@@ -8,7 +8,14 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from voidx.runtime import GoalSpec, ToolStatePatch
-from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema
+from voidx.tools.base import (
+    BaseTool,
+    ToolContext,
+    ToolResult,
+    drop_nullish_tool_fields,
+    keep_tool_args,
+    model_to_json_schema,
+)
 from voidx.workflow.service import (
     WorkflowService,
     advance_workflow_states,
@@ -57,6 +64,28 @@ class WorkflowInput(BaseModel):
     )
 
 
+def _normalize_workflow_args(args):
+    if not isinstance(args, dict):
+        return args
+    action = str(args.get("action") or "").strip().lower()
+    if action == "enter":
+        return drop_nullish_tool_fields(
+            keep_tool_args(args, {"action", "workflow", "goal"}), "workflow", "goal"
+        )
+    if action == "advance":
+        return drop_nullish_tool_fields(
+            keep_tool_args(args, {"action", "workflow", "condition", "goal"}),
+            "workflow",
+            "condition",
+            "goal",
+        )
+    if action == "done":
+        return drop_nullish_tool_fields(
+            keep_tool_args(args, {"action", "workflow"}), "workflow"
+        )
+    return args
+
+
 class WorkflowTool(BaseTool):
     id = "workflow"
     description = (
@@ -89,6 +118,7 @@ class WorkflowTool(BaseTool):
                 suggested_call='workflow(action="enter", workflow="debug")',
             )
         raw_args["action"] = canonical_action
+        raw_args = _normalize_workflow_args(raw_args)
         try:
             inp = WorkflowInput.model_validate(raw_args)
         except Exception as exc:

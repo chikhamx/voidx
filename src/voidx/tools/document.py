@@ -8,7 +8,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema
+from voidx.tools.base import (
+    BaseTool,
+    ToolContext,
+    ToolResult,
+    drop_nullish_tool_fields,
+    model_to_json_schema,
+)
 
 _DOCUMENTS_PACKAGE = "voidx.data"
 _DOCUMENTS_ROOT = "documents"
@@ -26,6 +32,15 @@ class DocumentInput(BaseModel):
     )
 
 
+def _normalize_document_args(args):
+    if not isinstance(args, dict):
+        return args
+    action = str(args.get("action") or "").strip().lower()
+    if action in {"list", "read"}:
+        return drop_nullish_tool_fields(args, "path")
+    return args
+
+
 class DocumentTool(BaseTool):
     id = "document"
     description = (
@@ -38,6 +53,7 @@ class DocumentTool(BaseTool):
         return model_to_json_schema(DocumentInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+        args = _normalize_document_args(args)
         try:
             inp = DocumentInput.model_validate(args)
         except Exception as exc:

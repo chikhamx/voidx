@@ -6,11 +6,16 @@ closing voidx, so the model-facing surface exposes no terminal outcome.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
-
-from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema
+from voidx.tools.base import (
+    BaseTool,
+    ToolContext,
+    ToolResult,
+    keep_tool_args,
+    model_to_json_schema,
+)
 
 
 class LoopDecisionInput(BaseModel):
@@ -38,6 +43,20 @@ class LoopDecisionInput(BaseModel):
     reason: str = Field(default="")
 
 
+def _normalize_loop_args(args: Any) -> Any:
+    if not isinstance(args, dict):
+        return args
+    operation = str(args.get("operation") or "commit").strip().lower()
+    if operation == "start":
+        return keep_tool_args(args, {"operation", "goal"})
+    if operation == "commit":
+        return keep_tool_args(
+            args,
+            {"operation", "outcome", "summary", "progress", "next_delay_seconds", "reason"},
+        )
+    return args
+
+
 class LoopTool(BaseTool):
     id = "loop"
     description = (
@@ -58,6 +77,7 @@ class LoopTool(BaseTool):
                 output="No active runtime-backed /loop controller is available in this tool context.",
                 metadata={"error": True, "loop_active": False},
             )
+        args = _normalize_loop_args(args)
         try:
             inp = LoopDecisionInput.model_validate(args)
         except Exception as exc:

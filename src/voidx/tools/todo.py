@@ -13,7 +13,14 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from voidx.runtime.todo import TodoStatus
-from voidx.tools.base import BaseTool, model_to_json_schema, ToolContext, ToolResult
+from voidx.tools.base import (
+    BaseTool,
+    ToolContext,
+    ToolResult,
+    drop_nullish_tool_fields,
+    keep_tool_args,
+    model_to_json_schema,
+)
 
 
 class TodoItem(BaseModel):
@@ -53,6 +60,19 @@ class TodoInput(BaseModel):
     )
 
 
+def _normalize_todo_args(args):
+    if not isinstance(args, dict):
+        return args
+    op = str(args.get("op") or "write").strip().lower()
+    if op == "read":
+        return drop_nullish_tool_fields(keep_tool_args(args, {"op", "filter"}), "filter")
+    if op == "update":
+        return keep_tool_args(args, {"op", "updates"})
+    if op == "write":
+        return keep_tool_args(args, {"op", "todos"})
+    return args
+
+
 class TodoWriteTool(BaseTool):
     id = "todo"
     description = (
@@ -68,6 +88,7 @@ class TodoWriteTool(BaseTool):
         return model_to_json_schema(TodoInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+        args = _normalize_todo_args(args)
         try:
             inp = TodoInput.model_validate(args)
         except Exception as exc:

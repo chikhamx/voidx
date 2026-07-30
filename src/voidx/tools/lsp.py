@@ -16,6 +16,8 @@ from voidx.tools.base import (
     BaseTool,
     ToolContext,
     ToolResult,
+    drop_nullish_tool_fields,
+    keep_tool_args,
     model_to_json_schema,
     _resolve_tool_path,
     _resolve_tool_path_for_access,
@@ -58,6 +60,29 @@ class LspInput(BaseModel):
     )
 
 
+def _normalize_lsp_args(args):
+    if not isinstance(args, dict):
+        return args
+    operation = str(args.get("operation") or "").strip().lower()
+    if operation in {"diagnostics", "symbols"}:
+        return drop_nullish_tool_fields(
+            keep_tool_args(args, {"operation", "file_path"}), "file_path"
+        )
+    if operation == "definition":
+        return drop_nullish_tool_fields(
+            keep_tool_args(args, {"operation", "file_path", "line", "character"}),
+            "file_path",
+        )
+    if operation == "references":
+        return drop_nullish_tool_fields(
+            keep_tool_args(
+                args, {"operation", "file_path", "line", "character", "include_declaration"}
+            ),
+            "file_path",
+        )
+    return args
+
+
 class LspTool(BaseTool):
     id = "lsp"
     description = "Run language-server operations: diagnostics, definition lookup, references, and document symbols."
@@ -66,6 +91,7 @@ class LspTool(BaseTool):
         return model_to_json_schema(LspInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+        args = _normalize_lsp_args(args)
         try:
             inp = LspInput.model_validate(args)
         except Exception as exc:

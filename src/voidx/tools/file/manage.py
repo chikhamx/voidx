@@ -8,7 +8,15 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from voidx.permission.grants import resolve_access
-from voidx.tools.base import BaseTool, ToolContext, ToolResult, _resolve_tool_path_for_access, model_to_json_schema
+from voidx.tools.base import (
+    BaseTool,
+    ToolContext,
+    ToolResult,
+    drop_nullish_tool_fields,
+    keep_tool_args,
+    model_to_json_schema,
+    _resolve_tool_path_for_access,
+)
 from .state import (
     check_staleness,
     clear_file_tracking,
@@ -66,6 +74,25 @@ class ManageInput(BaseModel):
         return self
 
 
+def _normalize_manage_args(args):
+    if not isinstance(args, dict):
+        return args
+    op = str(args.get("op") or "").strip().lower()
+    if op == "create":
+        return drop_nullish_tool_fields(
+            keep_tool_args(args, {"op", "kind", "paths", "overwrite"}), "kind"
+        )
+    if op == "delete":
+        return drop_nullish_tool_fields(
+            keep_tool_args(args, {"op", "kind", "paths"}), "kind"
+        )
+    if op == "move":
+        return drop_nullish_tool_fields(
+            keep_tool_args(args, {"op", "kind", "moves"}), "kind"
+        )
+    return args
+
+
 class ManageTool(BaseTool):
     id = "manage"
     description = "Create empty files or directories; create an empty file or directory, delete files or directories, or move/rename paths. No file content is written; use write to add file content."
@@ -75,6 +102,7 @@ class ManageTool(BaseTool):
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
         args = _normalize_legacy_manage_args(args)
+        args = _normalize_manage_args(args)
         try:
             inp = ManageInput.model_validate(args)
         except Exception as exc:

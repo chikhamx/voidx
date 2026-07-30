@@ -21,6 +21,8 @@ from voidx.tools.base import (
     BaseTool,
     ToolContext,
     ToolResult,
+    drop_nullish_tool_fields,
+    keep_tool_args,
     model_to_json_schema,
     tool_timeout_metadata,
 )
@@ -132,6 +134,24 @@ _RESULT_PRESETS: dict[str, AgentResultContract] = {
 }
 
 
+def _normalize_agent_args(args):
+    if not isinstance(args, dict):
+        return args
+    mode = str(args.get("mode") or "").strip().lower()
+    normalized = keep_tool_args(
+        args, {"agent", "mode", "task", "target", "success_criteria", "result_preset"}
+    )
+    normalized = drop_nullish_tool_fields(
+        normalized, "agent", "success_criteria", "result_preset"
+    )
+    if "result_preset" in normalized and not isinstance(normalized["result_preset"], str):
+        normalized.pop("result_preset", None)
+    if mode not in {"implement", "feedback"} and "success_criteria" in normalized:
+        if not isinstance(normalized["success_criteria"], str):
+            normalized.pop("success_criteria", None)
+    return normalized
+
+
 class AgentTool(BaseTool):
     id = "agent"
     description = (
@@ -171,6 +191,7 @@ class AgentTool(BaseTool):
         return model_to_json_schema(AgentInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+        args = _normalize_agent_args(args)
         try:
             inp = AgentInput.model_validate(args)
         except ValidationError as exc:

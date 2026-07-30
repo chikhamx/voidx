@@ -11,7 +11,14 @@ from voidx.skills.context import render_skill_tool_context
 from voidx.skills.registry import SkillRegistry, normalize_skill_name
 from voidx.skills.schema import SkillSelectionConfig
 from voidx.skills.service import SkillService
-from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema
+from voidx.tools.base import (
+    BaseTool,
+    ToolContext,
+    ToolResult,
+    drop_nullish_tool_fields,
+    keep_tool_args,
+    model_to_json_schema,
+)
 
 _MAX_OUTPUT_CHARS = 24_000
 
@@ -49,6 +56,21 @@ class SkillsInput(BaseModel):
     )
 
 
+def _normalize_skill_args(args):
+    if not isinstance(args, dict):
+        return args
+    op = str(args.get("op") or "").strip().lower()
+    if op == "list":
+        return keep_tool_args(args, {"op"})
+    if op == "load":
+        normalized = keep_tool_args(args, {"op", "name"})
+        return drop_nullish_tool_fields(normalized, "name")
+    if op == "create":
+        normalized = keep_tool_args(args, {"op", "name", "description", "body", "scope"})
+        return drop_nullish_tool_fields(normalized, "scope")
+    return args
+
+
 class SkillsTool(BaseTool):
     id = "skill"
     description = (
@@ -66,6 +88,7 @@ class SkillsTool(BaseTool):
         return model_to_json_schema(SkillsInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+        args = _normalize_skill_args(args)
         try:
             inp = SkillsInput.model_validate(args)
         except Exception as exc:

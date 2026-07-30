@@ -21,6 +21,9 @@ class FakeLoopController:
             return loop_decision.model_copy(update={"next_delay_seconds": 600.0})
         return loop_decision
 
+    def final_decision(self) -> LoopDecision | None:
+        return self.decisions[-1] if self.decisions else None
+
 
 @pytest.mark.asyncio
 async def test_loop_requires_loop_controller() -> None:
@@ -33,6 +36,29 @@ async def test_loop_requires_loop_controller() -> None:
     assert "No active runtime-backed /loop" in result.output
 
 
+
+@pytest.mark.asyncio
+async def test_loop_start_ignores_non_required_noise_fields() -> None:
+    controller = FakeLoopController()
+    tool = LoopTool()
+    ctx = ToolContext(workspace="/tmp/workspace", loop_controller=controller)
+
+    result = await tool.execute(
+        {
+            "operation": "start",
+            "goal": "use typex mcp",
+            "outcome": "null",
+            "summary": None,
+            "progress": "definitely-not-a-progress-value",
+            "next_delay_seconds": "null",
+        },
+        ctx,
+    )
+
+    assert result.metadata.get("error") is not True
+    assert result.metadata["operation"] == "start"
+    assert result.metadata["goal"] == "use typex mcp"
+    assert controller.decisions == []
 @pytest.mark.asyncio
 async def test_loop_submits_continue_decision() -> None:
     controller = FakeLoopController()

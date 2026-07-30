@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from voidx.tools.loop import LoopTool
 from voidx.tools.registry import ToolRegistry
 
 
-def test_loop_tool_registered_by_default() -> None:
+def test_loop_tool_not_registered_by_default() -> None:
     registry = ToolRegistry()
 
-    assert "loop" in registry.ids()
-    assert isinstance(registry.get("loop"), LoopTool)
+    assert "loop" not in registry.ids()
+    assert registry.get("loop") is None
+    assert "loop" not in {tool["function"]["name"] for tool in registry.tools_for_llm()}
 
 
 def test_schedule_wakeup_not_registered() -> None:
@@ -34,13 +34,13 @@ def test_filtered_copy_can_exclude_interactive_tools_for_subagents() -> None:
     assert "agent" not in clone.ids()
 
 
-def test_loop_tool_view_binds_loop_without_legacy_or_interactive_tools() -> None:
+def test_loop_tool_view_binds_closed_world_tools_without_loop_protocol_tool() -> None:
     registry = ToolRegistry()
 
     loop_registry = registry.loop_filtered_copy(workflow_enabled=False)
 
     ids = set(loop_registry.ids())
-    assert "loop" in ids
+    assert "loop" not in ids
     assert "read" in ids
     assert "search" in ids
     assert "schedule_wakeup" not in ids
@@ -65,7 +65,7 @@ def test_loop_tool_view_filters_real_llm_tool_definitions_by_function_name() -> 
         if (name := _tool_definition_name(tool)) and tool_view.allows(name)
     }
 
-    assert "loop" in visible_tool_names
+    assert "loop" not in visible_tool_names
     assert "read" in visible_tool_names
     assert "schedule_wakeup" not in visible_tool_names
     assert "bash" in visible_tool_names

@@ -6,7 +6,14 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from voidx.diffing import make_file_diff, make_structured_diff, render_numbered_diff
-from voidx.tools.base import BaseTool, ToolContext, ToolResult, _resolve_tool_path_for_access, model_to_json_schema
+from voidx.tools.base import (
+    BaseTool,
+    ToolContext,
+    ToolResult,
+    keep_tool_args,
+    model_to_json_schema,
+    _resolve_tool_path_for_access,
+)
 from .state import (
     check_read_coverage,
     check_staleness,
@@ -55,6 +62,17 @@ class WriteInput(BaseModel):
         return self
 
 
+def _normalize_write_args(args):
+    if not isinstance(args, dict):
+        return args
+    op = str(args.get("op") or "").strip().lower()
+    if op == "insert":
+        return keep_tool_args(args, {"file_path", "op", "lineno", "new_string"})
+    if op in {"append", "write"}:
+        return keep_tool_args(args, {"file_path", "op", "new_string"})
+    return args
+
+
 class WriteTool(BaseTool):
     id = "write"
     description = 'Edit text files: write op="insert" before a 1-based line, op="append" at EOF, or op="write" creates or fully overwrites full content.'
@@ -63,6 +81,7 @@ class WriteTool(BaseTool):
         return model_to_json_schema(WriteInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+        args = _normalize_write_args(args)
         try:
             inp = WriteInput.model_validate(args)
         except Exception as exc:

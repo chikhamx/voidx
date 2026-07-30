@@ -19,7 +19,6 @@ from voidx.tools.checkpoint import PlanCheckpointTool
 from voidx.tools.workflow import WorkflowTool
 from voidx.tools.compact import CompactContextTool
 from voidx.tools.document import DocumentTool
-from voidx.tools.loop import LoopTool
 
 
 class ToolDef(BaseModel):
@@ -74,13 +73,6 @@ class ToolRegistry:
         self.register(wf.id, wf, wf.description, wf.parameters_schema())
         ws = WebSearchTool(settings=self._settings)
         self.register(ws.id, ws, ws.description, ws.parameters_schema())
-        loop_tool = LoopTool()
-        self.register(
-            loop_tool.id,
-            loop_tool,
-            loop_tool.description,
-            loop_tool.parameters_schema(),
-        )
 
     def register(self, tool_id: str, instance: object, description: str, parameters: dict) -> None:
         """Register a tool dynamically (e.g. agent tool injected at runtime)."""
@@ -129,7 +121,6 @@ class ToolRegistry:
     def loop_filtered_copy(self, *, workflow_enabled: bool = False) -> "ToolRegistry":
         """Return the closed-world tool view for automatic runtime-backed /loop wakeups."""
         allowed = {
-            "loop",
             "read",
             "find",
             "search",
