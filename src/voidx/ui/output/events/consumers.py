@@ -152,10 +152,13 @@ class DockEventConsumer:
                 self._reset_turn_state()
                 return self._dock.start_turn(text)
             case TurnCompleted():
+                self._dock.end_turn()
                 return None
             case TurnCancelled():
+                self._dock.end_turn()
                 return None
             case TurnFailed() as e:
+                self._dock.end_turn()
                 if not e.message:
                     return None
                 self._dock.record_status(

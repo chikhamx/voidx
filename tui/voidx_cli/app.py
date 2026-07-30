@@ -146,7 +146,7 @@ class PureTui(
     # ── public API ───────────────────────────────────────────────────────
 
     async def run(self, on_submit: SubmitHandler) -> None:
-        dock.set_refresh_callback(self.invalidate)
+        dock.set_refresh_callback(self._on_dock_refresh)
         dock.set_width_provider(lambda: self._console.width or 80)
 
         self._tty = self._stdin_fd is not None and os.isatty(self._stdin_fd)
@@ -298,15 +298,24 @@ class PureTui(
     def _choose_busy_activity_verb(self) -> str:
         return random.choice(tui_activity.BUSY_ACTIVITY_VERBS)
 
+    def _on_dock_refresh(self) -> None:
+        # A loop-waiting record may land after the turn already ended; the
+        # countdown timer must be (re)started from here, not just at turn end.
+        self._start_busy_activity_timer()
+        self.invalidate()
+
     def _start_busy_activity_timer(self) -> None:
         if not self._tty or not self._running:
             return
-        if not (self._busy or self._loop_waiting_active()):
+        if not (self._busy or self._loop_waiting_active() or self._loop_turn_in_progress()):
             return
         task = self._busy_activity_timer_task
         if task is not None and not task.done():
             return
-        self._busy_activity_timer_task = asyncio.create_task(self._busy_activity_timer())
+        try:
+            self._busy_activity_timer_task = asyncio.create_task(self._busy_activity_timer())
+        except RuntimeError:
+            return
 
     async def _stop_busy_activity_timer(self) -> None:
         task = self._busy_activity_timer_task
@@ -328,9 +337,9 @@ class PureTui(
 
     async def _busy_activity_timer(self) -> None:
         try:
-            while self._running and (self._busy or self._loop_waiting_active()):
+            while self._running and (self._busy or self._loop_waiting_active() or self._loop_turn_in_progress()):
                 await asyncio.sleep(tui_activity.BUSY_ACTIVITY_TICK_SECONDS)
-                if not self._running or not (self._busy or self._loop_waiting_active()):
+                if not self._running or not (self._busy or self._loop_waiting_active() or self._loop_turn_in_progress()):
                     return
                 self._busy_activity_tick += 1
                 if not self._render_busy_activity_tick():
@@ -546,6 +555,28 @@ class PureTui(
     # ── interrupt / exit ─────────────────────────────────────────────────
 
     def _handle_interrupt(self) -> None:
+        loop_active = self._loop_turn_in_progress() or self._loop_waiting_active()
+        if not self._is_input_empty():
+            self._clear_input()
+            self._reset_ctrl_c()
+            self._notice = "Input cleared. Press Ctrl-C twice on empty input to exit."
+            self.invalidate()
+            return
+        if loop_active:
+            if self._active_text_prompt is not None:
+                self._cancel_text_prompt()
+            if self._active_choice is not None:
+                self._finish_choice(None)
+            self._queue.put_nowait(_SubmitQueueItem(
+                "/loop stop",
+                restore_text="",
+                paste_entries=[],
+                context=self._submit_context(),
+            ))
+            self._reset_ctrl_c()
+            self._notice = "Stopping loop..."
+            self.invalidate()
+            return
         if self._active_text_prompt is not None:
             self._cancel_text_prompt()
             self._reset_ctrl_c()
@@ -561,12 +592,6 @@ class PureTui(
             self._restore_interrupted_input()
             self._reset_ctrl_c()
             self._notice = "Interrupted. Restored last message for editing."
-            self.invalidate()
-            return
-        if not self._is_input_empty():
-            self._clear_input()
-            self._reset_ctrl_c()
-            self._notice = "Input cleared. Press Ctrl-C twice on empty input to exit."
             self.invalidate()
             return
         now = time.monotonic()

@@ -8,6 +8,7 @@ import time
 from rich.cells import cell_len
 from rich.text import Text
 
+from voidx.agent.domain.loop import LOOP_ITERATION_USER_TEXT
 from voidx.llm.usage import format_token_count
 from voidx.ui.output.dock import (
     active_agent_step_text,
@@ -46,7 +47,7 @@ class _ActivityRendererMixin:
         return len(self._render_busy_activity_elements(width))
 
     def _render_busy_activity_elements(self, width: int) -> list[Text]:
-        if not self._busy:
+        if not self._busy and not self._loop_turn_in_progress():
             return self._render_loop_waiting_elements(width)
         elements = [self._busy_activity_text(width)]
         permission_detail = active_permission_request_detail_text()
@@ -69,6 +70,15 @@ class _ActivityRendererMixin:
             return False
         return status_record(LOOP_WAITING_STATUS_ID) is not None
 
+    def _loop_turn_in_progress(self) -> bool:
+        if not getattr(dock, "turn_in_progress", False):
+            return False
+        current_text = getattr(dock, "current_turn_text", "")
+        if not isinstance(current_text, str):
+            return False
+        stripped = current_text.strip()
+        return stripped == LOOP_ITERATION_USER_TEXT or stripped.startswith("[loop]")
+
     def _loop_waiting_label(self, width: int) -> str:
         record = dock.status_record(LOOP_WAITING_STATUS_ID) if hasattr(dock, "status_record") else None
         if record is None:
@@ -77,8 +87,11 @@ class _ActivityRendererMixin:
             wake_at = float(record.detail)
         except (TypeError, ValueError):
             return ""
-        remaining = max(0, int(wake_at - time.time()))
-        label = f"○ {record.label} (next round in {self._format_elapsed(remaining)})"
+        remaining = int(wake_at - time.time())
+        if remaining <= 0:
+            return ""
+        glyph = BUSY_ACTIVITY_GLYPHS[self._busy_activity_tick % len(BUSY_ACTIVITY_GLYPHS)]
+        label = f"{glyph} {record.label} (next round in {self._format_elapsed(remaining)})"
         return _clip_cells(label, width)
 
     def _busy_activity_text(self, width: int) -> Text:
@@ -117,7 +130,8 @@ class _ActivityRendererMixin:
         if self._busy_activity_prev_has_special and not current_has_special:
             self._busy_activity_verb = self._choose_busy_activity_verb()
         self._busy_activity_prev_has_special = current_has_special
-        verb = "Thinking" if thinking else status_label or self._busy_activity_verb or ""
+        default_turn_verb = "Thinking" if self._loop_turn_in_progress() else ""
+        verb = "Thinking" if thinking else status_label or self._busy_activity_verb or default_turn_verb
         prefix = f"{glyph} {verb}"
         if started_at is None:
             return prefix

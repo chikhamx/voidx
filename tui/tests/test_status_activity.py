@@ -810,7 +810,7 @@ def test_loop_waiting_renders_countdown_when_idle(tmp_path, monkeypatch):
     assert "4m 32s" in plain
 
 
-def test_loop_waiting_countdown_reaches_zero_shows_due(tmp_path, monkeypatch):
+def test_loop_waiting_countdown_reaches_zero_hides_waiting_line(tmp_path, monkeypatch):
     from voidx.ui.output.dock import dock
 
     monkeypatch.setattr("voidx_cli.render_activity.time.time", lambda: 1_000.0)
@@ -821,8 +821,8 @@ def test_loop_waiting_countdown_reaches_zero_shows_due(tmp_path, monkeypatch):
 
     elements = tui._render_busy_activity_elements(100)
 
-    assert len(elements) == 1
-    assert "0s" in elements[0].plain
+    assert elements == []
+    assert tui._loop_waiting_label(100) == ""
 
 
 def test_loop_waiting_hidden_when_busy(tmp_path, monkeypatch):
@@ -840,3 +840,220 @@ def test_loop_waiting_hidden_when_busy(tmp_path, monkeypatch):
 
     assert len(elements) == 1
     assert "Cooking" in elements[0].plain
+
+
+def test_loop_waiting_label_animates_glyph(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx_cli.render_activity.time.time", lambda: 1_000.0)
+    tui = _tui(tmp_path)
+    tui._busy = False
+
+    dock.record_status("loop:waiting", "Looping", str(1_000.0 + 272))
+
+    tui._busy_activity_tick = 0
+    assert tui._loop_waiting_label(100).startswith("◐ Looping")
+    tui._busy_activity_tick = 1
+    assert tui._loop_waiting_label(100).startswith("◓ Looping")
+    tui._busy_activity_tick = 3
+    assert tui._loop_waiting_label(100).startswith("◒ Looping")
+    tui._busy_activity_tick = 4
+    assert tui._loop_waiting_label(100).startswith("◐ Looping")
+
+
+def test_loop_turn_in_progress_uses_default_label_without_local_busy_state(tmp_path, monkeypatch):
+    """Background loop turns bypass the local submit path, so the TUI may
+    have no busy start time or chosen verb. It should still render a visible
+    activity label instead of a lone spinner glyph.
+    """
+    from voidx.ui.output.dock import dock
+
+    monkeypatch.setattr("voidx_cli.app.random.choice", lambda _choices: "Thinking")
+    tui = _tui(tmp_path)
+    tui._busy = False
+    tui._busy_started_at = None
+    tui._busy_activity_verb = ""
+
+    dock.start_turn("Run the next scheduled loop iteration.")
+
+    elements = tui._render_busy_activity_elements(100)
+
+    assert len(elements) == 1
+    plain = elements[0].plain.strip()
+    assert plain != "◐"
+    assert "Thinking" in plain
+
+
+def test_loop_turn_in_progress_renders_vibe_line_not_countdown(tmp_path, monkeypatch):
+    """When a loop wakeup dispatches a turn, the TUI is not in its local
+    _consume submit path, so _busy stays False. But dock.start_turn() has been
+    called (TurnStarted event) and loop:waiting was cleared. The activity line
+    should show the normal busy/vibe line, not disappear or show a countdown.
+    """
+    from voidx.ui.output.dock import dock
+
+    monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 500.0)
+    monkeypatch.setattr("voidx_cli.app.random.choice", lambda _choices: "Thinking")
+    tui = _tui(tmp_path)
+    tui._busy = False
+    tui._busy_started_at = 500.0
+    tui._busy_activity_verb = "Thinking"
+
+    dock.start_turn("Run the next scheduled loop iteration.")
+
+    elements = tui._render_busy_activity_elements(100)
+
+    assert len(elements) == 1
+    plain = elements[0].plain
+    assert "Thinking" in plain
+    assert "Looping" not in plain
+    assert "next round in" not in plain
+
+
+def test_loop_turn_finished_clears_vibe_line_back_to_countdown(tmp_path, monkeypatch):
+    """After the loop turn ends and a new waiting record arrives, the activity
+    line should switch back to the countdown, not stay on the vibe line.
+    """
+    from voidx.ui.output.dock import dock
+
+    monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 500.0)
+    monkeypatch.setattr("voidx_cli.render_activity.time.time", lambda: 1_000.0)
+    monkeypatch.setattr("voidx_cli.app.random.choice", lambda _choices: "Thinking")
+    tui = _tui(tmp_path)
+    tui._busy = False
+    tui._busy_started_at = 500.0
+    tui._busy_activity_verb = "Thinking"
+
+    dock.start_turn("Run the next scheduled loop iteration.")
+    assert "Thinking" in tui._render_busy_activity_elements(100)[0].plain
+
+    dock.end_turn()
+    dock.record_status("loop:waiting", "Looping", str(1_000.0 + 120))
+
+    elements = tui._render_busy_activity_elements(100)
+    assert len(elements) == 1
+    plain = elements[0].plain
+    assert "Looping" in plain
+    assert "next round in" in plain
+    assert "Thinking" not in plain
+
+
+@pytest.mark.asyncio
+async def test_loop_waiting_record_arrival_starts_timer(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx_cli.activity.BUSY_ACTIVITY_TICK_SECONDS", 0.01)
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._running = True
+    ticked = asyncio.Event()
+
+    monkeypatch.setattr(tui, "invalidate", lambda: None)
+
+    def tick() -> bool:
+        ticked.set()
+        return True
+
+    monkeypatch.setattr(tui, "_render_busy_activity_tick", tick)
+    dock.set_refresh_callback(tui._on_dock_refresh)
+    try:
+        assert tui._busy_activity_timer_task is None
+
+        # The event bus applies StatusUpdated(loop:waiting) after the turn has
+        # already ended; the refresh callback must start the countdown timer.
+        dock.record_status("loop:waiting", "Looping", "9999999999.0")
+
+        assert tui._busy_activity_timer_task is not None
+        await asyncio.wait_for(ticked.wait(), timeout=1)
+
+        dock.clear_status_record("loop:waiting")
+        task = tui._busy_activity_timer_task
+        assert task is not None
+        await asyncio.wait_for(task, timeout=1)
+        assert task.done()
+    finally:
+        dock.set_refresh_callback(None)
+        await tui._stop_busy_activity_timer()
+        dock.reset()
+
+
+def test_ctrl_c_stops_loop_even_when_choice_prompt_active(tmp_path, monkeypatch):
+    from voidx.ui.output.dock import dock
+    tui = _tui(tmp_path)
+    tui._busy = False
+    tui._active_choice = [("Yes", "y", "Allow this tool use once")]
+    dock.start_turn("Run the next scheduled loop iteration.")
+
+    assert tui._loop_turn_in_progress() is True
+
+    tui._handle_interrupt()
+
+    assert tui._queue.qsize() == 1
+    item = tui._queue.get_nowait()
+    assert item == "/loop stop"
+    assert tui._choice_queue.get_nowait() is None
+    assert tui._notice == "Stopping loop..."
+
+
+def test_ctrl_c_does_not_stop_loop_for_regular_turn_in_progress(tmp_path, monkeypatch):
+    from voidx.ui.output.dock import dock
+    tui = _tui(tmp_path)
+    tui._busy = False
+    dock.start_turn("ordinary coding/chat turn")
+
+    assert dock.turn_in_progress is True
+    assert tui._loop_turn_in_progress() is False
+
+    tui._handle_interrupt()
+
+    assert tui._queue.empty()
+    assert tui._notice == "Press Ctrl-C again to exit"
+
+
+def test_ctrl_c_interrupts_loop_turn_in_progress(tmp_path, monkeypatch):
+    from voidx.ui.output.dock import dock
+    tui = _tui(tmp_path)
+    tui._busy = False
+    dock.start_turn("Run the next scheduled loop iteration.")
+
+    assert tui._loop_turn_in_progress() is True
+    assert tui._queue.qsize() == 0
+
+    tui._handle_interrupt()
+
+    assert tui._queue.qsize() == 1
+    item = tui._queue.get_nowait()
+    assert item == "/loop stop"
+    assert tui._notice == "Stopping loop..."
+
+
+def test_ctrl_c_interrupts_loop_waiting(tmp_path, monkeypatch):
+    from voidx.ui.output.dock import dock
+    tui = _tui(tmp_path)
+    tui._busy = False
+    dock.record_status("loop:waiting", "Looping", "9999999999.0")
+
+    assert tui._loop_waiting_active() is True
+    assert tui._queue.qsize() == 0
+
+    tui._handle_interrupt()
+
+    assert tui._queue.qsize() == 1
+    item = tui._queue.get_nowait()
+    assert item == "/loop stop"
+    assert tui._notice == "Stopping loop..."
+
+
+def test_ctrl_c_clears_input_first_even_if_loop_active(tmp_path, monkeypatch):
+    from voidx.ui.output.dock import dock
+    tui = _tui(tmp_path)
+    tui._busy = False
+    dock.record_status("loop:waiting", "Looping", "9999999999.0")
+    tui._input_lines = ["some text"]
+    tui._cursor_col = len("some text")
+
+    assert tui._loop_waiting_active() is True
+    assert tui._is_input_empty() is False
+    assert tui._queue.qsize() == 0
+
+    tui._handle_interrupt()
+
+    assert tui._queue.qsize() == 0
+    assert tui._is_input_empty() is True
+    assert "Input cleared" in tui._notice

@@ -55,6 +55,8 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._stopping = False
         self._tree = OutputTree()
         self._current_turn: OutputNode | None = None
+        self._current_turn_text = ""
+        self._turn_in_progress = False
         self._current_agent: OutputNode | None = None
         self._current_tool: OutputNode | None = None
         self._stream_node: OutputNode | None = None
@@ -93,6 +95,14 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
     @property
     def current_turn(self) -> OutputNode | None:
         return self._current_turn
+
+    @property
+    def turn_in_progress(self) -> bool:
+        return self._turn_in_progress
+
+    @property
+    def current_turn_text(self) -> str:
+        return self._current_turn_text
 
     @property
     def current_agent(self) -> OutputNode | None:
@@ -214,6 +224,8 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
 
     def _reset_runtime_nodes(self) -> None:
         self._current_turn = None
+        self._current_turn_text = ""
+        self._turn_in_progress = False
         self._current_agent = None
         self._current_tool = None
         self._stream_node = None
@@ -229,6 +241,8 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
     def start_turn(self, text: str) -> OutputNode:
         self.commit_stream()
         self._current_tool = None
+        self._turn_in_progress = True
+        self._current_turn_text = text
         self._current_agent = None
         if self._tree.root.children:
             self._append_root_spacer()
@@ -246,6 +260,11 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._mark_settled(self._current_turn)
         self.refresh()
         return self._current_turn
+
+    def end_turn(self) -> None:
+        self._turn_in_progress = False
+        self._current_turn_text = ""
+        self.refresh()
 
     def _render_turn_text(self, text: str) -> tuple[str, list[str]]:
         """Render user turn text into (header, body_lines) as plain text.
