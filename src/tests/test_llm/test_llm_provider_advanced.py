@@ -36,17 +36,17 @@ def test_doubao_reasoning_uses_thinking_format():
 
     doubao_off = create_chat_model(
         "test-key",
-        ModelConfig(provider="doubao", model="doubao-seed-1.6-thinking", reasoning_effort="off"),
+        ModelConfig(provider="doubao", model="doubao-seed-1.6-thinking", reasoning_effort="none"),
     )
     assert isinstance(doubao_off, DeepSeekChatOpenAI)
     assert doubao_off.extra_body == {"thinking": {"type": "disabled"}}
 
     doubao_auto = create_chat_model(
         "test-key",
-        ModelConfig(provider="doubao", model="doubao-seed-1.6-thinking", reasoning_effort="auto"),
+        ModelConfig(provider="doubao", model="doubao-seed-1.6-thinking", reasoning_effort="high"),
     )
     assert isinstance(doubao_auto, DeepSeekChatOpenAI)
-    assert doubao_auto.extra_body == {"thinking": {"type": "auto"}}
+    assert doubao_auto.extra_body == {"thinking": {"type": "enabled"}}
 
     # Doubao with non-reasoning model: no params
     doubao_plain = create_chat_model(
@@ -224,11 +224,11 @@ def test_deepseek_chat_reasoning_kwargs_maps_effort_per_provider():
     )
     assert mimo_medium == {"extra_body": {"thinking": {"type": "enabled"}}}
 
-    # Doubao: auto → auto, none → disabled
-    doubao_auto = DeepSeekChatOpenAI.reasoning_kwargs(
-        ModelConfig(provider="doubao", model="doubao-seed-1.6-thinking", reasoning_effort="auto"),
+    # Doubao: non-none → enabled, none → disabled (no external auto)
+    doubao_on = DeepSeekChatOpenAI.reasoning_kwargs(
+        ModelConfig(provider="doubao", model="doubao-seed-1.6-thinking", reasoning_effort="high"),
     )
-    assert doubao_auto == {"extra_body": {"thinking": {"type": "auto"}}}
+    assert doubao_on == {"extra_body": {"thinking": {"type": "enabled"}}}
 
     doubao_none = DeepSeekChatOpenAI.reasoning_kwargs(
         ModelConfig(provider="doubao", model="doubao-seed-1.6-thinking", reasoning_effort="none"),
@@ -241,11 +241,16 @@ def test_deepseek_chat_reasoning_kwargs_maps_effort_per_provider():
     )
     assert kimi_medium == {"extra_body": {"thinking": {"type": "enabled"}}}
 
-    # Unknown provider with deepseek protocol falls back to DeepSeek format
+    # Unknown provider: OpenAI-generic clamp (xhigh max); deepseek-protocol fallback format
     custom_xhigh = DeepSeekChatOpenAI.reasoning_kwargs(
         ModelConfig(provider="my-custom-ds", model="some-model", reasoning_effort="xhigh"),
     )
-    assert custom_xhigh == {"reasoning_effort": "max", "extra_body": {"thinking": {"type": "enabled"}}}
+    assert custom_xhigh == {"reasoning_effort": "xhigh", "extra_body": {"thinking": {"type": "enabled"}}}
+
+    custom_ultra = DeepSeekChatOpenAI.reasoning_kwargs(
+        ModelConfig(provider="my-custom-ds", model="some-model", reasoning_effort="ultra"),
+    )
+    assert custom_ultra == {"reasoning_effort": "xhigh", "extra_body": {"thinking": {"type": "enabled"}}}
 
     custom_none = DeepSeekChatOpenAI.reasoning_kwargs(
         ModelConfig(provider="my-custom-ds", model="some-model", reasoning_effort="none"),
@@ -382,7 +387,6 @@ def test_deepseek_chat_omits_reasoning_content_when_absent():
 
 def test_kimi_k3_reasoning_effort_mapping():
     """Kimi K3 maps reasoning effort to reasoning_effort and extra_body.thinking.type."""
-    # Kimi K3: ultra/max/xhigh -> max
     k3_max = DeepSeekChatOpenAI.reasoning_kwargs(
         ModelConfig(provider="kimi", model="k3", reasoning_effort="max"),
     )
@@ -393,7 +397,11 @@ def test_kimi_k3_reasoning_effort_mapping():
     )
     assert k3_xhigh == {"reasoning_effort": "max", "extra_body": {"thinking": {"type": "enabled"}}}
 
-    # Kimi K3: high/medium -> high
+    k3_ultra = DeepSeekChatOpenAI.reasoning_kwargs(
+        ModelConfig(provider="kimi", model="k3", reasoning_effort="ultra"),
+    )
+    assert k3_ultra == {"reasoning_effort": "max", "extra_body": {"thinking": {"type": "enabled"}}}
+
     k3_high = DeepSeekChatOpenAI.reasoning_kwargs(
         ModelConfig(provider="kimi", model="k3", reasoning_effort="high"),
     )
@@ -404,24 +412,16 @@ def test_kimi_k3_reasoning_effort_mapping():
     )
     assert k3_medium == {"reasoning_effort": "high", "extra_body": {"thinking": {"type": "enabled"}}}
 
-    # Kimi K3: low/minimum/light/minimal -> low
     k3_low = DeepSeekChatOpenAI.reasoning_kwargs(
         ModelConfig(provider="kimi", model="k3", reasoning_effort="low"),
     )
     assert k3_low == {"reasoning_effort": "low", "extra_body": {"thinking": {"type": "enabled"}}}
 
-    k3_light = DeepSeekChatOpenAI.reasoning_kwargs(
-        ModelConfig(provider="kimi", model="k3", reasoning_effort="light"),
-    )
-    assert k3_light == {"reasoning_effort": "low", "extra_body": {"thinking": {"type": "enabled"}}}
-
-    # Kimi K3: none -> thinking.type disabled
     k3_none = DeepSeekChatOpenAI.reasoning_kwargs(
         ModelConfig(provider="kimi", model="k3", reasoning_effort="none"),
     )
     assert k3_none == {"extra_body": {"thinking": {"type": "disabled"}}}
 
-    # Kimi non-K3 (e.g. kimi-k2.6): medium -> enabled (no reasoning_effort)
     k26_medium = DeepSeekChatOpenAI.reasoning_kwargs(
         ModelConfig(provider="kimi", model="kimi-k2.6", reasoning_effort="medium"),
     )

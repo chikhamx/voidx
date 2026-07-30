@@ -8,50 +8,248 @@ from __future__ import annotations
 
 from langchain_core.messages import AIMessageChunk
 
-from voidx.config import ModelConfig
+from voidx.config import ModelConfig, ReasoningEffort
+
+REASONING_EFFORT_ORDER: tuple[ReasoningEffort, ...] = tuple(ReasoningEffort)
 
 # Budget tokens shared by Anthropic-style thinking and Qwen thinking_budget.
 ANTHROPIC_BUDGETS = {
-    "low": 1_024,
-    "medium": 4_096,
-    "high": 8_192,
+    ReasoningEffort.LOW: 1_024,
+    ReasoningEffort.MEDIUM: 4_096,
+    ReasoningEffort.HIGH: 8_192,
+    ReasoningEffort.XHIGH: 8_192,
+    ReasoningEffort.MAX: 8_192,
+    ReasoningEffort.ULTRA: 8_192,
+}
+
+GEMINI_THINKING_BUDGETS = {
+    ReasoningEffort.LOW: 4_096,
+    ReasoningEffort.MEDIUM: 8_192,
+    ReasoningEffort.HIGH: 16_384,
+    ReasoningEffort.XHIGH: 32_768,
+    ReasoningEffort.MAX: 65_536,
+    ReasoningEffort.ULTRA: 65_536,
+}
+
+# OpenAI-protocol generic cap used as the final fallback.
+_OPENAI_GENERIC: tuple[ReasoningEffort, ...] = (
+    ReasoningEffort.NONE,
+    ReasoningEffort.LOW,
+    ReasoningEffort.MEDIUM,
+    ReasoningEffort.HIGH,
+    ReasoningEffort.XHIGH,
+)
+
+_TOGGLE_ONLY: tuple[ReasoningEffort, ...] = (
+    ReasoningEffort.NONE,
+    ReasoningEffort.HIGH,
+)
+
+
+_GEMINI_BUDGET: tuple[ReasoningEffort, ...] = (
+    ReasoningEffort.NONE,
+    ReasoningEffort.LOW,
+    ReasoningEffort.MEDIUM,
+    ReasoningEffort.HIGH,
+    ReasoningEffort.XHIGH,
+    ReasoningEffort.MAX,
+    ReasoningEffort.ULTRA,
+)
+
+_LEVEL_TO_HIGH: tuple[ReasoningEffort, ...] = (
+    ReasoningEffort.NONE,
+    ReasoningEffort.LOW,
+    ReasoningEffort.MEDIUM,
+    ReasoningEffort.HIGH,
+)
+
+_DEEPSEEK: tuple[ReasoningEffort, ...] = (
+    ReasoningEffort.NONE,
+    ReasoningEffort.HIGH,
+    ReasoningEffort.MAX,
+)
+
+_KIMI_K3: tuple[ReasoningEffort, ...] = (
+    ReasoningEffort.NONE,
+    ReasoningEffort.LOW,
+    ReasoningEffort.HIGH,
+    ReasoningEffort.MAX,
+)
+
+_CLAUDE_ADAPTIVE: tuple[ReasoningEffort, ...] = (
+    ReasoningEffort.NONE,
+    ReasoningEffort.LOW,
+    ReasoningEffort.MEDIUM,
+    ReasoningEffort.HIGH,
+    ReasoningEffort.XHIGH,
+    ReasoningEffort.MAX,
+)
+
+_OPENAI_TO_ULTRA: tuple[ReasoningEffort, ...] = (
+    ReasoningEffort.NONE,
+    ReasoningEffort.LOW,
+    ReasoningEffort.MEDIUM,
+    ReasoningEffort.HIGH,
+    ReasoningEffort.XHIGH,
+    ReasoningEffort.MAX,
+    ReasoningEffort.ULTRA,
+)
+
+_OPENAI_TO_MAX: tuple[ReasoningEffort, ...] = (
+    ReasoningEffort.NONE,
+    ReasoningEffort.LOW,
+    ReasoningEffort.MEDIUM,
+    ReasoningEffort.HIGH,
+    ReasoningEffort.XHIGH,
+    ReasoningEffort.MAX,
+)
+
+# Specific model prefixes first (longest / most specific wins via scan order).
+# (provider_or_None, model_substring, supported)
+_MODEL_EFFORT_TABLE: tuple[tuple[str | None, str, tuple[ReasoningEffort, ...]], ...] = (
+    ("openai", "gpt-5.6-sol", _OPENAI_TO_ULTRA),
+    ("openai", "gpt-5.6-terra", _OPENAI_TO_ULTRA),
+    ("openai", "gpt-5.6", _OPENAI_TO_MAX),
+    ("openai", "gpt-5.5", _OPENAI_GENERIC),
+    ("anthropic", "claude-opus-5", _CLAUDE_ADAPTIVE),
+    ("anthropic", "claude-sonnet-5", _CLAUDE_ADAPTIVE),
+    ("anthropic", "claude-opus-4", _CLAUDE_ADAPTIVE),
+    ("gemini", "gemini-3", _LEVEL_TO_HIGH),
+    ("gemini", "gemini-4", _LEVEL_TO_HIGH),
+    ("gemini", "gemini-2.5", _GEMINI_BUDGET),
+    ("deepseek", "deepseek-v4", _DEEPSEEK),
+    ("kimi", "kimi-k3", _KIMI_K3),
+    ("kimi", "k3", _KIMI_K3),
+    ("qwen", "qwen3", _TOGGLE_ONLY),
+    ("qwen", "qwq", _TOGGLE_ONLY),
+    ("doubao", "doubao-seed", _TOGGLE_ONLY),
+    ("doubao", "seed-1.6", _TOGGLE_ONLY),
+    ("zhipu", "glm-5", _TOGGLE_ONLY),
+    ("zhipu", "glm-4.7", _TOGGLE_ONLY),
+    ("zhipu", "glm-4.6", _TOGGLE_ONLY),
+    ("zhipu", "glm-4.5", _TOGGLE_ONLY),
+    ("typex", "glm-5", _TOGGLE_ONLY),
+    ("typex", "glm-4", _TOGGLE_ONLY),
+    ("minimax", "minimax-m3", _TOGGLE_ONLY),
+    ("mimo", "mimo-v2.5", _TOGGLE_ONLY),
+    ("mimo-token-plan", "mimo-v2.5", _TOGGLE_ONLY),
+)
+
+_PROVIDER_EFFORT_DEFAULTS: dict[str, tuple[ReasoningEffort, ...]] = {
+    "openai": _OPENAI_GENERIC,
+    "openrouter": _OPENAI_GENERIC,
+    "xunfei-coding-plan": _OPENAI_GENERIC,
+    "anthropic": _LEVEL_TO_HIGH,
+    "gemini": _GEMINI_BUDGET,
+    "deepseek": _DEEPSEEK,
+    "kimi": _TOGGLE_ONLY,
+    "qwen": _TOGGLE_ONLY,
+    "doubao": _TOGGLE_ONLY,
+    "zhipu": _TOGGLE_ONLY,
+    "typex": _TOGGLE_ONLY,
+    "mimo": _TOGGLE_ONLY,
+    "mimo-token-plan": _TOGGLE_ONLY,
+    "longcat": _TOGGLE_ONLY,
+    "minimax": _TOGGLE_ONLY,
 }
 
 
-def normalized_effort(effort: str | None) -> str | None:
-    if effort is None:
-        return None
-    value = effort.strip().lower()
-    if value in {"", "off", "none"}:
-        return "none"
-    if value in {"minimal", "low", "medium", "high", "xhigh", "max"}:
+def parse_reasoning_effort(value: ReasoningEffort | str | None) -> ReasoningEffort:
+    """Parse a strict ReasoningEffort value. No aliases."""
+    if isinstance(value, ReasoningEffort):
         return value
-    return "medium"
-
-
-def openai_effort(effort: str | None) -> str | None:
-    """Map unified reasoning_effort to an effort string for the nested reasoning format."""
-    value = normalized_effort(effort)
     if value is None:
-        return None
-    return {"none": "none", "minimal": "minimal", "low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "high"}.get(value)
+        return ReasoningEffort.XHIGH
+    return ReasoningEffort(str(value).strip().lower())
+
+
+def _effort_rank(effort: ReasoningEffort) -> int:
+    return REASONING_EFFORT_ORDER.index(effort)
+
+
+def map_effort(
+    requested: ReasoningEffort,
+    supported: tuple[ReasoningEffort, ...] | list[ReasoningEffort],
+) -> ReasoningEffort:
+    """Map *requested* onto *supported*.
+
+    Exact match wins. ``none`` only maps to ``none`` (or the lowest supported
+    value if ``none`` is absent). All other values pick the closest supported
+    non-``none`` level; equidistant ties prefer the higher level so sparse
+    provider ladders (e.g. DeepSeek high/max, Kimi low/high/max) follow the
+    vendor's upward banding.
+    """
+    if not supported:
+        return ReasoningEffort.NONE
+    ordered = sorted(set(supported), key=_effort_rank)
+    if requested in ordered:
+        return requested
+    if requested is ReasoningEffort.NONE:
+        return ReasoningEffort.NONE if ReasoningEffort.NONE in ordered else ordered[0]
+
+    candidates = [e for e in ordered if e is not ReasoningEffort.NONE]
+    if not candidates:
+        return ordered[0]
+
+    req_rank = _effort_rank(requested)
+    best = candidates[0]
+    best_dist = abs(_effort_rank(best) - req_rank)
+    for effort in candidates[1:]:
+        dist = abs(_effort_rank(effort) - req_rank)
+        if dist < best_dist or (dist == best_dist and _effort_rank(effort) > _effort_rank(best)):
+            best = effort
+            best_dist = dist
+    return best
+
+
+def supported_efforts(provider: str, model: str) -> tuple[ReasoningEffort, ...]:
+    """Resolve supported efforts: model table → provider default → OpenAI generic."""
+    name = (model or "").lower()
+    prov = (provider or "").lower()
+    for table_provider, prefix, supported in _MODEL_EFFORT_TABLE:
+        if table_provider is not None and table_provider != prov:
+            continue
+        if prefix in name:
+            return supported
+    if prov in _PROVIDER_EFFORT_DEFAULTS:
+        return _PROVIDER_EFFORT_DEFAULTS[prov]
+    return _OPENAI_GENERIC
+
+
+def resolve_effort(config: ModelConfig) -> ReasoningEffort:
+    """Parse config effort and clamp to the current provider/model capability."""
+    requested = parse_reasoning_effort(config.reasoning_effort)
+    return map_effort(requested, supported_efforts(config.provider, config.model))
+
+
+def normalized_effort(effort: ReasoningEffort | str | None) -> str:
+    """Return the canonical effort string (strict; no aliases)."""
+    return parse_reasoning_effort(effort).value
+
+
+def openai_effort(
+    effort: ReasoningEffort | str | None,
+    *,
+    provider: str = "openai",
+    model: str = "",
+) -> str:
+    """Map unified effort to an OpenAI nested ``reasoning.effort`` string."""
+    requested = parse_reasoning_effort(effort)
+    mapped = map_effort(requested, supported_efforts(provider, model))
+    return mapped.value
 
 
 def thinking_toggle(config: ModelConfig) -> dict:
     """``extra_body.thinking`` enabled/disabled for compatible providers."""
-    effort = normalized_effort(config.reasoning_effort)
-    if effort is None:
-        return {}
-    if effort == "none":
+    effort = resolve_effort(config)
+    if effort is ReasoningEffort.NONE:
         return {"extra_body": {"thinking": {"type": "disabled"}}}
     return {"extra_body": {"thinking": {"type": "enabled"}}}
 
 
 def nested_reasoning(config: ModelConfig) -> dict:
     """Map reasoning effort to ``extra_body.reasoning.effort``."""
-    effort = openai_effort(config.reasoning_effort)
-    if effort is None:
-        return {}
+    effort = openai_effort(config.reasoning_effort, provider=config.provider, model=config.model)
     return {"extra_body": {"reasoning": {"effort": effort}}}
 
 

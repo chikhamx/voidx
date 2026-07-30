@@ -10,7 +10,7 @@ class AiApprovalConfig(BaseModel):
     timeout_seconds: float = Field(default=12.0, ge=1.0, le=60.0, allow_inf_nan=False)
 
 from voidx.config.defaults import DEFAULT_MODEL, DEFAULT_PROVIDER
-from voidx.config.enums import PermissionMode
+from voidx.config.enums import PermissionMode, ReasoningEffort
 
 class Profile(BaseModel):
     """A named LLM configuration.  Name is ``provider/model`` (e.g. ``mimo/mimo-v2.5-pro``)."""
@@ -34,9 +34,9 @@ class ModelConfig(BaseModel):
     protocol: str | None = None  # "openai" | "anthropic" | "gemini" | None (auto-detect)
     temperature: float = Field(default=0.3, ge=0.0, le=2.0)
     max_tokens: int = Field(default=8192, ge=1, le=128000)
-    reasoning_effort: str | None = Field(
-        default="xhigh",
-        description="Reasoning intensity: off, low, medium, high, xhigh, or None (provider default)",
+    reasoning_effort: ReasoningEffort = Field(
+        default=ReasoningEffort.XHIGH,
+        description="Reasoning intensity: none, low, medium, high, xhigh, max, ultra",
     )
     context_window: int | None = Field(
         default=None,

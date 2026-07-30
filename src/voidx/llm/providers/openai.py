@@ -14,7 +14,8 @@ from langchain_core.outputs import ChatGenerationChunk
 from voidx.config import ModelConfig
 from voidx.llm.providers import base
 from voidx.llm.providers.base import ProviderSpec
-from voidx.llm.providers.common import openai_effort, preserve_reasoning_delta
+from voidx.config.enums import ReasoningEffort
+from voidx.llm.providers.common import openai_effort, preserve_reasoning_delta, resolve_effort
 
 OFFICIAL_OPENAI_PROVIDERS = {"openai", "openrouter"}
 
@@ -63,13 +64,15 @@ def openai_reasoning(config: ModelConfig) -> dict:
     Used for first-party OpenAI and as the fallback for custom providers
     on the openai protocol.
     """
-    effort = openai_effort(config.reasoning_effort)
-    if effort is None:
-        return {}
     if not supports_openai_reasoning(config.model):
         return {}
-    if effort == "none" and not config.model.lower().startswith("gpt-5"):
-        effort = "low"
+    effort = openai_effort(
+        config.reasoning_effort,
+        provider=config.provider,
+        model=config.model,
+    )
+    if effort == ReasoningEffort.NONE.value and not config.model.lower().startswith("gpt-5"):
+        effort = ReasoningEffort.LOW.value
     return {"extra_body": {"reasoning": {"effort": effort}}}
 
 

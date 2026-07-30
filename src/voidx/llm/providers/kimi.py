@@ -3,37 +3,23 @@
 from __future__ import annotations
 
 from voidx.config import ModelConfig
+from voidx.config.enums import ReasoningEffort
 from voidx.llm.providers import base
 from voidx.llm.providers.base import PROTOCOL_DEEPSEEK, ProviderSpec
-from voidx.llm.providers.common import normalized_effort
+from voidx.llm.providers.common import resolve_effort, thinking_toggle
 
 
 def _reasoning(config: ModelConfig) -> dict:
     """Kimi format: ``extra_body.thinking.type``; k3 models also take ``reasoning_effort``."""
-    effort = normalized_effort(config.reasoning_effort)
-    if effort is None:
-        return {}
-    if effort == "none":
+    if "k3" not in config.model.lower():
+        return thinking_toggle(config)
+    effort = resolve_effort(config)
+    if effort is ReasoningEffort.NONE:
         return {"extra_body": {"thinking": {"type": "disabled"}}}
-    if "k3" in config.model.lower():
-        raw_effort = (config.reasoning_effort or "").strip().lower()
-        if raw_effort in ("ultra", "max", "xhigh"):
-            mapped = "max"
-        elif raw_effort in ("high", "medium"):
-            mapped = "high"
-        elif raw_effort in ("low", "minimum", "light", "minimal"):
-            mapped = "low"
-        else:
-            if effort in ("xhigh", "max"):
-                mapped = "max"
-            elif effort in ("high", "medium"):
-                mapped = "high"
-            elif effort in ("low", "minimal"):
-                mapped = "low"
-            else:
-                mapped = "max"
-        return {"reasoning_effort": mapped, "extra_body": {"thinking": {"type": "enabled"}}}
-    return {"extra_body": {"thinking": {"type": "enabled"}}}
+    return {
+        "reasoning_effort": effort.value,
+        "extra_body": {"thinking": {"type": "enabled"}},
+    }
 
 
 def _temperature_override(config: ModelConfig) -> float | None:

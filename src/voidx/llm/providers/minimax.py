@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 from voidx.config import ModelConfig
+from voidx.config.enums import ReasoningEffort
 from voidx.llm.providers import base
 from voidx.llm.providers.base import PROTOCOL_DEEPSEEK, ProviderSpec
-from voidx.llm.providers.common import normalized_effort
+from voidx.llm.providers.common import resolve_effort
 
 
 def _reasoning(config: ModelConfig) -> dict:
     """MiniMax format: ``extra_body.thinking.type`` + ``reasoning_split``."""
-    effort = normalized_effort(config.reasoning_effort)
-    if effort is None:
-        return {}
-    if effort == "none":
+    effort = resolve_effort(config)
+    if effort is ReasoningEffort.NONE:
         return {"extra_body": {"thinking": {"type": "disabled"}}}
     return {"extra_body": {"thinking": {"type": "enabled"}, "reasoning_split": True}}
 

@@ -68,11 +68,6 @@ def test_gemini_reasoning_kwargs_25_low():
     assert kwargs == {"include_thoughts": True, "thinking_budget": 4_096}
 
 
-def test_gemini_reasoning_kwargs_25_minimal():
-    config = ModelConfig(provider="gemini", model="gemini-2.5-flash", reasoning_effort="minimal")
-    kwargs = _gemini_reasoning_kwargs(config)
-    assert kwargs == {"include_thoughts": True, "thinking_budget": 1_024}
-
 
 def test_gemini_reasoning_kwargs_25_xhigh():
     config = ModelConfig(provider="gemini", model="gemini-2.5-pro", reasoning_effort="xhigh")
@@ -107,11 +102,6 @@ def test_gemini_reasoning_kwargs_3_low():
     assert kwargs == {"include_thoughts": True, "thinking_level": "low"}
 
 
-def test_gemini_reasoning_kwargs_3_minimal():
-    config = ModelConfig(provider="gemini", model="gemini-3-pro", reasoning_effort="minimal")
-    kwargs = _gemini_reasoning_kwargs(config)
-    assert kwargs == {"include_thoughts": True, "thinking_level": "minimal"}
-
 
 def test_gemini_reasoning_kwargs_3_xhigh_maps_to_high():
     config = ModelConfig(provider="gemini", model="gemini-3-pro", reasoning_effort="xhigh")
@@ -136,7 +126,7 @@ def test_gemini_reasoning_kwargs_default_effort():
 
 
 def test_gemini_reasoning_kwargs_off_effort():
-    config = ModelConfig(provider="gemini", model="gemini-2.5-flash", reasoning_effort="off")
+    config = ModelConfig(provider="gemini", model="gemini-2.5-flash", reasoning_effort="none")
     kwargs = _gemini_reasoning_kwargs(config)
     assert kwargs == {}
 

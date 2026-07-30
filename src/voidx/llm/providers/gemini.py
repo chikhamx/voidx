@@ -8,7 +8,8 @@ import sys
 from voidx.config import ModelConfig
 from voidx.llm.providers import base
 from voidx.llm.providers.base import ProviderSpec
-from voidx.llm.providers.common import normalized_effort
+from voidx.config.enums import ReasoningEffort
+from voidx.llm.providers.common import GEMINI_THINKING_BUDGETS, resolve_effort
 
 GEMINI_API_VERSION = "v1beta"
 
@@ -38,33 +39,15 @@ def _is_gemini3_plus(model: str) -> bool:
     return any(model.lower().startswith(p) for p in _GEMINI3_PREFIXES)
 
 
-_GEMINI_THINKING_BUDGETS = {
-    "minimal": 1_024,
-    "low": 4_096,
-    "medium": 8_192,
-    "high": 16_384,
-    "xhigh": 32_768,
-    "max": 65_536,
-}
-
-
 def gemini_reasoning(config: ModelConfig) -> dict:
-    effort = normalized_effort(config.reasoning_effort)
-    if effort in (None, "none"):
+    effort = resolve_effort(config)
+    if effort is ReasoningEffort.NONE:
         return {}
     kwargs: dict = {"include_thoughts": True}
     if _is_gemini3_plus(config.model):
-        level_map = {
-            "minimal": "minimal",
-            "low": "low",
-            "medium": "medium",
-            "high": "high",
-            "xhigh": "high",
-            "max": "high",
-        }
-        kwargs["thinking_level"] = level_map.get(effort, "medium")
+        kwargs["thinking_level"] = effort.value  # already clamped to high max
     else:
-        kwargs["thinking_budget"] = _GEMINI_THINKING_BUDGETS.get(effort, 8_192)
+        kwargs["thinking_budget"] = GEMINI_THINKING_BUDGETS.get(effort, 8_192)
     return kwargs
 
 

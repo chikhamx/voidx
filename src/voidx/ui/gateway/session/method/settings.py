@@ -138,7 +138,7 @@ class SettingsMethods:
 
         # reasoning / context
         if "reasoning_effort" in model_patch if model_patch else {}:
-            valid_effort = {"off", "low", "medium", "high", "xhigh"}
+            valid_effort = {"none", "low", "medium", "high", "xhigh", "max", "ultra"}
             effort = str(model_patch["reasoning_effort"] or "")
             if effort and effort not in valid_effort:
                 raise MethodParamsError(f"invalid reasoning_effort: {effort}")

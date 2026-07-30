@@ -40,3 +40,15 @@ class CodeIde(str, Enum):
     JETBRAINS = "jetbrains"
     GHOSTTY = "ghostty"
     SYSTEM = "system"
+
+
+class ReasoningEffort(str, Enum):
+    """Unified reasoning intensity for all providers/models."""
+
+    NONE = "none"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    XHIGH = "xhigh"
+    MAX = "max"
+    ULTRA = "ultra"

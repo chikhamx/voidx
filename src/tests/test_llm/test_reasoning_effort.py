@@ -1,0 +1,130 @@
+"""Tests for ReasoningEffort enum and model→effort mapping."""
+
+from __future__ import annotations
+
+import pytest
+from pydantic import ValidationError
+
+from voidx.config import ModelConfig, ReasoningEffort
+from voidx.llm.providers.common import (
+    map_effort,
+    nested_reasoning,
+    openai_effort,
+    supported_efforts,
+    thinking_toggle,
+)
+from voidx.llm.providers.deepseek import _reasoning as deepseek_reasoning
+from voidx.llm.providers.gemini import gemini_reasoning
+from voidx.llm.providers.kimi import _reasoning as kimi_reasoning
+from voidx.llm.providers.openai import openai_reasoning
+
+
+def test_reasoning_effort_values_and_default():
+    assert [e.value for e in ReasoningEffort] == [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra",
+    ]
+    assert ModelConfig().reasoning_effort is ReasoningEffort.XHIGH
+
+
+def test_model_config_rejects_aliases_and_unknown():
+    with pytest.raises(ValidationError):
+        ModelConfig(reasoning_effort="off")
+    with pytest.raises(ValidationError):
+        ModelConfig(reasoning_effort="minimal")
+    with pytest.raises(ValidationError):
+        ModelConfig(reasoning_effort="auto")
+    with pytest.raises(ValidationError):
+        ModelConfig(reasoning_effort="bogus")
+
+
+def test_map_effort_floor_and_ceil():
+    openai_default = supported_efforts("openai", "gpt-4.1")
+    assert map_effort(ReasoningEffort.ULTRA, openai_default) is ReasoningEffort.XHIGH
+    assert map_effort(ReasoningEffort.LOW, openai_default) is ReasoningEffort.LOW
+
+    deepseek = supported_efforts("deepseek", "deepseek-v4-pro")
+    assert map_effort(ReasoningEffort.NONE, deepseek) is ReasoningEffort.NONE
+    assert map_effort(ReasoningEffort.LOW, deepseek) is ReasoningEffort.HIGH
+    assert map_effort(ReasoningEffort.MEDIUM, deepseek) is ReasoningEffort.HIGH
+    assert map_effort(ReasoningEffort.XHIGH, deepseek) is ReasoningEffort.MAX
+    assert map_effort(ReasoningEffort.ULTRA, deepseek) is ReasoningEffort.MAX
+
+    kimi_k3 = supported_efforts("kimi", "kimi-k3")
+    assert map_effort(ReasoningEffort.MEDIUM, kimi_k3) is ReasoningEffort.HIGH
+    assert map_effort(ReasoningEffort.LOW, kimi_k3) is ReasoningEffort.LOW
+    assert map_effort(ReasoningEffort.ULTRA, kimi_k3) is ReasoningEffort.MAX
+
+
+def test_supported_efforts_model_table_and_fallback():
+    assert max(supported_efforts("openai", "gpt-5.6-sol"), key=lambda e: list(ReasoningEffort).index(e)) is ReasoningEffort.ULTRA
+    assert max(supported_efforts("openai", "gpt-5.6-terra-preview"), key=lambda e: list(ReasoningEffort).index(e)) is ReasoningEffort.ULTRA
+    assert max(supported_efforts("openai", "gpt-5.6"), key=lambda e: list(ReasoningEffort).index(e)) is ReasoningEffort.MAX
+    assert max(supported_efforts("openai", "gpt-5.5"), key=lambda e: list(ReasoningEffort).index(e)) is ReasoningEffort.XHIGH
+
+    # Unknown provider / model → OpenAI-protocol generic cap (xhigh)
+    generic = supported_efforts("custom-relay", "whatever-v1")
+    assert ReasoningEffort.XHIGH in generic
+    assert ReasoningEffort.ULTRA not in generic
+    assert ReasoningEffort.MAX not in generic
+
+
+def test_openai_reasoning_maps_by_model():
+    sol = openai_reasoning(ModelConfig(provider="openai", model="gpt-5.6-sol", reasoning_effort="ultra"))
+    assert sol == {"extra_body": {"reasoning": {"effort": "ultra"}}}
+
+    base56 = openai_reasoning(ModelConfig(provider="openai", model="gpt-5.6", reasoning_effort="ultra"))
+    assert base56 == {"extra_body": {"reasoning": {"effort": "max"}}}
+
+    g55 = openai_reasoning(ModelConfig(provider="openai", model="gpt-5.5", reasoning_effort="max"))
+    assert g55 == {"extra_body": {"reasoning": {"effort": "xhigh"}}}
+
+    off = openai_reasoning(ModelConfig(provider="openai", model="gpt-5.6-sol", reasoning_effort="none"))
+    assert off == {"extra_body": {"reasoning": {"effort": "none"}}}
+
+
+def test_deepseek_and_kimi_and_toggle_hooks():
+    assert deepseek_reasoning(ModelConfig(provider="deepseek", model="deepseek-v4-pro", reasoning_effort="low")) == {
+        "reasoning_effort": "high",
+        "extra_body": {"thinking": {"type": "enabled"}},
+    }
+    assert deepseek_reasoning(ModelConfig(provider="deepseek", model="deepseek-v4-flash", reasoning_effort="ultra")) == {
+        "reasoning_effort": "max",
+        "extra_body": {"thinking": {"type": "enabled"}},
+    }
+    assert deepseek_reasoning(ModelConfig(provider="deepseek", model="deepseek-v4-pro", reasoning_effort="none")) == {
+        "extra_body": {"thinking": {"type": "disabled"}},
+    }
+
+    k3 = kimi_reasoning(ModelConfig(provider="kimi", model="kimi-k3", reasoning_effort="medium"))
+    assert k3 == {
+        "reasoning_effort": "high",
+        "extra_body": {"thinking": {"type": "enabled"}},
+    }
+
+    assert thinking_toggle(ModelConfig(provider="mimo", model="mimo-v2.5", reasoning_effort="none")) == {
+        "extra_body": {"thinking": {"type": "disabled"}},
+    }
+    assert thinking_toggle(ModelConfig(provider="mimo", model="mimo-v2.5", reasoning_effort="ultra")) == {
+        "extra_body": {"thinking": {"type": "enabled"}},
+    }
+
+
+def test_gemini_and_nested_openai_fallback():
+    g3 = gemini_reasoning(ModelConfig(provider="gemini", model="gemini-3-flash", reasoning_effort="ultra"))
+    assert g3["thinking_level"] == "high"
+    assert g3["include_thoughts"] is True
+
+    g25 = gemini_reasoning(ModelConfig(provider="gemini", model="gemini-2.5-flash", reasoning_effort="high"))
+    assert g25["thinking_budget"] == 16_384
+
+    nested = nested_reasoning(ModelConfig(provider="openrouter", model="some/model", reasoning_effort="ultra"))
+    assert nested == {"extra_body": {"reasoning": {"effort": "xhigh"}}}
+
+    assert openai_effort("ultra", provider="openai", model="gpt-5.5") == "xhigh"
+    assert openai_effort("ultra", provider="openai", model="gpt-5.6-sol") == "ultra"

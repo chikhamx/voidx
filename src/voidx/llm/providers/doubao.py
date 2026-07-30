@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from voidx.config import ModelConfig
+from voidx.config.enums import ReasoningEffort
 from voidx.llm.providers import base
 from voidx.llm.providers.base import PROTOCOL_DEEPSEEK, ProviderSpec
-from voidx.llm.providers.common import normalized_effort
+from voidx.llm.providers.common import resolve_effort
 
 _DOUBAO_THINKING_MODELS = (
     "doubao-seed",
@@ -19,17 +20,11 @@ def _supports_thinking(model: str) -> bool:
 
 
 def _reasoning(config: ModelConfig) -> dict:
-    """Doubao format: ``extra_body.thinking.type`` (model-gated, supports "auto")."""
+    """Doubao format: ``extra_body.thinking.type`` (model-gated; no external auto)."""
     if not _supports_thinking(config.model):
         return {}
-    effort = normalized_effort(config.reasoning_effort)
-    raw_effort = (config.reasoning_effort or "").strip().lower()
-    if effort is None or effort == "none":
-        thinking_type = "disabled"
-    elif raw_effort == "auto":
-        thinking_type = "auto"
-    else:
-        thinking_type = "enabled"
+    effort = resolve_effort(config)
+    thinking_type = "disabled" if effort is ReasoningEffort.NONE else "enabled"
     return {"extra_body": {"thinking": {"type": thinking_type}}}
 
 

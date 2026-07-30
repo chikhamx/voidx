@@ -24,7 +24,8 @@ from langchain_core.outputs import ChatGenerationChunk
 from voidx.config import ModelConfig
 from voidx.llm.providers import base
 from voidx.llm.providers.base import PROTOCOL_DEEPSEEK, ProviderSpec
-from voidx.llm.providers.common import normalized_effort, preserve_reasoning_delta
+from voidx.config.enums import ReasoningEffort
+from voidx.llm.providers.common import preserve_reasoning_delta, resolve_effort
 
 
 class DeepSeekChatOpenAI(ChatOpenAI):
@@ -118,13 +119,13 @@ class DeepSeekChatOpenAI(ChatOpenAI):
 
 def _reasoning(config: ModelConfig) -> dict:
     """DeepSeek format: ``reasoning_effort`` top-level + ``extra_body.thinking.type``."""
-    effort = normalized_effort(config.reasoning_effort)
-    if effort is None:
-        return {}
-    if effort == "none":
+    effort = resolve_effort(config)
+    if effort is ReasoningEffort.NONE:
         return {"extra_body": {"thinking": {"type": "disabled"}}}
-    ds_effort = "max" if effort in ("xhigh", "max") else "high"
-    return {"reasoning_effort": ds_effort, "extra_body": {"thinking": {"type": "enabled"}}}
+    return {
+        "reasoning_effort": effort.value,
+        "extra_body": {"thinking": {"type": "enabled"}},
+    }
 
 
 def _temperature_override(config: ModelConfig) -> float | None:

@@ -373,7 +373,7 @@ class ModelCommandsMixin:
         await self._pick_or_act("Switch", target, _do_switch)
 
     async def _model_reasoning(self, effort: str) -> None:
-        valid = ("off", "low", "medium", "high", "xhigh")
+        valid = ("none", "low", "medium", "high", "xhigh", "max", "ultra")
 
         if effort and effort in valid:
             new_effort = effort

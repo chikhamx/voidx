@@ -136,7 +136,7 @@ def test_reasoning_kwargs_are_provider_specific():
 
     mimo_off = create_chat_model(
         "test-key",
-        ModelConfig(provider="mimo", model="mimo-v2.5", reasoning_effort="off"),
+        ModelConfig(provider="mimo", model="mimo-v2.5", reasoning_effort="none"),
     )
     assert isinstance(mimo_off, DeepSeekChatOpenAI)
     assert mimo_off.extra_body == {"thinking": {"type": "disabled"}}
@@ -160,7 +160,7 @@ def test_reasoning_kwargs_are_provider_specific():
 
     deepseek_off = create_chat_model(
         "test-key",
-        ModelConfig(provider="deepseek", model="deepseek-v4-pro", reasoning_effort="off"),
+        ModelConfig(provider="deepseek", model="deepseek-v4-pro", reasoning_effort="none"),
     )
     assert isinstance(deepseek_off, DeepSeekChatOpenAI)
     assert deepseek_off.extra_body == {"thinking": {"type": "disabled"}}
@@ -255,14 +255,14 @@ def test_openai_compatible_reasoning_uses_nested_format():
     # gpt-5.x off → effort "none" via extra_body
     gpt5_off = create_chat_model(
         "test-key",
-        ModelConfig(provider="openai", model="gpt-5.4-mini", reasoning_effort="off"),
+        ModelConfig(provider="openai", model="gpt-5.4-mini", reasoning_effort="none"),
     )
     assert gpt5_off.extra_body == {"reasoning": {"effort": "none"}}
 
     # o3: off → "low" (cannot fully disable)
     o3_off = create_chat_model(
         "test-key",
-        ModelConfig(provider="openai", model="o3", reasoning_effort="off"),
+        ModelConfig(provider="openai", model="o3", reasoning_effort="none"),
     )
     assert o3_off.extra_body == {"reasoning": {"effort": "low"}}
 
@@ -284,7 +284,7 @@ def test_openai_compatible_reasoning_uses_nested_format():
     # openrouter: already uses extra_body nested format
     openrouter = create_chat_model(
         "test-key",
-        ModelConfig(provider="openrouter", model="any/reasoning-model", reasoning_effort="off"),
+        ModelConfig(provider="openrouter", model="any/reasoning-model", reasoning_effort="none"),
     )
     assert openrouter.reasoning_effort is None
     assert openrouter.extra_body == {"reasoning": {"effort": "none"}}
@@ -303,11 +303,11 @@ def test_reasoning_stream_timeout_applies_only_when_reasoning_is_active(monkeypa
     )
     openai_disabled = create_chat_model(
         "test-key",
-        ModelConfig(provider="openai", model="gpt-5.4-mini", reasoning_effort="off"),
+        ModelConfig(provider="openai", model="gpt-5.4-mini", reasoning_effort="none"),
     )
     openai_minimum = create_chat_model(
         "test-key",
-        ModelConfig(provider="openai", model="o3", reasoning_effort="off"),
+        ModelConfig(provider="openai", model="o3", reasoning_effort="none"),
     )
     qwen_reasoning = create_chat_model(
         "test-key",
@@ -315,7 +315,7 @@ def test_reasoning_stream_timeout_applies_only_when_reasoning_is_active(monkeypa
     )
     qwen_disabled = create_chat_model(
         "test-key",
-        ModelConfig(provider="qwen", model="qwen3-max", reasoning_effort="off"),
+        ModelConfig(provider="qwen", model="qwen3-max", reasoning_effort="none"),
     )
     qwen_plain = create_chat_model(
         "test-key",
@@ -367,7 +367,7 @@ def test_custom_provider_reasoning_uses_nested_format():
     # Custom provider with reasoning off
     custom_off = create_chat_model(
         "test-key",
-        ModelConfig(provider="my-relay", model="gpt-5.5-mini", reasoning_effort="off", protocol="openai"),
+        ModelConfig(provider="my-relay", model="gpt-5.5-mini", reasoning_effort="none", protocol="openai"),
     )
     assert custom_off.reasoning_effort is None
     assert custom_off.extra_body == {"reasoning": {"effort": "none"}}
@@ -474,7 +474,7 @@ def test_typex_reasoning_uses_zhipu_thinking_format():
 
     typex_off = create_chat_model(
         "test-key",
-        ModelConfig(provider="typex", model="zai-org/GLM-5-FP8", reasoning_effort="off"),
+        ModelConfig(provider="typex", model="zai-org/GLM-5-FP8", reasoning_effort="none"),
     )
     assert isinstance(typex_off, DeepSeekChatOpenAI)
     assert typex_off.extra_body == {"thinking": {"type": "disabled"}}
@@ -499,7 +499,7 @@ def test_qwen_reasoning_uses_enable_thinking_format():
 
     qwen_off = create_chat_model(
         "test-key",
-        ModelConfig(provider="qwen", model="qwen3-max", reasoning_effort="off"),
+        ModelConfig(provider="qwen", model="qwen3-max", reasoning_effort="none"),
     )
     assert isinstance(qwen_off, DeepSeekChatOpenAI)
     assert qwen_off.extra_body == {"enable_thinking": False}
@@ -524,7 +524,7 @@ def test_zhipu_reasoning_uses_thinking_format():
 
     zhipu_off = create_chat_model(
         "test-key",
-        ModelConfig(provider="zhipu", model="glm-5", reasoning_effort="off"),
+        ModelConfig(provider="zhipu", model="glm-5", reasoning_effort="none"),
     )
     assert isinstance(zhipu_off, DeepSeekChatOpenAI)
     assert zhipu_off.extra_body == {"thinking": {"type": "disabled"}}
@@ -555,7 +555,6 @@ def test_xunfei_coding_plan_strips_stainless_headers():
 
 def test_xunfei_coding_plan_passes_through_reasoning_effort():
     """xunfei-coding-plan is an OpenAI protocol proxy — transparently passes reasoning effort."""
-    # high effort
     model = create_chat_model(
         "test-key",
         ModelConfig(provider="xunfei-coding-plan", model="astron-code-latest", reasoning_effort="high"),
@@ -563,22 +562,20 @@ def test_xunfei_coding_plan_passes_through_reasoning_effort():
     assert model.reasoning_effort is None
     assert model.extra_body == {"reasoning": {"effort": "high"}}
 
-    # no effort → no params
+    # default xhigh is clamped to OpenAI generic max (xhigh)
     plain = create_chat_model(
         "test-key",
-        ModelConfig(provider="xunfei-coding-plan", model="astron-code-latest", reasoning_effort=None),
+        ModelConfig(provider="xunfei-coding-plan", model="astron-code-latest"),
     )
     assert plain.reasoning_effort is None
-    assert plain.extra_body is None
+    assert plain.extra_body == {"reasoning": {"effort": "xhigh"}}
 
-    # off → none (passed through, no coercion)
     off = create_chat_model(
         "test-key",
-        ModelConfig(provider="xunfei-coding-plan", model="astron-code-latest", reasoning_effort="off"),
+        ModelConfig(provider="xunfei-coding-plan", model="astron-code-latest", reasoning_effort="none"),
     )
     assert off.reasoning_effort is None
     assert off.extra_body == {"reasoning": {"effort": "none"}}
-
 
 def test_model_temperature_overrides():
     # 1. deepseek-reasoner should omit temperature
