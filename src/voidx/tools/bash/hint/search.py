@@ -11,6 +11,8 @@ _RG_TYPE_MAP = {
     "rs": "*.rs", "go": "*.go", "java": "*.java", "rb": "*.rb",
 }
 
+_RE_SIMPLE_EXT_GLOB = re.compile(r"^\*\.([A-Za-z0-9]+)$")
+
 
 def _regex_is_simple_python_compatible(pattern: str) -> bool:
     try:
@@ -51,6 +53,43 @@ def _parse_grep_short_flags(flags: str) -> dict[str, bool] | None:
         else:
             return None
     return parsed
+
+
+def _parse_rg_short_flags(flags: str) -> dict[str, bool] | None:
+    parsed = {
+        "ignore_case": False,
+        "whole_word": False,
+        "fixed": False,
+        "smart_case": False,
+    }
+    for flag in flags:
+        if flag == "n":
+            continue
+        if flag == "i":
+            parsed["ignore_case"] = True
+        elif flag == "w":
+            parsed["whole_word"] = True
+        elif flag == "F":
+            parsed["fixed"] = True
+        elif flag == "S":
+            parsed["smart_case"] = True
+        else:
+            return None
+    return parsed
+
+
+def _simple_extension_from_glob(glob_pat: str) -> str | None:
+    m = _RE_SIMPLE_EXT_GLOB.fullmatch(glob_pat)
+    if not m:
+        return None
+    return m.group(1).lower()
+
+
+def _append_extension(extensions: list[str] | None, ext: str) -> list[str]:
+    values = list(extensions or [])
+    if ext not in values:
+        values.append(ext)
+    return values
 
 
 def _hint_grep(words: list[str]) -> RouteHint | None:
@@ -106,12 +145,18 @@ def _hint_grep(words: list[str]) -> RouteHint | None:
             except ValueError:
                 return None
             i += 2
-        elif a == "-t" and prog == "rg" and i + 1 < len(args):
+        elif a in ("-t", "--type") and prog == "rg" and i + 1 < len(args):
             type_name = args[i + 1]
             ext = _RG_TYPE_MAP.get(type_name)
             if ext is None:
                 return None
-            extensions = [ext.removeprefix("*.")]
+            extensions = _append_extension(extensions, ext.removeprefix("*."))
+            i += 2
+        elif a in ("-g", "--glob") and prog == "rg" and i + 1 < len(args):
+            ext = _simple_extension_from_glob(args[i + 1])
+            if ext is None:
+                return None
+            extensions = _append_extension(extensions, ext)
             i += 2
         elif a.startswith("-") and not a.startswith("--") and len(a) > 2 and prog in {"grep", "egrep", "fgrep"}:
             parsed = _parse_grep_short_flags(a[1:])
@@ -123,6 +168,20 @@ def _hint_grep(words: list[str]) -> RouteHint | None:
                 case = "insensitive"
             if parsed["whole_word"]:
                 match_mode = "word"
+            i += 1
+        elif a.startswith("-") and not a.startswith("--") and len(a) > 2 and prog == "rg":
+            parsed = _parse_rg_short_flags(a[1:])
+            if parsed is None:
+                return None
+            if parsed["ignore_case"]:
+                case = "insensitive"
+            if parsed["smart_case"]:
+                case = "auto"
+            if parsed["whole_word"]:
+                match_mode = "word"
+            if parsed["fixed"]:
+                fixed = True
+                match_mode = "text"
             i += 1
         elif a.startswith("-"):
             return None

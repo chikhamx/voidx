@@ -102,6 +102,91 @@ class TestGrepSupportedFlags:
     def test_incompatible_regex_dialect_is_not_routed(self, command):
         assert try_hint(command) is None
 
+
+class TestRgExpandedRouting:
+    """rg forms that should route to search without requiring system rg."""
+
+    def test_rg_type_long_option(self):
+        h = try_hint("rg --type py pattern src")
+        assert h is not None
+        assert h.tool_id == "search"
+        assert h.tool_args["extensions"] == ["py"]
+        assert h.tool_args["query"] == "pattern"
+        assert h.tool_args["path"] == "src"
+
+    def test_rg_type_short_option(self):
+        h = try_hint("rg -t py pattern src")
+        assert h is not None
+        assert h.tool_id == "search"
+        assert h.tool_args["extensions"] == ["py"]
+
+    def test_rg_short_flag_combo(self):
+        h = try_hint("rg -ni pattern src")
+        assert h is not None
+        assert h.tool_id == "search"
+        assert h.tool_args == {
+            "query": "pattern",
+            "match": "regex",
+            "case": "insensitive",
+            "path": "src",
+        }
+
+    def test_rg_short_flag_combo_fixed_and_smart_case(self):
+        h = try_hint("rg -FS pattern src")
+        assert h is not None
+        assert h.tool_id == "search"
+        assert h.tool_args["match"] == "text"
+        assert h.tool_args["case"] == "auto"
+
+    def test_rg_simple_glob_short(self):
+        h = try_hint('rg -g "*.py" pattern src')
+        assert h is not None
+        assert h.tool_id == "search"
+        assert h.tool_args["extensions"] == ["py"]
+        assert h.tool_args["query"] == "pattern"
+        assert h.tool_args["path"] == "src"
+
+    def test_rg_simple_glob_long_with_line_number(self):
+        h = try_hint('rg -n --glob "*.jsonl" pattern /tmp')
+        assert h is not None
+        assert h.tool_id == "search"
+        assert h.tool_args["extensions"] == ["jsonl"]
+        assert h.tool_args["query"] == "pattern"
+        assert h.tool_args["path"] == "/tmp"
+
+    def test_rg_multiple_simple_globs(self):
+        h = try_hint('rg -g "*.ts" -g "*.tsx" pattern src')
+        assert h is not None
+        assert h.tool_id == "search"
+        assert h.tool_args["extensions"] == ["ts", "tsx"]
+
+    def test_rg_type_and_glob_merge_extensions(self):
+        h = try_hint('rg -t py -g "*.ts" pattern src')
+        assert h is not None
+        assert h.tool_id == "search"
+        assert h.tool_args["extensions"] == ["py", "ts"]
+
+    @pytest.mark.parametrize("cmd", [
+        'rg -l "processed" /tmp/sessions',
+        "rg --files-with-matches pattern src",
+        "rg -nl pattern src",
+        "rg -li pattern src",
+        'rg -g "!**/test/**" pattern src',
+        'rg -g "**/models/**" pattern src',
+        'rg -g ".py" pattern src',
+        'rg -g "py" pattern src',
+        "rg --type unknown pattern src",
+        "rg -v pattern src",
+        "rg -c pattern src",
+        "rg --files src",
+        "rg -e foo -e bar src",
+        "rg -n pattern src/a src/b",
+        "rg -n pattern src | head",
+    ])
+    def test_rg_unsupported_forms_stay_in_bash(self, cmd):
+        assert try_hint(cmd) is None
+
+
 # ---------------------------------------------------------------------------
 # Comprehensive: basic positive cases
 # ---------------------------------------------------------------------------
