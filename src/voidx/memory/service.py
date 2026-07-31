@@ -46,6 +46,7 @@ from voidx.memory.session import (
     save_message,
     touch_session,
     update_session_model,
+    update_session_profile,
     update_title,
     update_title_if_current,
 )
@@ -106,6 +107,7 @@ __all__ = [
     "save_runtime_state",
     "touch_session",
     "update_session_model",
+    "update_session_profile",
     "update_title",
     "update_title_if_current",
 ]

@@ -8,14 +8,16 @@ from voidx.agent.slash.helpers import _parse_interval
 
 class LoopCmdCommandsMixin:
     async def _loop(self, args: str) -> None:
+        arg = args.strip()
+        if not arg:
+            await self._switch_profile("loop")
+            return
+        if arg == "help":
+            ui.print("[dim]Usage: /loop [interval] <prompt>, /loop stop, /loop status, /loop resume[/dim]")
+            return
         service = getattr(self.host, "loop_service", None)
         if service is None:
             ui.error("/loop is not available in this session.")
-            return
-
-        arg = args.strip()
-        if not arg or arg == "help":
-            ui.print("[dim]Usage: /loop [interval] <prompt>, /loop stop, /loop status, /loop resume[/dim]")
             return
         session = getattr(self.host, "session", None)
         parent_thread_id = getattr(session, "id", None)

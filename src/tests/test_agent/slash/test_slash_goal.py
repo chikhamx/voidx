@@ -89,3 +89,16 @@ async def test_goal_requires_acceptance_condition(monkeypatch) -> None:
 
     assert service.started is None
     assert any("--accept" in line for line in output)
+
+
+@pytest.mark.asyncio
+async def test_goal_without_args_switches_profile(monkeypatch) -> None:
+    switches: list[str] = []
+
+    class Handler(SlashHandler):
+        async def _switch_profile(self, profile: str) -> None:
+            switches.append(profile)
+
+    assert await Handler(_host()).dispatch("/goal") is True
+
+    assert switches == ["goal"]

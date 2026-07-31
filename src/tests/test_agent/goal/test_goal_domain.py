@@ -82,3 +82,26 @@ def test_goal_tool_view_excludes_interactive_protocol_tools() -> None:
     )
     assert {"workflow", "todo", "task_status"}.issubset(workflow.bound_tool_ids)
     assert {"clarify", "checkpoint", "turn", "loop"}.isdisjoint(workflow.bound_tool_ids)
+
+
+def test_goal_tool_view_bash_requests_approval() -> None:
+    view = GoalToolView.default(phase="work").bind({"bash", "read", "write"})
+
+    bash_decision = view.check_tool_call("bash", {"command": "pytest -q"})
+    assert bash_decision.allowed is True
+    assert bash_decision.requests_approval is True
+
+    read_decision = view.check_tool_call("read", {"file_path": "/tmp/x"})
+    assert read_decision.allowed is True
+    assert read_decision.requests_approval is False
+
+    write_decision = view.check_tool_call("write", {"file_path": "/tmp/x"})
+    assert write_decision.allowed is True
+    assert write_decision.requests_approval is False
+
+
+def test_goal_tool_view_evaluator_phase_bash_not_bound() -> None:
+    view = GoalToolView.default(phase="evaluator").bind({"bash", "read", "goal"})
+
+    bash_decision = view.check_tool_call("bash", {"command": "pytest -q"})
+    assert bash_decision.allowed is False

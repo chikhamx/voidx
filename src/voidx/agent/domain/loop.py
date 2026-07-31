@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from voidx.agent.domain.profile import RuntimeProfile
+from voidx.agent.domain.tool_view import BoundToolView
 
 
 LOOP_ITERATION_USER_TEXT = "Run the next scheduled loop iteration."
@@ -100,11 +101,8 @@ class LoopSpec(BaseModel):
         return self.prompt.replace("\n", " ")[:80]
 
 
-class LoopToolView(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
+class LoopToolView(BoundToolView):
     workflow_enabled: bool = False
-    bound_tool_ids: frozenset[str] = Field(default_factory=frozenset)
 
     @classmethod
     def default(cls, *, workflow_enabled: bool = False) -> "LoopToolView":
@@ -128,14 +126,3 @@ class LoopToolView(BaseModel):
         if self.workflow_enabled:
             allowed.update({"workflow", "task_status", "todo"})
         return self.model_copy(update={"bound_tool_ids": frozenset(available & allowed)})
-
-    def allows(self, tool_id: str, **_kwargs) -> bool:
-        return tool_id in self.bound_tool_ids
-
-    def visible_tool_ids(self, available_tool_ids) -> frozenset[str]:
-        return frozenset(tool for tool in available_tool_ids if self.allows(tool))
-
-    def check_tool_call(self, tool_id: str, _args) -> object:
-        from voidx.agent.domain.tool_policy import ToolPolicyDecision
-
-        return ToolPolicyDecision(self.allows(tool_id), "tool_bound" if self.allows(tool_id) else "tool_not_bound", False)

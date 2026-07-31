@@ -91,3 +91,19 @@ def test_loop_spec_generation_drives_thread_and_session_id() -> None:
 def test_loop_spec_rejects_empty_generation() -> None:
     with pytest.raises(ValueError):
         LoopSpec(prompt="check", generation="  ")
+
+
+def test_loop_tool_view_bash_requests_approval() -> None:
+    view = LoopToolView.default(workflow_enabled=False).bind({"bash", "read", "loop"})
+
+    bash_decision = view.check_tool_call("bash", {"command": "pytest -q"})
+    assert bash_decision.allowed is True
+    assert bash_decision.requests_approval is True
+
+    read_decision = view.check_tool_call("read", {"file_path": "/tmp/x"})
+    assert read_decision.allowed is True
+    assert read_decision.requests_approval is False
+
+    loop_decision = view.check_tool_call("loop", {"op": "stop"})
+    assert loop_decision.allowed is True
+    assert loop_decision.requests_approval is False

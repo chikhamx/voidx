@@ -40,6 +40,9 @@ class FakeScheduler:
     def unregister_loop_thread(self, thread_id: str) -> None:
         self.unregistered.append(thread_id)
 
+    async def stop_pump(self) -> None:
+        return None
+
 
 @pytest.mark.asyncio
 async def test_loop_service_start_creates_repository_backed_status(tmp_path) -> None:
@@ -112,6 +115,18 @@ class TerminatingScheduler:
             update={"lifecycle": self.lifecycle, "lifecycle_decision": self.decision}
         )
         await self.store.save_state(thread_id, state, expected_state_version=loaded.state_version)
+
+    def register_loop_thread(self, thread_id: str) -> None:
+        return None
+
+    def unregister_loop_thread(self, thread_id: str) -> None:
+        return None
+
+    def start_pump(self) -> None:
+        return None
+
+    async def stop_pump(self) -> None:
+        return None
 
 
 @pytest.mark.asyncio

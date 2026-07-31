@@ -25,13 +25,16 @@ class ModeCommandsMixin:
     async def _goal(self, arg: str) -> None:
         from voidx.agent.domain.goal import GoalSpec
 
+        text = arg.strip()
+        if not text:
+            await self._switch_profile("goal")
+            return
         service = getattr(self.host, "goal_service", None)
         if service is None:
             ui.print("[dim]/goal runtime is not available in this session.[/dim]")
             return
-        text = arg.strip()
         parent_thread_id = getattr(getattr(self.host, "session", None), "id", None)
-        if text == "status" or not text:
+        if text == "status":
             status = await service.status(parent_thread_id)
             if status is None:
                 ui.print("[dim]/goal is not active.[/dim]")

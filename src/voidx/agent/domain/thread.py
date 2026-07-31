@@ -23,7 +23,7 @@ class LifecycleState(str, Enum):
     CANCELLED = "cancelled"
 
 
-_TERMINAL_STATES = frozenset(
+TERMINAL_LIFECYCLES = frozenset(
     {LifecycleState.COMPLETED, LifecycleState.FAILED, LifecycleState.CANCELLED}
 )
 
@@ -118,7 +118,7 @@ class RuntimeOutboxItem(BaseModel):
 def apply_lifecycle_decision(
     current: LifecycleState, decision: RuntimeDecision
 ) -> LifecycleState:
-    if current in _TERMINAL_STATES:
+    if current in TERMINAL_LIFECYCLES:
         raise ValueError(f"terminal lifecycle state cannot transition: {current.value}")
     if current is LifecycleState.CANCELLING:
         return LifecycleState.CANCELLED

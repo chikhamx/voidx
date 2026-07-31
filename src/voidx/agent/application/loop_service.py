@@ -2,17 +2,25 @@
 
 from __future__ import annotations
 
-import asyncio
-import uuid
-
 from dataclasses import dataclass
-from datetime import datetime
 
+from voidx.agent.application.autonomous import (
+    AutonomousServiceBase,
+    LoopScheduler,
+    new_generation,
+    parent_id,
+)
 from voidx.agent.domain.loop import LOOP_PROFILE, LoopMode, LoopSpec
 from voidx.agent.loop.prompt_materialize import materialize_loop_prompt
-from voidx.agent.domain.thread import AgentThread, AgentThreadState, LifecycleState, RuntimeDecision
+from voidx.agent.domain.thread import (
+    TERMINAL_LIFECYCLES,
+    AgentThread,
+    AgentThreadState,
+    LifecycleState,
+    RuntimeDecision,
+)
 from voidx.memory.service import ensure_session
-from voidx.memory.thread_store import ThreadStateConflict, ThreadStore
+from voidx.memory.thread_store import ThreadStore
 from voidx.runtime.ui import StatusFinished, ui_events
 
 
@@ -31,19 +39,24 @@ class LoopStatus:
     state: str
 
 
-class LoopService:
-    def __init__(self, *, store: ThreadStore, scheduler, workspace: str) -> None:
-        self._store = store
-        self._scheduler = scheduler
-        self._workspace = workspace
-        self._active_specs: dict[str, LoopSpec] = {}
-        self._parent_locks: dict[str, asyncio.Lock] = {}
+class LoopService(AutonomousServiceBase[LoopSpec, LoopScheduler]):
+    def __init__(self, *, store: ThreadStore, scheduler: LoopScheduler, workspace: str) -> None:
+        super().__init__(store=store, scheduler=scheduler, workspace=workspace)
 
-    def _lock_for(self, parent: str) -> asyncio.Lock:
-        return self._parent_locks.setdefault(parent, asyncio.Lock())
+    def _spec_thread_id(self, spec: LoopSpec, parent: str) -> str:
+        return spec.loop_thread_id(parent)
+
+    def _register_thread(self, thread_id: str) -> None:
+        self._scheduler.register_loop_thread(thread_id)
+
+    def _unregister_thread(self, thread_id: str) -> None:
+        self._scheduler.unregister_loop_thread(thread_id)
+
+    def _on_deactivated(self) -> None:
+        ui_events.emit_nowait(StatusFinished(status_id="loop:waiting"))
 
     async def start(self, parent_thread_id: str | None, spec: LoopSpec) -> LoopStatus:
-        parent = _parent_id(parent_thread_id)
+        parent = parent_id(parent_thread_id)
         async with self._lock_for(parent):
             return await self._start_unlocked(parent, spec)
 
@@ -52,15 +65,15 @@ class LoopService:
         spec = spec.model_copy(
             update={
                 "prompt": materialize_loop_prompt(spec.prompt, self._workspace),
-                "generation": _new_generation(),
+                "generation": new_generation(),
             }
         )
-        await self._deactivate_current(parent)
+        await self._deactivate_current(parent, summary="Loop superseded by a new /loop start.")
         await self._store.discard_pending_outbox_prefix(f"loop:{parent}:")
         return await self._activate(parent, spec, display_text)
 
     async def resume(self, parent_thread_id: str | None) -> LoopStatus | None:
-        parent = _parent_id(parent_thread_id)
+        parent = parent_id(parent_thread_id)
         async with self._lock_for(parent):
             return await self._resume_unlocked(parent)
 
@@ -74,11 +87,7 @@ class LoopService:
         loaded = await self._store.load(loop_thread_id)
         if loaded is None:
             return None
-        if loaded.state.lifecycle in {
-            LifecycleState.COMPLETED,
-            LifecycleState.FAILED,
-            LifecycleState.CANCELLED,
-        }:
+        if loaded.state.lifecycle in TERMINAL_LIFECYCLES:
             return None
         spec = self._spec_from_state(loaded.state, loop_thread_id)
         if spec is None:
@@ -88,12 +97,8 @@ class LoopService:
         if loaded.thread.session_id != loop_session_id:
             await self._store.rebind_thread_session(loop_thread_id, loop_session_id)
         self._active_specs[parent] = spec
-        register = getattr(self._scheduler, "register_loop_thread", None)
-        if callable(register):
-            register(loop_thread_id)
-        start_pump = getattr(self._scheduler, "start_pump", None)
-        if callable(start_pump):
-            start_pump()
+        self._register_thread(loop_thread_id)
+        self._start_pump()
         return await self.status(parent)
 
     @staticmethod
@@ -117,36 +122,28 @@ class LoopService:
         loop_thread_id = spec.loop_thread_id(parent)
         await self._ensure_thread(parent, loop_thread_id, spec, session_id=loop_session_id)
         self._active_specs[parent] = spec
-        register = getattr(self._scheduler, "register_loop_thread", None)
-        if callable(register):
-            register(loop_thread_id)
+        self._register_thread(loop_thread_id)
         await self._scheduler.run_prompt(
             spec.prompt,
             display_text=display_text,
             session_id=parent,
             spec=spec,
         )
-        start_pump = getattr(self._scheduler, "start_pump", None)
-        if callable(start_pump):
-            start_pump()
+        self._start_pump()
         status = await self.status(parent)
         if status is not None:
             return status
         raise RuntimeError(await self._start_failure_detail(parent, spec))
 
     async def status(self, parent_thread_id: str | None) -> LoopStatus | None:
-        parent = _parent_id(parent_thread_id)
+        parent = parent_id(parent_thread_id)
         spec = self._active_specs.get(parent)
         if spec is None:
             return None
         loaded = await self._store.load(spec.loop_thread_id(parent))
         if loaded is None:
             return None
-        if loaded.state.lifecycle in {
-            LifecycleState.COMPLETED,
-            LifecycleState.FAILED,
-            LifecycleState.CANCELLED,
-        }:
+        if loaded.state.lifecycle in TERMINAL_LIFECYCLES:
             self._active_specs.pop(parent, None)
             return None
         decision = loaded.state.lifecycle_decision
@@ -164,92 +161,17 @@ class LoopService:
             state=loaded.state.lifecycle.value,
         )
 
-    async def _deactivate_current(self, parent: str) -> bool:
-        spec = self._active_specs.pop(parent, None)
-        if spec is None:
-            return False
-        loop_thread_id = spec.loop_thread_id(parent)
-        unregister = getattr(self._scheduler, "unregister_loop_thread", None)
-        if callable(unregister):
-            unregister(loop_thread_id)
-        ui_events.emit_nowait(StatusFinished(status_id="loop:waiting"))
-        for _ in range(2):
-            loaded = await self._store.load(loop_thread_id)
-            if loaded is None:
-                break
-            if loaded.state.lifecycle in {
-                LifecycleState.COMPLETED,
-                LifecycleState.FAILED,
-                LifecycleState.CANCELLED,
-            }:
-                break
-            stopped = loaded.state.model_copy(
-                update={
-                    "lifecycle": LifecycleState.CANCELLED,
-                    "lifecycle_decision": RuntimeDecision(
-                        outcome="stop",
-                        summary="Loop superseded by a new /loop start.",
-                        progress="partial",
-                    ),
-                }
-            )
-            try:
-                await self._store.save_state(
-                    loaded.thread.thread_id,
-                    stopped,
-                    expected_state_version=loaded.state_version,
-                )
-                break
-            except ThreadStateConflict:
-                continue
-        await self._store.discard_pending_outbox(loop_thread_id)
-        return True
-
     async def stop(self, parent_thread_id: str | None) -> bool:
-        parent = _parent_id(parent_thread_id)
+        parent = parent_id(parent_thread_id)
         async with self._lock_for(parent):
             return await self._stop_unlocked(parent)
 
     async def _stop_unlocked(self, parent: str) -> bool:
-        spec = self._active_specs.pop(parent, None)
-        if spec is None:
-            return False
-        unregister = getattr(self._scheduler, "unregister_loop_thread", None)
-        if callable(unregister):
-            unregister(spec.loop_thread_id(parent))
-        ui_events.emit_nowait(StatusFinished(status_id="loop:waiting"))
-        loaded = await self._store.load(spec.loop_thread_id(parent))
-        if loaded is None:
-            return False
-        if loaded.state.lifecycle in {
-            LifecycleState.COMPLETED,
-            LifecycleState.FAILED,
-            LifecycleState.CANCELLED,
-        }:
-            return True
-        stopped = loaded.state.model_copy(
-            update={
-                "lifecycle": LifecycleState.CANCELLED,
-                "lifecycle_decision": RuntimeDecision(
-                    outcome="stop",
-                    summary="Loop stopped by user.",
-                    progress="partial",
-                ),
-            }
-        )
-        ui_events.emit_nowait(StatusFinished(status_id="loop:waiting"))
-        await self._store.save_state(
-            loaded.thread.thread_id,
-            stopped,
-            expected_state_version=loaded.state_version,
-        )
+        deactivated = await self._deactivate_current(parent, summary="Loop stopped by user.")
         # A stopped loop must not leave wakeups behind for the pump to retry forever.
-        await self._store.discard_pending_outbox(loaded.thread.thread_id)
-        if not self._active_specs:
-            stop_pump = getattr(self._scheduler, "stop_pump", None)
-            if callable(stop_pump):
-                await stop_pump()
-        return True
+        if deactivated and not self._active_specs:
+            await self._stop_pump()
+        return deactivated
 
     async def _start_failure_detail(self, parent: str, spec: LoopSpec) -> str:
         loaded = await self._store.load(spec.loop_thread_id(parent))
@@ -299,14 +221,6 @@ class LoopService:
             state,
             expected_state_version=loaded.state_version,
         )
-
-
-def _new_generation() -> str:
-    return f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:4]}"
-
-
-def _parent_id(parent_thread_id: str | None) -> str:
-    return (parent_thread_id or "default").strip() or "default"
 
 
 def _display_text(prompt: str) -> str:

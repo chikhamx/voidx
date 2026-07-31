@@ -173,3 +173,31 @@ async def test_loop_resume_without_history_prints_hint(tmp_path, monkeypatch) ->
     assert await SlashHandler(_host(tmp_path, EmptyService())).dispatch("/loop resume") is True
 
     assert any("No previous /loop" in line for line in output)
+
+
+@pytest.mark.asyncio
+async def test_loop_without_args_switches_profile(tmp_path, monkeypatch) -> None:
+    switches: list[str] = []
+
+    class Handler(SlashHandler):
+        async def _switch_profile(self, profile: str) -> None:
+            switches.append(profile)
+
+    assert await Handler(_host(tmp_path)).dispatch("/loop") is True
+
+    assert switches == ["loop"]
+
+
+@pytest.mark.asyncio
+async def test_loop_help_still_prints_usage(tmp_path, monkeypatch) -> None:
+    output = _capture_output(monkeypatch)
+    switches: list[str] = []
+
+    class Handler(SlashHandler):
+        async def _switch_profile(self, profile: str) -> None:
+            switches.append(profile)
+
+    assert await Handler(_host(tmp_path)).dispatch("/loop help") is True
+
+    assert switches == []
+    assert any("Usage:" in line for line in output)

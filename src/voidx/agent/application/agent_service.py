@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from functools import partial
 from typing import Any
 
 from voidx.llm.service import get_context_limit
-from voidx.runtime.intent import InteractionMode
 from voidx.runtime.ui import (
     COMMANDS,
     CompositeEventConsumer,
@@ -20,6 +18,7 @@ from voidx.runtime.ui import (
     McpServerStatus,
     StartupShown,
     UiStatus,
+    ui,
     create_frontend,
     emit_web_gateway_bootstrap,
 )
@@ -32,8 +31,6 @@ from voidx.agent.domain.thread import AgentThread
 
 
 AgentExecution = ExecutionHost
-
-logger = logging.getLogger(__name__)
 
 
 class RunLoopStartupError(RuntimeError):
@@ -554,6 +551,8 @@ class AgentService:
         try:
             if await self._route_chat_turn(user_input, thread_id=thread_id):
                 return True, None
+            if await self._route_autonomous_first_message(user_input, thread_id=thread_id):
+                return True, None
             await self.run_coding_turn(
                 user_text=user_input,
                 thread_id=thread_id,
@@ -563,20 +562,40 @@ class AgentService:
             self._execution.ui.ui.print(f"\n[dim]Interrupted.[/dim]")
         return True, None
 
+    async def _route_autonomous_first_message(self, user_input: str, *, thread_id: str) -> bool:
+        """Start a goal/loop from the first message of a goal/loop-profile session.
+
+        Only the first message (session has no messages yet) is consumed as the
+        prompt. Later messages fall through to the default coding path; the
+        autonomous runtime runs on its own dedicated thread/session.
+        """
+        session = getattr(self._execution, "session", None)
+        profile = getattr(session, "runtime_profile", "coding")
+        if profile not in {"goal", "loop"}:
+            return False
+        message_count = getattr(session, "message_count", 0) or 0
+        if message_count > 0:
+            return False
+        if profile == "goal":
+            return await self._handle_goal_first_message(user_input, thread_id=thread_id)
+        return await self._handle_loop_first_message(user_input, thread_id=thread_id)
+
     async def _route_chat_turn(self, user_input: str, *, thread_id: str) -> bool:
         """Route a turn to ChatService when the target thread is a chat session.
 
         Returns True when the turn was handled by the chat profile. Coding
-        sessions, the host's own thread, and unknown threads fall through to the
-        default coding path (False).
+        sessions and unknown threads fall through to the default coding path
+        (False). With no explicit thread_id, the host's current session decides:
+        a resumed chat session is routed to ChatService, anything else to coding.
         """
-        if self._chat_service is None or not thread_id:
+        if self._chat_service is None:
             return False
-        if thread_id == (self._execution.session_id or ""):
+        target_id = thread_id or self._execution.session_id or ""
+        if not target_id:
             return False
         from voidx.memory.service import get_session
 
-        target = await get_session(thread_id)
+        target = await get_session(target_id)
         if target is None or target.runtime_profile != "chat":
             return False
         workspace = target.workspace or target.directory or None
@@ -588,6 +607,72 @@ class AgentService:
             ),
             workspace=workspace,
         )
+        return True
+
+    async def _persist_first_message(self, user_input: str) -> None:
+        """Save the consumed first message to the host session.
+
+        The autonomous intake/start turns run with persist_user_input=False, so
+        this records the prompt in the host session and bumps message_count to
+        keep the first-message dispatch from firing again.
+        """
+        session = getattr(self._execution, "session", None)
+        if session is None:
+            return
+        from voidx.memory.service import memory_now, save_message
+        from voidx.memory.service import MessageRow
+
+        await save_message(
+            MessageRow(
+                session_id=session.id,
+                role="user",
+                content=user_input,
+                content_format="text",
+                created_at=memory_now(),
+            )
+        )
+        session.message_count = (getattr(session, "message_count", 0) or 0) + 1
+
+    async def _handle_loop_first_message(self, user_input: str, *, thread_id: str) -> bool:
+        """Start a dynamic loop from the first message of a loop-profile session."""
+        service = getattr(self._execution, "loop_service", None)
+        if service is None:
+            return False
+        parent = thread_id or self._execution.session_id or ""
+        if not parent:
+            return False
+        from voidx.agent.domain.loop import LoopSpec
+
+        status = await service.start(parent, LoopSpec(prompt=user_input, interval_seconds=None))
+        ui.print(f"[dim]/loop started · {status.loop_thread_id}.[/dim]")
+        await self._persist_first_message(user_input)
+        return True
+
+    async def _handle_goal_first_message(self, user_input: str, *, thread_id: str) -> bool:
+        """Confirm a GoalSpec from the first message, then start the goal."""
+        goal_service = getattr(self._execution, "goal_service", None)
+        if goal_service is None:
+            return False
+        parent = thread_id or self._execution.session_id or ""
+        if not parent:
+            return False
+        from voidx.agent.application.goal_intake import GoalIntakeError, GoalIntakeService
+
+        intake = GoalIntakeService(self._runtime, goal_service)
+        try:
+            status = await intake.run(
+                user_input,
+                parent,
+                workspace=getattr(self._execution, "workspace", "") or "",
+            )
+        except GoalIntakeError as exc:
+            ui.print(f"[dim]{exc}[/dim]")
+            return True
+        ui.print(
+            f"[dim]/goal started: [cyan]{status.objective_summary}[/cyan] "
+            f"attempt {status.attempt_count}/{status.max_attempts}[/dim]"
+        )
+        await self._persist_first_message(user_input)
         return True
 
     async def _dispatch_slash(self, inp: str) -> bool:

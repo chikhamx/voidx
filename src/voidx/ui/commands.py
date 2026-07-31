@@ -1,40 +1,32 @@
-"""Slash command palette — Claude Code style. / triggers selectable command list."""
+"""Slash command palette — Claude Code style. / triggers selectable command list.
 
+Top-level commands derive from ``voidx.agent.slash.registry.SLASH_COMMANDS``
+so a new command is registered in exactly one place and automatically appears
+in ``/help``, the command palette, and the gateway catalog. Sub-command
+entries (e.g. ``/mcp del``) have no dedicated dispatch handler and stay here.
+"""
 from __future__ import annotations
 
-COMMANDS: list[tuple[str, str]] = [
-    ("/allow", "Allow a tool for this session"),
-    ("/clear", "Start a new session with empty context"),
-    ("/code-ide", "Choose app for opening changed files"),
+from voidx.agent.slash.registry import SLASH_COMMANDS
+
+_COMMAND_EXTRA: list[tuple[str, str]] = [
+    ("/bocha delete", "Delete Bocha API key"),
+    ("/bocha set", "Set Bocha API key for web search"),
+    ("/bocha show", "Show Bocha API key status"),
     ("/code-ide status", "Show detected code IDEs"),
-    ("/compact", "Manually trigger context compaction"),
-    ("/debug", "Toggle verbose step/tool output"),
     ("/debug off", "Disable verbose step/tool output"),
     ("/debug on", "Enable verbose step/tool output"),
-    ("/deny", "Deny a tool for this session"),
-    ("/diff", "Show git working tree diff with syntax highlighting"),
-    ("/exit", "Exit voidx"),
-    ("/help", "Show all commands"),
-    ("/goal", "Set or show current goal"),
-    ("/guide", "Add guidance to the running agent turn"),
-    ("/init", "Generate AGENTS.md for this project"),
     ("/init force", "Regenerate AGENTS.md even if it already exists"),
-    ("/lang", "Set response language preference"),
-    ("/list", "List saved sessions"),
-    ("/log", "Toggle LLM logging"),
     ("/log diagnostic", "Toggle diagnostic logging"),
     ("/log exchange", "Toggle exchange logging"),
-    ("/loop", "Run a prompt on a recurring interval"),
-    ("/loop stop", "Stop the current loop"),
     ("/loop status", "Show current loop status"),
-    ("/lsp", "Manage language servers"),
+    ("/loop stop", "Stop the current loop"),
     ("/lsp doctor", "Check installed language servers"),
     ("/lsp restart", "Restart language servers"),
     ("/lsp servers", "List configured LSP servers"),
     ("/lsp status", "Show LSP server status"),
-    ("/mcp", "Manage MCP servers"),
-    ("/mcp del", "Remove an MCP server"),
     ("/mcp auto", "Mark an MCP server for auto-discovery"),
+    ("/mcp del", "Remove an MCP server"),
     ("/mcp disable", "Disable an MCP server"),
     ("/mcp enable", "Enable an MCP server"),
     ("/mcp list", "List configured MCP servers"),
@@ -43,7 +35,6 @@ COMMANDS: list[tuple[str, str]] = [
     ("/mcp restart", "Restart an MCP server"),
     ("/mcp test", "Test an MCP server connection"),
     ("/mcp tools", "Show MCP server tools"),
-    ("/model", "Switch configured model"),
     ("/model ctx", "Set context window size"),
     ("/model del", "Remove a profile"),
     ("/model list", "Show configured model details"),
@@ -51,28 +42,19 @@ COMMANDS: list[tuple[str, str]] = [
     ("/model reasoning", "Set reasoning effort level"),
     ("/model switch", "Switch to a configured provider"),
     ("/model test", "Test a provider's connectivity"),
-    ("/parallel", "Toggle parallel subagent execution"),
     ("/parallel off", "Disable parallel subagent execution"),
     ("/parallel on", "Enable parallel subagent execution"),
     ("/parallel status", "Show parallel subagent config"),
-    ("/paste", "Paste an image from the clipboard"),
-    ("/permission", "Choose permission mode"),
+    ("/permission ai_approval", "AI approval pre-screens dangerous tools; optionally add a profile name"),
     ("/permission full_access", "Allow most operations; ask for extreme risk"),
     ("/permission project_trusted", "Allow workspace edits; ask for broader risk"),
     ("/permission read_only", "Ask for writes and block unsafe operations"),
     ("/permission safe", "Ask before writes or risky commands"),
-    ("/permission ai_approval", "AI approval pre-screens dangerous tools; optionally add a profile name"),
-    ("/permissions", "Show current permission rules"),
-    ("/plan", "Enter plan mode (writes and write-capable bash blocked)"),
-    ("/quit", "Exit voidx"),
-    ("/resume", "Resume a session (select from list or specify ID)"),
-    ("/rollback", "Revert file changes from the current turn"),
-    ("/session del", "Delete old saved sessions"),
     ("/session del --dry-run", "Preview session deletion candidates"),
+    ("/session del", "Delete old saved sessions"),
     ("/session list", "List saved sessions"),
     ("/session new", "Start a new session with empty context"),
     ("/session resume", "Resume a saved session"),
-    ("/skills", "Manage local skills"),
     ("/skills auto", "Set a skill to auto-trigger"),
     ("/skills disable", "Disable a skill"),
     ("/skills enable", "Enable a skill"),
@@ -80,26 +62,21 @@ COMMANDS: list[tuple[str, str]] = [
     ("/skills manual", "Set a skill to manual trigger"),
     ("/skills paths", "Show skill directory paths"),
     ("/skills show", "Show a skill's content"),
-    ("/tavily", "Configure Tavily API key for web search"),
     ("/tavily delete", "Delete Tavily API key"),
     ("/tavily set", "Set Tavily API key for web search"),
     ("/tavily show", "Show Tavily API key status"),
-    ("/bocha", "Configure Bocha API key for web search"),
-    ("/bocha delete", "Delete Bocha API key"),
-    ("/bocha set", "Set Bocha API key for web search"),
-    ("/bocha show", "Show Bocha API key status"),
-    ("/title", "Set session title"),
     ("/title auto", "Regenerate session title"),
-    ("/tone", "Set response tone preference"),
-    ("/unplan", "Return to auto mode"),
-    ("/upgrade", "Check for voidx updates"),
     ("/upgrade check", "Check PyPI for a newer voidx version"),
     ("/upgrade now", "Upgrade voidx in the current Python environment"),
     ("/upgrade off", "Disable startup update checks"),
     ("/upgrade on", "Enable startup update checks"),
     ("/upgrade status", "Show update check status"),
-    ("/usage", "Show token usage for this session"),
 ]
+
+COMMANDS: list[tuple[str, str]] = sorted(
+    [(spec.name, spec.desc) for spec in SLASH_COMMANDS] + _COMMAND_EXTRA,
+    key=lambda pair: pair[0],
+)
 
 def filter_commands(prefix: str) -> list[tuple[str, str]]:
     """Filter commands by prefix. Returns (name, description) pairs.

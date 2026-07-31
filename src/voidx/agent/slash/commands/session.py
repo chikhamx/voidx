@@ -56,8 +56,35 @@ class SessionCommandsMixin:
             return
         ui.print("[dim]Usage: /session list|new|resume|del[/dim]")
 
+    async def _switch_profile(self, profile: str) -> None:
+        """Switch the session's runtime profile.
+
+        A fresh session (no messages yet) is reused in place: its profile is
+        updated and the host's session object is refreshed. A session that has
+        messages is locked, so a new session is created in the target profile.
+        """
+        session = getattr(self.host, "session", None)
+        message_count = getattr(session, "message_count", 0) or 0
+        if session is not None and message_count == 0:
+            from voidx.memory.service import update_session_profile
+
+            await update_session_profile(session.id, profile)
+            session.runtime_profile = profile
+            ui.print(f"[dim]Mode set to [cyan]{profile}[/cyan] — next message starts the {profile} session.[/dim]")
+            return
+        await self._session(f"new {profile}".strip())
+
     async def _chat_shortcut(self, args: str) -> None:
+        if not args.strip():
+            await self._switch_profile("chat")
+            return
         await self._session(f"new chat {args}".strip())
+
+    async def _coding_shortcut(self, args: str) -> None:
+        if not args.strip():
+            await self._switch_profile("coding")
+            return
+        await self._session(f"new coding {args}".strip())
 
     async def _session_del(self, args: str) -> None:
         parts = args.split()

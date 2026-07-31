@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
-import logging
+import time
 from dataclasses import dataclass
 
 from voidx.agent.domain.loop import (
@@ -14,8 +13,10 @@ from voidx.agent.domain.loop import (
 )
 from voidx.agent.domain.thread import AgentThread, AgentThreadState, LifecycleState, RuntimeDecision
 from voidx.agent.domain.turn_context import TurnExecutionContext
+from voidx.agent.loop.controller import LoopAttemptController
 from voidx.agent.runtime.contracts import TurnRequest
 from voidx.agent.runtime.dispatcher import DispatchResult, RuntimeDispatcher
+from voidx.agent.runtime.pump import WakeupPumpMixin
 from voidx.memory.thread_store import ThreadStore
 from voidx.runtime.ui import StatusFinished, StatusUpdated, ui_events
 
@@ -24,8 +25,6 @@ LOOP_WAITING_STATUS_ID = "loop:waiting"
 
 def _publish_loop_waiting(decision: RuntimeDecision) -> None:
     """Surface the next-wakeup time so idle UIs can show a countdown."""
-    import time
-
     if decision.outcome == "continue" and decision.next_delay_seconds:
         ui_events.emit_nowait(StatusUpdated(
             status_id=LOOP_WAITING_STATUS_ID,
@@ -36,8 +35,8 @@ def _publish_loop_waiting(decision: RuntimeDecision) -> None:
     else:
         ui_events.emit_nowait(StatusFinished(status_id=LOOP_WAITING_STATUS_ID))
 
+
 _DEFAULT_DYNAMIC_DELAY_SECONDS = 600.0
-from voidx.agent.loop.controller import LoopAttemptController
 
 
 @dataclass(frozen=True)
@@ -90,7 +89,7 @@ class LoopRuntimeRunner:
         return fallback
 
 
-class LoopRuntimeScheduler:
+class LoopRuntimeScheduler(WakeupPumpMixin):
     def __init__(
         self,
         *,
@@ -105,74 +104,27 @@ class LoopRuntimeScheduler:
         self._store = store
         self._runtime = runtime
         self._workspace = workspace
-        self._lease_owner = lease_owner
-        self._lease_seconds = lease_seconds
-        self._pump_poll_seconds = pump_poll_seconds
         self._session_id = session_id
-        # Loop threads this session owns (started or explicitly resumed).
-        # The pump only claims wakeups for these — a global outbox row for any
-        # other session is never this session's job to run.
-        self._managed_thread_ids: set[str] = set()
-        self._pump_task: asyncio.Task | None = None
+        self._init_pump(
+            lease_owner=lease_owner,
+            lease_seconds=lease_seconds,
+            pump_poll_seconds=pump_poll_seconds,
+        )
 
     def register_loop_thread(self, thread_id: str) -> None:
-        if thread_id:
-            self._managed_thread_ids.add(thread_id)
+        self.register_managed_thread(thread_id)
 
     def unregister_loop_thread(self, thread_id: str) -> None:
-        self._managed_thread_ids.discard(thread_id)
+        self.unregister_managed_thread(thread_id)
 
-    def start_pump(self) -> None:
-        if self._pump_task is not None:
-            return
-        self._pump_task = asyncio.create_task(self._pump_loop())
+    def _pump_has_work(self) -> bool:
+        return bool(self._managed_thread_ids)
 
-    async def stop_pump(self) -> None:
-        task, self._pump_task = self._pump_task, None
-        if task is None:
-            return
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+    async def _owns_wakeup(self, thread_id: str) -> bool:
+        return thread_id in self._managed_thread_ids
 
-    async def _dispatch_next_wakeup(self):
-        """Claim and run the next due wakeup owned by this session."""
-        if not self._managed_thread_ids:
-            return None
-        dispatcher = RuntimeDispatcher(
-            store=self._store,
-            runner=LoopRuntimeRunner(self._runtime),
-            lease_owner=self._lease_owner,
-            lease_seconds=self._lease_seconds,
-            claim_kind="wakeup",
-        )
-        for _ in range(16):
-            outbox = await self._store.claim_next_outbox(
-                lease_owner=self._lease_owner,
-                lease_seconds=self._lease_seconds,
-                kind="wakeup",
-            )
-            if outbox is None:
-                return None
-            if outbox.thread_id not in self._managed_thread_ids:
-                # Not ours: release the claim and leave it pending for the
-                # session that owns (or resumes) this loop.
-                await self._store.release_outbox_claim(outbox.outbox_id)
-                continue
-            return await dispatcher._dispatch_claimed(outbox)
-        return None
-
-    async def _pump_loop(self) -> None:
-        while True:
-            try:
-                result = await self._dispatch_next_wakeup()
-            except Exception:
-                logging.getLogger(__name__).exception("loop wakeup pump dispatch failed")
-                result = None
-            if result is None:
-                await asyncio.sleep(self._pump_poll_seconds)
+    def _runner(self):
+        return LoopRuntimeRunner(self._runtime)
 
     async def run_prompt(
         self,
@@ -196,7 +148,7 @@ class LoopRuntimeScheduler:
         )
         dispatcher = RuntimeDispatcher(
             store=self._store,
-            runner=LoopRuntimeRunner(self._runtime),
+            runner=self._runner(),
             lease_owner=self._lease_owner,
             lease_seconds=self._lease_seconds,
         )

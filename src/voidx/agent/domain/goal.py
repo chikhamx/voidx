@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from voidx.agent.domain.profile import RuntimeProfile
-from voidx.agent.domain.tool_policy import ToolPolicyDecision
+from voidx.agent.domain.tool_view import BoundToolView
 
 
 GOAL_ITERATION_USER_TEXT = "Start the autonomous goal attempt."
@@ -75,12 +75,9 @@ class GoalState(BaseModel):
         )
 
 
-class GoalToolView(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
+class GoalToolView(BoundToolView):
     workflow_enabled: bool = False
     phase: str = "work"
-    bound_tool_ids: frozenset[str] = Field(default_factory=frozenset)
 
     @classmethod
     def default(cls, *, workflow_enabled: bool = False, phase: str = "work") -> "GoalToolView":
@@ -101,18 +98,10 @@ class GoalToolView(BaseModel):
         }
         if self.phase == "work":
             allowed.update({"bash", "write", "replace", "manage", "lsp_format"})
+        elif self.phase == "intake":
+            allowed.add("clarify")
         elif self.phase == "evaluator":
             allowed.add("goal")
         if self.workflow_enabled:
             allowed.update({"workflow", "todo"})
         return self.model_copy(update={"bound_tool_ids": frozenset(set(available_tool_ids) & allowed)})
-
-    def allows(self, tool_id: str, **_kwargs) -> bool:
-        return tool_id in self.bound_tool_ids
-
-    def visible_tool_ids(self, available_tool_ids) -> frozenset[str]:
-        return frozenset(tool for tool in available_tool_ids if self.allows(tool))
-
-    def check_tool_call(self, tool_id: str, _args) -> ToolPolicyDecision:
-        allowed = self.allows(tool_id)
-        return ToolPolicyDecision(allowed, "tool_bound" if allowed else "tool_not_bound", False)

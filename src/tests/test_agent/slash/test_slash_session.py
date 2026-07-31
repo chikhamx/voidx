@@ -456,3 +456,47 @@ def test_title_auto_command_is_in_palette():
 
 def test_quit_command_is_in_palette():
     assert ("/quit", "Exit voidx") in COMMANDS
+
+
+@pytest.mark.asyncio
+async def test_switch_profile_reuses_fresh_session_in_place(monkeypatch):
+    from voidx.memory.session import SessionInfo, update_session_profile
+
+    updated: list[tuple[str, str]] = []
+
+    async def fake_update(session_id: str, profile: str) -> None:
+        updated.append((session_id, profile))
+
+    monkeypatch.setattr("voidx.memory.service.update_session_profile", fake_update)
+
+    session = SessionInfo(id="fresh", workspace=".", message_count=0)
+    calls: list[str] = []
+
+    class Handler(SlashHandler):
+        async def _session(self, args: str) -> None:
+            calls.append(args)
+
+    graph = command_context(session=session)
+    await Handler(graph)._switch_profile("chat")
+
+    assert updated == [("fresh", "chat")]
+    assert session.runtime_profile == "chat"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_switch_profile_creates_new_session_when_locked(monkeypatch):
+    from voidx.memory.session import SessionInfo
+
+    session = SessionInfo(id="locked", workspace=".", message_count=3)
+    calls: list[str] = []
+
+    class Handler(SlashHandler):
+        async def _session(self, args: str) -> None:
+            calls.append(args)
+
+    graph = command_context(session=session)
+    await Handler(graph)._switch_profile("loop")
+
+    assert calls == ["new loop"]
+    assert session.runtime_profile == "coding"

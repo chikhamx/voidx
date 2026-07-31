@@ -233,16 +233,22 @@ class PermissionFlow:
         if chat_tool_view is not None:
             approved: list[dict] = []
             denied: list[tuple[dict, str]] = []
+            defer_to_engine: list[dict] = []
             for tool_call in tool_calls:
                 args = tool_call.get("args", {}) or {}
                 decision = chat_tool_view.check_tool_call(str(tool_call.get("name", "")), args)
-                if decision.allowed:
+                if decision.allowed and decision.requests_approval:
+                    defer_to_engine.append(tool_call)
+                elif decision.allowed:
                     approved.append(tool_call)
                 else:
                     denied.append((tool_call, f"Tool denied: {decision.reason}"))
-            return approved, denied
-        approved: list[dict] = []
-        denied: list[tuple[dict, str]] = []
+            if not defer_to_engine:
+                return approved, denied
+            tool_calls = defer_to_engine
+        else:
+            approved: list[dict] = []
+            denied: list[tuple[dict, str]] = []
         need_ask: list[PermissionDecision] = []
         context = PermissionContext.from_service(
             host._permission,

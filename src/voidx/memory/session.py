@@ -179,6 +179,13 @@ async def update_title_if_current(
     return cur.rowcount > 0
 
 
+async def update_session_profile(session_id: str, profile: str) -> None:
+    await _execute_commit(
+        "UPDATE sessions SET runtime_profile = ?, updated_at = ? WHERE id = ?",
+        (profile, _now(), session_id),
+    )
+
+
 async def update_session_model(session_id: str, provider: str, model: str) -> None:
     await _execute_commit(
         "UPDATE sessions SET model_provider = ?, model_name = ?, updated_at = ? WHERE id = ?",
