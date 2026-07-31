@@ -1,3 +1,5 @@
+> **Status: Done** — Goal/Loop runtime implemented and refactored (P0+P1+P2); naming conventions supersede this design doc.
+
 ---
 name: goal-runtime
 display_name: Goal Runtime & Tool-Based Evaluation
@@ -44,6 +46,13 @@ Goal 复用 dispatcher、attempt、outbox、ThreadStore、lifecycle、权限和�
 - `src/voidx/agent/runtime/recovery.py`：进程重启后的 attempt/outbox recovery。
 - `src/voidx/agent/infrastructure/langgraph/runtime/graph_protocol.py`：根据 profile protocol 注入 `turn` / `loop` / `goal` 控制工具。
 
+两条正交的“模式”轴，命名上不要混用：
+
+- `InteractionMode`（`AUTO` / `PLAN`，见 `src/voidx/agent/application/runtime_context.py`）是**编辑权限轴**：只影响 coding turn 里写工具（write/replace/manage/bash）是否被阻塞，存于 session runtime state。
+- `RuntimeProfile`（`coding` / `chat` / `loop` / `goal`）是**协议轴**：决定 prompt 注入、工具视图、thread 命名空间和持久化隔离。
+
+一个会话同时属于两个轴的某个取值；例如 PLAN 模式下的 coding profile 会话只读，但 goal/loop/chat 的自治 turn 由各自的 profile 工具视图约束，与 `InteractionMode` 无关。
+
 ### Goal Naming Conflict
 
 旧的 `InteractionMode.GOAL` 表示 coding turn 内部 workflow 路由偏好，不应继续作为用户可见的 Goal Runtime。新的规则：
@@ -51,6 +60,16 @@ Goal 复用 dispatcher、attempt、outbox、ThreadStore、lifecycle、权限和�
 - `goal` 在 runtime/profile/命令层只表示 `GOAL_PROFILE`。
 - `/goal` 不路由到旧 `InteractionMode.GOAL` 或 `goal_resolver`。
 - `coding`、`chat`、`loop`、`goal` 的 profile id、thread prefix 和 persisted state 不交叉读取。
+
+### Loop Naming Conflict
+
+代码库中 `loop` 一词有三种含义，阅读时按上下文区分，**不做重命名**（涉及持久化字段、UI 协议和提示词，改名风险大于收益）：
+
+- `/loop` 自治模式：`LOOP_PROFILE`、`LoopService`、`agent/loop/`、`LoopRuntimeScheduler` 的调度循环。
+- LLM 调用重试循环：`src/voidx/agent/infrastructure/langgraph/runtime/core/loop.py` 的 `LlmLoopState` / `handle_llm_exception`。
+- 调度器 wakeup 轮询：`WakeupPumpMixin._pump_loop`（`src/voidx/agent/runtime/pump.py`），goal 与 loop 调度器共用。
+
+规则：新代码避免引入第四种 `loop` 含义；提到调度轮询时优先使用 `pump` / `wakeup` 词（如 `_dispatch_next_wakeup`），提到 LLM 重试时使用 `retry` 词。
 
 ## Goals / Non-Goals
 
