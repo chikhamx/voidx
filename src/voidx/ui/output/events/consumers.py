@@ -10,7 +10,7 @@ from typing import Any
 from voidx.logging import log_internal_error
 from rich.markup import escape
 
-from voidx.ui.output.agent_display import agent_display_name
+from voidx.ui.output.agent_display import subagent_display_name
 from voidx.ui.output.dock import BottomInputDock
 from voidx.ui.output.dock.status import PERMISSION_REQUEST_STATUS_ID
 from voidx.ui.output.dock.formatting import short_path, short_value
@@ -330,8 +330,9 @@ class DockEventConsumer:
                 )
             case SubagentStarted() as e:
                 parent = self._tool_nodes.get(e.parent_tool_call_id)
-                role_name = agent_display_name(e.name)
-                title = _subagent_title(role_name, e.description)
+                display_name = subagent_display_name(e.subagent_id or e.agent_id)
+                mode = _subagent_mode(e.description)
+                title = _subagent_title(display_name, e.description, mode=mode)
                 self._agents_with_specific_status.discard(e.agent_id)
                 if parent is not None and parent.payload.get("tool_name") == "agent":
                     fallback = self._agent_nodes.get(e.agent_id)
@@ -344,13 +345,16 @@ class DockEventConsumer:
                     parent.header = f"[#B48EAD]●[/#B48EAD] [bold]{escape(title)}[/bold]"
                     parent.body_lines = []
                     parent.collapsed = False
-                    parent.agent_name = role_name
+                    parent.agent_name = display_name
                     parent.agent_run_id = e.subagent_id
                     parent.meta = None
                     parent.payload = {
-                        "role_name": role_name,
+                        "role_name": display_name,
+                        "display_name": display_name,
+                        "name": display_name,
                         "title": title,
                         "agent_name": e.name,
+                        "mode": mode,
                         "description": e.description,
                         "agent_id": e.agent_id,
                         "parent_tool_call_id": e.parent_tool_call_id,
@@ -370,12 +374,15 @@ class DockEventConsumer:
                     header=f"[#B48EAD]●[/#B48EAD] [bold]{escape(title)}[/bold]",
                     body_lines=[],
                     collapsed=False,
-                    agent_name=role_name,
+                    agent_name=display_name,
                     agent_run_id=e.subagent_id,
                     payload={
-                        "role_name": role_name,
+                        "role_name": display_name,
+                        "display_name": display_name,
+                        "name": display_name,
                         "title": title,
                         "agent_name": e.name,
+                        "mode": mode,
                         "description": e.description,
                         "agent_id": e.agent_id,
                     },
@@ -563,9 +570,24 @@ def _permission_detail_text(tools: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _subagent_title(role_name: str, description: str) -> str:
+def _subagent_mode(description: str) -> str:
+    for line in description.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Mode:"):
+            return stripped[len("Mode:"):].strip()
+    return ""
+
+
+def _subagent_title(display_name: str, description: str, *, mode: str = "") -> str:
     summary = _subagent_description_summary(description)
-    return f"{role_name}({short_path(summary, limit=56)})" if summary else role_name
+    mode = mode or _subagent_mode(description)
+    if mode and summary:
+        return f"{display_name} · {mode}({short_path(summary, limit=56)})"
+    if mode:
+        return f"{display_name} · {mode}"
+    if summary:
+        return f"{display_name}({short_path(summary, limit=56)})"
+    return display_name
 
 
 def _subagent_description_summary(description: str) -> str:

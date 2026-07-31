@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
+
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -35,9 +37,17 @@ class LoopService:
         self._scheduler = scheduler
         self._workspace = workspace
         self._active_specs: dict[str, LoopSpec] = {}
+        self._parent_locks: dict[str, asyncio.Lock] = {}
+
+    def _lock_for(self, parent: str) -> asyncio.Lock:
+        return self._parent_locks.setdefault(parent, asyncio.Lock())
 
     async def start(self, parent_thread_id: str | None, spec: LoopSpec) -> LoopStatus:
         parent = _parent_id(parent_thread_id)
+        async with self._lock_for(parent):
+            return await self._start_unlocked(parent, spec)
+
+    async def _start_unlocked(self, parent: str, spec: LoopSpec) -> LoopStatus:
         display_text = _display_text(spec.prompt)
         spec = spec.model_copy(
             update={
@@ -46,14 +56,16 @@ class LoopService:
             }
         )
         await self._deactivate_current(parent)
-        # Every start opens a fresh loop session; wakeups from any previous
-        # generation are poison and must be discarded before the pump sees them.
         await self._store.discard_pending_outbox_prefix(f"loop:{parent}:")
         return await self._activate(parent, spec, display_text)
 
     async def resume(self, parent_thread_id: str | None) -> LoopStatus | None:
-        """Reactivate the most recent loop of this parent with its original session."""
         parent = _parent_id(parent_thread_id)
+        async with self._lock_for(parent):
+            return await self._resume_unlocked(parent)
+
+    async def _resume_unlocked(self, parent: str) -> LoopStatus | None:
+        """Reactivate the most recent loop of this parent with its original session."""
         if parent in self._active_specs:
             return await self.status(parent)
         loop_thread_id = await self._store.latest_thread_id_with_prefix(f"loop:{parent}:")
@@ -195,6 +207,10 @@ class LoopService:
 
     async def stop(self, parent_thread_id: str | None) -> bool:
         parent = _parent_id(parent_thread_id)
+        async with self._lock_for(parent):
+            return await self._stop_unlocked(parent)
+
+    async def _stop_unlocked(self, parent: str) -> bool:
         spec = self._active_specs.pop(parent, None)
         if spec is None:
             return False

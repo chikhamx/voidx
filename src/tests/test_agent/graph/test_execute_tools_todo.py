@@ -440,7 +440,7 @@ async def test_execute_loop_protocol_tool_without_registry_tool(tmp_path):
     finally:
         _CURRENT_THREAD_EXECUTION_STATE.reset(token)
 
-    assert "loop" not in graph.tools.ids()
+    assert "loop" in graph.tools.ids()
     assert controller.decisions[0].outcome == "continue"
     assert result["should_continue"] is False
     assert result["messages"][0].status == "success"

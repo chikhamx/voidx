@@ -416,7 +416,7 @@ async def test_plan_and_unplan_are_mode_aliases():
 
 
 @pytest.mark.asyncio
-async def test_goal_dispatch_sets_goal_and_goal_mode():
+async def test_goal_dispatch_requires_goal_runtime_acceptance_condition():
     graph = command_context(
         _interaction_mode=None,
         _plan_mode=False,
@@ -426,14 +426,13 @@ async def test_goal_dispatch_sets_goal_and_goal_mode():
 
     assert await SlashHandler(graph).dispatch("/goal 优化 markdown 渲染截断") is True
 
-    assert graph._interaction_mode.value == "goal"
+    assert graph._interaction_mode is None
     assert graph._plan_mode is False
-    assert graph.task_state.current_goal is not None
-    assert graph.task_state.current_goal.desc == "优化 markdown 渲染截断"
+    assert graph.task_state.current_goal is None
 
 
 @pytest.mark.asyncio
-async def test_goal_clear_subcommand_is_removed():
+async def test_goal_clear_is_treated_as_missing_acceptance_condition():
     state = TaskState(
         current_goal=GoalSpec(desc="优化 markdown 渲染截断"),
     )
@@ -446,6 +445,6 @@ async def test_goal_clear_subcommand_is_removed():
 
     assert await SlashHandler(graph).dispatch("/goal clear") is True
 
-    assert graph._interaction_mode.value == "goal"
+    assert graph._interaction_mode is None
     assert graph.task_state.current_goal is not None
-    assert graph.task_state.current_goal.desc == "clear"
+    assert graph.task_state.current_goal.desc == "优化 markdown 渲染截断"

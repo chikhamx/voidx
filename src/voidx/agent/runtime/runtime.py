@@ -71,6 +71,13 @@ class AgentRuntime:
             update={"session_id": final_session_id, "lifecycle": LifecycleState.COMPLETED}
         )
         self._resources.events.publish(AgentEvent(kind=AgentEventKind.TURN_COMPLETED))
+        evidence = getattr(self._resources.turn_engine, "last_evidence", {}) or {}
         return TurnResult(
-            thread=committed_thread, lifecycle=LifecycleState.COMPLETED, runtime=result
+            thread=committed_thread,
+            lifecycle=LifecycleState.COMPLETED,
+            runtime=result,
+            final_llm_messages=tuple(evidence.get("final_llm_messages", ()) or ()),
+            final_assistant_summary=str(evidence.get("final_assistant_summary", "") or ""),
+            tool_result_summaries=tuple(evidence.get("tool_result_summaries", ()) or ()),
+            stop_signal=str(evidence.get("stop_signal", "") or ""),
         )

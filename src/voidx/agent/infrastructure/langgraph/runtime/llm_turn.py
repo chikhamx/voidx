@@ -54,24 +54,20 @@ from voidx.agent.infrastructure.langgraph.runtime.graph_protocol import (
     resolve_graph_protocol,
     strip_tool_calls_after_loop_commit,
 )
-from voidx.agent.infrastructure.langgraph.runtime.core.context import (
-    rebuild_llm_messages as build_llm_context_messages,
-    replacement_messages as compacted_replacement_messages,
-    rerender_task_context,
-    save_main_context_frame,
-)
-from voidx.agent.infrastructure.langgraph.runtime.core.loop import LlmLoopState, handle_llm_exception
-from voidx.agent.infrastructure.langgraph.runtime.core.turn import handle_turn_control_response
-from voidx.agent.infrastructure.langgraph.runtime.core.helpers import _invalidate_tui, _merge_workflow_runs, _persona_for_workflow_runs, _task_state_for_context, _LLM_MAX_RETRIES, _LLM_TIMEOUT_MAX_RETRIES
-from typing import Any
-from langchain_core.messages import BaseMessage, HumanMessage
-from voidx.agent.application.agents import get_agent
-from voidx.agent.infrastructure.langgraph.runtime.core.helpers import _invalidate_tui
-from voidx.agent.infrastructure.langgraph.runtime.streaming import stream_llm as _stream_llm
 from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_thread_execution_state
-from voidx.agent.application.runtime_context import InteractionMode
-from voidx.runtime.task_state import TaskState, goal_type_from_join
 from voidx.llm.message_markers import GUIDANCE_MARKER
+
+
+def filter_profile_tool_definitions(tool_defs: list[dict[str, Any]], profile) -> list[dict[str, Any]]:
+    protocol = getattr(profile, "protocol", "turn")
+    if protocol == "goal":
+        return tool_defs
+    return [
+        tool
+        for tool in tool_defs
+        if _tool_definition_name(tool) != "goal"
+        and (protocol == "loop" or _tool_definition_name(tool) != "loop")
+    ]
 
 
 MALFORMED_TOOL_CALL_REPAIR_INSTRUCTION = (
@@ -88,6 +84,18 @@ def _tool_definition_name(tool: dict[str, Any]) -> str:
     if isinstance(function, dict):
         return str(function.get("name") or "")
     return ""
+def _dedupe_tool_definitions(tool_defs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    result: list[dict[str, Any]] = []
+    for tool in tool_defs:
+        name = _tool_definition_name(tool)
+        if name in seen:
+            continue
+        seen.add(name)
+        result.append(tool)
+    return result
+
+
 
 
 
@@ -118,14 +126,21 @@ class LlmTurn:
         chat_tool_view = getattr(state_context, "tool_policy", None) if state_context else None
         loop_turn_context = getattr(state_context, "turn_context", None) if state_context else None
         loop_controller = getattr(loop_turn_context, "loop_controller", None)
-        graph_protocol = resolve_graph_protocol(
-            getattr(state_context, "runtime_profile", None) if state_context else None
-        )
+        runtime_profile = getattr(state_context, "runtime_profile", None) if state_context else None
+        graph_protocol = resolve_graph_protocol(runtime_profile)
+        tool_defs = filter_profile_tool_definitions(tool_defs, runtime_profile)
         if chat_tool_view is not None:
             tool_defs = [tool for tool in tool_defs if chat_tool_view.allows(_tool_definition_name(tool))]
         turn_control_active = host._turn_control_enabled()
         if turn_control_active:
-            tool_defs = [*tool_defs, *graph_protocol.tool_definitions()]
+            tool_defs = _dedupe_tool_definitions(
+                [*tool_defs, *graph_protocol.tool_definitions()]
+            )
+        if chat_tool_view is not None:
+            tool_defs = [
+                tool for tool in tool_defs
+                if chat_tool_view.allows(_tool_definition_name(tool))
+            ]
         runtime_task_state = _task_state_for_context(
             state.get("task_state"),
             getattr(host, "_task_state", None),

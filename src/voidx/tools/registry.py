@@ -19,6 +19,8 @@ from voidx.tools.checkpoint import PlanCheckpointTool
 from voidx.tools.workflow import WorkflowTool
 from voidx.tools.compact import CompactContextTool
 from voidx.tools.document import DocumentTool
+from voidx.tools.goal import GoalTool
+from voidx.tools.loop import LoopTool
 
 
 class ToolDef(BaseModel):
@@ -48,7 +50,7 @@ class ToolRegistry:
             GitTool,
             FindTool, SearchTool,
             LspTool, LspFormatTool,
-            ClarifyTool, PlanCheckpointTool, WorkflowTool, CompactContextTool, DocumentTool,
+            ClarifyTool, PlanCheckpointTool, WorkflowTool, CompactContextTool, DocumentTool, GoalTool, LoopTool,
         ]:
             instance = cls()
             self.register(instance.id, instance, instance.description, instance.parameters_schema())
@@ -131,6 +133,7 @@ class ToolRegistry:
             "mcp",
             "skill",
             "bash",
+            "loop",
         }
         if workflow_enabled:
             allowed.update({"workflow", "task_status", "todo"})

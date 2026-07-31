@@ -84,6 +84,7 @@ def test_only_facade_and_engine_adapter_call_run_turn() -> None:
         "infrastructure/langgraph/adapter.py",
         "runtime/dispatcher.py",
         "loop/scheduler.py",
+        "goal/runner.py",
         "infrastructure/langgraph/execution.py",
     }
     offenders = []

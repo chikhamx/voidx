@@ -146,12 +146,41 @@ class LoopProtocol:
 
 
 class GoalProtocol:
-    """Placeholder for the future goal mode; behaves like the turn protocol for now."""
+    """Goal protocol: evaluator may verify, then submits one lifecycle decision."""
 
     protocol_id = "goal"
 
+    def __init__(
+        self,
+        *,
+        verification_tool_ids: set[str] | None = None,
+        verification_tool_definitions: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self.verification_tool_ids = verification_tool_ids or set()
+        self.verification_tool_definitions = verification_tool_definitions or []
+
     def tool_definitions(self) -> list[dict[str, Any]]:
-        return [TURN_TOOL_DEFINITION]
+        from voidx.tools.goal import GoalTool
+
+        definitions = [{
+            "type": "function",
+            "function": {
+                "name": "goal",
+                "description": GoalTool.description,
+                "parameters": GoalTool().parameters_schema(),
+            },
+        }, *self.verification_tool_definitions]
+        existing = {item.get("function", {}).get("name") for item in definitions}
+        for tool_id in sorted(self.verification_tool_ids - existing):
+            definitions.append({
+                "type": "function",
+                "function": {
+                    "name": tool_id,
+                    "description": f"Policy-approved verification tool: {tool_id}.",
+                    "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+                },
+            })
+        return definitions
 
     def classify(self, msg: AIMessage) -> TurnClassification:
         return classify_turn_call(msg)
@@ -159,10 +188,21 @@ class GoalProtocol:
     def decision_missing(
         self, msg: AIMessage, loop: LlmLoopState, *, controller: Any | None
     ) -> bool:
-        return False
+        if controller is None or self.classify(msg) not in _BARRIER_CLASSIFICATIONS:
+            return False
+        if loop.protocol_repairs >= _MAX_DECISION_REPAIRS:
+            return False
+        from voidx.agent.infrastructure.langgraph.runtime.streaming import extract_text
+
+        if self.classify(msg) is TurnClassification.REGULAR_TOOLS and not extract_text(msg).strip():
+            return False
+        return controller.final_decision() is None
 
     def repair_prompt(self) -> str:
-        return ""
+        return (
+            "Evaluate the acceptance condition using policy-approved verification tools when needed, "
+            "then call goal with status=finished, continue, or blocked."
+        )
 
 
 _PROTOCOL_TYPES = {

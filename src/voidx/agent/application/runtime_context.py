@@ -296,10 +296,8 @@ class RuntimeContextBuilder:
             f"- Intent: {self.task_intent.value}",
             f"- Turn state: {self.turn_state}",
         ]
-        if self.current_goal is not None:
-            lines.extend([
-                f"- Goal: {self.current_goal.desc or 'not set'}",
-            ])
+        if self.current_goal is not None and self.interaction_mode != InteractionMode.GOAL:
+            lines.append(f"- Goal: {self.current_goal.desc or 'not set'}")
         if self.active_workflow_summaries:
             lines.append(f"- Active workflow nodes: {'; '.join(self.active_workflow_summaries)}")
         if self.workflow_route is not None and (self.workflow_route.join or self.workflow_route.leave):
@@ -318,8 +316,6 @@ class RuntimeContextBuilder:
             lines.extend(todo_lines)
         if self.interaction_mode == InteractionMode.PLAN:
             lines.append("- Constraint: plan mode blocks write/insert/replace/edit, write-capable bash, and implement delegation.")
-        elif self.interaction_mode == InteractionMode.GOAL:
-            lines.append("- Constraint: goal mode should keep work scoped to the current user goal and task state.")
         return "\n".join(lines)
 
     def _active_workflow_node_names(self) -> list[str]:

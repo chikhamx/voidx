@@ -15,35 +15,48 @@ class ModeCommandsMixin:
         labels = {
             InteractionMode.AUTO: "Auto",
             InteractionMode.PLAN: "Plan",
-            InteractionMode.GOAL: "Goal",
         }
         notes = {
             InteractionMode.PLAN: "write/insert/replace/edit/bash blocked",
-            InteractionMode.GOAL: "keep work scoped to the current goal",
         }
         suffix = f" — {notes[parsed]}" if parsed in notes else ""
-        ui.print(f"[dim]Mode set to [cyan]{labels[parsed]}[/cyan]{suffix}[/dim]")
+        ui.print(f"[dim]Mode set to [cyan]{labels.get(parsed, parsed.value)}[/cyan]{suffix}[/dim]")
 
     async def _goal(self, arg: str) -> None:
-        from voidx.agent.application.runtime_context import InteractionMode
-        from voidx.runtime.task_state import TaskState, goal_label
+        from voidx.agent.domain.goal import GoalSpec
 
-        task_state = self.host.task_state or TaskState()
-        goal = arg.strip()
-
-        if not goal:
-            if task_state.current_goal is not None:
-                ui.print(f"Goal: [cyan]{goal_label(task_state.current_goal)}[/cyan]")
-            else:
-                ui.print("Usage: /goal <goal>")
+        service = getattr(self.host, "goal_service", None)
+        if service is None:
+            ui.print("[dim]/goal runtime is not available in this session.[/dim]")
             return
-
-        task_state.set_goal(goal)
-        self.host.set_task_state(task_state)
-        self._set_interaction_mode(InteractionMode.GOAL.value)
-        await self.host.persist_runtime_state()
-        await self.host.set_session_title(task_state.current_goal.desc)
-        ui.print(f"[dim]Goal set to [cyan]{goal_label(task_state.current_goal)}[/cyan][/dim]")
+        text = arg.strip()
+        parent_thread_id = getattr(getattr(self.host, "session", None), "id", None)
+        if text == "status" or not text:
+            status = await service.status(parent_thread_id)
+            if status is None:
+                ui.print("[dim]/goal is not active.[/dim]")
+                return
+            ui.print(
+                f"[dim]/goal active: [cyan]{status.objective_summary}[/cyan] "
+                f"attempt {status.attempt_count}/{status.max_attempts} state={status.state}[/dim]"
+            )
+            return
+        if text == "stop":
+            stopped = await service.stop(parent_thread_id)
+            ui.print("[dim]/goal stopped.[/dim]" if stopped else "[dim]/goal is not active.[/dim]")
+            return
+        objective, acceptance = _parse_goal_args(text)
+        if not objective or not acceptance:
+            ui.print("Usage: /goal <objective> --accept <acceptance condition>")
+            return
+        status = await service.start(
+            parent_thread_id,
+            GoalSpec(objective=objective, acceptance_condition=acceptance),
+        )
+        ui.print(
+            f"[dim]/goal started: [cyan]{status.objective_summary}[/cyan] "
+            f"attempt {status.attempt_count}/{status.max_attempts}[/dim]"
+        )
 
     def _usage(self) -> None:
         from voidx.llm.usage import format_cache_hit_rate, format_token_count
@@ -206,3 +219,11 @@ class ModeCommandsMixin:
             active_dock.reset()
         await self._show_startup(prefer_direct=True)
 
+
+
+def _parse_goal_args(text: str) -> tuple[str, str]:
+    marker = " --accept "
+    if marker not in text:
+        return text.strip(), ""
+    objective, acceptance = text.split(marker, 1)
+    return objective.strip(), acceptance.strip()

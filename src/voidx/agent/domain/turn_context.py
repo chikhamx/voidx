@@ -22,3 +22,5 @@ class TurnExecutionContext(BaseModel):
     workspace: str = ""
     tool_policy: Any | None = None
     loop_controller: Any | None = None
+    goal_controller: Any | None = None
+    goal_phase: str = "work"

@@ -8,6 +8,7 @@ from rich.console import Console
 from rich.text import Text
 
 
+from voidx.ui.output.agent_display import subagent_display_name
 from voidx.ui.output.capture import CaptureConsole
 from voidx.ui.output.console import StreamingRenderer
 from voidx.ui.output.dock import ANSI_LINE_PREFIX, BottomInputDock, set_dock
@@ -42,6 +43,39 @@ from voidx.ui.output.events import (
 from voidx.ui.output.tree import OutputTree
 
 from tests.test_ui.gateway.conftest import _plain, _rich_plain, _tree_nodes, isolated_dock
+
+
+def _expected_subagent_title(subagent_id: str, description: str) -> str:
+    display = subagent_display_name(subagent_id)
+    lines = [line.strip() for line in description.splitlines() if line.strip()]
+    mode = ""
+    for line in lines:
+        if line.startswith("Mode:"):
+            mode = line[len("Mode:"):].strip()
+            break
+    summary = ""
+    for prefix in ("Task:", "Target:", "Success criteria:"):
+        for line in lines:
+            if line.startswith(prefix):
+                summary = " ".join(line[len(prefix):].strip().split())
+                break
+        if summary:
+            break
+    if not summary:
+        first = next(
+            (line for line in lines if not line.startswith(("Mode:", "Result schema:"))),
+            lines[0] if lines else "",
+        )
+        if ":" in first:
+            first = first.split(":", 1)[1].strip()
+        summary = " ".join(first.split())
+    if mode and summary:
+        return f"{display} · {mode}({summary})"
+    if mode:
+        return f"{display} · {mode}"
+    if summary:
+        return f"{display}({summary})"
+    return display
 
 
 async def test_capture_console_uses_ui_event_bus_for_subagent_tools(isolated_dock):
@@ -187,9 +221,16 @@ async def test_subagent_tool_events_update_single_status_row(isolated_dock):
         subagent = next(node for node in assistant.children if node.node_type == "subagent")
         status_nodes = [node for node in subagent.children if node.node_type == "status"]
 
-        assert "voidx" in subagent.header
-        assert "实现子agent任务摘要展示" in _rich_plain(subagent.header)
+        expected = _expected_subagent_title(
+            "agent_0",
+            "Task: 实现子agent任务摘要展示\nMode: implement\nTarget: src/voidx/ui/output/events/consumers.py\nSuccess criteria: 标题中展示短摘要",
+        )
+        assert expected in _rich_plain(subagent.header)
+        assert "voidx(" not in _rich_plain(subagent.header)
         assert subagent.payload["agent_name"] == "voidx"
+        assert subagent.payload["display_name"] == subagent_display_name("agent_0")
+        assert subagent.payload["mode"] == "implement"
+        assert subagent.payload["name"] == subagent.payload["display_name"]
         assert len(status_nodes) == 1
         assert _rich_plain(status_nodes[0].header) == "● Reading x.py"
         assert status_nodes[0].body_lines == []
@@ -233,8 +274,14 @@ async def test_subagent_title_ignores_mode_when_using_fallback_summary(isolated_
         subagent = next(node for node in assistant.children if node.node_type == "subagent")
         title = _rich_plain(subagent.header)
 
-        assert "voidx(update the dock title)" in title
-        assert "voidx(implement)" not in title
+        expected = _expected_subagent_title(
+            "agent_0",
+            "Mode: implement\nSuccess criteria: update the dock title\nCheck title fallback behavior",
+        )
+        assert expected in title
+        assert "voidx(" not in title
+        assert "(implement)" not in title
+        assert " · implement(" in title
     finally:
         await bus.stop()
 
@@ -306,7 +353,9 @@ async def test_subagent_step_does_not_overwrite_specific_tool_status(isolated_do
         subagent = next(node for node in assistant.children if node.node_type == "subagent")
         status = next(node for node in subagent.children if node.node_type == "status")
 
-        assert "voidx(review permission and UI changes)" in _rich_plain(subagent.header)
+        expected = _expected_subagent_title("agent_0", "review permission and UI changes")
+        assert expected in _rich_plain(subagent.header)
+        assert "voidx(" not in _rich_plain(subagent.header)
         assert _rich_plain(status.header) == "● Reading src/voidx/permission/rules.py"
     finally:
         await bus.stop()
@@ -346,7 +395,9 @@ async def test_child_agent_stream_updates_status_without_rendering_text(isolated
         agent_node = next(node for node in assistant.children if node.node_type == "subagent")
         status_node = next(node for node in agent_node.children if node.node_type == "status")
 
-        assert "voidx" in agent_node.header
+        expected = _expected_subagent_title("agent_0", "inspect auth.py")
+        assert expected in _rich_plain(agent_node.header)
+        assert "voidx(" not in _rich_plain(agent_node.header)
         assert "agent" not in agent_node.header
         assert agent_node.body_lines == []
         assert agent_node.payload["description"] == "inspect auth.py"
@@ -356,7 +407,7 @@ async def test_child_agent_stream_updates_status_without_rendering_text(isolated
 
         rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
         assert "Task:" not in rendered
-        assert "voidx(inspect auth.py)" in rendered
+        assert expected in rendered
         assert "Agent ID" not in rendered
         assert "Exploring" not in rendered
         assert "Responding" in rendered
@@ -373,9 +424,10 @@ async def test_child_agent_stream_updates_status_without_rendering_text(isolated
         await bus.drain()
 
         rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(100))
+        expected = _expected_subagent_title("agent_0", "inspect auth.py")
         assert "explore agent completed (2.5s)" not in rendered
-        assert "voidx(inspect auth.py) completed (final answer, 2.5s)" in rendered
-        assert "voidx" in rendered
+        assert f"{expected} completed (final answer, 2.5s)" in rendered
+        assert "voidx(" not in rendered
         assert 'Agent("explore")' not in rendered
         assert "subagent completed" not in rendered
 
@@ -429,7 +481,8 @@ async def test_subagent_finish_failure_keeps_reason_status_without_summary(isola
         status_node = next(node for node in agent_node.children if node.node_type == "status")
 
         assert _rich_plain(status_node.header) == "✗ Failed: permission denied"
-        assert "reviewer(review permission flow) failed (permission denied, 1.2s)" in _rich_plain(agent_node.header)
+        expected = _expected_subagent_title("agent_0", "Task: review permission flow")
+        assert f"{expected} failed (permission denied, 1.2s)" in _rich_plain(agent_node.header)
     finally:
         await bus.stop()
 

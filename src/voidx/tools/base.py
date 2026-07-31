@@ -128,6 +128,8 @@ class ToolContext(BaseModel):
     lsp_manager: Any | None = None
     format_after_edit_enabled: bool = True
     loop_controller: Any | None = Field(default=None, exclude=True)
+    goal_controller: Any | None = Field(default=None, exclude=True)
+    goal_phase: str = "work"
     tool_registry: Any | None = Field(default=None, exclude=True)
     permission_mode: str = "safe"
     sandbox_readable_files: list[str] = Field(default_factory=list)

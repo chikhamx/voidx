@@ -211,7 +211,7 @@ def test_current_task_state_records_current_goal(tmp_path):
     assert "Pending approval" not in messages[-1].content
 
 
-def test_current_task_state_records_goal_run(tmp_path):
+def test_current_task_state_omits_legacy_goal_mode_goal(tmp_path):
     messages = [HumanMessage(content="给个方案")]
     context = RuntimeContextBuilder(
         config=Config(workspace=str(tmp_path)),
@@ -228,4 +228,4 @@ def test_current_task_state_records_goal_run(tmp_path):
     context.apply_to_messages(messages)
 
     assert "Current persona: voidx" in messages[-1].content
-    assert "Goal: 优化 markdown 渲染截断" in messages[-1].content
+    assert "Goal: 优化 markdown 渲染截断" not in messages[-1].content

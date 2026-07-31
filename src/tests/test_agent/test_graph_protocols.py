@@ -130,13 +130,13 @@ def test_loop_protocol_ignores_regular_tool_calls() -> None:
     assert LoopProtocol().decision_missing(msg, loop, controller=controller) is False
 
 
-# ── GoalProtocol (placeholder) ───────────────────────────────────────────────
+# ── GoalProtocol ─────────────────────────────────────────────────────────────
 
 
-def test_goal_protocol_placeholder_uses_turn_tool_shape() -> None:
+def test_goal_protocol_exposes_goal_control_tool() -> None:
     defs = GoalProtocol().tool_definitions()
 
-    assert [d["function"]["name"] for d in defs] == ["turn"]
+    assert [d["function"]["name"] for d in defs] == ["goal"]
 
 
 # ── Loop decision terminates the iteration ────────────────────────────────────

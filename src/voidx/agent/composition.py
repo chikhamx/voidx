@@ -12,6 +12,9 @@ from types import SimpleNamespace
 from voidx.agent.runtime import AgentRuntime
 from voidx.agent.loop.scheduler import LoopRuntimeScheduler
 from voidx.agent.application.loop_service import LoopService
+from voidx.agent.application.goal_service import GoalService
+from voidx.agent.goal.evaluator import GoalEvaluator
+from voidx.agent.goal.scheduler import GoalRuntimeScheduler
 from voidx.config.ports import bind_model_profile_store
 from voidx.memory.profile_store import MemoryModelProfileStore
 from voidx.memory.service import ThreadStore
@@ -55,8 +58,23 @@ def build_agent_app(
         scheduler=loop_scheduler,
         workspace=getattr(config, "workspace", ""),
     )
+    goal_service = None
+    model = getattr(execution, "model", None)
+    if model is not None:
+        goal_scheduler = GoalRuntimeScheduler(
+            store=loop_store,
+            runtime=runtime,
+            workspace=getattr(config, "workspace", ""),
+            evaluator=GoalEvaluator(),
+        )
+        goal_service = GoalService(
+            store=loop_store,
+            scheduler=goal_scheduler,
+            workspace=getattr(config, "workspace", ""),
+        )
     if hasattr(execution, "__dict__"):
         execution.loop_service = loop_service
+        execution.goal_service = goal_service
     chat_service = ChatService(runtime)
     coding_service = CodingService(runtime)
     return AgentFacade(

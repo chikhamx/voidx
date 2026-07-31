@@ -286,6 +286,18 @@ class ThreadStore:
             except (TypeError, ValueError):
                 iteration = 0
             context["iteration"] = iteration + 1
+            goal_patch = decision.metadata.goal_state_patch if decision.metadata is not None else None
+            updated_goal_state: dict[str, Any] | None = None
+            if goal_patch is not None:
+                from voidx.agent.domain.goal import GoalState
+
+                raw_goal_state = context.get("goal_run")
+                if not isinstance(raw_goal_state, dict):
+                    raise ValueError("goal state patch requires context['goal_run']")
+                goal_state = GoalState.model_validate(raw_goal_state)
+                patch = goal_patch.model_dump(exclude_none=True, mode="python")
+                updated_goal_state = goal_state.model_copy(update=patch).model_dump(mode="json")
+                context["goal_run"] = updated_goal_state
             next_state = loaded.state.model_copy(
                 update={
                     "lifecycle": next_lifecycle,
@@ -313,10 +325,12 @@ class ThreadStore:
                     "decision": decision.model_dump(mode="json"),
                     **{
                         key: prior_frame[key]
-                        for key in ("prompt", "display_text", "spec")
+                        for key in ("prompt", "display_text", "spec", "goal_state")
                         if key in prior_frame
                     },
                 }
+                if updated_goal_state is not None:
+                    wakeup_payload["goal_state"] = updated_goal_state
                 conn.execute(
                     """INSERT OR IGNORE INTO runtime_outbox (
                            id, thread_id, source_attempt_id, kind, payload_json,
@@ -411,31 +425,39 @@ class ThreadStore:
         return await self._write(_tx)
 
     async def claim_next_outbox(
-        self, *, lease_owner: str, lease_seconds: float, kind: str | None = None
+        self,
+        *,
+        lease_owner: str,
+        lease_seconds: float,
+        kind: str | None = None,
+        thread_id_prefix: str | None = None,
+        exclude_outbox_ids: set[str] | None = None,
     ) -> RuntimeOutboxItem | None:
         def _tx(conn):
             now_ts = time.time()
-            if kind is None:
-                row = conn.execute(
-                    """SELECT * FROM runtime_outbox
-                       WHERE delivered_at IS NULL
-                         AND available_at <= ?
-                         AND (claimed_until IS NULL OR claimed_until <= ?)
-                       ORDER BY available_at, created_at
-                       LIMIT 1""",
-                    (now_ts, now_ts),
-                ).fetchone()
-            else:
-                row = conn.execute(
-                    """SELECT * FROM runtime_outbox
-                       WHERE delivered_at IS NULL
-                         AND kind = ?
-                         AND available_at <= ?
-                         AND (claimed_until IS NULL OR claimed_until <= ?)
-                       ORDER BY available_at, created_at
-                       LIMIT 1""",
-                    (kind, now_ts, now_ts),
-                ).fetchone()
+            clauses = [
+                "delivered_at IS NULL",
+                "available_at <= ?",
+                "(claimed_until IS NULL OR claimed_until <= ?)",
+            ]
+            params: list[object] = [now_ts, now_ts]
+            if kind is not None:
+                clauses.append("kind = ?")
+                params.append(kind)
+            if thread_id_prefix is not None:
+                clauses.append("thread_id LIKE ?")
+                params.append(f"{thread_id_prefix}%")
+            if exclude_outbox_ids:
+                placeholders = ", ".join("?" for _ in exclude_outbox_ids)
+                clauses.append(f"id NOT IN ({placeholders})")
+                params.extend(exclude_outbox_ids)
+            row = conn.execute(
+                f"""SELECT * FROM runtime_outbox
+                   WHERE {' AND '.join(clauses)}
+                   ORDER BY available_at, created_at
+                   LIMIT 1""",
+                tuple(params),
+            ).fetchone()
             if row is None:
                 return None
             conn.execute(

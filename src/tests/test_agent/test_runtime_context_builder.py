@@ -473,6 +473,22 @@ def test_runtime_context_preserves_multimodal_user_message_without_extra_system(
     assert messages[-1].content[2]["type"] == "image_url"
 
 
+def test_runtime_context_goal_mode_omits_legacy_task_state_goal_constraint(tmp_path):
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="voidx",
+        interaction_mode=InteractionMode.GOAL,
+        task_state=TaskState(current_goal=GoalSpec(desc="legacy goal")),
+    ).build()
+
+    task_context = context.render_task_context()
+
+    assert "goal mode should keep work scoped" not in task_context
+    assert "legacy goal" not in task_context
+
+
 def test_runtime_context_migrates_task_overlay_from_ai_message_to_latest_message(tmp_path):
     messages = [
         HumanMessage(content="current request"),

@@ -32,6 +32,10 @@ class TurnResult(BaseModel):
     lifecycle: LifecycleState
     runtime: SessionRuntimeState | None = None
     error: str | None = None
+    final_llm_messages: tuple[object, ...] = ()
+    final_assistant_summary: str = ""
+    tool_result_summaries: tuple[str, ...] = ()
+    stop_signal: str = ""
 
     @property
     def session_id(self) -> str | None:

@@ -28,6 +28,27 @@ _TERMINAL_STATES = frozenset(
 )
 
 
+class GoalStatePatch(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    attempt_count: int | None = Field(default=None, ge=0)
+    evaluator_failure_count: int | None = Field(default=None, ge=0)
+    last_progress_key: str | None = None
+    repeated_progress_count: int | None = Field(default=None, ge=0)
+    last_evaluator_summary: str | None = None
+    last_evaluator_next_hint: str | None = None
+    last_evaluator_missing: tuple[str, ...] | None = None
+    blocked_reason: str | None = None
+    active: bool | None = None
+
+
+class DecisionMetadata(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    goal_state_patch: GoalStatePatch | None = None
+    evidence_summary: dict[str, Any] | None = None
+
+
 class RuntimeDecision(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -36,6 +57,7 @@ class RuntimeDecision(BaseModel):
     progress: Literal["none", "partial", "meaningful"] = "none"
     next_delay_seconds: float | None = None
     reason: str = ""
+    metadata: DecisionMetadata | None = None
 
 
 class AgentThread(BaseModel):

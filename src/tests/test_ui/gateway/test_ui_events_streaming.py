@@ -8,6 +8,7 @@ from rich.console import Console
 from rich.text import Text
 
 
+from voidx.ui.output.agent_display import subagent_display_name
 from voidx.ui.output.capture import CaptureConsole
 from voidx.ui.output.console import StreamingRenderer
 from voidx.ui.output.dock import ANSI_LINE_PREFIX, BottomInputDock, set_dock
@@ -338,7 +339,9 @@ async def test_subagent_streaming_is_headless(isolated_dock):
         assert sub_tools == []
         assert len(status_nodes) == 1
         assert _rich_plain(status_nodes[0].header) == "● Completed"
-        assert "voidx(实现子agent任务摘要展示) completed" in _rich_plain(subagent.header)
+        display = subagent_display_name("agent_0")
+        assert f"{display} · implement(实现子agent任务摘要展示) completed" in _rich_plain(subagent.header)
+        assert "voidx(" not in _rich_plain(subagent.header)
 
         # No ToolResultAppended under the child agent node
         result_nodes = [n for n in subagent.children if n.node_type == "tool_result"]

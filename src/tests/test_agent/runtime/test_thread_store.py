@@ -205,3 +205,66 @@ async def test_thread_store_with_db_path_uses_isolated_database(tmp_path) -> Non
 
     other = ThreadStore(db_path=tmp_path / "other.db")
     assert await other.load("loop-iso") is None
+
+
+@pytest.mark.asyncio
+async def test_commit_decision_atomically_applies_goal_state_patch() -> None:
+    from voidx.agent.domain.goal import GOAL_PROFILE, GoalSpec, GoalState
+    from voidx.agent.domain.thread import DecisionMetadata
+
+    store = ThreadStore()
+    spec = GoalSpec(objective="ship", acceptance_condition="tests pass", generation="run-1")
+    goal_state = GoalState.from_spec(spec, run_id="run-id")
+    await store.create_thread(
+        AgentThread(thread_id="goal:parent:run-1"),
+        profile=GOAL_PROFILE,
+        state=AgentThreadState(
+            thread_id="goal:parent:run-1",
+            lifecycle=LifecycleState.READY,
+            context={"goal_run": goal_state.model_dump(mode="json")},
+        ),
+    )
+    loaded = await store.load("goal:parent:run-1")
+    assert loaded is not None
+    attempt = await store.begin_attempt(
+        thread_id=loaded.thread.thread_id,
+        source_outbox_id="goal-prompt-1",
+        input_frame={"spec": spec.model_dump(mode="json")},
+        expected_state_version=loaded.state_version,
+        lease_owner="worker-a",
+        lease_seconds=60,
+    )
+
+    decision = RuntimeDecision(
+        outcome="continue",
+        summary="not yet",
+        metadata=DecisionMetadata(
+            goal_state_patch={
+                "attempt_count": 1,
+                "last_evaluator_summary": "missing test evidence",
+                "last_progress_key": "implementation",
+            }
+        ),
+    )
+    first = await store.commit_decision(
+        attempt_id=attempt.attempt_id,
+        decision=decision,
+        expected_state_version=attempt.state_version,
+    )
+    second = await store.commit_decision(
+        attempt_id=attempt.attempt_id,
+        decision=decision,
+        expected_state_version=attempt.state_version,
+    )
+
+    reloaded = await store.load(loaded.thread.thread_id)
+    assert reloaded is not None
+    committed_goal = GoalState.model_validate(reloaded.state.context["goal_run"])
+    assert committed_goal.attempt_count == 1
+    assert committed_goal.objective == "ship"
+    assert committed_goal.last_evaluator_summary == "missing test evidence"
+    assert first.next_outbox_id == second.next_outbox_id
+    outbox = await store.claim_next_outbox(lease_owner="worker-b", lease_seconds=60, kind="wakeup")
+    assert outbox is not None
+    assert outbox.payload["goal_state"]["attempt_count"] == 1
+    assert outbox.payload["goal_state"]["last_evaluator_summary"] == "missing test evidence"

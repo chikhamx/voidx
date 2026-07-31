@@ -4,9 +4,10 @@ from dataclasses import dataclass, field
 
 import pytest
 
+from langchain_core.messages import ToolMessage
 from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.domain.turn import TurnPhase
-from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
+from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine, _evidence_from_execution
 from voidx.agent.infrastructure.langgraph.state_mapper import LangGraphStateMapper
 from voidx.runtime import GoalSpec, InteractionMode, TaskState
 
@@ -94,4 +95,23 @@ def test_state_mapper_is_the_runtime_graph_host_conversion_boundary():
     assert restored == runtime.model_copy(update={"turn_phase": TurnPhase.COMMITTED})
     assert restored.task_state is not runtime.task_state
 
+
+def test_evidence_from_execution_keeps_large_tool_batch_counts():
+    host = FakeHost()
+    host._current_messages = [
+        ToolMessage(
+            content="{'ok': True, 'recipient_name': 'IM集团'}",
+            tool_call_id=f"call-{index}",
+            name="typex.send_message",
+        )
+        for index in range(100)
+    ]
+
+    evidence = _evidence_from_execution(host)
+
+    summaries = "\n".join(evidence["tool_result_summaries"])
+    assert "Observed tool result total: 100" in summaries
+    assert "typex.send_message=100" in summaries
+    assert "ok_true=100" in summaries
+    assert "omitted_middle_tool_results=60" in summaries
 
