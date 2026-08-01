@@ -5,22 +5,22 @@ from types import SimpleNamespace
 
 import pytest
 
-from voidx.agent.application.goal_intake import (
-    GoalIntakeError,
-    GoalIntakeService,
-    _extract_json,
-)
-from voidx.agent.domain.goal import GoalToolView
+from voidx.agent.application.goal_intake import GoalIntakeError, GoalIntakeService
+from voidx.agent.domain.goal import GoalSpec, GoalToolView
 from voidx.agent.domain.thread import AgentThread
 
 
 class FakeRuntime:
-    def __init__(self, summary: str = ""):
+    def __init__(self, spec: dict | None = None, summary: str = ""):
+        self.spec = spec
         self.summary = summary
         self.requests = []
 
     async def run_turn(self, request):
         self.requests.append(request)
+        controller = getattr(request.context, "goal_intake_controller", None)
+        if self.spec is not None and controller is not None:
+            await controller.submit_init(GoalSpec(**self.spec))
         return SimpleNamespace(final_assistant_summary=self.summary)
 
 
@@ -33,19 +33,15 @@ class FakeGoalService:
         return SimpleNamespace(active=True)
 
 
-def test_extract_json_parses_plain_and_fenced() -> None:
-    assert _extract_json('{"a": 1}') == {"a": 1}
-    assert _extract_json("```json\n{\"a\": 1}\n```") == {"a": 1}
-    assert _extract_json("explanation ```\n{\"a\": 1}\n```") == {"a": 1}
-    assert _extract_json("not json") is None
-    assert _extract_json("") is None
-
-
 @pytest.mark.asyncio
-async def test_intake_runs_restricted_turn_and_starts_goal() -> None:
+async def test_intake_runs_restricted_turn_and_starts_goal_from_init_tool() -> None:
     runtime = FakeRuntime(
-        '{"objective": "fix flaky tests", "acceptance_condition": "suite green", '
-        '"achievement_method": ""}'
+        {
+            "objective": "fix flaky tests",
+            "acceptance_condition": "suite green",
+            "achievement_method": "",
+        },
+        summary="this final text should not be parsed",
     )
     service = GoalIntakeService(runtime, goal_service := FakeGoalService())
 
@@ -63,35 +59,43 @@ async def test_intake_runs_restricted_turn_and_starts_goal() -> None:
     assert request.thread.thread_id == "goal-intake:host-1"
     assert request.context.runtime_profile.profile_id == "goal"
     assert request.context.goal_phase == "intake"
+    assert request.context.goal_intake_controller is not None
     assert request.context.tool_policy.allows("clarify")
+    assert request.context.tool_policy.allows("goal")
     assert not request.context.tool_policy.allows("bash")
     assert not request.context.tool_policy.allows("write")
+    assert request.display_text == "make the tests reliable"
+    assert 'op="init"' in request.user_text
+    assert "Required output" not in request.user_text
 
 
 @pytest.mark.asyncio
-async def test_intake_non_json_raises() -> None:
-    runtime = FakeRuntime("I could not determine a goal.")
+async def test_intake_raises_when_goal_init_not_submitted() -> None:
+    runtime = FakeRuntime(summary='{"objective": "ignored", "acceptance_condition": "ignored"}')
     service = GoalIntakeService(runtime, FakeGoalService())
 
-    with pytest.raises(GoalIntakeError):
+    with pytest.raises(GoalIntakeError) as exc_info:
         await service.run("vague", "host-1")
+
+    assert 'goal(op="init")' in str(exc_info.value)
 
 
 @pytest.mark.asyncio
-async def test_intake_incomplete_spec_raises() -> None:
-    runtime = FakeRuntime('{"objective": "only objective", "acceptance_condition": "", "achievement_method": ""}')
+async def test_intake_rejects_incomplete_init_spec() -> None:
+    runtime = FakeRuntime({"objective": "only objective", "acceptance_condition": "", "achievement_method": ""})
     service = GoalIntakeService(runtime, FakeGoalService())
 
-    with pytest.raises(GoalIntakeError):
+    with pytest.raises(ValueError):
         await service.run("vague", "host-1")
 
 
-def test_goal_tool_view_intake_phase_binds_clarify_only() -> None:
+def test_goal_tool_view_intake_phase_binds_clarify_and_goal_only() -> None:
     view = GoalToolView.default(phase="intake").bind(
-        {"read", "clarify", "bash", "write", "websearch", "mcp"}
+        {"read", "clarify", "goal", "bash", "write", "websearch", "mcp"}
     )
 
     assert view.allows("clarify")
+    assert view.allows("goal")
     assert view.allows("read")
     assert view.allows("websearch")
     assert view.allows("mcp")

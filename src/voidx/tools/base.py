@@ -129,6 +129,7 @@ class ToolContext(BaseModel):
     format_after_edit_enabled: bool = True
     loop_controller: Any | None = Field(default=None, exclude=True)
     goal_controller: Any | None = Field(default=None, exclude=True)
+    goal_intake_controller: Any | None = Field(default=None, exclude=True)
     goal_phase: str = "work"
     tool_registry: Any | None = Field(default=None, exclude=True)
     permission_mode: str = "safe"

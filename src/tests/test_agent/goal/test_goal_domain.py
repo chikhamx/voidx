@@ -69,6 +69,7 @@ def test_goal_tool_view_excludes_interactive_protocol_tools() -> None:
         "checkpoint",
         "turn",
         "loop",
+        "goal",
     }
 
     default = GoalToolView.default(workflow_enabled=False).bind(available)
@@ -77,11 +78,11 @@ def test_goal_tool_view_excludes_interactive_protocol_tools() -> None:
     assert {"read", "search", "bash", "write", "replace", "manage", "websearch"}.issubset(
         default.bound_tool_ids
     )
-    assert {"clarify", "checkpoint", "turn", "loop", "workflow", "todo"}.isdisjoint(
+    assert {"clarify", "checkpoint", "turn", "loop", "goal", "workflow", "todo"}.isdisjoint(
         default.bound_tool_ids
     )
     assert {"workflow", "todo", "task_status"}.issubset(workflow.bound_tool_ids)
-    assert {"clarify", "checkpoint", "turn", "loop"}.isdisjoint(workflow.bound_tool_ids)
+    assert {"clarify", "checkpoint", "turn", "loop", "goal"}.isdisjoint(workflow.bound_tool_ids)
 
 
 def test_goal_tool_view_bash_requests_approval() -> None:
@@ -105,3 +106,13 @@ def test_goal_tool_view_evaluator_phase_bash_not_bound() -> None:
 
     bash_decision = view.check_tool_call("bash", {"command": "pytest -q"})
     assert bash_decision.allowed is False
+
+
+def test_goal_tool_view_intake_phase_binds_clarify_and_goal() -> None:
+    view = GoalToolView.default(phase="intake").bind({"read", "clarify", "goal", "bash", "write"})
+
+    assert view.allows("read") is True
+    assert view.allows("clarify") is True
+    assert view.allows("goal") is True
+    assert view.allows("bash") is False
+    assert view.allows("write") is False

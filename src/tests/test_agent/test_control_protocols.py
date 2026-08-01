@@ -1,13 +1,16 @@
-"""Graph protocol behavior: tool injection, classification, and loop decision barrier."""
+"""Control protocol behavior: tool injection, classification, and loop decision barrier."""
 
 from __future__ import annotations
 
 import pytest
 from langchain_core.messages import AIMessage
 
-from voidx.agent.domain.loop import LoopSpec
+from voidx.agent.domain.goal import GOAL_PROFILE
+from voidx.agent.domain.loop import LOOP_PROFILE, LoopSpec
+from voidx.agent.domain.profile import RuntimeProfile
+from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.infrastructure.langgraph.runtime.core.loop import LlmLoopState
-from voidx.agent.infrastructure.langgraph.runtime.graph_protocol import (
+from voidx.agent.infrastructure.langgraph.runtime.control_protocol import (
     GoalProtocol,
     LoopProtocol,
     TurnToolProtocol,
@@ -16,6 +19,8 @@ from voidx.agent.infrastructure.langgraph.runtime.turn_control import (
     LOOP_DECISION_PROMPT,
     TurnClassification,
 )
+from voidx.agent.goal.controller import GoalController
+from voidx.agent.goal.intake_controller import GoalIntakeController
 from voidx.agent.loop.controller import LoopAttemptController
 
 
@@ -139,6 +144,103 @@ def test_goal_protocol_exposes_goal_control_tool() -> None:
     assert [d["function"]["name"] for d in defs] == ["goal"]
 
 
+# ── Controller routing ───────────────────────────────────────────────────────
+
+
+class _Controller:
+    def final_decision(self):
+        return None
+
+
+def test_turn_protocol_has_no_lifecycle_controller() -> None:
+    ctx = TurnExecutionContext(thread_id="t1", session_id="s1")
+
+    assert TurnToolProtocol().controller(ctx) is None
+
+
+def test_loop_protocol_resolves_loop_controller() -> None:
+    controller = _Controller()
+    ctx = TurnExecutionContext(
+        thread_id="t1",
+        session_id="s1",
+        runtime_profile=LOOP_PROFILE,
+        loop_controller=controller,
+    )
+
+    assert LoopProtocol().controller(ctx) is controller
+
+
+def test_goal_protocol_resolves_intake_controller_by_phase() -> None:
+    intake_controller = _Controller()
+    evaluator_controller = _Controller()
+    ctx = TurnExecutionContext(
+        thread_id="t1",
+        session_id="s1",
+        runtime_profile=GOAL_PROFILE,
+        goal_intake_controller=intake_controller,
+        goal_controller=evaluator_controller,
+        goal_phase="intake",
+    )
+
+    assert GoalProtocol().controller(ctx) is intake_controller
+
+
+def test_goal_protocol_resolves_evaluator_controller_by_phase() -> None:
+    intake_controller = _Controller()
+    evaluator_controller = _Controller()
+    ctx = TurnExecutionContext(
+        thread_id="t1",
+        session_id="s1",
+        runtime_profile=GOAL_PROFILE,
+        goal_intake_controller=intake_controller,
+        goal_controller=evaluator_controller,
+        goal_phase="evaluator",
+    )
+
+    assert GoalProtocol().controller(ctx) is evaluator_controller
+
+
+def test_goal_protocol_ignores_work_phase_controller() -> None:
+    ctx = TurnExecutionContext(
+        thread_id="t1",
+        session_id="s1",
+        runtime_profile=GOAL_PROFILE,
+        goal_controller=_Controller(),
+        goal_phase="work",
+    )
+
+    assert GoalProtocol().controller(ctx) is None
+
+
+def test_goal_protocol_blocks_intake_until_init_submitted() -> None:
+    controller = GoalIntakeController()
+    loop = LlmLoopState(context_tokens=0)
+    protocol = GoalProtocol(phase="intake")
+
+    assert protocol.decision_missing(_turn_stop_msg(), loop, controller=controller) is True
+    assert 'op="init"' in protocol.repair_prompt()
+    assert 'op="decision"' not in protocol.repair_prompt()
+
+
+def test_goal_protocol_blocks_evaluator_until_decision_submitted() -> None:
+    controller = GoalController()
+    loop = LlmLoopState(context_tokens=0)
+    protocol = GoalProtocol(phase="evaluator")
+
+    assert protocol.decision_missing(_turn_stop_msg(), loop, controller=controller) is True
+    assert 'op="decision"' in protocol.repair_prompt()
+
+
+def test_resolve_control_protocol_falls_back_to_turn_for_unknown_profile() -> None:
+    from voidx.agent.infrastructure.langgraph.runtime.control_protocol import (
+        resolve_control_protocol,
+    )
+
+    profile = RuntimeProfile(profile_id="custom", revision=1, name="Custom", protocol="missing")
+
+    assert type(resolve_control_protocol(profile)) is TurnToolProtocol
+
+
 # ── Loop decision terminates the iteration ────────────────────────────────────
 
 
@@ -165,7 +267,7 @@ def _bind_thread_state(loop_controller=None):
 
 @pytest.mark.asyncio
 async def test_loop_decision_submitted_true_after_commit() -> None:
-    from voidx.agent.infrastructure.langgraph.runtime.graph_protocol import (
+    from voidx.agent.infrastructure.langgraph.runtime.control_protocol import (
         loop_decision_submitted,
     )
     from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
@@ -185,7 +287,7 @@ async def test_loop_decision_submitted_true_after_commit() -> None:
 
 
 def test_loop_decision_submitted_false_without_context_or_controller() -> None:
-    from voidx.agent.infrastructure.langgraph.runtime.graph_protocol import (
+    from voidx.agent.infrastructure.langgraph.runtime.control_protocol import (
         loop_decision_submitted,
     )
     from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
@@ -202,7 +304,7 @@ def test_loop_decision_submitted_false_without_context_or_controller() -> None:
 
 @pytest.mark.asyncio
 async def test_strip_tool_calls_after_loop_commit() -> None:
-    from voidx.agent.infrastructure.langgraph.runtime.graph_protocol import (
+    from voidx.agent.infrastructure.langgraph.runtime.control_protocol import (
         strip_tool_calls_after_loop_commit,
     )
     from voidx.agent.infrastructure.langgraph.runtime.thread_context import (

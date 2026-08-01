@@ -168,6 +168,34 @@ async def test_run_loop_default_context_includes_workspace(monkeypatch, tmp_path
     assert request.context.session_id == ""
     assert request.context.workspace == workspace
 
+
+@pytest.mark.asyncio
+async def test_run_loop_status_goal_label_reflects_task_state_current_goal(monkeypatch, tmp_path):
+    captured = {}
+
+    class CaptureTui:
+        def __init__(self, status, commands):
+            self.status = status
+            self.commands = commands
+            captured["status"] = status
+
+        async def run(self, on_submit):
+            return False
+
+        def set_external_command_handler(self, handler):
+            pass
+
+    monkeypatch.setattr("voidx.agent.application.agent_service.create_frontend", CaptureTui)
+    monkeypatch.setattr(runtime_ui_port, "show_startup", lambda **_: None)
+
+    graph = _graph(workspace=str(tmp_path))
+    _disable_external_managers(graph)
+    graph._execution.task_state.set_goal("实现自动重试机制")
+
+    await graph.run()
+
+    assert captured["status"].goal_label() == "实现自动重试机制"
+
 @pytest.mark.asyncio
 async def test_web_headless_uses_gateway_frontend_without_default_tui_factory(monkeypatch, tmp_path):
     graph = _graph(workspace=str(tmp_path))

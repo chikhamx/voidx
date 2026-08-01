@@ -11,7 +11,7 @@ from voidx.agent.domain.loop import LoopSpec
 from voidx.agent.infrastructure.langgraph.runtime.core.loop import LlmLoopState
 from voidx.agent.infrastructure.langgraph.runtime.core.turn import handle_turn_control_response
 from voidx.agent.infrastructure.langgraph.runtime.turn_control import LOOP_DECISION_PROMPT
-from voidx.agent.infrastructure.langgraph.runtime.graph_protocol import LoopProtocol
+from voidx.agent.infrastructure.langgraph.runtime.control_protocol import LoopProtocol
 from voidx.agent.loop.controller import LoopAttemptController
 from voidx.llm.message_markers import GUIDANCE_MARKER
 from voidx.runtime.task_state import TaskState

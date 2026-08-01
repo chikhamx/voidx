@@ -138,6 +138,7 @@ class ToolExecutorAdapter:
                 lsp_manager=getattr(host, "_lsp_manager", None),
                 loop_controller=getattr(thread_state.turn_context, "loop_controller", None),
                 goal_controller=getattr(thread_state.turn_context, "goal_controller", None),
+                goal_intake_controller=getattr(thread_state.turn_context, "goal_intake_controller", None),
                 goal_phase=getattr(thread_state.turn_context, "goal_phase", "work"),
                 format_after_edit_enabled=host.config.lsp_format_after_edit,
                 tool_registry=host.tools,

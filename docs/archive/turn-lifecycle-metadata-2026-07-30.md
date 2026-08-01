@@ -243,7 +243,7 @@ interrupt behavior later.
 - Do not create a loop-only `is_loop_turn` field.
 - Do not infer turn type from `display_text`, `user_text`, `thread_id` prefixes, or
   rendered transcript headers.
-- Do not change graph protocol selection; `resolve_graph_protocol()` remains driven
+- Do not change control protocol selection; `resolve_control_protocol()` remains driven
   by `RuntimeProfile.protocol`.
 - Do not change loop scheduling, loop persistence, or loop tool execution semantics.
 - Do not add frontend-specific behavior for loop interrupts or profile semantics in this

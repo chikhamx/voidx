@@ -53,7 +53,7 @@ async def handle_turn_control_response(
     loop_controller: Any | None = None,
     protocol: Any | None = None,
 ) -> TurnControlResult:
-    from voidx.agent.infrastructure.langgraph.runtime.graph_protocol import (
+    from voidx.agent.infrastructure.langgraph.runtime.control_protocol import (
         TurnToolProtocol,
     )
 
@@ -127,6 +127,7 @@ async def handle_turn_control_response(
             runtime_task_state=runtime_task_state,
             state_messages=state_messages,
             interaction_mode_value=interaction_mode_value,
+            protocol=protocol,
             estimate_tokens=estimate_tokens,
         )
 
@@ -338,10 +339,12 @@ def _handle_plain_text(
     runtime_task_state: TaskState,
     state_messages: list[BaseMessage],
     interaction_mode_value: str,
+    protocol: Any,
     estimate_tokens: Any,
 ) -> TurnControlResult:
     text = extract_text(assistant_msg).strip()
     has_text = bool(text)
+    is_turn_protocol = getattr(protocol, "protocol_id", "turn") == "turn"
     if (
         turn_state == "initial"
         and loop.missing_turn_count == 0
@@ -357,6 +360,11 @@ def _handle_plain_text(
     if loop.missing_turn_count == 0 and has_text:
         loop.pending_provisional = assistant_msg
         loop.pending_provisional_visible = not loop.turn_prompt_active
+    if not is_turn_protocol and has_text:
+        loop.terminal_msg = normalize_terminal_message(assistant_msg)
+        loop.terminal_msg_visible = loop.pending_provisional_visible
+        turn_state = "committed"
+        return TurnControlResult("break", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
     if (
         turn_state == "initial"
         and not loop.start_prompt_injected

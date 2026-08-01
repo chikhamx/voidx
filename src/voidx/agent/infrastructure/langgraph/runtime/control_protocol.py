@@ -1,19 +1,14 @@
-"""Graph-level protocol registry: each runtime profile declares its turn-lifecycle protocol.
-
-A graph protocol owns the protocol tool set injected into the LLM (turn, loop,
-goal, …), classifies assistant messages against that protocol, and decides
-whether a turn may end. Profiles select a protocol via
-``RuntimeProfile.protocol``; unknown ids fall back to the turn protocol so
-existing sessions keep working.
-"""
+"""Shared control protocol registry for runtime lifecycle handling."""
 
 from __future__ import annotations
 
-from typing import Any, Protocol as TypingProtocol
+from dataclasses import dataclass, field
+from typing import Any, Protocol as TypingProtocol, Sequence
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage
 
 from voidx.agent.domain.profile import RuntimeProfile
+from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.infrastructure.langgraph.runtime.core.loop import LlmLoopState
 from voidx.agent.infrastructure.langgraph.runtime.turn_control import (
     LOOP_DECISION_PROMPT,
@@ -21,15 +16,28 @@ from voidx.agent.infrastructure.langgraph.runtime.turn_control import (
     TurnClassification,
     classify_turn_call,
 )
+from voidx.runtime.task_state import TaskState
 from voidx.tools.loop import LoopTool
 
 
-class GraphProtocol(TypingProtocol):
-    """Graph-level protocol tool set for one runtime profile."""
+@dataclass(frozen=True)
+class ControlContext:
+    runtime_profile: RuntimeProfile | None = None
+    turn_context: TurnExecutionContext | None = None
+    interaction_mode: str = ""
+    turn_state: str = ""
+    loop_state: LlmLoopState | None = None
+    runtime_task_state: TaskState | None = None
+    state_messages: Sequence[BaseMessage] = field(default_factory=tuple)
+    tool_definitions: Sequence[dict[str, Any]] = field(default_factory=tuple)
 
+
+class ControlProtocol(TypingProtocol):
     protocol_id: str
 
     def tool_definitions(self) -> list[dict[str, Any]]: ...
+
+    def controller(self, ctx: ControlContext | TurnExecutionContext | None) -> Any | None: ...
 
     def classify(self, msg: AIMessage) -> TurnClassification: ...
 
@@ -40,6 +48,14 @@ class GraphProtocol(TypingProtocol):
     def repair_prompt(self) -> str: ...
 
 
+def turn_context_from(ctx: ControlContext | TurnExecutionContext | None) -> TurnExecutionContext | None:
+    if ctx is None:
+        return None
+    if isinstance(ctx, ControlContext):
+        return ctx.turn_context
+    return ctx
+
+
 class TurnToolProtocol:
     """Default coding/chat protocol: turn(start/stop) manages the whole lifecycle."""
 
@@ -47,6 +63,9 @@ class TurnToolProtocol:
 
     def tool_definitions(self) -> list[dict[str, Any]]:
         return [TURN_TOOL_DEFINITION]
+
+    def controller(self, ctx: ControlContext | TurnExecutionContext | None) -> Any | None:
+        return None
 
     def classify(self, msg: AIMessage) -> TurnClassification:
         return classify_turn_call(msg)
@@ -74,14 +93,8 @@ def loop_decision_submitted() -> bool:
     return controller.final_decision() is not None
 
 
-def strip_tool_calls_after_loop_commit(msg):
-    """Drop tool calls from the final assistant message once the loop committed.
-
-    After operation=commit the iteration is over: executing further tool calls
-    would keep the turn alive forever and the scheduled wakeup delay would never
-    take effect. Stripping (instead of routing around the tools node) keeps the
-    message history free of dangling tool_calls.
-    """
+def strip_tool_calls_after_loop_commit(msg: AIMessage) -> AIMessage:
+    """Drop tool calls from the final assistant message once the loop committed."""
     if not loop_decision_submitted():
         return msg
     tool_calls = getattr(msg, "tool_calls", None)
@@ -96,9 +109,6 @@ def strip_tool_calls_after_loop_commit(msg):
 _BARRIER_CLASSIFICATIONS = {
     TurnClassification.VALID_TURN,
     TurnClassification.PLAIN_TEXT,
-    # Text + tool calls in one message still must not end the iteration without
-    # a loop decision: the model "says" it committed but the commit tool call is
-    # never reached when the message is the turn's terminal one.
     TurnClassification.REGULAR_TOOLS,
 }
 _MAX_DECISION_REPAIRS = 2
@@ -120,6 +130,10 @@ class LoopProtocol:
             },
         }]
 
+    def controller(self, ctx: ControlContext | TurnExecutionContext | None) -> Any | None:
+        turn_context = turn_context_from(ctx)
+        return getattr(turn_context, "loop_controller", None) if turn_context else None
+
     def classify(self, msg: AIMessage) -> TurnClassification:
         return classify_turn_call(msg)
 
@@ -132,9 +146,6 @@ class LoopProtocol:
             return False
         if loop.protocol_repairs >= _MAX_DECISION_REPAIRS:
             return False
-        # Mid-iteration tool turns are fine; only block when the model adds a
-        # closing summary (it believes the iteration is over) without having
-        # committed a loop decision.
         from voidx.agent.infrastructure.langgraph.runtime.streaming import extract_text
 
         if self.classify(msg) is TurnClassification.REGULAR_TOOLS and not extract_text(msg).strip():
@@ -146,16 +157,18 @@ class LoopProtocol:
 
 
 class GoalProtocol:
-    """Goal protocol: evaluator may verify, then submits one lifecycle decision."""
+    """Goal protocol: intake initializes goals; evaluator submits lifecycle decisions."""
 
     protocol_id = "goal"
 
     def __init__(
         self,
         *,
+        phase: str = "work",
         verification_tool_ids: set[str] | None = None,
         verification_tool_definitions: list[dict[str, Any]] | None = None,
     ) -> None:
+        self.phase = phase
         self.verification_tool_ids = verification_tool_ids or set()
         self.verification_tool_definitions = verification_tool_definitions or []
 
@@ -182,6 +195,17 @@ class GoalProtocol:
             })
         return definitions
 
+    def controller(self, ctx: ControlContext | TurnExecutionContext | None) -> Any | None:
+        turn_context = turn_context_from(ctx)
+        if turn_context is None:
+            return None
+        self.phase = turn_context.goal_phase
+        if self.phase == "intake":
+            return turn_context.goal_intake_controller
+        if self.phase == "evaluator":
+            return turn_context.goal_controller
+        return None
+
     def classify(self, msg: AIMessage) -> TurnClassification:
         return classify_turn_call(msg)
 
@@ -196,22 +220,31 @@ class GoalProtocol:
 
         if self.classify(msg) is TurnClassification.REGULAR_TOOLS and not extract_text(msg).strip():
             return False
-        return controller.final_decision() is None
+        if self.phase == "intake":
+            return controller.final_spec() is None
+        if self.phase == "evaluator":
+            return controller.final_decision() is None
+        return False
 
     def repair_prompt(self) -> str:
+        if self.phase == "intake":
+            return (
+                "Ask one concise clarification question if needed, otherwise call goal with "
+                "op=\"init\", objective, acceptance_condition, and optional achievement_method."
+            )
         return (
             "Evaluate the acceptance condition using policy-approved verification tools when needed, "
-            "then call goal with status=finished, continue, or blocked."
+            "then call goal with op=\"decision\" and status=\"finished\", \"continue\", or \"blocked\"."
         )
 
 
-_PROTOCOL_TYPES = {
+_PROTOCOL_TYPES: dict[str, type[ControlProtocol]] = {
     "turn": TurnToolProtocol,
     "loop": LoopProtocol,
     "goal": GoalProtocol,
 }
 
 
-def resolve_graph_protocol(profile: RuntimeProfile | None) -> GraphProtocol:
+def resolve_control_protocol(profile: RuntimeProfile | None) -> ControlProtocol:
     protocol_id = getattr(profile, "protocol", "") or "turn"
     return _PROTOCOL_TYPES.get(protocol_id, TurnToolProtocol)()

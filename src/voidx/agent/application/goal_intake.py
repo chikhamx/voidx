@@ -1,18 +1,10 @@
-"""Goal intake — turn the first user message into a confirmed GoalSpec.
-
-Runs one restricted LLM turn (read-only tools + clarify) that collects the
-objective, acceptance condition, and achievement method. The model may ask the
-user clarifying questions via the clarify tool; the final assistant message
-must carry a JSON spec which is parsed and passed to the goal service.
-"""
+"""Goal intake — turn the first user message into a confirmed GoalSpec."""
 from __future__ import annotations
 
-import json
-import re
-
-from voidx.agent.domain.goal import GOAL_PROFILE, GoalSpec, GoalToolView
+from voidx.agent.domain.goal import GOAL_PROFILE, GoalToolView
 from voidx.agent.domain.thread import AgentThread
 from voidx.agent.domain.turn_context import TurnExecutionContext
+from voidx.agent.goal.intake_controller import GoalIntakeController
 from voidx.agent.runtime.contracts import TurnRequest
 
 _INTAKE_TOOL_IDS = frozenset(
@@ -26,47 +18,34 @@ _INTAKE_TOOL_IDS = frozenset(
         "webfetch",
         "mcp",
         "clarify",
+        "goal",
     }
 )
 
 _INTAKE_PROMPT = """\
-You are starting an autonomous Goal. Turn the user's request into a complete goal spec.
-
-Required output (final message, valid JSON, nothing else):
-{{"objective": "...", "acceptance_condition": "...", "achievement_method": "..."}}
+You are initializing an autonomous Goal from the user's first request.
 
 Rules:
+- If the objective or acceptance condition is unclear, call clarify with one targeted question.
+- When both are clear, call goal with op="init" and the complete goal spec.
+- Do not emit the spec as JSON text; the goal tool call is the only successful submission path.
+- Do not call goal with op="decision" during intake.
+- Use achievement_method for important execution guidance from the user; otherwise use "".
+- Read project files only when needed to ground the goal spec.
+
+Required goal(op="init") fields:
 - objective: one sentence describing what must be accomplished.
 - acceptance_condition: a concrete, verifiable condition that determines done.
-- achievement_method: the approach the agent should take (optional; use "" if unknown).
-- If any field cannot be determined, ask the user via the clarify tool before
-  answering. Keep asking until the spec is complete and unambiguous.
-- You may read project files (read/find/search/lsp/document) to ground the spec.
-- Do not modify anything. Only the JSON above may be emitted as your final message.
+- achievement_method: optional approach or execution guidance; use "" if unknown.
+- max_attempts: optional attempt budget; use 20 unless the user specifies otherwise.
 
 User request:
 {user_input}
 """
 
-_JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
-
 
 class GoalIntakeError(RuntimeError):
-    """Goal spec could not be determined from the intake turn."""
-
-
-def _extract_json(text: str) -> dict | None:
-    if not text:
-        return None
-    block = _JSON_BLOCK_RE.search(text)
-    candidate = block.group(1) if block else text
-    try:
-        parsed = json.loads(candidate)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    return parsed
+    """Goal spec could not be initialized from the intake turn."""
 
 
 class GoalIntakeService:
@@ -82,39 +61,30 @@ class GoalIntakeService:
             session_id=parent_thread_id or "",
             workspace=workspace,
         )
+        controller = GoalIntakeController()
         context = TurnExecutionContext(
             thread_id=thread.thread_id,
             session_id=thread.session_id,
             runtime_profile=GOAL_PROFILE,
             workspace=thread.workspace,
             tool_policy=GoalToolView.default(phase="intake").bind(_INTAKE_TOOL_IDS),
+            goal_intake_controller=controller,
             goal_phase="intake",
         )
-        result = await self._runtime.run_turn(
+        await self._runtime.run_turn(
             TurnRequest(
                 thread=thread,
                 user_text=_INTAKE_PROMPT.format(user_input=user_input),
                 context=context,
+                display_text=user_input,
                 runtime=None,
                 persist_user_input=False,
             )
         )
-        raw = _extract_json(getattr(result, "final_assistant_summary", "") or "")
-        if raw is None:
+        spec = controller.final_spec()
+        if spec is None:
             raise GoalIntakeError(
-                "Could not determine a complete goal spec from the first message. "
-                "Use /goal <objective> --accept <condition> to start explicitly."
-            )
-        try:
-            spec = GoalSpec(
-                objective=str(raw.get("objective") or "").strip(),
-                acceptance_condition=str(raw.get("acceptance_condition") or "").strip(),
-                achievement_method=str(raw.get("achievement_method") or "").strip(),
-            )
-        except ValueError as exc:
-            raise GoalIntakeError(str(exc)) from exc
-        if not spec.objective or not spec.acceptance_condition:
-            raise GoalIntakeError(
-                "Goal spec is incomplete. Use /goal <objective> --accept <condition> to start explicitly."
+                "Could not initialize a complete goal spec because intake did not receive "
+                "goal(op=\"init\"). Use /goal <objective> --accept <condition> to start explicitly."
             )
         return await self._goal_service.start(parent_thread_id, spec)

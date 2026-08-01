@@ -44,7 +44,7 @@ Goal 复用 dispatcher、attempt、outbox、ThreadStore、lifecycle、权限和�
 - `src/voidx/agent/domain/thread.py`：`RuntimeDecision`、lifecycle transition 和 typed metadata。
 - `src/voidx/memory/thread_store.py`：thread state、attempt、outbox 和原子 commit。
 - `src/voidx/agent/runtime/recovery.py`：进程重启后的 attempt/outbox recovery。
-- `src/voidx/agent/infrastructure/langgraph/runtime/graph_protocol.py`：根据 profile protocol 注入 `turn` / `loop` / `goal` 控制工具。
+- `src/voidx/agent/infrastructure/langgraph/runtime/control_protocol.py`：根据 profile protocol 注入 `turn` / `loop` / `goal` 控制工具。
 
 两条正交的“模式”轴，命名上不要混用：
 
@@ -377,7 +377,7 @@ Visible work-phase and evaluator verification tool calls still flow through exis
 | `src/voidx/agent/goal/controller.py` | new | Store evaluator-submitted goal decision for one attempt. |
 | `src/voidx/agent/domain/goal.py` | update | GoalSpec, GoalState, GOAL_PROFILE and GoalToolView. |
 | `src/voidx/agent/goal/runner.py` | update | Work phase, evaluator phase and decision mapping. |
-| `src/voidx/agent/infrastructure/langgraph/runtime/graph_protocol.py` | update | Real GoalProtocol with cache-stable `goal` definition, evaluator-only `goal` execution and missing-decision repair. |
+| `src/voidx/agent/infrastructure/langgraph/runtime/control_protocol.py` | update | Real GoalProtocol with cache-stable `goal` definition, evaluator-only `goal` execution and missing-decision repair. |
 | `src/voidx/agent/infrastructure/langgraph/runtime/tool_executor/executor.py` | update | Route `goal` through `GoalTool`; execute only with evaluator-phase controller, otherwise return guidance. |
 | `src/voidx/agent/domain/turn_context.py` | update | Add `goal_controller`. |
 | `src/voidx/agent/domain/thread.py` | update | Ensure RuntimeDecision metadata supports GoalState patch. |

@@ -99,7 +99,7 @@ class GoalToolView(BoundToolView):
         if self.phase == "work":
             allowed.update({"bash", "write", "replace", "manage", "lsp_format"})
         elif self.phase == "intake":
-            allowed.add("clarify")
+            allowed.update({"clarify", "goal"})
         elif self.phase == "evaluator":
             allowed.add("goal")
         if self.workflow_enabled:

@@ -50,8 +50,9 @@ from voidx.runtime.ui import (
     StatusFinished,
     StreamingRenderer,
 )
-from voidx.agent.infrastructure.langgraph.runtime.graph_protocol import (
-    resolve_graph_protocol,
+from voidx.agent.infrastructure.langgraph.runtime.control_protocol import (
+    ControlContext,
+    resolve_control_protocol,
     strip_tool_calls_after_loop_commit,
 )
 from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_thread_execution_state
@@ -125,16 +126,23 @@ class LlmTurn:
         state_context = current_thread_execution_state()
         chat_tool_view = getattr(state_context, "tool_policy", None) if state_context else None
         loop_turn_context = getattr(state_context, "turn_context", None) if state_context else None
-        loop_controller = getattr(loop_turn_context, "loop_controller", None)
         runtime_profile = getattr(state_context, "runtime_profile", None) if state_context else None
-        graph_protocol = resolve_graph_protocol(runtime_profile)
+        control_protocol = resolve_control_protocol(runtime_profile)
+        protocol_controller = control_protocol.controller(
+            ControlContext(
+                runtime_profile=runtime_profile,
+                turn_context=loop_turn_context,
+                interaction_mode=str(interaction_mode_value),
+                turn_state=turn_state,
+            )
+        )
         tool_defs = filter_profile_tool_definitions(tool_defs, runtime_profile)
         if chat_tool_view is not None:
             tool_defs = [tool for tool in tool_defs if chat_tool_view.allows(_tool_definition_name(tool))]
         turn_control_active = host._turn_control_enabled()
         if turn_control_active:
             tool_defs = _dedupe_tool_definitions(
-                [*tool_defs, *graph_protocol.tool_definitions()]
+                [*tool_defs, *control_protocol.tool_definitions()]
             )
         if chat_tool_view is not None:
             tool_defs = [
@@ -397,8 +405,8 @@ class LlmTurn:
                         interaction_mode_value=interaction_mode_value,
                         estimate_tokens=estimate_llm_context_tokens,
                         rerender_task_context=_rerender_task_context,
-                        loop_controller=loop_controller,
-                        protocol=graph_protocol,
+                        loop_controller=protocol_controller,
+                        protocol=control_protocol,
                     )
                     llm_messages = turn_result.llm_messages
                     turn_state = turn_result.turn_state

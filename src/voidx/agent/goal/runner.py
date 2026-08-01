@@ -117,7 +117,8 @@ def _evaluator_prompt(spec: GoalSpec, state: GoalState, attempt_index: int) -> s
         f"Objective: {spec.objective}\n"
         f"Acceptance condition: {spec.acceptance_condition}\n"
         f"Attempt: {attempt_index}/{spec.max_attempts}\n"
-        "Use policy-approved verification tools when needed, then call goal with a final status."
+        "Use policy-approved verification tools when needed, then call goal with "
+        "op=\"decision\" and status=\"finished\", \"continue\", or \"blocked\"."
     )
 
 
