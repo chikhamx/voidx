@@ -35,7 +35,7 @@ class ToolDef(BaseModel):
 class ToolRegistry:
     """Manages all available tools. No dynamic discovery — everything explicit."""
 
-    _HIDDEN_FROM_LLM = frozenset({"git"})
+    _HIDDEN_FROM_LLM = frozenset({"git", "lsp_format"})
 
     def __init__(self, settings=None, tracker=None) -> None:
         self._tools: dict[str, ToolDef] = {}

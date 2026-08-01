@@ -71,7 +71,7 @@ class TestToolRegistry:
     def test_tools_for_llm(self):
         r = ToolRegistry()
         tools = r.tools_for_llm()
-        assert len(tools) == len(r.ids()) - 1
+        assert len(tools) == len(r.ids()) - 2
         assert len(tools) >= 10
         names = [t["function"]["name"] for t in tools]
         assert "manage" in names
@@ -80,6 +80,8 @@ class TestToolRegistry:
         assert "replace" in names
         assert "line" not in names
         assert "edit" not in names
+        assert "git" not in names
+        assert "lsp_format" not in names
         for t in tools:
             assert t["type"] == "function"
             assert "name" in t["function"]
