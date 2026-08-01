@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+from voidx.runtime.task_state import GoalSpec, ToolStatePatch
 from voidx.tools.base import (
     BaseTool,
     ToolContext,
@@ -95,7 +96,13 @@ class LoopTool(BaseTool):
             )
         return ToolResult(
             output=f"Loop iteration started: {inp.goal.strip()}",
-            metadata={"operation": "start", "goal": inp.goal.strip()},
+            metadata={
+                "operation": "start",
+                "goal": inp.goal.strip(),
+                "state_patch": ToolStatePatch(
+                    goal=GoalSpec(desc=inp.goal.strip())
+                ).model_dump(mode="json", exclude_unset=True),
+            },
         )
 
     async def _commit(self, inp: LoopDecisionInput, controller) -> ToolResult:

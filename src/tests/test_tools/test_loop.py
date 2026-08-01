@@ -125,3 +125,17 @@ def test_loop_schema_exposes_no_terminal_outcomes() -> None:
 
     for forbidden in ("completed", "stop", "failed", "blocked", "needs_user"):
         assert f'"{forbidden}"' not in schema
+
+
+@pytest.mark.asyncio
+async def test_loop_start_state_patch_goal_syncs_task_state() -> None:
+    controller = FakeLoopController()
+    tool = LoopTool()
+    ctx = ToolContext(workspace="/tmp/workspace", loop_controller=controller)
+
+    result = await tool.execute({"operation": "start", "goal": "ship retry"}, ctx)
+
+    assert result.metadata["operation"] == "start"
+    patch = result.metadata.get("state_patch")
+    assert patch is not None
+    assert patch["goal"]["desc"] == "ship retry"
