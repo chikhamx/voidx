@@ -171,3 +171,13 @@ def test_busy_activity_tick_noops_without_rendered_frame(tmp_path, monkeypatch):
     assert tui._render_busy_activity_tick() is False
     assert "Cogitating" not in status.plain
 
+
+
+def test_status_bar_shows_profile_segment_for_each_mode(tmp_path):
+    cases = (("chat", "chat"), ("loop", "loop"), ("goal", "goal"), ("coding", ""))
+    for profile, expected in cases:
+        tui = _tui(tmp_path)
+        tui.status.runtime_profile = lambda: profile
+        _, segments = tui._status_segments(include_busy=True)
+        profile_segment = next((segment for segment in segments if segment.kind == "profile"), None)
+        assert (profile_segment.text if profile_segment else "") == expected, profile

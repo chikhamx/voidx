@@ -646,8 +646,10 @@ class PureTui(
             self._current_submit_task.cancel()
         if not self._is_input_empty():
             self._clear_input()
+        command = "/loop stop"
+        self._quiet_commands.append(command)
         self._queue.put_nowait(_SubmitQueueItem(
-            "/loop stop",
+            command,
             restore_text="",
             paste_entries=[],
             context=self._submit_context(),

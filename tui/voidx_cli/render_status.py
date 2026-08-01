@@ -117,9 +117,7 @@ class _StatusRendererMixin:
         if effort:
             model_text = f"{model_text} {effort}"
 
-        profile_text = ""
-        if profile == "chat":
-            profile_text = "chat"
+        profile_text = "" if profile in ("", "coding") else profile
 
         policy_parts = [part for part in (permission,) if part]
         policy_text = " ".join(policy_parts)

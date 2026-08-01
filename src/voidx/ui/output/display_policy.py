@@ -115,6 +115,8 @@ DEFAULT_DISPLAY_RULES: dict[str, ToolDisplayRule] = {
     "compact": ToolDisplayRule(tool_name="compact", mode=ToolDisplayMode.HIDDEN),
     "workflow": ToolDisplayRule(tool_name="workflow", mode=ToolDisplayMode.HIDDEN),
     "skill": ToolDisplayRule(tool_name="skill", mode=ToolDisplayMode.HIDDEN),
+    "loop": ToolDisplayRule(tool_name="loop", mode=ToolDisplayMode.HIDDEN),
+    "goal": ToolDisplayRule(tool_name="goal", mode=ToolDisplayMode.HIDDEN),
     "clarify": ToolDisplayRule(tool_name="clarify", mode=ToolDisplayMode.HIDDEN),
     # ── Summary：搜索/查询类 ──
     "search": ToolDisplayRule(tool_name="search", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),

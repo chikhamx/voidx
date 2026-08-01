@@ -1159,6 +1159,7 @@ def test_ctrl_c_stops_loop_even_when_choice_prompt_active(tmp_path, monkeypatch)
     assert tui._queue.qsize() == 1
     item = tui._queue.get_nowait()
     assert item == "/loop stop"
+    assert tui.consume_quiet_command("/loop stop") is True
     assert tui._choice_queue.get_nowait() is None
     assert tui._notice == "Stopping loop..."
 
