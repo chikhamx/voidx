@@ -27,12 +27,18 @@ class FakeGoalService:
 
 
 class FakeIntakeRuntime:
-    def __init__(self, summary: str = ""):
+    def __init__(self, summary: str = "", spec: dict | None = None):
         self.summary = summary
+        self.spec = spec
         self.requests = []
 
     async def run_turn(self, request):
         self.requests.append(request)
+        controller = getattr(request.context, "goal_intake_controller", None)
+        if self.spec is not None and controller is not None:
+            from voidx.agent.domain.goal import GoalSpec
+
+            await controller.submit_init(GoalSpec(**self.spec))
         return SimpleNamespace(final_assistant_summary=self.summary)
 
 
@@ -78,11 +84,11 @@ async def test_goal_profile_first_message_starts_goal_from_message() -> None:
     from voidx.agent.domain.goal import GoalSpec
 
     service = _service("goal")
-    service._runtime.summary = (
-        '{"objective": "refactor the auth module to use typed contracts", '
-        '"acceptance_condition": "all auth call sites use the new contracts and tests pass", '
-        '"achievement_method": ""}'
-    )
+    service._runtime.spec = {
+        "objective": "refactor the auth module to use typed contracts",
+        "acceptance_condition": "all auth call sites use the new contracts and tests pass",
+        "achievement_method": "",
+    }
 
     handled = await service._handle_goal_first_message(
         "refactor the auth module to use typed contracts",
@@ -111,9 +117,11 @@ async def test_goal_first_message_intake_failure_reports_and_consumes() -> None:
 @pytest.mark.asyncio
 async def test_autonomous_first_message_only_fires_once() -> None:
     service = _service("goal")
-    service._runtime.summary = (
-        '{"objective": "do it", "acceptance_condition": "done", "achievement_method": ""}'
-    )
+    service._runtime.spec = {
+        "objective": "do it",
+        "acceptance_condition": "done",
+        "achievement_method": "",
+    }
 
     first = await service._route_autonomous_first_message("do it", thread_id="")
     service._execution.session.message_count = 1
@@ -145,12 +153,36 @@ async def test_first_message_is_persisted_so_intake_fires_once(monkeypatch) -> N
     monkeypatch.setattr("voidx.memory.service.save_message", fake_save_message)
 
     service = _service("goal")
-    service._runtime.summary = (
-        '{"objective": "do it", "acceptance_condition": "done", "achievement_method": ""}'
-    )
+    service._runtime.spec = {
+        "objective": "do it",
+        "acceptance_condition": "done",
+        "achievement_method": "",
+    }
 
     handled = await service._handle_goal_first_message("do it", thread_id="")
 
     assert handled is True
     assert service._execution.session.message_count == 1
     assert saved == [("host-session", "do it")]
+
+
+@pytest.mark.asyncio
+async def test_goal_intake_failure_persists_first_message(monkeypatch) -> None:
+    saved: list[tuple[str, str]] = []
+    from voidx.memory.session import MessageRow
+
+    async def fake_save_message(row: MessageRow) -> int:
+        saved.append((row.session_id, row.content))
+        return 1
+
+    monkeypatch.setattr("voidx.memory.service.save_message", fake_save_message)
+
+    service = _service("goal")
+    service._runtime.summary = "I need a clearer acceptance condition."
+
+    handled = await service._handle_goal_first_message("something vague", thread_id="")
+
+    assert handled is True
+    assert service._execution.session.message_count == 1
+    assert saved == [("host-session", "something vague")]
+    assert service._execution.goal_service.started == []

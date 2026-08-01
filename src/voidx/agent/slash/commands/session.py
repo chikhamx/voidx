@@ -19,6 +19,10 @@ class SessionCommandsMixin:
                 profile = "chat"
             elif rest_lower in {"coding", "--coding"}:
                 profile = "coding"
+            elif rest_lower in {"goal", "--goal"}:
+                profile = "goal"
+            elif rest_lower in {"loop", "--loop"}:
+                profile = "loop"
 
             if profile is None:
                 await self._clear()

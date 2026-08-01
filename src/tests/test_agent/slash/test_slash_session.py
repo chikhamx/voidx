@@ -500,3 +500,44 @@ async def test_switch_profile_creates_new_session_when_locked(monkeypatch):
 
     assert calls == ["new loop"]
     assert session.runtime_profile == "coding"
+
+
+@pytest.mark.asyncio
+async def test_switch_profile_creates_goal_session_when_no_session(monkeypatch, isolated_memory_store):
+    """/goal on a brand-new host (no session yet) must create a goal-profile session."""
+    from voidx.memory.session import SessionInfo
+
+    created: list[SessionInfo] = []
+    resumed: list[SessionInfo] = []
+
+    async def fake_create_session(*args, **kwargs) -> SessionInfo:
+        session = SessionInfo(
+            id="goal-new",
+            workspace=str(kwargs.get("workspace") or "."),
+            runtime_profile=str(kwargs.get("profile") or "coding"),
+        )
+        created.append(session)
+        return session
+
+    async def fake_resume_session(session: SessionInfo) -> None:
+        resumed.append(session)
+
+    monkeypatch.setattr("voidx.memory.service.create_session", fake_create_session)
+    monkeypatch.setattr("voidx.memory.service.get_session", lambda _sid: None)
+
+    output = _capture_output(monkeypatch)
+    async def fake_show_startup(**kwargs) -> bool:
+        return True
+
+    graph = command_context(
+        session=None,
+        resume_session=fake_resume_session,
+        show_startup=fake_show_startup,
+    )
+
+    await SlashHandler(graph)._switch_profile("goal")
+
+    assert len(created) == 1
+    assert created[0].runtime_profile == "goal"
+    assert resumed == created
+    assert not output

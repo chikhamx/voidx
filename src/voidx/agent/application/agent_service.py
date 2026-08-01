@@ -23,6 +23,7 @@ from voidx.runtime.ui import (
     emit_web_gateway_bootstrap,
 )
 from voidx.agent.application.workflow_utils import active_workflow_names
+from voidx.runtime.task_state import goal_label
 from voidx.logging.tool_log import log_tool_event
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.application.coding_service import CODING_PROFILE
@@ -243,7 +244,7 @@ class AgentService:
             debug=lambda: self._execution.debug_enabled,
             plan_mode=lambda: self._execution.plan_mode,
             interaction_mode=lambda: self._execution.interaction_mode.value,
-            goal_label=lambda: "",
+            goal_label=lambda: goal_label(self._execution.task_state.current_goal),
             active_workflows=lambda: active_workflow_names(self._execution.task_state),
             mcp_servers=lambda: [
                 McpServerStatus(
@@ -667,6 +668,7 @@ class AgentService:
             )
         except GoalIntakeError as exc:
             ui.print(f"[dim]{exc}[/dim]")
+            await self._persist_first_message(user_input)
             return True
         ui.print(
             f"[dim]/goal started: [cyan]{status.objective_summary}[/cyan] "
