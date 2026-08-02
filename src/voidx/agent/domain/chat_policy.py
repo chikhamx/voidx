@@ -10,7 +10,7 @@ from voidx.agent.domain.tool_policy import ToolPolicyDecision
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-_LOCAL_READ_TOOLS = frozenset({"read", "find", "search"})
+_LOCAL_READ_TOOLS = frozenset({"read", "find", "search", "lsp"})
 _ALWAYS_BOUND_TOOLS = frozenset({"websearch", "webfetch", "mcp"})
 _ESCAPE_TOOLS = frozenset(
     {"bash", "powershell", "write", "manage", "replace", "git", "agent", "subagent"}

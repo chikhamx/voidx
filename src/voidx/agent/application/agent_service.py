@@ -467,49 +467,20 @@ class AgentService:
         context: TurnExecutionContext | None = None,
         display_text: str | None = None,
     ) -> None:
-        if self._coding_service is not None:
-            session_id = (
-                (getattr(context, "session_id", "") or None)
-                if context is not None
-                else (self._execution.session_id or None)
-            )
-            await self._coding_service.run_turn(
-                user_text=user_text,
-                thread_id=thread_id,
-                session_id=session_id,
-                context=context,
-                display_text=display_text,
-                workspace=self._execution.workspace,
-            )
-            return
-
-        from voidx.agent.runtime.contracts import TurnRequest
-
-        if context is not None:
-            resolved_thread_id = thread_id or context.thread_id or self._execution.session_id or "coding"
-            session_id = context.session_id or None
-            execution_context = context
-        else:
-            session_id = self._execution.session_id or None
-            resolved_thread_id = thread_id or session_id or "coding"
-            execution_context = TurnExecutionContext(
-                thread_id=resolved_thread_id,
-                session_id=session_id or "",
-                runtime_profile=CODING_PROFILE,
-                workspace=self._execution.workspace,
-            )
-
-        await self._runtime.run_turn(
-            TurnRequest(
-                thread=AgentThread(
-                    thread_id=resolved_thread_id,
-                    session_id=session_id,
-                ),
-                user_text=user_text,
-                runtime=None,
-                display_text=display_text,
-                context=execution_context,
-            )
+        if self._coding_service is None:
+            raise RuntimeError("coding service is not configured")
+        session_id = (
+            (getattr(context, "session_id", "") or None)
+            if context is not None
+            else (self._execution.session_id or None)
+        )
+        await self._coding_service.run_turn(
+            user_text=user_text,
+            thread_id=thread_id,
+            session_id=session_id,
+            context=context,
+            display_text=display_text,
+            workspace=self._execution.workspace,
         )
 
     def _ensure_gateway_thread(self) -> None:

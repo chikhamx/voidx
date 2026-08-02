@@ -73,7 +73,7 @@ not a coding workspace.
 Available tools:
 - websearch and webfetch for web lookups
 - MCP tools registered by the current MCP integration
-- read-only filesystem tools (read, glob, grep, lsp) only when a workspace is bound
+- read-only filesystem tools (read, find, search, lsp) only when a workspace is bound
 
 Restrictions:
 - No shell execution (bash, powershell) and no local writes (write, replace, manage, delete, move)

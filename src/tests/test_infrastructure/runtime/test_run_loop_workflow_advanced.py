@@ -110,7 +110,7 @@ async def test_run_turn_preadvances_workflow_from_resolver_workflow_start(tmp_pa
     )
     captured: dict[str, object] = {}
 
-    def _fake_resolve_goal_mode(user_text, task_state):
+    def _fake_build_goal_resolution(user_text, task_state):
         return GoalResolution(
             intent=IntentResolution(type=TaskIntent.CODING),
             goal=GoalSpec(desc="agent_name 语义清理"),
@@ -125,7 +125,7 @@ async def test_run_turn_preadvances_workflow_from_resolver_workflow_start(tmp_pa
     graph.graph = FakeGraph()
     graph._interaction_mode = InteractionMode.GOAL
     import voidx.agent.infrastructure.langgraph.runtime.turn_runner as turn_runner_mod
-    monkeypatch.setattr(turn_runner_mod, "resolve_goal_mode", _fake_resolve_goal_mode)
+    monkeypatch.setattr(turn_runner_mod, "build_goal_resolution", _fake_build_goal_resolution)
 
     test_dock = BottomInputDock()
     set_dock(test_dock)

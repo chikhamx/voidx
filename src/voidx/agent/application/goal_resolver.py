@@ -76,7 +76,7 @@ def resolve_plan_mode(user_text: str, task_state: TaskState) -> GoalResolution:
     )
 
 
-def resolve_goal_mode(user_text: str, task_state: TaskState) -> GoalResolution:
+def build_goal_resolution(user_text: str, task_state: TaskState) -> GoalResolution:
     """GOAL mode: construct result directly without LLM call.
 
     The user must specify a goal to enter goal mode. Fixed entry from plan node;

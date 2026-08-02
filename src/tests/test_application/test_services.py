@@ -270,7 +270,7 @@ class FakeRuntime:
 
 
 @pytest.mark.asyncio
-async def test_agent_service_fallback_coding_runner_builds_context_and_preserves_display_text():
+async def test_agent_service_coding_runner_raises_without_coding_service():
     execution = FakeExecutionHost(session_id="session-1")
     runtime = FakeRuntime()
     service = __import__(
@@ -278,22 +278,12 @@ async def test_agent_service_fallback_coding_runner_builds_context_and_preserves
         fromlist=["AgentService"],
     ).AgentService(execution, runtime=runtime, coding_service=None)
 
-    await service.run_coding_turn(
-        "generate agents",
-        thread_id="thread-1",
-        display_text="/init",
-    )
-
-    assert len(runtime.requests) == 1
-    request = runtime.requests[0]
-    assert request.user_text == "generate agents"
-    assert request.display_text == "/init"
-    assert request.thread.thread_id == "thread-1"
-    assert request.thread.session_id == "session-1"
-    assert request.context.thread_id == "thread-1"
-    assert request.context.session_id == "session-1"
-    assert request.context.runtime_profile.profile_id == "coding"
-    assert request.context.workspace == "/tmp/workspace"
+    with pytest.raises(RuntimeError, match="coding service is not configured"):
+        await service.run_coding_turn(
+            "generate agents",
+            thread_id="thread-1",
+            display_text="/init",
+        )
 
 
 @pytest.mark.asyncio
@@ -334,11 +324,5 @@ async def test_agent_service_fallback_runner_preserves_explicit_context_identity
         workspace="/tmp/workspace",
     )
 
-    await service.run_coding_turn("continue target", context=context)
-
-    assert len(runtime.requests) == 1
-    request = runtime.requests[0]
-    assert request.thread.thread_id == "target-thread"
-    assert request.thread.session_id == "target-session"
-    assert request.context is context
-    assert request.context.workspace == "/tmp/workspace"
+    with pytest.raises(RuntimeError, match="coding service is not configured"):
+        await service.run_coding_turn("continue target", context=context)

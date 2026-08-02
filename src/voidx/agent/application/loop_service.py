@@ -10,7 +10,7 @@ from voidx.agent.application.autonomous import (
     new_generation,
     parent_id,
 )
-from voidx.agent.domain.loop import LOOP_PROFILE, LoopMode, LoopSpec
+from voidx.agent.domain.loop import LoopMode, LoopSpec, loop_profile_for_spec
 from voidx.agent.loop.prompt_materialize import materialize_loop_prompt
 from voidx.agent.domain.thread import (
     TERMINAL_LIFECYCLES,
@@ -209,7 +209,7 @@ class LoopService(AutonomousServiceBase[LoopSpec, LoopScheduler]):
                     parent_thread_id=parent_thread_id,
                     workspace=self._workspace,
                 ),
-                profile=LOOP_PROFILE,
+                profile=loop_profile_for_spec(spec),
                 state=state,
                 resource_scope={"workspace": self._workspace},
             )

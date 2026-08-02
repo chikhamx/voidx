@@ -24,12 +24,10 @@ class LoopAttemptController:
             raise ValueError(
                 f"outcome {runtime_decision.outcome!r} is not allowed: use 'continue'"
             )
-        if self.spec.mode is LoopMode.FIXED and runtime_decision.outcome == "continue":
+        if self.spec.mode is LoopMode.FIXED:
             runtime_decision = runtime_decision.model_copy(
                 update={"next_delay_seconds": self.spec.interval_seconds}
             )
-        elif runtime_decision.outcome != "continue":
-            runtime_decision = runtime_decision.model_copy(update={"next_delay_seconds": None})
         self._decision = runtime_decision
         return runtime_decision
 

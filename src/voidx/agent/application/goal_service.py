@@ -104,7 +104,6 @@ class GoalService(AutonomousServiceBase[GoalSpec, GoalScheduler]):
             return None
         if loaded.state.lifecycle in TERMINAL_LIFECYCLES:
             if not include_terminal:
-                self._active_specs.pop(parent, None)
                 return None
             self._active_specs.pop(parent, None)
         state = GoalState.model_validate(loaded.state.context["goal_run"])

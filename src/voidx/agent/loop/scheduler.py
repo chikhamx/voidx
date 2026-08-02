@@ -60,7 +60,7 @@ class LoopRuntimeRunner:
             session_id=thread.session_id or "",
             runtime_profile=runtime_profile,
             workspace=thread.workspace,
-            tool_policy=LoopToolView.default(workflow_enabled=False).bind(_available_loop_tool_ids()),
+            tool_policy=LoopToolView.default(workflow_enabled=spec.workflow_enabled).bind(_available_loop_tool_ids()),
             loop_controller=controller,
         )
         await self.runtime.run_turn(
@@ -120,8 +120,21 @@ class LoopRuntimeScheduler(WakeupPumpMixin):
     def _pump_has_work(self) -> bool:
         return bool(self._managed_thread_ids)
 
+    def _claim_wakeup_filters(self) -> dict:
+        return {"thread_id_prefix": "loop:"}
+
     async def _owns_wakeup(self, thread_id: str) -> bool:
-        return thread_id in self._managed_thread_ids
+        if not self._managed_thread_ids:
+            return False
+        if thread_id in self._managed_thread_ids:
+            return True
+        if not self._session_id or not thread_id.startswith(f"loop:{self._session_id}:"):
+            return False
+        loaded = await self._store.load(thread_id)
+        return loaded is not None and loaded.profile.profile_id == "loop"
+
+    def _on_wakeup_owned(self, outbox) -> None:
+        self._managed_thread_ids.add(outbox.thread_id)
 
     def _runner(self):
         return LoopRuntimeRunner(self._runtime)

@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from voidx.agent.application.todo_state import sanitize_todo_replay_messages
 from voidx.agent.application.attachments import build_user_message_payload, serialize_message_content
 from voidx.agent.infrastructure.message_rows import messages_from_rows_incremental
-from voidx.agent.application.goal_resolver import resolve_goal_mode, resolve_plan_mode
+from voidx.agent.application.goal_resolver import build_goal_resolution, resolve_plan_mode
 from voidx.agent.application.runtime_context import TaskIntent
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.domain.turn_metadata import turn_metadata_from_context
@@ -240,7 +240,7 @@ class TurnRunner:
                 if interaction_mode == InteractionMode.PLAN.value:
                     intent_resolution = resolve_plan_mode(payload.title_text, base_task_state)
                 elif interaction_mode == InteractionMode.GOAL.value:
-                    intent_resolution = resolve_goal_mode(payload.title_text, base_task_state)
+                    intent_resolution = build_goal_resolution(payload.title_text, base_task_state)
                 else:
                     intent_resolution = GoalResolution(
                         intent=IntentResolution(type=TaskIntent.CODING),

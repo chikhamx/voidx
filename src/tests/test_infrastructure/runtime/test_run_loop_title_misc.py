@@ -77,7 +77,7 @@ async def test_run_turn_keeps_default_title_when_resolver_falls_back_without_goa
 async def test_smart_title_generation_failure_keeps_temporary_title(tmp_path, monkeypatch):
     graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None)
 
-    def _fake_resolve_goal_mode(user_text, task_state):
+    def _fake_build_goal_resolution(user_text, task_state):
         return GoalResolution(
             intent=IntentResolution(type=TaskIntent.CODING),
             goal=GoalSpec(desc="分析启动流程"),
@@ -91,7 +91,7 @@ async def test_smart_title_generation_failure_keeps_temporary_title(tmp_path, mo
     graph.graph = FakeGraph()
     graph._interaction_mode = InteractionMode.GOAL
     import voidx.agent.infrastructure.langgraph.runtime.turn_runner as turn_runner_mod
-    monkeypatch.setattr(turn_runner_mod, "resolve_goal_mode", _fake_resolve_goal_mode)
+    monkeypatch.setattr(turn_runner_mod, "build_goal_resolution", _fake_build_goal_resolution)
     test_dock = BottomInputDock()
     set_dock(test_dock)
     test_dock.begin_capture()
