@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -27,6 +28,7 @@ from voidx.tools.base import (
     tool_timeout_metadata,
 )
 from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
+from voidx.ui.output.agent_display import subagent_display_name
 
 
 class AgentResultContract(BaseModel):
@@ -38,20 +40,40 @@ class AgentResultContract(BaseModel):
 
 
 class AgentInput(BaseModel):
-    name: str = Field(
-        description="Child agent identity to run. Use voidx.",
+    action: Literal["spawn", "wait", "cancel"] = Field(
+        default="spawn",
+        description="Lifecycle action. Use spawn to start a child agent asynchronously and return run_id; use wait/cancel with target_run_id.",
     )
-    mode: Literal["inspect", "review", "debug", "plan", "implement", "feedback"] = Field(
-        description="Kind of bounded child-agent work. Drives internal workflow routing.",
+    target_run_id: str | None = Field(
+        default=None,
+        description="Target child run id for wait/cancel actions.",
     )
-    task: str = Field(
+    timeout: float = Field(
+        default=0,
         description=(
-            "Complete, self-contained task brief for the child agent. "
-            "Caller conversation history is not inherited."
+            "Seconds to wait for wait action. "
+            "Use 0 to wait indefinitely until the child reaches a terminal state; "
+            "use a positive value for a bounded wait."
         ),
     )
-    target: str = Field(
-        description="Single file, module, directory, behavior, or issue scope for this child task.",
+    name: str | None = Field(
+        default=None,
+        description="Child agent identity to run. Use voidx. Required for spawn.",
+    )
+    mode: Literal["inspect", "review", "debug", "plan", "implement", "feedback"] | None = Field(
+        default=None,
+        description="Kind of bounded child-agent work. Drives internal workflow routing. Required for spawn.",
+    )
+    task: str | None = Field(
+        default=None,
+        description=(
+            "Complete, self-contained task brief for the child agent. "
+            "Caller conversation history is not inherited. Required for spawn."
+        ),
+    )
+    target: str | None = Field(
+        default=None,
+        description="Single file, module, directory, behavior, or issue scope for this child task. Required for spawn.",
     )
     success_criteria: str = Field(
         default="",
@@ -138,7 +160,18 @@ def _normalize_agent_args(args):
         return args
     mode = str(args.get("mode") or "").strip().lower()
     normalized = keep_tool_args(
-        args, {"name", "mode", "task", "target", "success_criteria", "result_preset"}
+        args,
+        {
+            "action",
+            "target_run_id",
+            "timeout",
+            "name",
+            "mode",
+            "task",
+            "target",
+            "success_criteria",
+            "result_preset",
+        },
     )
     normalized = drop_nullish_tool_fields(
         normalized, "success_criteria", "result_preset"
@@ -154,7 +187,8 @@ def _normalize_agent_args(args):
 class AgentTool(BaseTool):
     id = "agent"
     description = (
-        "Run an isolated child agent for one independent delegated task and return its completed result. "
+        "Start an isolated child agent for one independent delegated task and return its run_id immediately. "
+        "Use agent(wait) with target_run_id to collect the completed result, or agent(cancel) to stop it. "
         "The child receives the task brief and runtime context, but not caller conversation history."
     )
 
@@ -208,6 +242,23 @@ class AgentTool(BaseTool):
                 ),
                 metadata={"error": True, "validation_error": True},
             )
+        if inp.action in {"wait", "cancel"}:
+            return await _execute_control_action(inp, ctx)
+
+        missing_spawn_fields = [
+            field
+            for field in ("name", "mode", "task", "target")
+            if getattr(inp, field) is None
+        ]
+        if missing_spawn_fields:
+            return ToolResult(
+                output=(
+                    "Child agent delegation rejected."
+                    f" Missing required argument: {', '.join(missing_spawn_fields)}. "
+                    "The main agent must provide name, mode, task, and target for each delegated task."
+                ),
+                metadata={"error": True, "validation_error": True},
+            )
         requested_agent = inp.name
 
         rejection = _delegation_rejection(inp)
@@ -235,26 +286,54 @@ class AgentTool(BaseTool):
             )
 
         try:
-            output = await self._run_child_agent(
-                agent_def,
-                normalized.description,
-                normalized.goal_resolution,
-                normalized.result_contract,
-                **_runner_permission_kwargs(self._run_child_agent, ctx),
+            if ctx.agent_gateway is None or not ctx.agent_run_id:
+                return ToolResult(
+                    output="Agent gateway is required for agent(spawn).",
+                    metadata={"agent": agent_def_name, "error": True, "reason": "gateway_unavailable"},
+                )
+
+            async def gateway_runner(agent_run_id: str) -> str:
+                return await self._run_child_agent(
+                    agent_def,
+                    normalized.description,
+                    normalized.goal_resolution,
+                    normalized.result_contract,
+                    **_runner_kwargs(
+                        self._run_child_agent,
+                        ctx,
+                        agent_run_id=agent_run_id,
+                    ),
+                )
+
+            run = await ctx.agent_gateway.spawn(
+                session_id=ctx.session_id,
+                parent_run_id=ctx.agent_run_id,
+                agent_name=agent_def_name,
+                description=normalized.description,
+                runner=gateway_runner,
             )
             goal = normalized.goal_resolution.goal
             plan = normalized.goal_resolution.plan
+            metadata = {
+                "agent": agent_def_name,
+                "intent": normalized.goal_resolution.intent.model_dump(mode="json"),
+                "goal": goal.model_dump(mode="json") if goal is not None else None,
+                "workflow_route": plan.model_dump(mode="json") if plan is not None else None,
+                "result_schema": normalized.result_contract.schema_name,
+                "run_id": run.run_id,
+                "status": run.status,
+                "run": run.model_dump(mode="json"),
+            }
             return ToolResult(
                 title=f"{agent_def_name}: {normalized.description[:60]}",
-                output=output,
-                summary=f"{agent_def_name} completed",
-                metadata={
-                    "agent": agent_def_name,
-                    "intent": normalized.goal_resolution.intent.model_dump(mode="json"),
-                    "goal": goal.model_dump(mode="json") if goal is not None else None,
-                    "workflow_route": plan.model_dump(mode="json") if plan is not None else None,
-                    "result_schema": normalized.result_contract.schema_name,
-                },
+                output=f"Child agent '{agent_def_name}' spawned with run_id {run.run_id}.",
+                display=f"Spawned {subagent_display_name(run.run_id)}.",
+                summary=f"{agent_def_name} spawned",
+                metadata=metadata,
+                next_step_hint=(
+                    f"Use agent(wait) with target_run_id={run.run_id} to collect the result, "
+                    "or agent(cancel) to stop it."
+                ),
             )
         except TimeoutError as exc:
             return ToolResult(
@@ -272,6 +351,89 @@ class AgentTool(BaseTool):
                 metadata={"agent": agent_def_name, "error": True, "reason": "exception", "detail": str(exc)[:200]},
             )
 
+
+async def _execute_control_action(inp: AgentInput, ctx: ToolContext) -> ToolResult:
+    gateway = ctx.agent_gateway
+    if gateway is None or not ctx.agent_run_id:
+        return ToolResult(
+            output="Agent gateway is unavailable for wait/cancel.",
+            metadata={"error": True, "reason": "gateway_unavailable"},
+        )
+    if not inp.target_run_id:
+        return ToolResult(
+            output=f"agent({inp.action}) requires target_run_id.",
+            metadata={"error": True, "reason": "missing_target_run_id"},
+        )
+    try:
+        if inp.action == "wait":
+            if inp.timeout < 0:
+                return ToolResult(
+                    output="agent(wait) requires timeout greater than or equal to 0.",
+                    metadata={"error": True, "reason": "invalid_timeout"},
+                )
+            run = await gateway.wait(
+                requester_run_id=ctx.agent_run_id,
+                target_run_id=inp.target_run_id,
+                timeout=inp.timeout,
+            )
+        else:
+            run = await gateway.cancel(
+                requester_run_id=ctx.agent_run_id,
+                target_run_id=inp.target_run_id,
+            )
+    except Exception as exc:
+        detail = str(exc).strip() or exc.__class__.__name__
+        return ToolResult(
+            output=f"agent({inp.action}) failed: {detail}",
+            metadata={"error": True, "reason": "gateway_error", "detail": detail[:200]},
+        )
+    display_name = subagent_display_name(run.run_id)
+    if inp.action == "wait" and run.status not in {"completed", "failed", "cancelled"}:
+        return ToolResult(
+            output=(
+                f"Agent run {run.run_id} is still {run.status}. "
+                "Call agent(wait) again to continue waiting, or agent(cancel) to stop it."
+            ),
+            display=f"{display_name} is still {run.status}.",
+            summary=f"{display_name} {run.status}",
+            metadata={
+                "run": run.model_dump(mode="json"),
+                "status": run.status,
+                "reason": "timeout",
+            },
+            next_step_hint=(
+                f"Use agent(wait, target_run_id={run.run_id}, timeout=...) again, "
+                f"or agent(cancel, target_run_id={run.run_id})."
+            ),
+        )
+    return ToolResult(
+        output=_result_output(run.result) or run.error or run.status,
+        display=f"{display_name} {run.status}.",
+        summary=f"{display_name} {run.status}",
+        metadata={"run": run.model_dump(mode="json"), "status": run.status},
+    )
+
+
+def _result_output(result: dict[str, Any] | None) -> str:
+    if not result:
+        return ""
+    for key in ("result", "output", "content", "text"):
+        if key in result:
+            return str(result.get(key) or "")
+    return json.dumps(result, ensure_ascii=False, default=str)
+
+
+def _runner_kwargs(runner, ctx: ToolContext, *, agent_run_id: str | None = None) -> dict[str, object]:
+    kwargs = _runner_permission_kwargs(runner, ctx)
+    try:
+        params = inspect.signature(runner).parameters
+    except (TypeError, ValueError):
+        return kwargs
+    if agent_run_id is not None and "agent_run_id" in params:
+        kwargs["agent_run_id"] = agent_run_id
+    if ctx.agent_gateway is not None and "agent_gateway" in params:
+        kwargs["agent_gateway"] = ctx.agent_gateway
+    return kwargs
 
 def _runner_permission_kwargs(runner, ctx: ToolContext) -> dict[str, object]:
     if ctx.get_access_grants is None or ctx.get_revocation_epoch is None:
@@ -321,6 +483,8 @@ def _description_for_child(inp: AgentInput) -> str:
 
 
 def _delegation_rejection(inp: AgentInput) -> str:
+    if not inp.name.strip():
+        return "Child agent delegation rejected. spawn requires name."
     if len("".join(inp.task.split())) < 12:
         return "Child agent delegation rejected. task must be a complete, self-contained brief."
     if not inp.target.strip():

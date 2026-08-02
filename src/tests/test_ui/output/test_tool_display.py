@@ -62,3 +62,67 @@ def test_strip_rich_markup_removes_markup_and_key_prefix():
 def test_mcp_tool_display_name_removes_prefix_and_hash():
     assert mcp_tool_display_name("mcp__tavily__tavily_search_943584b9") == "Tavily Search"
     assert mcp_tool_display_name("mcp__github__list_issues_1234abcd") == "Github List Issues"
+
+def test_extract_tool_display_value_for_agent_wait_and_cancel():
+    from voidx.ui.output.agent_display import subagent_display_name
+
+    run_id = "run_8bf0d23519a843dd9213989e25427944"
+    display_name = subagent_display_name(run_id)
+    wait_args = {
+        "action": "wait",
+        "target_run_id": run_id,
+        "timeout": 0.0,
+        "result_preset": "auto",
+    }
+    cancel_args = {
+        "action": "cancel",
+        "target_run_id": run_id,
+    }
+    assert extract_tool_display_value("agent", wait_args, "") == display_name
+    assert extract_tool_display_value("agent", cancel_args, "") == display_name
+    assert run_id not in extract_tool_display_value(
+        "agent",
+        wait_args,
+        f'action="wait", target_run_id="{run_id}", timeout=0.0',
+    )
+
+
+def test_agent_tool_header_for_wait_and_cancel_is_clean():
+    from voidx.ui.output.agent_display import subagent_display_name
+    from voidx.ui.output.dock.nodes import _tool_header
+    from voidx.ui.output.console.formatting import _fmt_args
+
+    run_id = "run_8bf0d23519a843dd9213989e25427944"
+    display_name = subagent_display_name(run_id)
+    wait_args = {
+        "action": "wait",
+        "target_run_id": run_id,
+        "timeout": 0.0,
+        "result_preset": "auto",
+    }
+    cancel_args = {
+        "action": "cancel",
+        "target_run_id": run_id,
+    }
+    spawn_args = {
+        "action": "spawn",
+        "name": "voidx",
+        "mode": "review",
+        "task": "review gateway",
+        "target": "docs/design/agent-gateway.md",
+    }
+
+    wait_header = _tool_header("agent", "Agenting", _fmt_args(wait_args), wait_args)
+    cancel_header = _tool_header("agent", "Agenting", _fmt_args(cancel_args), cancel_args)
+    spawn_header = _tool_header("agent", "Agenting", _fmt_args(spawn_args), spawn_args)
+
+    assert "Wait" in wait_header
+    assert display_name in wait_header
+    assert run_id not in wait_header
+    assert 'wait"' not in wait_header
+    assert "result_preset" not in wait_header
+    assert "Cancel" in cancel_header
+    assert display_name in cancel_header
+    assert run_id not in cancel_header
+    assert "voidx" in spawn_header
+

@@ -66,6 +66,12 @@ async def test_intake_runs_restricted_turn_and_starts_goal_from_init_tool() -> N
     assert not request.context.tool_policy.allows("write")
     assert request.display_text == "make the tests reliable"
     assert 'op="init"' in request.user_text
+    assert "Intake Workflow" in request.user_text
+    assert "objective" in request.user_text
+    assert "acceptance_condition" in request.user_text
+    assert "achievement_method" in request.user_text
+    assert "schedule" in request.user_text
+    assert "max_attempts" in request.user_text
     assert "Required output" not in request.user_text
 
 

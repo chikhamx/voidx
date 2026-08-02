@@ -25,18 +25,25 @@ _INTAKE_TOOL_IDS = frozenset(
 _INTAKE_PROMPT = """\
 You are initializing an autonomous Goal from the user's first request.
 
+Intake Workflow:
+1. Extract the objective: one stable sentence describing what must be accomplished.
+2. Define the acceptance_condition: a concrete, verifiable done condition.
+3. Capture the achievement_method: user-provided approach, constraints, schedule, cadence, priority, or execution guidance. If no method or schedule is supplied, use "".
+4. Resolve schedule and attempt budget: encode schedule/cadence in achievement_method, and set max_attempts only when the user gives an attempt budget; otherwise use 20.
+5. Submit only after the goal is clear enough to run autonomously: call goal with op="init" and the complete spec.
+
 Rules:
-- If the objective or acceptance condition is unclear, call clarify with one targeted question.
-- When both are clear, call goal with op="init" and the complete goal spec.
+- If any required intake item is unclear, call clarify with one targeted question before goal init.
+- Ask about exactly one missing item at a time; do not bundle unrelated decisions.
+- If the user already provided enough detail, do not ask extra questions; call goal with op="init".
 - Do not emit the spec as JSON text; the goal tool call is the only successful submission path.
 - Do not call goal with op="decision" during intake.
-- Use achievement_method for important execution guidance from the user; otherwise use "".
 - Read project files only when needed to ground the goal spec.
 
 Required goal(op="init") fields:
 - objective: one sentence describing what must be accomplished.
 - acceptance_condition: a concrete, verifiable condition that determines done.
-- achievement_method: optional approach or execution guidance; use "" if unknown.
+- achievement_method: optional approach, schedule/cadence, constraints, or execution guidance; use "" if unknown.
 - max_attempts: optional attempt budget; use 20 unless the user specifies otherwise.
 
 User request:

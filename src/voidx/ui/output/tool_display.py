@@ -6,6 +6,7 @@ import json
 import re
 from typing import Any
 
+from voidx.ui.output.agent_display import subagent_display_name
 from voidx.ui.output.dock.formatting import short_path
 from voidx.ui.output.manage_display import manage_display
 
@@ -62,7 +63,7 @@ def extract_tool_display_value(
     elif tool_name == "git":
         value = raw_args.get("args")
     elif tool_name == "agent":
-        value = raw_args.get("name") or raw_args.get("description")
+        value = _agent_display_value(raw_args)
     elif tool_name == "checkpoint":
         value = raw_args.get("goal")
     elif tool_name in {"webfetch", "websearch"}:
@@ -80,6 +81,13 @@ def extract_tool_display_value(
         return short_path(result, limit=short_path_limit)
     return result
 
+
+def _agent_display_value(raw_args: dict[str, Any]) -> object:
+    action = str(raw_args.get("action") or "spawn").strip().lower()
+    if action in {"wait", "cancel"}:
+        run_id = str(raw_args.get("target_run_id") or "").strip()
+        return subagent_display_name(run_id) if run_id else ""
+    return raw_args.get("name") or raw_args.get("description") or ""
 
 def mcp_tool_display_name(tool_name: str) -> str:
     match = _MCP_TOOL_ID_RE.match(tool_name)

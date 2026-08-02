@@ -211,6 +211,12 @@ class AgentService:
 
         async def cleanup_run_loop() -> None:
             await self._execution.delete_empty_current_session()
+            gateway = getattr(self._execution, "agent_gateway", None)
+            if gateway is not None and hasattr(gateway, "close_all"):
+                try:
+                    await gateway.close_all()
+                except Exception:
+                    pass
             if gateway_server is not None:
                 await gateway_server.stop()
             if update_check_task is not None:

@@ -9,6 +9,7 @@ import pytest
 from voidx.lsp.schema import LspLocation, LspPosition, LspRange
 from voidx.permission.grants import AccessGrant, AccessGrants
 from voidx.permission.service import PermissionService
+from voidx.agent.gateway import AgentGateway
 from voidx.tools.agent import AgentTool
 from voidx.tools.base import ToolContext
 from voidx.tools.lsp import LspTool
@@ -163,8 +164,13 @@ async def test_agent_tool_passes_subagent_permission_snapshot(tmp_path):
         agent_resolver=lambda name: _AgentDef(),
         available_agents=["voidx"],
     )
+    gateway = AgentGateway()
+    root_id = gateway.ensure_root("session-1")
     ctx = ToolContext(
         workspace=str(tmp_path),
+        session_id="session-1",
+        agent_gateway=gateway,
+        agent_run_id=root_id,
         get_access_grants=service.get_access_grants,
         get_revocation_epoch=lambda: service.revocation_epoch,
     )
@@ -180,6 +186,10 @@ async def test_agent_tool_passes_subagent_permission_snapshot(tmp_path):
     )
 
     assert result.metadata.get("error") is not True
+    await tool.execute(
+        {"action": "wait", "target_run_id": result.metadata["run_id"], "timeout": 1},
+        ctx,
+    )
     snapshot = captured["snapshot"]
     grants = snapshot.get_access_grants(current_revocation_epoch=service.revocation_epoch)
     assert str(tmp_path / "readable.txt") in grants.readable_files

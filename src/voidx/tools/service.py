@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from voidx.tools.agent import AgentTool
+from voidx.tools.message import MessageTool
 from voidx.tools.bash import BashTool
 from voidx.tools.base import (
     ApprovedToolRisk,
@@ -18,6 +19,7 @@ from voidx.tools.task_tracker import TaskState, TaskStatus, TaskTracker
 
 __all__ = [
     "AgentTool",
+    "MessageTool",
     "ApprovedToolRisk",
     "BaseTool",
     "BashTool",

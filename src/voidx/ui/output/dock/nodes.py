@@ -356,6 +356,13 @@ def _tool_header(
     raw_args: dict[str, Any],
 ) -> str:
     if tool_name == "agent":
+        action = str(raw_args.get("action") or "spawn").strip().lower()
+        if action in {"wait", "cancel"}:
+            name = "Wait" if action == "wait" else "Cancel"
+            value = extract_tool_display_value(tool_name, raw_args, args)
+            if value:
+                return f'[bold]{escape(name)}[/bold]("[cyan]{escape(_shorten(value))}[/cyan]")'
+            return f"[bold]{escape(name)}[/bold]()"
         agent_name = raw_args.get("name") or extract_tool_display_value(tool_name, raw_args, args)
         return f"[bold]{escape(agent_display_name(agent_name))}[/bold]"
     if tool_name == "manage":

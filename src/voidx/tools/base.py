@@ -132,6 +132,8 @@ class ToolContext(BaseModel):
     goal_intake_controller: Any | None = Field(default=None, exclude=True)
     goal_phase: str = "work"
     tool_registry: Any | None = Field(default=None, exclude=True)
+    agent_gateway: Any | None = Field(default=None, exclude=True)
+    agent_run_id: str = Field(default="", exclude=True)
     permission_mode: str = "safe"
     sandbox_readable_files: list[str] = Field(default_factory=list)
     sandbox_readable_dirs: list[str] = Field(default_factory=list)

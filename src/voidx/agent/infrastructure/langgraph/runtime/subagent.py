@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
 
@@ -49,6 +50,7 @@ from voidx.runtime.ui import (
     StreamingRenderer,
 )
 from voidx.tools.service import ToolContext, ToolRegistry, TaskTracker
+from voidx.tools.message import MessageTool
 from voidx.runtime.ui_port import AgentUiPort, runtime_ui_port
 
 
@@ -80,18 +82,27 @@ async def run_subagent(
     workflow_runtime_context: WorkflowRuntimeContext | None = None,
     todo_state_sink=None,
     permission_snapshot=None,
+    agent_run_id: str | None = None,
+    agent_gateway=None,
     ui_port: AgentUiPort = runtime_ui_port,
 ) -> str:
     """Run a child agent in its own message context."""
     agent_def = child_run_agent_def(agent_def)
+    run_identity = agent_run_id or f"agent_{agent_id}"
     persona = (runtime_persona or PersonaName.EXPLORE).strip() or PersonaName.EXPLORE
     model_cfg = config.model.model_copy()
     if agent_def.model:
         model_cfg.model = agent_def.model
 
-    # Child agents inherit the full parent tool registry.
-    # Access control is handled by the permission layer.
-    agent_tools = parent_tools or ToolRegistry()
+    # Child agents inherit the parent registry through a copy so child-only tools
+    # do not leak back into the main agent registry.
+    if parent_tools is not None:
+        agent_tools = parent_tools.filtered_copy(set(parent_tools.ids()))
+    else:
+        agent_tools = ToolRegistry()
+    if hasattr(agent_tools, "register"):
+        message_tool = MessageTool()
+        agent_tools.register(message_tool.id, message_tool, message_tool.description, message_tool.parameters_schema())
     blocked_child_tools = _BLOCKED_CHILD_TOOLS
     if not agent_def.can_delegate:
         agent_tools = agent_tools.filtered_copy(set(agent_tools.ids()) - blocked_child_tools)
@@ -145,6 +156,8 @@ async def run_subagent(
         session_id=session_id or "default",
         lsp_manager=lsp_manager,
         tool_registry=agent_tools,
+        agent_gateway=agent_gateway,
+        agent_run_id=run_identity,
         format_after_edit_enabled=config.lsp_format_after_edit,
         permission_mode=config.permission_mode.value,
         sandbox_readable_files=list(snapshot_grants.readable_files) if snapshot_grants is not None else list(config.sandbox_readable_files),
@@ -160,6 +173,24 @@ async def run_subagent(
     )
 
     # Register with tracker
+
+    async def report_result(text: str) -> None:
+        if agent_gateway is None or not run_identity:
+            return
+        current = _gateway_run_by_id(agent_gateway, run_identity)
+        if current is None:
+            return
+        if current.status in {"completed", "failed", "cancelled"}:
+            return
+        parent_run_id = current.parent_run_id
+        if not parent_run_id:
+            return
+        await agent_gateway.send(
+            sender_run_id=run_identity,
+            target_run_id=parent_run_id,
+            message_type="result",
+            payload={"result": text},
+        )
     task_id = f"sub_{agent_def.name}_{persona}_{int(time.time())}"
     if tracker:
         tracker.start(task_id, persona, task_description)
@@ -270,7 +301,7 @@ async def run_subagent(
                     for tc in tool_calls
                     if isinstance(tc, dict)
                 ]
-                await append_subagent_event(session_id, f"agent_{agent_id}", {
+                await append_subagent_event(session_id, run_identity, {
                     "type": "assistant_message",
                     "step": step,
                     "content_preview": (assistant_msg.content or "")[:200],
@@ -289,11 +320,13 @@ async def run_subagent(
                     if tracker:
                         tracker.update(task_id, last_output=text[:200])
                         tracker.finish(task_id, "completed")
+                    await report_result(text)
                     mark_finished("contract_unsatisfied")
                     return text
                 if tracker:
                     tracker.update(task_id, last_output=text[:200])
                     tracker.finish(task_id, "completed")
+                await report_result(text)
                 mark_finished("final_answer")
                 return text
 
@@ -318,6 +351,7 @@ async def run_subagent(
                     if tracker:
                         tracker.update(task_id, last_output=repetitive_decision.message[:200])
                         tracker.finish(task_id, "completed")
+                    await report_result(repetitive_decision.message)
                     mark_finished("guard_terminated")
                     return repetitive_decision.message
                 continue
@@ -354,7 +388,7 @@ async def run_subagent(
                     if todo_event is not None:
                         ui_port.events.emit_direct(todo_event)
                 if session_id:
-                    await append_subagent_event(session_id, f"agent_{agent_id}", {
+                    await append_subagent_event(session_id, run_identity, {
                         "type": "tool_result",
                         "step": step,
                         "tool_name": tid,
@@ -385,6 +419,10 @@ async def run_subagent(
                     "todo_state": todo_state,
                 }
 
+            result_tool_call = next((tc for tc in approved if _is_message_result_tool_call(tc)), None)
+            if result_tool_call is not None:
+                approved = [result_tool_call]
+
             executed = await asyncio.gather(*[run_one(tc) for tc in approved])
             executed = [item for item in executed if item is not None]
             denied_msgs = [
@@ -399,6 +437,27 @@ async def run_subagent(
             messages.extend(tool_msgs + denied_msgs)
             sub_messages.extend(tool_msgs + denied_msgs)
 
+
+            for item in executed:
+                metadata = getattr(item["result"], "metadata", {}) or {}
+                if (
+                    item["tool_call"].get("name") == "message"
+                    and metadata.get("message_type") == "result"
+                    and result_ok(item["result"])
+                ):
+                    text = str(getattr(item["result"], "output", "") or "")
+                    if agent_gateway is not None:
+                        try:
+                            current = _gateway_run_by_id(agent_gateway, run_identity)
+                            if current is not None:
+                                text = _result_text(current.result) or text
+                        except Exception:
+                            pass
+                    if tracker:
+                        tracker.update(task_id, last_output=text[:200])
+                        tracker.finish(task_id, "completed")
+                    mark_finished("message_result")
+                    return text
             for item in executed:
                 metadata = getattr(item["result"], "metadata", {}) or {}
                 if metadata.get("runtime_guard"):
@@ -438,6 +497,7 @@ async def run_subagent(
                 if tracker:
                     tracker.update(task_id, last_output=no_progress_decision.message[:200])
                     tracker.finish(task_id, "completed")
+                await report_result(no_progress_decision.message)
                 mark_finished("guard_terminated")
                 return no_progress_decision.message
             wall_clock_decision = guard_state.wall_clock.record_check(
@@ -448,6 +508,7 @@ async def run_subagent(
                 if tracker:
                     tracker.update(task_id, last_output=wall_clock_decision.message[:200])
                     tracker.finish(task_id, "completed")
+                await report_result(wall_clock_decision.message)
                 mark_finished("guard_terminated")
                 return wall_clock_decision.message
 
@@ -478,6 +539,35 @@ def _task_payload(task_description: str, result_contract) -> str:
             "Return the final answer using this contract."
         )
     return "\n\n".join(parts)
+
+
+def _is_message_result_tool_call(tool_call: dict) -> bool:
+    args = tool_call.get("args")
+    return (
+        tool_call.get("name") == "message"
+        and isinstance(args, dict)
+        and args.get("action", "send") == "send"
+        and args.get("message_type") == "result"
+    )
+
+
+def _gateway_run_by_id(gateway, run_id: str):
+    try:
+        for run in gateway.list_runs():
+            if run.run_id == run_id:
+                return run
+    except Exception:
+        return None
+    return None
+
+
+def _result_text(result: dict | None) -> str:
+    if not result:
+        return ""
+    for key in ("result", "output", "content", "text"):
+        if key in result:
+            return str(result.get(key) or "")
+    return json.dumps(result, ensure_ascii=False, default=str)
 
 
 def _result_contract_fields(result_contract) -> list[str]:

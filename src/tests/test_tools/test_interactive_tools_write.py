@@ -20,6 +20,7 @@ import voidx.tools.file.state as file_state
 from voidx.tools.search import FindInput, SearchInput
 from voidx.tools.bash import BashInput
 from voidx.tools.agent import AgentInput, AgentTool
+from voidx.agent.gateway import AgentGateway
 from voidx.tools.task_tracker import TaskTracker
 from voidx.tools.task_status import TaskStatusTool
 from voidx.tools.todo import TodoInput, TodoWriteTool
@@ -157,6 +158,28 @@ class TestInteractiveTools:
         args.update(overrides)
         return args
 
+    async def _spawn_and_wait_agent(self, tool: AgentTool, args: dict, tmp_path):
+        gateway = AgentGateway()
+        root_id = gateway.ensure_root("session-1")
+        ctx = ToolContext(
+            workspace=str(tmp_path),
+            session_id="session-1",
+            agent_gateway=gateway,
+            agent_run_id=root_id,
+        )
+        spawn_result = await tool.execute(args, ctx)
+        assert spawn_result.metadata["run_id"]
+        assert spawn_result.metadata["status"] == "running"
+        wait_result = await tool.execute(
+            {
+                "action": "wait",
+                "target_run_id": spawn_result.metadata["run_id"],
+                "timeout": 1,
+            },
+            ctx,
+        )
+        return spawn_result, wait_result
+
     @pytest.mark.asyncio
     async def test_agent_tool_rejects_missing_target(self, tmp_path):
         calls: list[object] = []
@@ -278,15 +301,12 @@ class TestInteractiveTools:
             available_agents=["voidx"],
         )
 
-        result = await tool.execute(
-            self._agent_args(),
-            ToolContext(workspace=str(tmp_path)),
-        )
+        spawn_result, wait_result = await self._spawn_and_wait_agent(tool, self._agent_args(), tmp_path)
 
-        assert result.output == "child result"
-        assert result.metadata["goal"] == {"desc": "review: src/voidx/tools/agent.py"}
-        assert result.metadata["workflow_route"] == {"join": "review", "leave": "review"}
-        assert result.metadata["result_schema"] == "review_result"
+        assert wait_result.output == "child result"
+        assert spawn_result.metadata["goal"] == {"desc": "review: src/voidx/tools/agent.py"}
+        assert spawn_result.metadata["workflow_route"] == {"join": "review", "leave": "review"}
+        assert spawn_result.metadata["result_schema"] == "review_result"
         assert "Target: src/voidx/tools/agent.py" in captured["description"]
         assert "Result contract:" not in captured["description"]
         assert captured["goal_resolution"].goal.desc == "review: src/voidx/tools/agent.py"
@@ -310,16 +330,17 @@ class TestInteractiveTools:
             available_agents=["voidx"],
         )
 
-        result = await tool.execute(
+        _spawn_result, wait_result = await self._spawn_and_wait_agent(
+            tool,
             self._agent_args(
                 mode="inspect",
                 task="Inspect the runtime module",
                 target="src/voidx/runtime",
             ),
-            ToolContext(workspace=str(tmp_path)),
+            tmp_path,
         )
 
-        assert result.output == "child result"
+        assert wait_result.output == "child result"
         goal_resolution = captured["goal_resolution"]
         assert goal_resolution.goal.desc == "inspect: src/voidx/runtime"
         assert goal_resolution.plan.join == "review"
@@ -343,17 +364,18 @@ class TestInteractiveTools:
             available_agents=["voidx"],
         )
 
-        result = await tool.execute(
+        _spawn_result, wait_result = await self._spawn_and_wait_agent(
+            tool,
             self._agent_args(
                 mode="feedback",
                 task="Address the review feedback",
                 target="review comment about agent routing",
                 success_criteria="Return accepted/rejected status and verification notes.",
             ),
-            ToolContext(workspace=str(tmp_path)),
+            tmp_path,
         )
 
-        assert result.output == "child result"
+        assert wait_result.output == "child result"
         goal_resolution = captured["goal_resolution"]
         assert goal_resolution.goal.desc == "feedback: review comment about agent routing"
         assert goal_resolution.plan.join == "feedback"
@@ -377,17 +399,18 @@ class TestInteractiveTools:
             available_agents=["voidx"],
         )
 
-        result = await tool.execute(
+        _spawn_result, wait_result = await self._spawn_and_wait_agent(
+            tool,
             self._agent_args(
                 mode="implement",
                 task="Implement the agent mode contract",
                 target="src/voidx/tools/agent.py",
                 success_criteria="Focused tests pass for the new agent input schema.",
             ),
-            ToolContext(workspace=str(tmp_path)),
+            tmp_path,
         )
 
-        assert result.output == "child result"
+        assert wait_result.output == "child result"
         goal_resolution = captured["goal_resolution"]
         assert goal_resolution.goal.desc == "implement: src/voidx/tools/agent.py"
         assert goal_resolution.plan.join == "tdd"
@@ -417,16 +440,17 @@ class TestInteractiveTools:
         )
 
         for mode, schema_name in expected.items():
-            result = await tool.execute(
+            spawn_result, wait_result = await self._spawn_and_wait_agent(
+                tool,
                 self._agent_args(
                     mode=mode,
                     task=f"Run {mode} child agent task",
                     target=f"target/{mode}",
                     success_criteria="Return structured status and verification notes.",
                 ),
-                ToolContext(workspace=str(tmp_path)),
+                tmp_path,
             )
-            assert result.output == "child result"
-            assert result.metadata["result_schema"] == schema_name
+            assert wait_result.output == "child result"
+            assert spawn_result.metadata["result_schema"] == schema_name
 
         assert captured == list(expected.values())

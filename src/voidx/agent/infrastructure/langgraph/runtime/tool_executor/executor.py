@@ -16,6 +16,8 @@ from voidx.agent.application.tool_messages import sanitize_tool_message_content
 from voidx.agent.infrastructure.tool_result_storage import maybe_persist_tool_result
 from voidx.agent.infrastructure.langgraph.runtime.todo_events import todo_updated_event
 from voidx.runtime.ui import (
+    AssistantStreamCommitted,
+    AssistantStreamUpdated,
     DEFAULT_DISPLAY_RULES,
     StatusFinished,
     StatusUpdated,
@@ -57,9 +59,44 @@ from .ui import (
 )
 
 def _loop_iteration_committed(loop_controller) -> bool:
+    return _loop_iteration_decision(loop_controller) is not None
+
+
+def _loop_iteration_decision(loop_controller):
     if loop_controller is None:
-        return False
-    return loop_controller.final_decision() is not None
+        return None
+    return loop_controller.final_decision()
+
+
+def _loop_commit_terminal_message(loop_controller, source_msg: AIMessage) -> AIMessage | None:
+    if str(source_msg.content or "").strip() or not _has_loop_commit_call(source_msg):
+        return None
+    decision = _loop_iteration_decision(loop_controller)
+    summary = str(getattr(decision, "summary", "") or "").strip()
+    if not summary:
+        return None
+    return AIMessage(content=summary)
+
+
+def _has_loop_commit_call(source_msg: AIMessage) -> bool:
+    for call in getattr(source_msg, "tool_calls", None) or []:
+        if not isinstance(call, dict) or call.get("name") != "loop":
+            continue
+        args = call.get("args")
+        if isinstance(args, dict) and args.get("operation") == "commit":
+            return True
+    return False
+
+
+async def _publish_loop_terminal_message(host, message: AIMessage) -> None:
+    text = str(message.content or "").strip()
+    if not text:
+        return
+    if host._ui.via_events():
+        await host._ui.events.emit(AssistantStreamUpdated(text=text, phase="text"))
+        await host._ui.events.emit(AssistantStreamCommitted())
+    else:
+        host._ui.ui.print(text)
 
 
 UI_EVENT_BUS_TIMEOUT_KIND = "ui_event_bus_timeout"
@@ -142,6 +179,12 @@ class ToolExecutorAdapter:
                 goal_phase=getattr(thread_state.turn_context, "goal_phase", "work"),
                 format_after_edit_enabled=host.config.lsp_format_after_edit,
                 tool_registry=host.tools,
+                agent_gateway=getattr(host, "agent_gateway", None),
+                agent_run_id=(
+                    getattr(host, "agent_gateway", None).ensure_root(session_id)
+                    if getattr(host, "agent_gateway", None) is not None
+                    else ""
+                ),
                 permission_mode=host._permission.permission_mode,
                 sandbox_readable_files=list(host._permission.sandbox_readable_files),
                 sandbox_readable_dirs=list(host._permission.sandbox_readable_dirs),
@@ -346,7 +389,10 @@ class ToolExecutorAdapter:
                 host._ui.session_tracker.record_diff(result.diff)
                 await notify_tool_diff(host, result, tool_event_id, tool_node)
             else:
-                ui_output = _agent_result_preview(result.output) if tid == "agent" else (result.display or result.output)
+                if tid == "agent":
+                    ui_output = result.display or _agent_result_preview(result.output)
+                else:
+                    ui_output = result.display or result.output
                 await notify_tool_text_output(host, ui_output, tid, tool_event_id, tool_node, display_policy, ok)
 
             llm_content = maybe_persist_tool_result(
@@ -518,6 +564,9 @@ class ToolExecutorAdapter:
         compacted_messages = await _inline_compaction_messages(host, state.get("messages", []), executed)
         if compacted_messages:
             tool_messages = compacted_messages + tool_messages
+        loop_terminal_message = None
+        if state_update.get("should_continue") is False:
+            loop_terminal_message = _loop_commit_terminal_message(loop_controller, last)
         if terminal_reason == UI_EVENT_BUS_TIMEOUT_KIND:
             tool_messages.append(AIMessage(content=(
                 "Turn terminated: UI event bus timed out while notifying tool start. "
@@ -525,6 +574,10 @@ class ToolExecutorAdapter:
                 "The session is still alive — you can continue interacting."
             )))
             state_update["should_continue"] = False
+            loop_terminal_message = None
+        if loop_terminal_message is not None:
+            await _publish_loop_terminal_message(host, loop_terminal_message)
+            tool_messages.append(loop_terminal_message)
         if no_progress_decision.action == "terminate":
             tool_messages.append(AIMessage(content=no_progress_decision.message))
             state_update["should_continue"] = False

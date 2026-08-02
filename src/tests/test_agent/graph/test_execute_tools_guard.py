@@ -49,7 +49,15 @@ from voidx.tools.base import ToolContext, ToolResult
 from voidx.tools.agent import AgentResultContract, AgentTool
 from voidx.tools.registry import ToolRegistry
 from voidx.ui.output.dock import BottomInputDock, set_dock
-from voidx.ui.output.events import DockEventConsumer, StatusUpdated, ToolResultAppended, TurnStarted, ui_events
+from voidx.ui.output.events import (
+    AssistantStreamCommitted,
+    AssistantStreamUpdated,
+    DockEventConsumer,
+    StatusUpdated,
+    ToolResultAppended,
+    TurnStarted,
+    ui_events,
+)
 
 
 def _graph(tmp_path):
@@ -402,7 +410,7 @@ async def test_subagent_full_output_reaches_orchestrator(tmp_path, monkeypatch):
                 }],
         )
 
-        result = await graph._execute_tools({
+        spawn_result = await graph._execute_tools({
             "messages": [parent],
             "workspace": str(tmp_path),
             "persona": "voidx",
@@ -410,9 +418,35 @@ async def test_subagent_full_output_reaches_orchestrator(tmp_path, monkeypatch):
         })
         await ui_events.drain()
 
+        spawn_tool_messages = [message for message in spawn_result["messages"] if isinstance(message, ToolMessage)]
+        assert spawn_tool_messages[0].tool_call_id == "call_agent"
+        assert "spawned with run_id" in spawn_tool_messages[0].content
+        child_run = next(run for run in graph.agent_gateway.list_runs() if run.agent_type == "sub")
+
+        wait_parent = AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "agent",
+                "args": {
+                    "action": "wait",
+                    "target_run_id": child_run.run_id,
+                    "timeout": 1,
+                },
+                "id": "call_wait_agent",
+                "type": "tool_call",
+            }],
+        )
+        wait_result = await graph._execute_tools({
+            "messages": [wait_parent],
+            "workspace": str(tmp_path),
+            "persona": "voidx",
+            "plan_mode": False,
+        })
+        await ui_events.drain()
+
         assistant = next(node for node in test_dock.tree.root.children if node.node_type == "assistant")
-        subagent = next(node for node in assistant.children if node.node_type == "subagent")
-        child_streams = [
+        subagent = next((node for node in assistant.children if node.node_type == "subagent"), None)
+        child_streams = [] if subagent is None else [
             node for node in subagent.children
             if node.node_type == "assistant" and "child final line" in node.header
         ]
@@ -421,10 +455,10 @@ async def test_subagent_full_output_reaches_orchestrator(tmp_path, monkeypatch):
         assert child_streams == []
         assert "child hidden thought" not in rendered
         assert "child final line 7" not in rendered
-        tool_messages = [message for message in result["messages"] if isinstance(message, ToolMessage)]
-        assert tool_messages[0].tool_call_id == "call_agent"
-        assert tool_messages[0].content == child_output
-        assert not any(isinstance(message, AIMessage) and message.content == child_output for message in result["messages"])
+        wait_tool_messages = [message for message in wait_result["messages"] if isinstance(message, ToolMessage)]
+        assert wait_tool_messages[0].tool_call_id == "call_wait_agent"
+        assert wait_tool_messages[0].content == child_output
+        assert not any(isinstance(message, AIMessage) and message.content == child_output for message in wait_result["messages"])
     finally:
         await ui_events.stop()
         test_dock.deactivate()
@@ -1876,6 +1910,19 @@ async def test_execute_tools_skips_calls_after_loop_commit_in_same_batch(tmp_pat
     from voidx.agent.loop.controller import LoopAttemptController
     from voidx.tools.loop import LoopTool
 
+    events: list[object] = []
+
+    class RecordingConsumer:
+        def handle(self, event):
+            events.append(event)
+            return None
+
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    if ui_events.is_running:
+        await ui_events.stop()
+    ui_events.start(RecordingConsumer())
     controller = LoopAttemptController(spec=LoopSpec(prompt="check"))
     token = _CURRENT_THREAD_EXECUTION_STATE.set(ThreadExecutionState(
         thread_id="loop-thread",
@@ -1925,12 +1972,22 @@ async def test_execute_tools_skips_calls_after_loop_commit_in_same_batch(tmp_pat
             "persona": "voidx",
             "plan_mode": False,
         })
+        await ui_events.drain()
 
         assert controller.final_decision() is not None
         assert executed == [], "mcp must not run after the loop commit"
-        contents = {m.tool_call_id: m.content for m in result["messages"]}
+        contents = {m.tool_call_id: m.content for m in result["messages"] if isinstance(m, ToolMessage)}
         assert "call_commit" in contents and "call_mcp" in contents
         assert "skipped" in contents["call_mcp"]
         assert result["should_continue"] is False
+
+        assistant_messages = [message for message in result["messages"] if isinstance(message, AIMessage)]
+        assert assistant_messages[-1].content == "done"
+        assert any(isinstance(event, AssistantStreamUpdated) and event.text == "done" for event in events)
+        assert any(isinstance(event, AssistantStreamCommitted) for event in events)
     finally:
         _CURRENT_THREAD_EXECUTION_STATE.reset(token)
+        await ui_events.stop()
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)

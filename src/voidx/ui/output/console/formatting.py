@@ -8,7 +8,7 @@ from io import StringIO
 
 from rich.console import Console
 
-from voidx.ui.output.agent_display import agent_display_name
+from voidx.ui.output.agent_display import agent_display_name, subagent_display_name
 from voidx.ui.output.manage_display import manage_display
 
 _SPIN_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -98,6 +98,12 @@ def _fmt_args_short(tool_name: str, args: dict[str, object]) -> str:
         shortened = value[:77] + "..." if len(value) > 80 else value
         return _escape_rich(shortened)
     if tool_name == "agent":
+        action = str(args.get("action") or "spawn").strip().lower()
+        if action in {"wait", "cancel"}:
+            run_id = str(args.get("target_run_id") or "").strip()
+            if run_id:
+                return _escape_rich(subagent_display_name(run_id))
+            return action.title()
         return _escape_rich(agent_display_name(args.get("name")))
     if tool_name in {"webfetch", "websearch"}:
         value = args.get("url") or args.get("query")

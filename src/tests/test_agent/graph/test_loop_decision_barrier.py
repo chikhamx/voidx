@@ -139,6 +139,56 @@ async def test_loop_turn_stop_commits_once_decision_submitted() -> None:
 
 
 @pytest.mark.asyncio
+async def test_loop_commit_only_uses_decision_summary_as_visible_terminal() -> None:
+    graph = _FakeGraph()
+    loop = LlmLoopState(context_tokens=0)
+    controller = _controller()
+    await controller.submit_decision(
+        controller.spec_decision(outcome="continue", summary="本轮笑话已发送，下一轮继续。")
+    )
+    msg = AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "loop",
+            "args": {"operation": "commit", "outcome": "continue", "summary": "本轮笑话已发送，下一轮继续。"},
+            "id": "call_loop",
+            "type": "tool_call",
+        }],
+    )
+
+    result = await _handle(graph, msg, loop, controller=controller)
+
+    assert result.action == "break"
+    assert loop.terminal_msg is not None
+    assert loop.terminal_msg.content == "本轮笑话已发送，下一轮继续。"
+    assert loop.terminal_msg_visible is True
+
+
+@pytest.mark.asyncio
+async def test_empty_regular_tool_message_after_loop_decision_stays_empty() -> None:
+    graph = _FakeGraph()
+    loop = LlmLoopState(context_tokens=0)
+    controller = _controller()
+    await controller.submit_decision(
+        controller.spec_decision(outcome="continue", summary="不应该显示这段 summary")
+    )
+    msg = AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "mcp",
+            "args": {"op": "call"},
+            "id": "call_mcp",
+            "type": "tool_call",
+        }],
+    )
+
+    result = await _handle(graph, msg, loop, controller=controller)
+
+    assert result.action == "break"
+    assert loop.terminal_msg is msg
+    assert loop.terminal_msg.content == ""
+
+@pytest.mark.asyncio
 async def test_regular_turn_stop_unaffected_without_loop_controller() -> None:
     graph = _FakeGraph()
     loop = _loop_state_with_provisional()

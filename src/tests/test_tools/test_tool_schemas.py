@@ -247,18 +247,29 @@ class TestToolSchemas:
         assert "name" in schema["properties"]
         assert "agent" not in schema["properties"]
         assert "sub-voidx" not in str(schema)
-        assert "name" in schema["required"]
-        assert "mode" in schema["required"]
-        assert "task" in schema["required"]
-        assert "target" in schema["required"]
-        assert "description" not in schema["required"]
-        assert "goal_resolution" not in schema["required"]
-        assert "result" not in schema["required"]
-        assert "persona" not in schema["required"]
-        assert "max_steps" not in schema["required"]
-        assert "delegation_reason" not in schema["required"]
-        assert "expected_output" not in schema["required"]
-        assert "parent_evidence" not in schema["required"]
+        assert "name" not in schema.get("required", [])
+        assert "mode" not in schema.get("required", [])
+        assert "task" not in schema.get("required", [])
+        assert "target" not in schema.get("required", [])
+        wait_inp = AgentInput.model_validate({
+            "action": "wait",
+            "target_run_id": "run_123",
+            "timeout": 1,
+        })
+        assert wait_inp.action == "wait"
+        assert wait_inp.name is None
+        assert wait_inp.mode is None
+        assert wait_inp.task is None
+        assert wait_inp.target is None
+        required = schema.get("required", [])
+        assert "description" not in required
+        assert "goal_resolution" not in required
+        assert "result" not in required
+        assert "persona" not in required
+        assert "max_steps" not in required
+        assert "delegation_reason" not in required
+        assert "expected_output" not in required
+        assert "parent_evidence" not in required
         assert "subagent_type" not in schema["properties"]
 
     def test_interaction_tool_descriptions_are_precise_for_llms(self):
@@ -268,7 +279,7 @@ class TestToolSchemas:
         checkpoint_schema = PlanCheckpointTool().parameters_schema()
 
         assert "independent delegated task" in AgentTool(runner=None).description
-        assert "return its completed result" in AgentTool(runner=None).description
+        assert "return its run_id immediately" in AgentTool(runner=None).description
         assert "tasks recorded by the child-agent tracker" in TaskStatusTool.description
         assert "current step" not in TaskStatusTool.description
         assert "self-contained" in agent_schema["properties"]["task"]["description"]
@@ -283,12 +294,15 @@ class TestToolSchemas:
         assert "no code changes" in PlanCheckpointTool.description
         assert "one small action" in checkpoint_schema["properties"]["steps"]["description"]
 
-    def test_agent_input_requires_name_mode_task_and_target(self):
-        with pytest.raises(ValueError):
-            AgentInput.model_validate({"name": "voidx", "task": "inspect"})
-        with pytest.raises(ValueError):
-            AgentInput.model_validate({
-                "mode": "inspect",
-                "task": "Inspect auth flow carefully",
-                "target": "src/voidx/auth.py",
-            })
+    def test_agent_input_allows_control_actions_without_spawn_fields(self):
+        wait_inp = AgentInput.model_validate({"action": "wait", "target_run_id": "run_123", "timeout": 1})
+        cancel_inp = AgentInput.model_validate({"action": "cancel", "target_run_id": "run_123"})
+
+        assert wait_inp.name is None
+        assert wait_inp.mode is None
+        assert wait_inp.task is None
+        assert wait_inp.target is None
+        assert cancel_inp.name is None
+        assert cancel_inp.mode is None
+        assert cancel_inp.task is None
+        assert cancel_inp.target is None

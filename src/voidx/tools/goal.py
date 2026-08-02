@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from voidx.agent.domain.goal import GoalSpec
+from voidx.runtime.goal import GoalSpec as AutonomousGoalSpec
 from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema
 
 
@@ -84,7 +84,7 @@ async def _submit_init(inp: GoalInput, ctx: ToolContext) -> ToolResult:
             metadata={"goal_init_submitted": False, "guidance_only": True},
         )
     try:
-        spec = GoalSpec(
+        spec = AutonomousGoalSpec(
             objective=inp.objective,
             acceptance_condition=inp.acceptance_condition,
             achievement_method=inp.achievement_method,

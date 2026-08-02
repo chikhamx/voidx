@@ -103,7 +103,11 @@ async def handle_turn_control_response(
     if classification == TurnClassification.REGULAR_TOOLS:
         if loop.turn_prompt_active:
             graph._turn_metrics.increment("turn_control_prompt_succeeded")
-        loop.terminal_msg = assistant_msg
+        loop.terminal_msg = _loop_commit_summary_message(
+            assistant_msg,
+            protocol=protocol,
+            loop_controller=loop_controller,
+        ) or assistant_msg
         return TurnControlResult("break", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
 
     if classification == TurnClassification.INVALID_TURN:
@@ -134,6 +138,33 @@ async def handle_turn_control_response(
     graph._turn_metrics.increment("turn_control_prompt_succeeded")
     loop.terminal_msg = assistant_msg
     return TurnControlResult("break", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
+
+
+def _loop_commit_summary_message(
+    assistant_msg: AIMessage,
+    *,
+    protocol: Any,
+    loop_controller: Any | None,
+) -> AIMessage | None:
+    if getattr(protocol, "protocol_id", "turn") != "loop":
+        return None
+    if extract_text(assistant_msg).strip() or not _has_loop_commit_call(assistant_msg):
+        return None
+    decision = loop_controller.final_decision() if loop_controller is not None else None
+    summary = str(getattr(decision, "summary", "") or "").strip()
+    if not summary:
+        return None
+    return AIMessage(content=summary)
+
+
+def _has_loop_commit_call(assistant_msg: AIMessage) -> bool:
+    for call in getattr(assistant_msg, "tool_calls", None) or []:
+        if not isinstance(call, dict) or call.get("name") != "loop":
+            continue
+        args = call.get("args")
+        if isinstance(args, dict) and args.get("operation") == "commit":
+            return True
+    return False
 
 
 def _prompt_for_loop_decision(
