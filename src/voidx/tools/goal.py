@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 from typing import Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
 
 from voidx.runtime.goal import GoalSpec as AutonomousGoalSpec
-from voidx.tools.base import BaseTool, ToolContext, ToolResult, model_to_json_schema
+from voidx.tools.base import (
+    BaseTool,
+    ToolContext,
+    ToolResult,
+    UserInteraction,
+    model_to_json_schema,
+)
 
 
 class GoalInput(BaseModel):
@@ -76,6 +83,14 @@ class GoalTool(BaseTool):
         return await _submit_decision(inp, ctx)
 
 
+_INIT_APPROVAL_OPTIONS: list[tuple[str, str, str]] = [
+    ("Approve and start", "approved", "Accept the goal spec and start the goal"),
+    ("Revise", "revised", "Give feedback so the spec can be revised and re-submitted"),
+    ("Cancel", "cancelled", "Do not start this goal"),
+]
+_INIT_APPROVAL_TIMEOUT_SECONDS = 300.0
+
+
 async def _submit_init(inp: GoalInput, ctx: ToolContext) -> ToolResult:
     controller = ctx.goal_intake_controller
     if ctx.goal_phase != "intake" or controller is None:
@@ -92,14 +107,118 @@ async def _submit_init(inp: GoalInput, ctx: ToolContext) -> ToolResult:
         )
     except Exception as exc:
         return ToolResult(output=f"Invalid goal init: {exc}", metadata={"error": True})
+    approval = await _request_init_approval(spec, ctx)
+    if approval == "cancelled":
+        cancel = getattr(controller, "cancel", None)
+        if callable(cancel):
+            cancel()
+        return ToolResult(
+            output="Goal init cancelled by the user; the spec was not submitted. Intake is over.",
+            metadata={"goal_init_submitted": False, "goal_init_decision": "cancelled"},
+        )
+    if isinstance(approval, str) and approval.startswith("revise:"):
+        feedback = approval.removeprefix("revise:").strip()
+        return ToolResult(
+            output=(
+                "The user requested changes to the goal spec and it was not submitted. "
+                f"Feedback: {feedback or '(no details)'}. "
+                "Revise the spec accordingly and call goal(op=\"init\") again with the updated fields."
+            ),
+            metadata={"goal_init_submitted": False, "goal_init_decision": "revised"},
+        )
     submitted = await controller.submit_init(spec)
+    auto = approval == "auto_approved"
     return ToolResult(
-        output="Goal init recorded.",
+        output="Goal init approved by the user." if not auto else "Goal init auto-approved (no user response).",
         metadata={
             "goal_init_submitted": True,
+            "goal_init_decision": "auto_approved" if auto else "approved",
             "goal_spec": submitted.model_dump(mode="json"),
         },
     )
+
+
+async def _request_init_approval(spec: AutonomousGoalSpec, ctx: ToolContext) -> str:
+    if ctx.interact is None:
+        return "auto_approved"
+    prompt_id = uuid4().hex
+    event_ui_active = _emit_goal_spec_shown(prompt_id, spec)
+    response = await ctx.interact(UserInteraction(
+        prompt="Goal spec:" if event_ui_active else _init_approval_prompt(spec),
+        options=_INIT_APPROVAL_OPTIONS,
+        timeout=_INIT_APPROVAL_TIMEOUT_SECONDS,
+    ))
+    if response.cancelled:
+        # Timeout or dismissed prompt auto-approves so autonomous runs are never stuck.
+        decision = "auto_approved"
+    elif response.free_text:
+        decision = f"revise:{response.value}"
+    elif response.value == "approved":
+        decision = "approved"
+    elif response.value == "cancelled":
+        decision = "cancelled"
+    else:
+        decision = "revise:"
+    _emit_goal_spec_decision(prompt_id, decision)
+    return decision
+
+
+def _init_approval_prompt(spec: AutonomousGoalSpec) -> str:
+    parts = [
+        f"Objective: {spec.objective}",
+        f"Acceptance: {spec.acceptance_condition}",
+    ]
+    if spec.achievement_method:
+        parts.append(f"Method: {spec.achievement_method}")
+    parts.append(f"Max attempts: {spec.max_attempts}")
+    return "\n".join(parts)
+
+
+def _emit_goal_spec_shown(prompt_id: str, spec: AutonomousGoalSpec) -> bool:
+    try:
+        from voidx.ui.output.events import ui_events
+        from voidx.ui.output.events.schema import (
+            GoalSpecChoicePayload,
+            GoalSpecPayload,
+            GoalSpecPromptShown,
+        )
+    except ImportError:
+        return False
+    if not ui_events.is_running:
+        return False
+    ui_events.emit_direct(GoalSpecPromptShown(
+        prompt_id=prompt_id,
+        spec=GoalSpecPayload(
+            objective=spec.objective,
+            acceptance_condition=spec.acceptance_condition,
+            achievement_method=spec.achievement_method,
+            max_attempts=spec.max_attempts,
+        ),
+        choices=[
+            GoalSpecChoicePayload(label=label, value=value, description=description)
+            for label, value, description in _INIT_APPROVAL_OPTIONS
+        ],
+    ))
+    return True
+
+
+def _emit_goal_spec_decision(prompt_id: str, decision: str) -> None:
+    try:
+        from voidx.ui.output.events import ui_events
+        from voidx.ui.output.events.schema import GoalSpecDecisionSubmitted
+    except ImportError:
+        return
+    if not ui_events.is_running:
+        return
+    if decision.startswith("revise:"):
+        kind, response = "revised", decision.removeprefix("revise:").strip()
+    else:
+        kind, response = decision, ""
+    ui_events.emit_direct(GoalSpecDecisionSubmitted(
+        prompt_id=prompt_id,
+        decision=kind,
+        response=response,
+    ))
 
 
 async def _submit_decision(inp: GoalInput, ctx: ToolContext) -> ToolResult:

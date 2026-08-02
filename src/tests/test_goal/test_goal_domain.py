@@ -115,3 +115,43 @@ def test_goal_tool_view_intake_phase_binds_clarify_and_goal() -> None:
     assert view.allows("goal") is True
     assert view.allows("bash") is False
     assert view.allows("write") is False
+
+
+def test_goal_tool_view_evaluator_phase_excludes_execution_and_web_tools() -> None:
+    """Evaluator judges from evidence; it gets read-only tools plus goal, no mcp/web."""
+    available = {
+        "read", "find", "search", "lsp", "document",
+        "bash", "write", "replace", "manage",
+        "websearch", "webfetch", "mcp", "skill",
+        "goal", "clarify",
+    }
+
+    view = GoalToolView.default(phase="evaluator").bind(available)
+
+    assert {"read", "find", "search", "lsp", "document", "goal"}.issubset(view.bound_tool_ids)
+    assert {"bash", "write", "replace", "manage", "websearch", "webfetch", "mcp", "skill", "clarify"}.isdisjoint(
+        view.bound_tool_ids
+    )
+
+
+def test_goal_evaluator_directive_exists_for_evaluator_phase() -> None:
+    from voidx.agent.domain.goal import GOAL_EVALUATOR_DIRECTIVE
+
+    assert "decision" in GOAL_EVALUATOR_DIRECTIVE
+    assert "evaluator" in GOAL_EVALUATOR_DIRECTIVE.lower()
+
+
+def test_goal_phase_directive_covers_intake_and_evaluator() -> None:
+    from types import SimpleNamespace
+
+    from voidx.agent.domain.goal import GOAL_EVALUATOR_DIRECTIVE, GOAL_INTAKE_DIRECTIVE
+    from voidx.agent.infrastructure.langgraph.runtime.llm_turn import _goal_phase_directive
+
+    intake_ctx = SimpleNamespace(turn_context=SimpleNamespace(goal_phase="intake"))
+    evaluator_ctx = SimpleNamespace(turn_context=SimpleNamespace(goal_phase="evaluator"))
+    work_ctx = SimpleNamespace(turn_context=SimpleNamespace(goal_phase="work"))
+
+    assert _goal_phase_directive(intake_ctx, GOAL_PROFILE) == GOAL_INTAKE_DIRECTIVE
+    assert _goal_phase_directive(evaluator_ctx, GOAL_PROFILE) == GOAL_EVALUATOR_DIRECTIVE
+    assert _goal_phase_directive(work_ctx, GOAL_PROFILE) == ""
+    assert _goal_phase_directive(evaluator_ctx, None) == ""

@@ -30,6 +30,8 @@ from voidx.ui.output.events.schema import (
     ClarifyPromptShown,
     DiffAppended,
     ErrorAppended,
+    GoalSpecDecisionSubmitted,
+    GoalSpecPromptShown,
     FileChangeAppended,
     GuidanceCommitted,
     GuidanceSubmitted,
@@ -462,6 +464,20 @@ class DockEventConsumer:
                     e.answer,
                     cancelled=e.cancelled,
                     was_custom_input=e.was_custom_input,
+                )
+            case GoalSpecPromptShown() as e:
+                choices = [choice.model_dump(mode="json") for choice in e.choices]
+                return self._dock.show_goal_spec(
+                    e.prompt_id,
+                    e.spec.model_dump(mode="json"),
+                    choices,
+                    parent=self._agent_parent(e.agent_id),
+                )
+            case GoalSpecDecisionSubmitted() as e:
+                return self._dock.resolve_goal_spec(
+                    e.prompt_id,
+                    e.decision,
+                    e.response,
                 )
             case NoticeSet():
                 return None

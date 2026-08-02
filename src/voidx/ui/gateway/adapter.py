@@ -25,6 +25,8 @@ from voidx.ui.output.events.schema import (
     CheckpointPromptShown,
     ClarifyAnswerSubmitted,
     ClarifyPromptShown,
+    GoalSpecDecisionSubmitted,
+    GoalSpecPromptShown,
     DiffAppended,
     ErrorAppended,
     FileChangeAppended,
@@ -426,6 +428,31 @@ class UiEventItemAdapter:
             },
         )
 
+    def _on_goal_spec_prompt(self, event: GoalSpecPromptShown) -> JsonRpcNotification:
+        return self._item_notification(
+            _uid(),
+            "prompt",
+            "started",
+            {
+                "prompt_type": "goal_spec",
+                "prompt_id": event.prompt_id,
+                "spec": event.spec.model_dump(),
+                "choices": [c.model_dump() for c in event.choices],
+            },
+        )
+
+    def _on_goal_spec_decision(self, event: GoalSpecDecisionSubmitted) -> JsonRpcNotification:
+        return self._item_notification(
+            _uid(),
+            "prompt",
+            "completed",
+            {
+                "prompt_type": "goal_spec",
+                "prompt_id": event.prompt_id,
+                "decision": event.decision,
+            },
+        )
+
     # ── non-Item notifications ───────────────────────────────────────────
 
     def _on_turn_started(self, event: TurnStarted) -> JsonRpcNotification:
@@ -547,6 +574,8 @@ _HANDLERS: dict[type, Callable[[UiEventItemAdapter, UiEvent], JsonRpcNotificatio
     CheckpointDecisionSubmitted: UiEventItemAdapter._on_checkpoint_decision,
     ClarifyPromptShown: UiEventItemAdapter._on_clarify_prompt,
     ClarifyAnswerSubmitted: UiEventItemAdapter._on_clarify_answer,
+    GoalSpecPromptShown: UiEventItemAdapter._on_goal_spec_prompt,
+    GoalSpecDecisionSubmitted: UiEventItemAdapter._on_goal_spec_decision,
     # non-Item notifications
     TurnStarted: UiEventItemAdapter._on_turn_started,
     TurnCompleted: UiEventItemAdapter._on_turn_completed,

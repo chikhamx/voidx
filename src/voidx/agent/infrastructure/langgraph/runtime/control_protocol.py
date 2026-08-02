@@ -221,6 +221,8 @@ class GoalProtocol:
         if self.classify(msg) is TurnClassification.REGULAR_TOOLS and not extract_text(msg).strip():
             return False
         if self.phase == "intake":
+            if getattr(controller, "cancelled", False):
+                return False
             return controller.final_spec() is None
         if self.phase == "evaluator":
             return controller.final_decision() is None
@@ -229,8 +231,10 @@ class GoalProtocol:
     def repair_prompt(self) -> str:
         if self.phase == "intake":
             return (
+                "Do not execute the user's request; this stage only defines the goal. "
                 "Ask one concise clarification question if needed, otherwise call goal with "
-                "op=\"init\", objective, acceptance_condition, and optional achievement_method."
+                "op=\"init\", objective, acceptance_condition, and optional achievement_method. "
+                "The spec is shown to the user for approval; revise and re-submit if they request changes."
             )
         return (
             "Evaluate the acceptance condition using policy-approved verification tools when needed, "

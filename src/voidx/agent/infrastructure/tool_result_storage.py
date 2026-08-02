@@ -62,6 +62,16 @@ def _tool_results_root(workspace: str | None = None) -> Path:
     return store.DATA_DIR / "tool-results"
 
 
+def persist_named_tool_result(
+    content: str,
+    name: str,
+    *,
+    session_id: str = "default",
+    workspace: str | None = None,
+) -> str:
+    return _persist_to_disk(content, name, session_id=session_id, workspace=workspace)
+
+
 def _persist_to_disk(
     content: str,
     tool_use_id: str,

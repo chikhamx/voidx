@@ -14,40 +14,47 @@ _INTAKE_TOOL_IDS = frozenset(
         "search",
         "lsp",
         "document",
-        "websearch",
-        "webfetch",
-        "mcp",
         "clarify",
         "goal",
     }
 )
 
 _INTAKE_PROMPT = """\
-You are initializing an autonomous Goal from the user's first request.
+User request:
+{user_input}
 
-Intake Workflow:
+---
+
+You are the Goal Intake stage of an autonomous Goal. Convert the user request above into
+a GoalSpec. You are NOT here to execute the request.
+
+Hard rules:
+- NEVER perform the task itself: do not write code, do not run commands, do not produce
+  the analysis/answer the request asks for. Doing the work is a failure of this stage.
+- Your only two outcomes are: call clarify with one targeted question, or call
+  goal with op="init" carrying a complete spec.
+- Do not emit the spec as JSON text; the goal tool call is the only submission path.
+- Do not call goal with op="decision" during intake.
+- goal(op="init") presents the spec to the user for approval; the user may approve,
+  request revisions, or cancel. On revision feedback, update the spec and submit again.
+
+Intake workflow:
 1. Extract the objective: one stable sentence describing what must be accomplished.
 2. Define the acceptance_condition: a concrete, verifiable done condition.
-3. Capture the achievement_method: user-provided approach, constraints, schedule, cadence, priority, or execution guidance. If no method or schedule is supplied, use "".
-4. Resolve schedule and attempt budget: encode schedule/cadence in achievement_method, and set max_attempts only when the user gives an attempt budget; otherwise use 20.
-5. Submit only after the goal is clear enough to run autonomously: call goal with op="init" and the complete spec.
-
-Rules:
-- If any required intake item is unclear, call clarify with one targeted question before goal init.
-- Ask about exactly one missing item at a time; do not bundle unrelated decisions.
-- If the user already provided enough detail, do not ask extra questions; call goal with op="init".
-- Do not emit the spec as JSON text; the goal tool call is the only successful submission path.
-- Do not call goal with op="decision" during intake.
-- Read project files only when needed to ground the goal spec.
+3. Capture the achievement_method: user-provided approach, constraints, schedule, cadence,
+   priority, or execution guidance. If none is supplied, use "".
+4. Resolve attempt budget: set max_attempts only when the user gives one; otherwise use 20.
+5. If a required item is unclear, call clarify with exactly one question about it and wait
+   for the answer. Ask about one missing item at a time; do not bundle decisions.
+6. When the request is clear enough to run autonomously, call goal with op="init".
+   If the user already provided enough detail, do not ask extra questions.
+- Read project files only when needed to ground the spec wording, never to start the work.
 
 Required goal(op="init") fields:
 - objective: one sentence describing what must be accomplished.
 - acceptance_condition: a concrete, verifiable condition that determines done.
 - achievement_method: optional approach, schedule/cadence, constraints, or execution guidance; use "" if unknown.
 - max_attempts: optional attempt budget; use 20 unless the user specifies otherwise.
-
-User request:
-{user_input}
 """
 
 
@@ -90,6 +97,8 @@ class GoalIntakeService:
         )
         spec = controller.final_spec()
         if spec is None:
+            if controller.cancelled:
+                raise GoalIntakeError("Goal intake cancelled; no goal was started.")
             raise GoalIntakeError(
                 "Could not initialize a complete goal spec because intake did not receive "
                 "goal(op=\"init\"). Use /goal <objective> --accept <condition> to start explicitly."

@@ -12,6 +12,43 @@ from voidx.runtime.goal import GoalSpec
 GOAL_ITERATION_USER_TEXT = "Start the autonomous goal attempt."
 GOAL_PROFILE = RuntimeProfile(profile_id="goal", revision=1, name="Goal", protocol="goal")
 
+GOAL_INTAKE_DIRECTIVE = """\
+## Goal Intake Stage
+
+This turn is the intake stage of an autonomous Goal. Its sole responsibility is to
+produce a GoalSpec from the user's request — never to execute the request itself.
+
+- Permitted outcomes: call clarify with one targeted question, or call goal with
+  op="init" and a complete spec.
+- Forbidden: performing the task, producing the requested analysis/answer, writing
+  code, or running commands for the task. The work phase starts only after intake.
+- goal(op="init") presents the spec for user approval; on revision feedback, update
+  the spec and submit again.
+"""
+
+GOAL_EVALUATOR_DIRECTIVE = """\
+## Goal Evaluator Stage
+
+This turn is the evaluator stage of an autonomous Goal. Its sole responsibility is
+to judge whether the work-phase evidence satisfies the acceptance condition, then
+submit exactly one lifecycle decision.
+
+Follow this procedure:
+1. Review — read the work-phase evidence in this turn's input and check each
+   acceptance condition against it. The work phase already ran; never re-run the
+   task, and never answer with a plain-text acceptance report.
+2. Verify — spot-check any evidence that looks missing or unreliable with
+   read-only tools (read, find, search, lsp, document). You have no execution
+   tools; do not attempt to run commands.
+3. Decide — call goal with op="decision":
+   - status="finished" when every condition is backed by concrete evidence;
+   - status="continue" when evidence is insufficient — name the missing evidence
+     in the reason so the next work attempt collects it;
+   - status="blocked" when the goal cannot proceed.
+   In the reason field, cite the evidence or files you relied on. This call is
+   the only way the turn ends.
+"""
+
 
 class GoalState(BaseModel):
     model_config = ConfigDict(frozen=True)
@@ -66,8 +103,10 @@ class GoalToolView(BoundToolView):
             allowed.update({"bash", "write", "replace", "manage", "lsp_format"})
         elif self.phase == "intake":
             allowed.update({"clarify", "goal"})
+            allowed -= {"websearch", "webfetch", "mcp", "skill"}
         elif self.phase == "evaluator":
             allowed.add("goal")
+            allowed -= {"websearch", "webfetch", "mcp", "skill"}
         if self.workflow_enabled:
             allowed.update({"workflow", "todo"})
         return self.model_copy(update={"bound_tool_ids": frozenset(set(available_tool_ids) & allowed)})

@@ -319,9 +319,10 @@ def _requires_workspace_write_lock(tool_call: dict) -> bool:
         return name in {"bash", "powershell", "git", "agent"}
     return str(classified.capability.value) in _WORKSPACE_WRITE_LOCK_CAPABILITIES
 def _is_barrier_tool(tool_call: dict) -> bool:
-    # loop must be serial: a commit ends the iteration, so anything the model
-    # scheduled after it in the same batch must wait (and then be skipped).
-    return tool_call.get("name") in {"clarify", "checkpoint", "workflow", "compact", "loop"}
+    # loop/goal must be serial: a commit or spec/decision submission ends the phase,
+    # so anything the model scheduled after it in the same batch must wait (and then
+    # be skipped). goal also interacts with the user during intake approval.
+    return tool_call.get("name") in {"clarify", "checkpoint", "workflow", "compact", "loop", "goal"}
 
 
 def _split_at_first_barrier(tool_calls: list[dict]) -> tuple[list[dict], dict | None, list[dict]]:

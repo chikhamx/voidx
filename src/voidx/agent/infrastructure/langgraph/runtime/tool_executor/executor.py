@@ -68,6 +68,25 @@ def _loop_iteration_decision(loop_controller):
     return loop_controller.final_decision()
 
 
+def _goal_phase_committed(turn_context) -> str | None:
+    """Skip reason once the goal phase's terminal submission landed, else None."""
+    if turn_context is None:
+        return None
+    phase = getattr(turn_context, "goal_phase", "")
+    if phase == "intake":
+        controller = getattr(turn_context, "goal_intake_controller", None)
+        if controller is None:
+            return None
+        if controller.final_spec() is not None or getattr(controller, "cancelled", False):
+            return "was skipped after goal intake submission"
+        return None
+    if phase == "evaluator":
+        controller = getattr(turn_context, "goal_controller", None)
+        if controller is not None and controller.final_decision() is not None:
+            return "was skipped after goal decision"
+    return None
+
+
 def _loop_commit_terminal_message(loop_controller, source_msg: AIMessage) -> AIMessage | None:
     if str(source_msg.content or "").strip() or not _has_loop_commit_call(source_msg):
         return None
@@ -389,8 +408,11 @@ class ToolExecutorAdapter:
                 host._ui.session_tracker.record_diff(result.diff)
                 await notify_tool_diff(host, result, tool_event_id, tool_node)
             else:
-                if tid == "agent":
-                    ui_output = result.display or _agent_result_preview(result.output)
+if tid == "agent":
+                    # Prefer explicit UI display; successful spawn has none (subagent tree covers it).
+                    ui_output = result.display or (
+                        "" if ok else _agent_result_preview(result.output)
+                    )
                 else:
                     ui_output = result.display or result.output
                 await notify_tool_text_output(host, ui_output, tid, tool_event_id, tool_node, display_policy, ok)
@@ -453,9 +475,14 @@ class ToolExecutorAdapter:
                 cycle_workflow_changed = cycle_workflow_changed or "workflow_runs" in segment_update
                 apply_state_update(segment_update)
                 pending = ([barrier] if barrier is not None else []) + suffix
-                if _loop_iteration_committed(loop_controller):
+                commit_skip_reason = (
+                    "was skipped after loop commit"
+                    if _loop_iteration_committed(loop_controller)
+                    else _goal_phase_committed(thread_state.turn_context)
+                )
+                if commit_skip_reason is not None:
                     executed.extend(
-                        _infrastructure_skipped_tool(tc, reason="was skipped after loop commit")
+                        _infrastructure_skipped_tool(tc, reason=commit_skip_reason)
                         for tc in pending
                     )
                     state_update["should_continue"] = False
@@ -495,9 +522,14 @@ class ToolExecutorAdapter:
             )
             cycle_workflow_changed = cycle_workflow_changed or "workflow_runs" in segment_update
             apply_state_update(segment_update)
-            if _loop_iteration_committed(loop_controller):
+            commit_skip_reason = (
+                "was skipped after loop commit"
+                if _loop_iteration_committed(loop_controller)
+                else _goal_phase_committed(thread_state.turn_context)
+            )
+            if commit_skip_reason is not None:
                 executed.extend(
-                    _infrastructure_skipped_tool(tc, reason="was skipped after loop commit")
+                    _infrastructure_skipped_tool(tc, reason=commit_skip_reason)
                     for tc in suffix
                 )
                 state_update["should_continue"] = False

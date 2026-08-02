@@ -129,6 +129,31 @@ export function showPromptItemRequest(data: Record<string, unknown>): void {
       choices,
       response_method: "session.respond",
     });
+    return;
+  }
+  if (promptType === "goal_spec") {
+    const spec = (data.spec as Record<string, unknown>) || {};
+    const choices = ((data.choices as Array<Record<string, unknown>>) || []).map((choice) => [
+      (choice.label as string) || (choice.value as string) || "",
+      (choice.value as string) || (choice.label as string) || "",
+      (choice.description as string) || (choice.label as string) || (choice.value as string) || "",
+    ]);
+    const lines = [
+      `Goal: ${(spec.objective as string) || ""}`,
+      `Acceptance: ${(spec.acceptance_condition as string) || ""}`,
+    ];
+    if (spec.achievement_method) {
+      lines.push(`Method: ${spec.achievement_method as string}`);
+    }
+    lines.push(`Max attempts: ${(spec.max_attempts as number) || 20}`);
+    showRequest({
+      kind: "choice",
+      request_id: (data.prompt_id as string) || (data.request_id as string) || "goal_spec",
+      thread_id: (data.thread_id as string) || "",
+      prompt: lines.join("\n"),
+      choices,
+      response_method: "session.respond",
+    });
   }
 }
 

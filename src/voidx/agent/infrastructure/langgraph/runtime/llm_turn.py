@@ -77,6 +77,22 @@ MALFORMED_TOOL_CALL_REPAIR_INSTRUCTION = (
 )
 
 
+def _goal_phase_directive(state_context, active_profile) -> str:
+    if getattr(active_profile, "protocol", "") != "goal":
+        return ""
+    turn_context = getattr(state_context, "turn_context", None) if state_context else None
+    goal_phase = getattr(turn_context, "goal_phase", "")
+    if goal_phase == "intake":
+        from voidx.agent.domain.goal import GOAL_INTAKE_DIRECTIVE
+
+        return GOAL_INTAKE_DIRECTIVE
+    if goal_phase == "evaluator":
+        from voidx.agent.domain.goal import GOAL_EVALUATOR_DIRECTIVE
+
+        return GOAL_EVALUATOR_DIRECTIVE
+    return ""
+
+
 def _tool_definition_name(tool: dict[str, Any]) -> str:
     name = tool.get("name")
     if name:
@@ -511,8 +527,9 @@ class LlmTurn:
             else ""
         )
         profile_system_prompt = str(getattr(active_profile, "system_prompt", "") or "").strip()
+        phase_directive = _goal_phase_directive(state_context, active_profile)
         profile_directive_value = "\n\n".join(
-            part for part in (policy_directive, profile_system_prompt) if part.strip()
+            part for part in (policy_directive, phase_directive, profile_system_prompt) if part.strip()
         )
         task_state_suppressed = (
             prompt_policy is not None and prompt_policy.task_state_section == ""

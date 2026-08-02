@@ -299,6 +299,37 @@ class CheckpointDecisionSubmitted(UiEventBase):
     response: str = ""
     was_custom_input: bool = False
 
+class GoalSpecChoicePayload(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    label: str
+    value: str
+    description: str = ""
+
+
+class GoalSpecPayload(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    objective: str
+    acceptance_condition: str
+    achievement_method: str = ""
+    max_attempts: int = 20
+
+
+class GoalSpecPromptShown(UiEventBase):
+    kind: Literal["goal_spec_prompt.shown"] = "goal_spec_prompt.shown"
+    prompt_id: str
+    spec: GoalSpecPayload
+    choices: list[GoalSpecChoicePayload] = Field(default_factory=list)
+
+
+class GoalSpecDecisionSubmitted(UiEventBase):
+    kind: Literal["goal_spec_decision.submitted"] = "goal_spec_decision.submitted"
+    prompt_id: str
+    decision: str
+    response: str = ""
+
+
 
 
 class ClarifyPromptShown(UiEventBase):
@@ -368,6 +399,8 @@ UiEvent: TypeAlias = (
     | CheckpointDecisionSubmitted
     | ClarifyPromptShown
     | ClarifyAnswerSubmitted
+    | GoalSpecPromptShown
+    | GoalSpecDecisionSubmitted
     | InputSet
     | NoticeSet
 )
