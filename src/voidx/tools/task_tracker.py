@@ -98,8 +98,9 @@ class TaskTracker:
                 if todo_id and todo_id in self._todos:
                     if "status" in update:
                         self._todos[todo_id]["status"] = update["status"]
-                    if "content" in update:
-                        self._todos[todo_id]["content"] = update["content"]
+                    content = update.get("content")
+                    if content:
+                        self._todos[todo_id]["content"] = content
                 else:
                     skipped.append(todo_id)
         return skipped

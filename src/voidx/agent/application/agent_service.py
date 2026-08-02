@@ -560,6 +560,8 @@ class AgentService:
                 return True, None
             if await self._route_autonomous_first_message(user_input, thread_id=thread_id):
                 return True, None
+            if await self._route_autonomous_followup(user_input, thread_id=thread_id):
+                return True, None
             await self.run_coding_turn(
                 user_text=user_input,
                 thread_id=thread_id,
@@ -573,8 +575,7 @@ class AgentService:
         """Start a goal/loop from the first message of a goal/loop-profile session.
 
         Only the first message (session has no messages yet) is consumed as the
-        prompt. Later messages fall through to the default coding path; the
-        autonomous runtime runs on its own dedicated thread/session.
+        prompt. Later messages are handled by `_route_autonomous_followup`.
         """
         session = getattr(self._execution, "session", None)
         profile = getattr(session, "runtime_profile", "coding")
@@ -586,6 +587,57 @@ class AgentService:
         if profile == "goal":
             return await self._handle_goal_first_message(user_input, thread_id=thread_id)
         return await self._handle_loop_first_message(user_input, thread_id=thread_id)
+
+    async def _route_autonomous_followup(self, user_input: str, *, thread_id: str) -> bool:
+        """Keep goal/loop host sessions from silently falling back to coding.
+
+        Autonomous runtimes own a dedicated thread. Follow-up host messages are
+        treated as guidance when possible; otherwise the user is told how to
+        inspect or stop the active goal/loop instead of starting a coding turn.
+        """
+        del thread_id
+        session = getattr(self._execution, "session", None)
+        profile = getattr(session, "runtime_profile", "coding")
+        if profile not in {"goal", "loop"}:
+            return False
+
+        parent = getattr(session, "id", None) or getattr(self._execution, "session_id", None)
+        service = getattr(self._execution, f"{profile}_service", None)
+        status = None
+        if service is not None and hasattr(service, "status"):
+            try:
+                status = await service.status(parent)
+            except Exception:
+                status = None
+
+        if status is not None and getattr(status, "active", False):
+            if self.submit_guidance(user_input, source="user"):
+                from voidx.runtime.ui import ui
+
+                label = getattr(status, "objective_summary", None) or getattr(status, "prompt_summary", None) or profile
+                ui.print(
+                    f"[dim]/{profile} guidance queued for [cyan]{label}[/cyan]. "
+                    f"Use /{profile} status or /{profile} stop.[/dim]"
+                )
+                return True
+            from voidx.runtime.ui import ui
+
+            label = getattr(status, "objective_summary", None) or getattr(status, "prompt_summary", None) or profile
+            ui.print(
+                f"[dim]/{profile} is active: [cyan]{label}[/cyan]. "
+                f"Use /guide <text> for mid-run guidance, /{profile} status, or /{profile} stop. "
+                f"Switch with /coding if you want a normal coding turn.[/dim]"
+            )
+            return True
+
+        from voidx.runtime.ui import ui
+
+        ui.print(
+            f"[dim]This session is in {profile} mode. "
+            f"Send a first message or /{profile} <args> to start, "
+            f"or /coding to switch to coding.[/dim]"
+        )
+        return True
 
     async def _route_chat_turn(self, user_input: str, *, thread_id: str) -> bool:
         """Route a turn to ChatService when the target thread is a chat session.

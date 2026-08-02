@@ -24,3 +24,40 @@ class TestTodoTool:
         assert result.summary is not None
         assert len(result.summary) > 0
         assert "invalid" in result.summary
+
+
+    @pytest.mark.asyncio
+    async def test_todo_update_empty_content_does_not_clear_existing(self, tmp_path):
+        """Strict-schema models often pass content='' for status-only updates."""
+        from voidx.tools.task_tracker import TaskTracker
+
+        tracker = TaskTracker()
+        tracker.set_todos_from_dict(
+            {
+                "impl": {"content": "implement event", "status": "active"},
+                "test": {"content": "write tests", "status": "pending"},
+            }
+        )
+        tool = TodoWriteTool(tracker=tracker)
+        ctx = ToolContext(workspace=str(tmp_path))
+
+        result = await tool.execute(
+            {
+                "op": "update",
+                "updates": [
+                    {"id": "impl", "status": "done", "content": ""},
+                    {"id": "test", "status": "active", "content": ""},
+                ],
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert tracker.get_todos() == {
+            "impl": {"content": "implement event", "status": "done"},
+            "test": {"content": "write tests", "status": "active"},
+        }
+        assert result.metadata["todo_items"] == [
+            {"id": "impl", "content": "implement event", "status": "done"},
+            {"id": "test", "content": "write tests", "status": "active"},
+        ]

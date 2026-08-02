@@ -35,7 +35,10 @@ class TodoItem(BaseModel):
 class TodoUpdateOp(BaseModel):
     id: str = Field(..., description="Target item id.")
     status: TodoStatus = Field(..., description="New status.")
-    content: str | None = Field(default=None, description="Optional: update description too.")
+    content: str | None = Field(
+        default=None,
+        description="Optional: update description too. Omit or pass empty string to keep existing content.",
+    )
 
 
 TodoReadFilter = Literal["all", "pending", "active", "done"]
@@ -189,7 +192,7 @@ class TodoWriteTool(BaseTool):
         for update in inp.updates:
             if update.id in current_todos:
                 current_todos[update.id]["status"] = update.status
-                if update.content is not None:
+                if update.content:
                     current_todos[update.id]["content"] = update.content
                 updated_count += 1
             else:

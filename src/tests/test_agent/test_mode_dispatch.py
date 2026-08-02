@@ -186,3 +186,41 @@ async def test_goal_intake_failure_persists_first_message(monkeypatch) -> None:
     assert service._execution.session.message_count == 1
     assert saved == [("host-session", "something vague")]
     assert service._execution.goal_service.started == []
+
+
+
+@pytest.mark.asyncio
+async def test_goal_profile_followup_does_not_fall_through_to_coding(monkeypatch) -> None:
+    """After goal intake starts, later host-session messages must not run coding."""
+    service = _service("goal")
+    service._execution.session.message_count = 1
+    service._execution.goal_service = FakeGoalService()
+
+    async def fake_status(_parent):
+        return SimpleNamespace(
+            active=True,
+            objective_summary="ship the feature",
+            attempt_count=1,
+            max_attempts=20,
+            state="running",
+        )
+
+    service._execution.goal_service.status = fake_status  # type: ignore[method-assign]
+    coding_calls: list[str] = []
+
+    async def fake_coding_turn(user_text: str, **kwargs):
+        coding_calls.append(user_text)
+
+    service.run_coding_turn = fake_coding_turn  # type: ignore[method-assign]
+    printed: list[str] = []
+    monkeypatch.setattr("voidx.agent.application.agent_service.ui.print", lambda msg: printed.append(str(msg)))
+
+    keep_running, exit_message = await service._handle_user_input(
+        SimpleNamespace(consume_quiet_command=lambda _cmd: False),
+        "please also cover edge cases",
+    )
+
+    assert keep_running is True
+    assert exit_message is None
+    assert coding_calls == []
+    assert any("goal" in line.lower() for line in printed)
