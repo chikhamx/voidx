@@ -11,7 +11,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from voidx.diffing import FileDiff
+from voidx.memory import store
 from voidx.memory.jsonl_store import session_dir
+from voidx.paths import voidx_workspace_dir
 from voidx.tools.base import ToolContext
 
 
@@ -503,3 +505,37 @@ def _display_path(workspace: str, resolved: Path) -> str:
         return str(resolved.relative_to(workspace))
     except ValueError:
         return str(resolved)
+
+
+def persist_named_tool_result(
+    content: str,
+    name: str,
+    *,
+    session_id: str = "default",
+    workspace: str | None = None,
+) -> str:
+    return _persist_to_disk(content, name, session_id=session_id, workspace=workspace)
+
+
+def _persist_to_disk(
+    content: str,
+    tool_use_id: str,
+    *,
+    session_id: str = "default",
+    workspace: str | None = None,
+) -> str:
+    safe_id = "".join(c for c in tool_use_id if c.isalnum() or c in "-_")
+    dir_path = _tool_results_root(workspace) / session_id
+    dir_path.mkdir(parents=True, exist_ok=True)
+    file_path = dir_path / f"{safe_id}.txt"
+    file_path.write_text(content, encoding="utf-8", errors="replace")
+    return str(file_path)
+
+
+def _tool_results_root(workspace: str | None = None) -> Path:
+    if workspace:
+        try:
+            return voidx_workspace_dir(workspace) / "tool-results"
+        except OSError:
+            pass
+    return store.DATA_DIR / "tool-results"

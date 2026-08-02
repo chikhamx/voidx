@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -10,6 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from voidx.tools.file.state import persist_named_tool_result
 from voidx.logging.tool_log import log_tool_event
 from voidx.tools.base import (
     BaseTool,
@@ -26,6 +28,7 @@ from voidx.tools.file.state import record_read_range
 
 CaseMode = Literal["auto", "sensitive", "insensitive"]
 MatchMode = Literal["text", "word", "regex"]
+OUTPUT_CHAR_BUDGET = 4_000
 
 
 class FindInput(BaseModel):
@@ -33,7 +36,7 @@ class FindInput(BaseModel):
     path: str | None = Field(default=None, description="File or directory scope; defaults to workspace root.")
     extensions: list[str] | None = Field(default=None, description="Extensions such as ['py', 'pyi'].")
     case: CaseMode = "auto"
-    max_results: int = Field(default=50, ge=1, le=200)
+    max_results: int = Field(default=50, ge=1, le=500)
 
     @model_validator(mode="after")
     def _require_query_or_extensions(self):
@@ -58,7 +61,7 @@ class SearchInput(BaseModel):
     match: MatchMode = "text"
     case: CaseMode = "auto"
     context: int = Field(default=0, ge=0, le=10)
-    max_results: int = Field(default=30, ge=1, le=100)
+    max_results: int = Field(default=30, ge=1, le=500)
 
     @field_validator("extensions", mode="before")
     @classmethod
@@ -146,6 +149,53 @@ def _case_insensitive(value: str, mode: CaseMode) -> bool:
     return mode == "insensitive" or (mode == "auto" and not any(char.isupper() for char in value))
 
 
+def _json_output(payload: dict) -> str:
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def _overflow_name(tool_name: str, full_output: str) -> str:
+    digest = hashlib.sha256(full_output.encode("utf-8")).hexdigest()[:16]
+    return f"{tool_name}-overflow-{digest}"
+
+
+def _fit_json_output(
+    build_payload,
+    size: int,
+    *,
+    already_truncated: bool,
+    ctx: ToolContext,
+    tool_name: str,
+    max_chars: int = OUTPUT_CHAR_BUDGET,
+) -> tuple[str, int, bool]:
+    full_payload = build_payload(size, already_truncated)
+    full_output = _json_output(full_payload)
+    if len(full_output) <= max_chars:
+        return full_output, size, already_truncated
+
+    overflow_path = None
+    try:
+        overflow_path = persist_named_tool_result(
+            full_output,
+            _overflow_name(tool_name, full_output),
+            session_id=ctx.session_id,
+            workspace=ctx.workspace,
+        )
+    except OSError:
+        overflow_path = None
+
+    for count in range(size - 1, -1, -1):
+        payload = build_payload(count, True)
+        if overflow_path:
+            payload["overflow_path"] = overflow_path
+        text = _json_output(payload)
+        if len(text) <= max_chars or count == 0:
+            return text, count, True
+    payload = build_payload(0, True)
+    if overflow_path:
+        payload["overflow_path"] = overflow_path
+    return _json_output(payload), 0, True
+
+
 class FindTool(BaseTool):
     id = "find"
     description = "Find files by filename substring and extension filters with stable structured results."
@@ -176,9 +226,29 @@ class FindTool(BaseTool):
             rank = 0 if query and candidate == needle else 1 if query and candidate.startswith(needle) else 2
             matches.append((rank, entry.relative, {"path": entry.relative, "name": entry.path.name}))
         matches.sort(key=lambda item: (item[0], item[1]))
-        truncated = len(matches) > inp.max_results
-        payload = {"query": inp.query, "extensions": inp.extensions, "files": [item[2] for item in matches[:inp.max_results]], "truncated": truncated}
-        return ToolResult(output=json.dumps(payload, ensure_ascii=False, indent=2), summary=f"{len(payload['files'])} files", metadata={"count": len(payload["files"]), "truncated": truncated})
+        limited = [item[2] for item in matches[:inp.max_results]]
+        count_truncated = len(matches) > inp.max_results
+
+        def build_payload(count: int, truncated: bool) -> dict:
+            return {
+                "query": inp.query,
+                "extensions": inp.extensions,
+                "files": limited[:count],
+                "truncated": truncated,
+            }
+
+        output, returned, truncated = _fit_json_output(
+            build_payload,
+            len(limited),
+            already_truncated=count_truncated,
+            ctx=ctx,
+            tool_name="find",
+        )
+        return ToolResult(
+            output=output,
+            summary=f"{returned} files",
+            metadata={"count": returned, "truncated": truncated},
+        )
 
 
 class SearchTool(BaseTool):
@@ -187,6 +257,7 @@ class SearchTool(BaseTool):
 
     def parameters_schema(self) -> dict:
         return model_to_json_schema(SearchInput)
+
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
         try:
             inp = SearchInput.model_validate(args)
@@ -238,8 +309,33 @@ class SearchTool(BaseTool):
                 record_read_range(ctx, entry.path, min(hit["line"] for hit in hits), max(hit["line"] for hit in hits))
             if truncated:
                 break
-        matches = [{"path": path, "hits": hits} for path, hits in grouped.items()]
-        payload = {"query": inp.query, "match": inp.match, "case": inp.case, "matches": matches, "truncated": truncated}
-        details = [{"path": path, **hit} for path, hits in grouped.items() for hit in hits]
-        display = "\n".join(f"{path}:{hit['line']}:{hit['text']}" for path, hits in grouped.items() for hit in hits)
-        return ToolResult(output=json.dumps(payload, ensure_ascii=False, indent=2), display=display, summary=f"{count} matches", metadata={"query": inp.query, "matches": count, "match_details": details, "truncated": truncated})
+        flat_hits = [(path, hit) for path, hits in grouped.items() for hit in hits]
+
+        def build_payload(hit_count: int, is_truncated: bool) -> dict:
+            selected: dict[str, list[dict]] = {}
+            for path, hit in flat_hits[:hit_count]:
+                selected.setdefault(path, []).append(hit)
+            return {
+                "query": inp.query,
+                "match": inp.match,
+                "case": inp.case,
+                "matches": [{"path": path, "hits": hits} for path, hits in selected.items()],
+                "truncated": is_truncated,
+            }
+
+        output, returned, truncated = _fit_json_output(
+            build_payload,
+            len(flat_hits),
+            already_truncated=truncated,
+            ctx=ctx,
+            tool_name="search",
+        )
+        selected_hits = flat_hits[:returned]
+        details = [{"path": path, **hit} for path, hit in selected_hits]
+        display = "\n".join(f"{path}:{hit['line']}:{hit['text']}" for path, hit in selected_hits)
+        return ToolResult(
+            output=output,
+            display=display,
+            summary=f"{returned} matches",
+            metadata={"query": inp.query, "matches": returned, "match_details": details, "truncated": truncated},
+        )
