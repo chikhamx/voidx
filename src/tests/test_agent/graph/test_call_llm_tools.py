@@ -1,5 +1,6 @@
 """Tests for call_llm tools and convergence."""
 
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -506,3 +507,46 @@ async def test_call_llm_keeps_lsp_tools_when_a_lsp_server_is_available(tmp_path,
 
     tool_names = [tool["function"]["name"] for tool in model.bound_tools]
     assert "lsp" in tool_names
+
+
+@pytest.mark.asyncio
+async def test_finalize_warns_about_running_child_runs(tmp_path):
+    from voidx.memory.session import SessionInfo
+
+    session = SessionInfo(id="session-finalize-warning", workspace=str(tmp_path))
+    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    gateway = graph.agent_gateway
+    root_id = gateway.ensure_root(session.id)
+    release = asyncio.Event()
+
+    async def runner(_run_id: str) -> str:
+        await release.wait()
+        return "late"
+
+    child = await gateway.spawn(
+        session_id=session.id,
+        parent_run_id=root_id,
+        agent_name="child",
+        description="background child",
+        runner=runner,
+    )
+
+    result = await graph._finalize({
+        "messages": [AIMessage(content="Here is the final answer with enough detail.")],
+        "convergence_forced": False,
+    })
+
+    assert result["messages"], "finalize should surface running background child runs"
+    warning = result["messages"][-1]
+    assert child.run_id in warning.content
+    assert "wait" in warning.content and "cancel" in warning.content
+    assert is_guidance_message(warning)
+
+    release.set()
+    await gateway.close_all()
+
+    settled = await graph._finalize({
+        "messages": [AIMessage(content="Here is the final answer with enough detail.")],
+        "convergence_forced": False,
+    })
+    assert settled == {}

@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from langchain_core.messages import BaseMessage, HumanMessage
 
 from voidx.agent.application.agents import AgentDef
+from voidx.agent.gateway import AgentGateway
 from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import CompactionCoordinator
 from voidx.agent.infrastructure.langgraph.runtime.convergence import generate_fallback_summary
 from voidx.agent.infrastructure.langgraph.runtime.core.helpers import (
@@ -329,6 +330,7 @@ class LangGraphExecution:
         self.api_key = api_key
         self.model = create_chat_model(api_key, config.model) if api_key else None
         self._session = session
+        self.agent_gateway = AgentGateway()
         self._workspace = config.workspace
         self._settings = settings
         self._ai_approval = AiApprovalService()
@@ -671,6 +673,8 @@ class LangGraphExecution:
     async def clear_current_session(self) -> None:
         self._invalidate_session_title_generation()
         old_session_id = self._session.id if self._session is not None else None
+        if old_session_id:
+            await self.agent_gateway.close_session(old_session_id)
         self._session = None
         self._session_date = session_date(None)
         self._session_msg_cache = []
@@ -714,6 +718,9 @@ class LangGraphExecution:
 
     async def resume_session(self, session: SessionInfo) -> None:
         self._invalidate_session_title_generation()
+        old_session_id = self._session.id if self._session is not None else None
+        if old_session_id and old_session_id != session.id:
+            await self.agent_gateway.close_session(old_session_id)
         self._session = session
         self._workspace = session.workspace
         self.config.workspace = session.workspace
@@ -754,13 +761,16 @@ class LangGraphExecution:
         result_contract: Any,
         *,
         permission_snapshot=None,
+        agent_run_id: str | None = None,
+        agent_gateway=None,
     ) -> str:
         sub_buffer: list[BaseMessage] = []
         session_id = self._session.id if self._session else "default"
         agent_id = self._next_agent_id
         self._next_agent_id += 1
         parent_tool_call_id = _current_parent_tool_call_id.get()
-        agent_run_id = f"agent_{agent_id}"
+        agent_run_id = agent_run_id or f"agent_{agent_id}"
+        agent_gateway = agent_gateway or getattr(self, "agent_gateway", None)
         started_at = time.monotonic()
         goal = goal_resolution.goal
         plan = goal_resolution.plan
@@ -822,6 +832,8 @@ class LangGraphExecution:
                 "todo_state_sink": lambda todo_state: apply_todo_state_to_host(self, todo_state),
                 "run_metadata": run_metadata,
                 "permission_snapshot": permission_snapshot,
+                "agent_run_id": agent_run_id,
+                "agent_gateway": agent_gateway,
             }
             if self._current_tree and self._turn_node:
                 kwargs.update({
@@ -1152,10 +1164,32 @@ class LangGraphExecution:
     async def _finalize(self, state: AgentState) -> dict:
         from voidx.agent.infrastructure.langgraph.runtime.convergence import generate_fallback_summary
 
-        if not state.get("convergence_forced"):
-            return {}
-        last = latest_ai_message(state.get("messages", []))
-        if isinstance(last, AIMessage) and not last.tool_calls:
-            if len(extract_text(last).strip()) >= 20:
-                return {}
-        return {"messages": [AIMessage(content=generate_fallback_summary(state))]}
+        messages: list = []
+        if state.get("convergence_forced"):
+            last = latest_ai_message(state.get("messages", []))
+            if not (isinstance(last, AIMessage) and not last.tool_calls and len(extract_text(last).strip()) >= 20):
+                messages.append(AIMessage(content=generate_fallback_summary(state)))
+        running_notice = self._running_child_runs_notice()
+        if running_notice is not None:
+            messages.append(running_notice)
+        return {"messages": messages} if messages else {}
+
+    def _running_child_runs_notice(self):
+        session = self._session
+        if session is None:
+            return None
+        running = [
+            run
+            for run in self.agent_gateway.list_runs(session_id=session.id)
+            if run.agent_type == "sub" and run.status in ("pending", "running")
+        ]
+        if not running:
+            return None
+        lines = "\n".join(f"- {run.run_id} ({run.agent_name}): {run.description}" for run in running)
+        return HumanMessage(
+            content=(
+                f"{len(running)} background child agent run(s) still running:\n{lines}\n"
+                "Use agent(wait) with target_run_id to collect results, or agent(cancel) to stop them."
+            ),
+            additional_kwargs={GUIDANCE_MARKER: True},
+        )

@@ -10,11 +10,11 @@ audience: human+llm
 
 ## TL;DR
 
-当前 `agent` 工具会同步等待 `run_subagent()` 完成，主 agent 在此期间不能继续推理，因此即使增加消息队列也无法实现有效的双向通信。本设计在 `src/voidx/agent/gateway/` 增加每个 graph 实例独立的进程内 `AgentGateway`：`agent(background=true)` 创建后台任务并立即返回 `run_id`，主子 agent 通过 `agent_message` 工具发送、接收、等待消息、获取结果和取消任务。现有 `background=false` 同步行为保持不变。首期不支持主 agent 在 turn 结束后被消息自动唤醒，也不恢复进程重启前的后台任务。
+当前 `agent` 工具如果同步等待 `run_subagent()` 完成，主 agent 在此期间不能继续推理，因此即使增加消息队列也无法实现有效通信。本设计在 `src/voidx/agent/gateway/` 增加每个 graph 实例独立的进程内 `AgentGateway`：`agent(spawn)` 默认异步并立即返回 `run_id`，结果由子 agent 通过 child-only `message(send, message_type=result)` 报告，parent 后续用 `agent(wait)` 获取；`agent(cancel)` 可取消后台 run。首期不支持主 agent 在 turn 结束后被消息自动唤醒，也不暴露 root-side 普通消息收发 UI，不恢复进程重启前的后台任务。首期范围有意克制，但关键选型（run_id 不透明、集中式路由、窄 gateway API、inbox 实现封装、结果走 message 通道）对齐长期演进方向，未来扩展到任意拓扑通信与分布式 transport 时无需推翻本设计，见 Evolution。
 
 ## Context
 
-### 当前执行链路
+### 设计前的旧执行链路
 
 ```text
 AgentTool.execute()
@@ -47,19 +47,19 @@ AgentTool.execute()
 ### Goals
 
 - 支持一个主 agent 同时启动多个后台子 agent。
-- 让主 agent 和直属子 agent 在运行期间双向发送结构化消息。
+- 在 gateway 层支持主 agent 与直属子 agent 的父子路由；首期公开工具面由 child-only `message` 与 parent-side `agent(wait/cancel)` 组成。
 - 为后台 run 提供查询、等待结果和取消能力。
 - 保证 completed、failed、cancelled 均有唯一、可观察的终态。
 - 按 session 隔离 run 和消息，并在 session 清理或切换时回收后台 task。
-- 保持现有同步 `agent` 调用兼容。
+- 将 `agent(spawn)` 收口为默认异步、gateway 必需语义；缺少 gateway 时明确返回 `gateway_unavailable`，不提供同步 fallback。
 - 复用现有 result contract、权限快照、UI lifecycle event 和 transcript 逻辑。
 
 ### Non-Goals
 
-- 首期不在主 agent turn 已结束后自动触发新的推理轮次。
-- 首期不允许任意拓扑通信；只允许父子直连。
+- 首期不在主 agent turn 已结束后自动触发新的推理轮次（演进路径见 Evolution）。
+- 首期不允许任意拓扑通信；只允许父子直连（路由结构已预留扩展，见 Decision 5 与 Evolution）。
 - 首期不支持子 agent 启动孙 agent；现有 `can_delegate` 规则保持不变。
-- 首期不跨进程恢复后台 run 或未读 inbox。
+- 首期不跨进程恢复后台 run 或未读 inbox（演进路径见 Evolution）。
 - 不用 gateway 取代 workflow DAG、`TaskTracker` 或终止汇报协议。
 - 不在首期增加前端专用通信 UI。
 
@@ -77,6 +77,8 @@ root:<session_id>
 
 子 run id 使用不可碰撞标识，不复用当前仅用于 UI 排序的 `agent_id`。UI 仍可保留递增 `agent_id`，但 lifecycle event 的 `subagent_id` 应使用 gateway `run_id`，使通信、日志和展示引用同一身份。
 
+run_id 对工具、LLM 和任何调用方都是不透明字符串：不得解析、拼接或假设其格式。`root:<session_id>` 与子 run id 的生成规则是 gateway 内部实现细节，未来可整体替换（例如携带 agent_type 的格式）而不影响工具协议、消息协议和存储。调用方需要拓扑信息时通过 `AgentRun` 字段获取（如 `agent_type`、`parent_run_id`），而不是从 run_id 解析。
+
 ### 2. Gateway 是运行事实源，TaskTracker 是状态投影
 
 `AgentGateway` 独占以下状态：
@@ -89,18 +91,13 @@ root:<session_id>
 
 `TaskTracker` 继续服务 `task_status` 和 UI 预览。runner 在状态变化时更新 tracker，但不得由 tracker 反向推断 gateway 生命周期。
 
-### 3. 同步兼容，显式后台派发
+### 3. spawn 默认异步，wait/cancel 管理后台 run
 
-`AgentInput` 增加：
+`agent` 的 `spawn` 默认异步：创建 child run 后立即返回 `run_id`，主 agent 可继续推理、启动更多 child，或使用 `agent(wait)` / `agent(cancel)` 管理该 run。不新增 `spawn_async`，也不引入 `background` 字段；`spawn` 本身就是后台派发语义。
 
-```python
-background: bool = False
-```
+结果传递统一走 message 通道：子 agent 通过 `message(send, message_type=result)` 报告结果（见 Decision 6）。`agent(wait)` 等待 child 终态，并从 `AgentRun.result` 的结构化 payload 中提取字符串输出。这样 spawn、wait、message 的结果事实源保持一致。
+`agent(spawn)` 必须在携带 `agent_gateway` 和 `agent_run_id` 的 runtime context 中运行；缺少 gateway 时返回 `gateway_unavailable` 错误，不回退为同步 runner 调用。
 
-- `false`：保持现有 runner await 和最终 `ToolResult` 语义。
-- `true`：gateway 立即创建后台 task，工具返回 `run_id`、`status=running` 和用于后续通信的提示。
-
-不把所有调用默认改成后台模式，以免现有 workflow 在拿不到最终结构化结果时错误推进。
 
 ### 4. 通过 ToolContext 传递执行身份
 
@@ -125,6 +122,19 @@ agent_run_id: str
 
 规则由 gateway 统一校验，不能只依赖 LLM 工具描述。
 
+路由判定必须实现为 gateway 内单一的显式规则函数（输入 source/target run record 与操作类型，输出允许或拒绝），不得散落成各 API 里的硬编码判断。首期规则集只放行父子直连；未来放开兄弟、祖孙或跨层通信时只需扩展规则集，gateway API、两个通信工具和消息协议保持不变（见 Evolution）。
+
+### 6. 子 agent 结果通过 message result 消息报告
+
+子 agent 的最终结果统一通过 `message(send, message_type=result, payload={...})` 报告给 parent。result 消息兼容两种产生方式：
+
+1. **显式发送（优先）**：子 agent LLM 在完成任务后主动调用 `message(send, message_type=result, payload={...})`。gateway 检测到 result 消息后将其作为该 run 的正式结果，并终止子 agent run。
+2. **自动包装（兜底）**：如果子 agent 正常结束（LLM 不再调用工具）但未显式发送 result 消息，runner 自动将最后一轮 LLM 输出包装成 result 消息投递给 parent。这与现有 `extract_text(assistant_msg)` 行为一致，对子 agent LLM 透明。
+
+两种方式产生的 result 消息内容应保持一致——都放在 `payload` 里，结构由 `result_contract` 约定。`agent(wait)` 返回的 `AgentRun.result` 与 result 消息的 payload 是同一份数据。
+
+现有 `run_subagent` 的返回值（`str`）改为从 result 消息的 payload 提取，而非直接取 `extract_text`。`agent(spawn)` 返回 `run_id`；`agent(wait)` 从 gateway 保存的结构化 result payload 中提取字符串并包装成 `ToolResult`。
+
 ## Data Model
 
 在 `src/voidx/agent/gateway/models.py` 定义 Pydantic 模型和字面量类型。
@@ -134,8 +144,14 @@ AgentRunStatus = Literal[
     "pending", "running", "completed", "failed", "cancelled"
 ]
 
+UserMessageType = Literal[
+    "message", "question", "answer", "progress", "result"
+]
+
+LifecycleMessageType = Literal["completed", "failed", "cancelled"]
+
 AgentMessageType = Literal[
-    "message", "question", "answer", "progress",
+    "message", "question", "answer", "progress", "result",
     "completed", "failed", "cancelled",
 ]
 
@@ -152,16 +168,19 @@ class AgentRun(BaseModel):
     run_id: str
     session_id: str
     parent_run_id: str
+    agent_type: Literal["root", "sub"]
     agent_name: str
     description: str
     status: AgentRunStatus
-    result: str | None = None
+    result: dict[str, Any] | None = None
     error: str | None = None
     created_at: float
     updated_at: float
 ```
 
 内部 runtime record 可使用 dataclass，额外保存 `asyncio.Task`、有界 `asyncio.Queue[AgentMessage]` 和 `asyncio.Event`；这些对象不得进入 Pydantic 序列化或 transcript。
+
+`agent_type` 让调用方无需解析 run_id 即可区分 root 与 sub，未来可扩展取值（如 `third_party`）。`AgentRunStatus` 和 `AgentMessageType` 的新增取值视为向后兼容扩展（如未来的 `paused`、`retrying`、控制类消息），但任何扩展不得破坏两条不变量：completed/failed/cancelled 是唯一终态语义来源且每个 run 只进入一次终态；lifecycle 终态消息不得因背压丢失。
 
 ## Gateway API
 
@@ -178,7 +197,7 @@ class AgentGateway:
         parent_run_id: str,
         agent_name: str,
         description: str,
-        runner: Callable[[str], Awaitable[str]],
+        runner: Callable[[str], Awaitable[str | dict[str, Any]]],
     ) -> AgentRun: ...
 
     async def send(
@@ -186,7 +205,7 @@ class AgentGateway:
         *,
         sender_run_id: str,
         target_run_id: str,
-        message_type: AgentMessageType,
+        message_type: UserMessageType,
         payload: dict[str, Any],
     ) -> AgentMessage: ...
 
@@ -200,23 +219,29 @@ class AgentGateway:
 
     def get_run(self, *, requester_run_id: str, target_run_id: str) -> AgentRun: ...
 
+    def get_parent_run_id(self, run_id: str) -> str | None: ...
+
     async def cancel(
         self, *, requester_run_id: str, target_run_id: str
     ) -> AgentRun: ...
 
     async def close_session(self, session_id: str) -> None: ...
+
+    async def close_all(self) -> None: ...
 ```
+
+`wait` 的 `timeout` 语义：`0` 表示无限等待终态；`>0` 为有界等待，超时返回当前 `AgentRun`（通常仍是 `running`），不抛异常。
 
 ### Spawn 和终态规则
 
 1. 校验 parent 属于同一 session。
 2. 创建 run record、inbox 和完成 event。
 3. 用 `asyncio.create_task()` 执行包装后的 runner。
-4. runner 正常返回时写入 result，状态变为 completed。
+4. 若 run 尚未终态，runner 正常返回时写入 result，状态变为 completed。若已通过 `message_type=result` 进入终态，runner 返回值不得覆盖已有 result。
 5. runner 抛出 `CancelledError` 时状态变为 cancelled，并继续正确处理取消。
 6. runner 抛出其他异常时捕获摘要，状态变为 failed；后台 task 不得泄漏未检索异常。
 7. 每次终态转换只执行一次，并向 parent inbox 发送对应 lifecycle message。
-8. `close_session()` 取消该 session 的非终态 task，等待回收后删除 inbox 和 runtime record。
+8. `close_session()` 取消该 session 的非终态 task，等待回收后删除 inbox 和 runtime record；应用退出路径调用 `close_all()`。
 
 ### 消息背压
 
@@ -225,15 +250,42 @@ class AgentGateway:
 - inbox 已满或消息过大时明确返回错误，不静默丢弃。
 - lifecycle 终态消息不能因普通 inbox 已满而消失；实现可为 lifecycle 保留槽位，或使用独立 completion event 并让 `wait/get_run` 成为可靠终态通道。
 
-## `agent_message` Tool
+inbox 的队列实现封装在 gateway 内部，不出现在 `AgentGateway` 公开 API 的签名中。未来需要跨进程通信时，可在 send/receive 之下引入 `MessageTransport` 抽象，将内存队列替换为外部队列，上层工具与消息协议不变（见 Evolution）。
 
-新增 `src/voidx/tools/agent_message.py`，注册到 builtins。输入使用单一 action discriminant：
+## Communication & Control Tools
+
+首期涉及两个工具：`agent` 扩展为创建+控制子 agent 的统一入口，新增 `message` 工具供子 agent 与 parent 通信（含结果传递）。按职责拆分——`agent` 管生命周期（spawn/wait/cancel），`message` 管子 agent 消息（send/receive，含 result 类型）。语义边界对齐权限边界：child 需要 `message` 报告结果；parent 通过 `agent(wait/cancel)` 管理直属 child。
+
+### `agent`（创建 + 运行控制）
+
+扩展现有 `src/voidx/tools/agent.py`。`AgentInput` 增加两个字段：
 
 ```python
-class AgentMessageInput(BaseModel):
-    action: Literal["send", "receive", "wait", "result", "cancel"]
+class AgentInput(BaseModel):
+    # 现有字段保持不变：name, mode, task, target, success_criteria, result_preset
+
+    action: Literal["spawn", "wait", "cancel"] = "spawn"
+    target_run_id: str | None = None  # wait/cancel 必填
+    timeout: float = 0  # wait: 0 = 无限等待终态；>0 = 有界等待
+```
+
+语义：
+
+- `spawn`（默认）：必须在携带 `agent_gateway` 和 `agent_run_id` 的 runtime context 中运行；创建后台子 agent 后立即返回 `run_id` 和 `status="running"`。缺少 gateway context 时返回 `metadata.error=True`、`reason="gateway_unavailable"`，不调用 runner，也不回退同步执行。
+- `wait`：等待 `target_run_id` 指定的直属 child。`timeout=0` 表示同步等待到终态（不超时）；`timeout>0` 为有界等待，超时后返回当前 `AgentRun`（通常仍是 `running`）且不标 error。终态时从 result payload 中提取字符串作为 `ToolResult.output`。
+- `cancel`：取消 `target_run_id` 指定的直属 child。
+
+`action != "spawn"` 时，name/mode/task/target/success_criteria 等创建字段忽略。路由与权限统一由 gateway 校验。
+
+### `message`（消息收发）
+
+新增 `src/voidx/tools/message.py`：
+
+```python
+class MessageInput(BaseModel):
+    action: Literal["send", "receive"]
     target_run_id: str | None = None
-    message_type: Literal["message", "question", "answer", "progress"] = "message"
+    message_type: Literal["message", "question", "answer", "progress", "result"] = "message"
     payload: dict[str, Any] = Field(default_factory=dict)
     limit: int = 1
     timeout: float = 0
@@ -241,28 +293,45 @@ class AgentMessageInput(BaseModel):
 
 语义：
 
-- `send`：要求 target，向 parent 或直属 child 发送消息。
-- `receive`：读取当前 run inbox；`timeout=0` 为非阻塞。
-- `wait`：等待直属 child 进入终态，timeout 必须大于 0 且受最大值限制。
-- `result`：读取直属 child 当前状态和结果，不阻塞。
-- `cancel`：取消直属 child。
+- `send`：向 parent 或直属 child 发送消息。`target_run_id` 省略时默认路由到当前 run 的 parent（child 无需知晓 parent 的具体 run id）；root 省略 target 时返回参数错误。`message_type` 只接受 `UserMessageType`；lifecycle 类型（completed/failed/cancelled）由 gateway 在终态转换时内部产生，`AgentGateway.send()` 会拒绝外部发送 lifecycle 类型。
+- `receive`：读取当前 run inbox；`timeout=0` 为非阻塞，`timeout>0` 等待消息到达。
 
-工具从 `ToolContext.agent_gateway` 和 `ToolContext.agent_run_id` 获取调用身份。gateway 缺失、参数不适用或路由越权时返回 `ToolResult(metadata={"error": True, ...})`。
+`message_type=result` 用于子 agent 向 parent 报告结果，产生机制见 Decision 6。子 agent 显式发送时优先使用；未显式发送时由 runner 自动包装。result 消息与 gateway 的终态 lifecycle 消息（completed/failed/cancelled，系统自动发送）互补——lifecycle 消息通知"结束了"，result 消息携带"结果是什么"。`agent(wait)` 返回的 `AgentRun.result` 与 result 消息的 payload 是同一份数据。
 
-`agent_message` 不加入 `src/voidx/agent/graph/subagent.py:_BLOCKED_CHILD_TOOLS`。不能委派的子 agent 仍需要它与父 agent 通信。
+### 共性
+
+两个工具都从 `ToolContext.agent_gateway` 和 `ToolContext.agent_run_id` 获取调用身份。gateway 缺失、参数不适用或路由越权时返回 `ToolResult(metadata={"error": True, ...})`。
+
+### 工具裁剪策略
+
+现有裁剪机制：`_BLOCKED_CHILD_TOOLS = {"agent", "clarify", "checkpoint"}`，`can_delegate=False` 的子 agent 从父 registry 减去这些工具。引入 `message` 后的裁剪规则：
+
+| 工具 | 主 agent（首期） | 子 agent can_delegate=False | 子 agent can_delegate=True |
+|---|---|---|---|
+| 现有全部工具 | ✅ | ✅（减去 agent/clarify/checkpoint） | ✅ |
+| `message` | ❌ 不注册 | ✅ | ✅ |
+| `agent` 的 spawn | ✅ | ❌ | ✅ |
+| `agent` 的 wait/cancel | ✅ | ❌ | ❌ |
+
+首期裁剪要点：
+
+1. **主 agent 不注册 `message`**：首期 root-side 普通消息 UX 不暴露；主 agent 通过 `agent(wait)` 获取 result、通过 `agent(cancel)` 取消直属 child。
+2. **子 agent 注册 `message`**：子 agent 需要它向 parent 发送 result/progress 消息并读取发给自己的消息。`message` 不加入 `_BLOCKED_CHILD_TOOLS`。
+3. **子 agent delegation 规则不变**：`can_delegate=False` 仍然屏蔽整个 `agent` 工具；`can_delegate=True` 可保留 `agent`，但当前子 agent 启动孙 agent 仍属于 Non-Goal，不应在首期依赖。
+4. **`clarify`/`checkpoint` 保持屏蔽**：子 agent 不应与用户交互或设审批门，现有规则不变。
 
 ## Integration
 
 ### Tool wiring
 
-- `src/voidx/tools/registry.py` 注册 `AgentMessageTool`。
-- `src/voidx/agent/graph/wiring.py:build_tool_registry()` 接收 gateway，并在创建 `AgentTool` 时注入。
-- `src/voidx/agent/graph/core/voidx_graph.py:__init__()` 在 `build_tool_registry()` 前创建 gateway。
-- `_reload_parallel_subagents_from_settings()` 重新注册 `AgentTool` 时继续使用同一 gateway。
+- `src/voidx/tools/registry.py`：`AgentTool` 已注册；`MessageTool` 不在主 agent registry 注册——只在子 agent 的 tool registry 中注册（见工具裁剪策略）。
+- `src/voidx/agent/infrastructure/langgraph/runtime/subagent.py:run_subagent()`：在现有 `parent_tools` 基础上，为子 agent 额外注册 `MessageTool`。`can_delegate=False` 的子 agent 仍按现有规则减去 `_BLOCKED_CHILD_TOOLS`，但 `message` 不在屏蔽列表中。
+- `src/voidx/agent/infrastructure/langgraph/execution.py` 创建 graph-scoped gateway，并在 session cleanup 时关闭对应 gateway session。
+- `src/voidx/agent/infrastructure/langgraph/runtime/tool_executor/executor.py` 在主 agent 工具执行 context 中注入 root run identity。
 
 ### Main agent context
 
-`src/voidx/agent/graph/tool_executor/executor.py:make_context()`：
+`src/voidx/agent/infrastructure/langgraph/runtime/tool_executor/executor.py`：
 
 - 调用 `gateway.ensure_root(session_id)`；
 - 注入 `agent_gateway`；
@@ -279,7 +348,7 @@ AgentGateway.spawn wrapper
         -> ToolContext(agent_run_id=..., agent_gateway=...)
 ```
 
-同步路径同样可分配 run identity，但不由 gateway 创建后台 task；首期为减少改动，允许同步路径继续使用现有身份，仅后台路径必须完整接入 gateway。
+`agent(spawn)` 不再保留无 gateway 的同步执行路径；缺少 `agent_gateway` 或 `agent_run_id` 时工具直接返回 `gateway_unavailable`，避免同一 action 存在两套语义。
 
 `_subagent_runner()` 中现有 `_next_agent_id` 继续只负责 UI 排序。`SubagentStarted.subagent_id`、`SubagentFinished.subagent_id` 和 `append_subagent_event(..., agent_run_id, ...)` 使用 gateway run id。
 
@@ -296,178 +365,96 @@ cleanup 顺序必须先取消旧后台任务，再替换 `_session` 和 workspac
 ## Interaction Example
 
 ```text
-main -> agent({background: true, ...})
+main -> agent({action: "spawn", ...})
 agent -> {run_id: "run_...", status: "running"}
 
-child -> agent_message({
-  action: "send",
-  target_run_id: "root:<session>",
-  message_type: "question",
-  payload: {"text": "Should the fallback preserve legacy metadata?"}
-})
+child -> message({action: "send", message_type: "progress", payload: {...}})
+child -> message({action: "send", message_type: "result", payload: {...}})
 
-main -> agent_message({action: "receive", timeout: 5, limit: 10})
-agent_message -> [{source_run_id: "run_...", type: "question", ...}]
-
-main -> agent_message({
-  action: "send",
-  target_run_id: "run_...",
-  message_type: "answer",
-  payload: {"text": "Yes, preserve it."}
-})
-
-main -> agent_message({action: "wait", target_run_id: "run_...", timeout: 60})
-agent_message -> {status: "completed", result: "..."}
+main -> agent({action: "wait", target_run_id: "run_...", timeout: 60})
+agent -> {status: "completed", result: "..."}
 ```
 
-主 agent 在存在后台子任务时必须继续工作、轮询 `receive`，或调用 `wait`。首期 gateway 不会在主 turn 已 finalize 后自动恢复 graph。
+主 agent 在存在后台子任务时必须继续工作或调用 `agent(wait)` / `agent(cancel)` 管理 run。首期 gateway 不会在主 turn 已 finalize 后自动恢复 graph；root-side message receive/send UX 也不在首期暴露。
 
-## Implementation Plan
 
-### Task 1 — Gateway core
+## Implementation Status
 
-Files:
+本设计已实现，关键变更如下：
 
-- Create `src/voidx/agent/gateway/__init__.py`.
-- Create `src/voidx/agent/gateway/models.py`.
-- Create `src/voidx/agent/gateway/gateway.py`.
-- Create `src/tests/test_agent/gateway/test_gateway.py`.
+- `src/voidx/agent/gateway/` 提供进程内 `AgentGateway`、`AgentRun`、`AgentMessage`，负责 run registry、父子路由、inbox、后台 task、终态、取消和 session cleanup。
+- `src/voidx/tools/agent.py` 支持 `action="spawn" | "wait" | "cancel"`；`spawn` 默认异步并立即返回 `run_id`，缺少 gateway context 时返回 `gateway_unavailable`，不执行同步 fallback。
+- `src/voidx/tools/message.py` 提供 child-only `message(send/receive)`，支持 `message_type="result"` 将结构化 payload 写入 `AgentRun.result`。
+- `src/voidx/tools/base.py` 的 `ToolContext` 携带 `agent_gateway` 和 `agent_run_id`，二者不参与序列化。
+- `src/voidx/agent/infrastructure/langgraph/execution.py` 与 runtime tool executor 为主 agent 注入 root run identity，并在 session cleanup 时关闭 gateway session。
+- `src/voidx/agent/infrastructure/langgraph/runtime/subagent.py` 为子 agent 注入 child run identity，只在子 agent registry 注册 `MessageTool`，并在没有显式 result 消息时自动包装最终文本为 result payload。
+- `src/voidx/runtime/goal.py` 承载工具可用的 `GoalSpec`，避免 `src/voidx/tools/*` 反向导入 `voidx.agent.*`。
 
-Steps:
-
-- [ ] 先测试 root/run 注册、父子 send/receive、timeout 和路由拒绝，运行并确认 RED。
-- [ ] 实现最小 run registry 和有界 inbox，使消息测试 GREEN。
-- [ ] 增加 completed/failed/cancelled、唯一终态和 completion wait 测试，确认 RED。
-- [ ] 实现 task wrapper、结果保存、异常捕获、取消和 session cleanup，使测试 GREEN。
-
-Verification:
-
-```bash
-./test.py --backend -- src/tests/test_agent/gateway/test_gateway.py -v
-```
-
-Expected: gateway 测试全部通过，无 pending task 或 unhandled task exception 警告。
-
-### Task 2 — Communication tool
-
-Files:
-
-- Create `src/voidx/tools/agent_message.py`.
-- Create `src/tests/test_tools/test_agent_message.py`.
-- Modify `src/voidx/tools/registry.py`.
-
-Steps:
-
-- [ ] 为五个 action、gateway 缺失和无效参数编写失败测试。
-- [ ] 实现 Pydantic input、ToolResult 映射和 registry 注册。
-- [ ] 为跨 session、sibling 和未知 run 拒绝编写测试并实现统一 gateway 校验。
-
-Verification:
-
-```bash
-./test.py --backend -- src/tests/test_tools/test_agent_message.py -v
-```
-
-Expected: 所有 action 返回结构化 metadata，越权请求明确失败。
-
-### Task 3 — Background AgentTool
-
-Files:
-
-- Modify `src/voidx/tools/agent.py`.
-- Modify `src/tests/test_tools/test_interactive_tools.py`.
-
-Steps:
-
-- [ ] 测试 `background` 默认值保持同步 runner await 行为。
-- [ ] 测试 `background=true` 立即返回 run id，确认 RED。
-- [ ] 注入 gateway 并实现 spawn 分支；保留现有校验、permission snapshot 和同步异常处理。
-- [ ] 测试后台 runner 的结果和异常可由 gateway 查询。
-
-Verification:
-
-```bash
-./test.py --backend -- src/tests/test_tools/test_interactive_tools.py -k agent -v
-```
-
-Expected: 现有 agent tests 与新增后台 tests 全部通过。
-
-### Task 4 — Graph and context integration
-
-Files:
-
-- Modify `src/voidx/tools/base.py`.
-- Modify `src/voidx/agent/graph/wiring.py`.
-- Modify `src/voidx/agent/graph/core/voidx_graph.py`.
-- Modify `src/voidx/agent/graph/tool_executor/executor.py`.
-- Modify `src/voidx/agent/graph/subagent.py`.
-- Modify `src/tests/test_agent/graph/test_subagent_runner.py`.
-- Modify `src/tests/test_agent/graph/test_run_loop_startup.py`.
-
-Steps:
-
-- [ ] 测试主 context 获得 root identity、子 context 获得 child identity，确认 RED。
-- [ ] 添加 `ToolContext` 字段并贯穿 runner 链路。
-- [ ] 测试 lifecycle event 和 subagent JSONL 使用 gateway run id。
-- [ ] 测试 clear/resume 取消旧 session 后台 task，确认 RED 后实现 cleanup。
-- [ ] 确认过滤 child tools 时保留 `agent_message`。
-
-Verification:
-
-```bash
-./test.py --backend -- \
-  src/tests/test_agent/graph/test_subagent_runner.py \
-  src/tests/test_agent/graph/test_run_loop_startup.py -v
-```
-
-Expected: context、lifecycle、persistence 和 cleanup 测试全部通过。
-
-### Task 5 — Regression
-
-Focused regression:
+已覆盖测试：
 
 ```bash
 ./test.py --backend -- \
   src/tests/test_agent/gateway \
-  src/tests/test_tools/test_agent_message.py \
+  src/tests/test_tools/test_message.py \
   src/tests/test_tools/test_interactive_tools.py \
-  src/tests/test_agent/graph/test_subagent_runner.py \
-  src/tests/test_agent/graph/test_subagent_persistence.py -v
-```
+  src/tests/test_tools/test_interactive_tools_write.py \
+  src/tests/test_tools/test_tool_schemas.py \
+  src/tests/test_agent/graph/test_subagent_gateway_result.py \
+  src/tests/test_agent/graph/test_execute_tools_guard.py \
+  src/tests/test_agent/test_permission_phase4.py::test_agent_tool_passes_subagent_permission_snapshot -v
 
-Full backend regression:
-
-```bash
 ./test.py --backend
 ```
 
-Expected: 命令退出码为 0；不得出现 pending task、跨 session 消息或现有同步 agent 行为回归。
+最近验证结果：focused regression 通过；完整 backend `4047 passed, 30 skipped`。
+
+## Evolution
+
+长期方向参见 `docs/design/agent-gateway-v2.md`。以下能力已在首期选型中预留，扩展时不得推翻已验证的首期不变量（终态唯一、lifecycle 终态消息不丢失、run_id 不透明、路由集中校验）。
+
+已预留，可直接扩展：
+
+- **任意拓扑通信**：路由集中在 gateway 单一规则函数（Decision 5），放开兄弟、祖孙或跨层通信只扩展规则集，gateway API、`agent`/`message` 工具和消息协议不变。
+- **更深层嵌套**：身份经 `ToolContext` 显式传递（Decision 4），不依赖调用深度；放开孙 agent 只需调整 `can_delegate` 与路由规则。
+- **新生命周期状态与消息类型**：`paused`、`retrying`、控制类消息等是枚举的向后兼容扩展，但必须保持终态不变量（见 Data Model）。
+- **分布式通信**：inbox 实现封装在 gateway 内部（见消息背压），可在 send/receive 之下引入 `MessageTransport` 抽象替换为外部队列，首期不预先抽象。
+- **身份体系演进**：run_id 格式可整体替换（如携带 agent_type），因为调用方只通过 `AgentRun.agent_type`、`parent_run_id` 获取拓扑信息。
+- **root-side 消息 UX**：gateway API 已支持父子路由，首期用户可见控制面先暴露 `agent(wait/cancel)`；若未来要让主 agent 直接收发普通消息，应在主 agent registry 中有控制地注册 root-safe `message` 能力，并保持 child-only result 终止规则不变。
+
+需要独立设计，本设计不承诺：
+
+- **暂停/恢复**：需要 checkpoint 执行中的 LLM graph（含进行中的工具调用），属于独立的持久化设计。
+- **自动重试**：需要定义重跑起点、副作用处理与成本归属，建议作为独立的错误处理设计。
+- **自动唤醒 / push**：见 Risks and Follow-ups，需将 gateway arrival event 接入 session scheduler。
+- **跨进程恢复**：需要 message/lifecycle 持久化与 task 恢复设计，可与重启丢失风险项一并立项。
 
 ## Acceptance Criteria
 
-- `agent` 不传 `background` 时行为和返回结构保持兼容。
-- `agent(background=true)` 在 child 完成前返回唯一 `run_id`。
-- 一个 root 可以同时拥有多个 running child。
-- parent 和 child 可在 child 运行期间互发消息。
-- sibling、跨 session 和非父子目标不可通信或取消。
-- parent 可等待、查询结果和取消直属 child。
+- `agent(spawn)` 默认异步，立即返回可用于后续控制的 `run_id`。
+- 子 agent 显式调 `message(send, message_type=result)` 时，gateway 保存该 payload，`agent(wait)` 返回该 payload 提取出的字符串。
+- 子 agent 未显式发 result 时，runner 自动包装最后一轮输出为 result 消息，`agent(wait)` 返回包装内容。
+- `message` 的 send/receive 支持子 agent 向 parent 发送 result 消息。
+- 主 agent 首期不注册 `message` 工具；子 agent 注册 `message` 且不受 `_BLOCKED_CHILD_TOOLS` 屏蔽。
+- `can_delegate=False` 的子 agent 仍被屏蔽 `agent`/`clarify`/`checkpoint`，但保留 `message`。
+- sibling、跨 session 和非父子目标不可通信。
+- `agent` 的 wait/cancel 接口可用于等待或取消 `spawn` 返回的后台 run。
 - completed、failed、cancelled 只发生一次，且 parent 可可靠观察。
 - clear/resume 后旧 session 不留存 running task 或可访问消息。
-- 子 agent 无委派权限时仍能调用 `agent_message`。
 - 聚焦测试和完整 backend 测试通过。
 
 ## Forbidden Changes
 
 - 不把 `AgentGateway` 实现为进程级单例。
 - 不将 gateway 状态混入 `TaskTracker` 作为双重事实源。
-- 不默认把所有 `agent` 调用改为后台模式。
+- 不引入 `background` 字段，也不新增 `spawn_async`；`spawn` 默认异步并返回不透明 `run_id`。
 - 不允许工具自行绕过 gateway 做路由授权。
 - 不在首期引入自动 graph resume、跨进程恢复或 sibling broadcast。
+- 不在工具描述、prompt 或调用方代码中解析、拼接或假设 run_id 格式。
 - 不回退或覆盖工作区中与本设计无关的未提交修改。
 
 ## Risks and Follow-ups
 
-- **主 agent 忘记等待**：工具描述必须提示后台 run 的后续操作；未来可在 finalize 前检测 running child 并给出 guidance。
+- **主 agent 忘记等待**：`spawn` 默认异步后，工具描述已提示后台 run 的后续操作；graph `_finalize` 会检测当前 session 的 running child 并注入 guidance（含 run_id 列表与 wait/cancel 指引）。
 - **上下文并发**：后台 runner 仍共享 graph 的部分服务；接入时应确认 thread execution state、权限和 UI capture 不依赖可变的主 turn 字段。
 - **消息堆积**：有界 inbox 和 payload 限制必须在首期实现。
 - **重启丢失**：后续可将 message/lifecycle event 追加到 `memory/subagents.py`，但恢复 task 需要单独设计。
