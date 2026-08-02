@@ -21,6 +21,10 @@ class MessageTool(BaseTool):
     id = "message"
     description = "Send or receive structured messages between a child agent and its parent."
 
+    def __init__(self, *, description: str | None = None) -> None:
+        if description is not None:
+            self.description = description
+
     def parameters_schema(self) -> dict:
         return model_to_json_schema(MessageInput)
 

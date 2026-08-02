@@ -101,7 +101,9 @@ async def run_subagent(
     else:
         agent_tools = ToolRegistry()
     if hasattr(agent_tools, "register"):
-        message_tool = MessageTool()
+        message_tool = MessageTool(
+            description="Report results or progress to your parent agent, and read messages from your parent."
+        )
         agent_tools.register(message_tool.id, message_tool, message_tool.description, message_tool.parameters_schema())
     blocked_child_tools = _BLOCKED_CHILD_TOOLS
     if not agent_def.can_delegate:
