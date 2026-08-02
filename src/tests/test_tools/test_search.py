@@ -2,6 +2,7 @@
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -130,6 +131,66 @@ async def test_find_keeps_top_level_hidden_files(tmp_path):
     (tmp_path / ".env.py").touch()
     data = json.loads((await execute("find", {"extensions": ["py"]}, tmp_path)).output)
     assert data["files"] == [{"path": ".env.py", "name": ".env.py"}]
+
+
+
+@pytest.mark.asyncio
+async def test_find_accepts_max_results_500(tmp_path):
+    for index in range(10):
+        (tmp_path / f"test_{index:03d}.py").touch()
+    result = await execute(
+        "find",
+        {"query": "test_", "extensions": ["py"], "max_results": 500},
+        tmp_path,
+    )
+    assert result.metadata.get("error") is not True
+    data = json.loads(result.output)
+    assert len(data["files"]) == 10
+
+
+@pytest.mark.asyncio
+async def test_find_output_stays_within_char_budget_and_persists_overflow(tmp_path):
+    for index in range(200):
+        (tmp_path / f"test_{index:03d}_long_name_for_budget_check.py").touch()
+    result = await execute(
+        "find",
+        {"query": "test_", "extensions": ["py"], "max_results": 500},
+        tmp_path,
+    )
+    data = json.loads(result.output)
+    assert len(result.output) <= 4000
+    assert data["truncated"] is True
+    assert 0 < len(data["files"]) < 200
+    overflow_path = data.get("overflow_path")
+    assert overflow_path
+    overflow = json.loads(Path(overflow_path).read_text(encoding="utf-8"))
+    assert len(overflow["files"]) == 200
+    assert overflow["truncated"] is False
+
+
+@pytest.mark.asyncio
+async def test_search_output_stays_within_char_budget_and_persists_overflow(tmp_path):
+    for index in range(80):
+        (tmp_path / f"file_{index:03d}.txt").write_text(
+            f"needle match with long surrounding text for budget pressure {index:03d}\n"
+        )
+    result = await execute(
+        "search",
+        {"query": "needle", "extensions": ["txt"], "max_results": 500},
+        tmp_path,
+    )
+    data = json.loads(result.output)
+    assert len(result.output) <= 4000
+    assert data["truncated"] is True
+    total_hits = sum(len(item["hits"]) for item in data["matches"])
+    assert 0 < total_hits < 80
+    overflow_path = data.get("overflow_path")
+    assert overflow_path
+    overflow = json.loads(Path(overflow_path).read_text(encoding="utf-8"))
+    overflow_hits = sum(len(item["hits"]) for item in overflow["matches"])
+    assert overflow_hits == 80
+
+
 
 
 @pytest.mark.asyncio

@@ -182,3 +182,113 @@ async def test_goal_tool_decision_rejected_outside_evaluator_phase() -> None:
 
     assert result.metadata["goal_decision_submitted"] is False
     assert controller.calls == []
+
+
+from voidx.tools.base import UserInteraction, UserResponse
+
+
+def _init_args() -> dict:
+    return {
+        "op": "init",
+        "objective": "ship feature",
+        "acceptance_condition": "tests pass",
+        "achievement_method": "",
+        "max_attempts": 20,
+        "status": "",
+        "summary": "",
+        "evidence": "",
+        "next": "",
+        "reason": "",
+        "progress": "none",
+    }
+
+
+@pytest.mark.asyncio
+async def test_goal_tool_init_approved_via_interaction() -> None:
+    controller = IntakeController()
+    seen_prompts = []
+
+    async def interact(request: UserInteraction) -> UserResponse:
+        seen_prompts.append(request)
+        return UserResponse(value="approved")
+
+    ctx = ToolContext(
+        workspace="/tmp",
+        goal_intake_controller=controller,
+        goal_phase="intake",
+        interact=interact,
+    )
+
+    result = await GoalTool().execute(_init_args(), ctx)
+
+    assert result.metadata["goal_init_submitted"] is True
+    assert result.metadata["goal_init_decision"] == "approved"
+    assert controller.final_spec() is not None
+    assert len(seen_prompts) == 1
+    assert seen_prompts[0].timeout == 300.0
+    values = {opt[1] for opt in seen_prompts[0].options}
+    assert values == {"approved", "revised", "cancelled"}
+
+
+@pytest.mark.asyncio
+async def test_goal_tool_init_revise_returns_feedback_without_submitting() -> None:
+    controller = IntakeController()
+
+    async def interact(request: UserInteraction) -> UserResponse:
+        return UserResponse(value="tighten the acceptance condition", free_text=True)
+
+    ctx = ToolContext(
+        workspace="/tmp",
+        goal_intake_controller=controller,
+        goal_phase="intake",
+        interact=interact,
+    )
+
+    result = await GoalTool().execute(_init_args(), ctx)
+
+    assert result.metadata["goal_init_submitted"] is False
+    assert result.metadata["goal_init_decision"] == "revised"
+    assert "tighten the acceptance condition" in result.output
+    assert controller.final_spec() is None
+
+
+@pytest.mark.asyncio
+async def test_goal_tool_init_cancelled_by_user() -> None:
+    controller = IntakeController()
+
+    async def interact(request: UserInteraction) -> UserResponse:
+        return UserResponse(value="cancelled")
+
+    ctx = ToolContext(
+        workspace="/tmp",
+        goal_intake_controller=controller,
+        goal_phase="intake",
+        interact=interact,
+    )
+
+    result = await GoalTool().execute(_init_args(), ctx)
+
+    assert result.metadata["goal_init_submitted"] is False
+    assert result.metadata["goal_init_decision"] == "cancelled"
+    assert controller.final_spec() is None
+
+
+@pytest.mark.asyncio
+async def test_goal_tool_init_timeout_auto_approves() -> None:
+    controller = IntakeController()
+
+    async def interact(request: UserInteraction) -> UserResponse:
+        return UserResponse(value="", cancelled=True)
+
+    ctx = ToolContext(
+        workspace="/tmp",
+        goal_intake_controller=controller,
+        goal_phase="intake",
+        interact=interact,
+    )
+
+    result = await GoalTool().execute(_init_args(), ctx)
+
+    assert result.metadata["goal_init_submitted"] is True
+    assert result.metadata["goal_init_decision"] == "auto_approved"
+    assert controller.final_spec() is not None

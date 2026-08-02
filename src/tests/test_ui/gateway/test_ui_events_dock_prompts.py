@@ -528,3 +528,79 @@ async def test_system_guidance_commit_stays_hidden(isolated_dock):
         assert isolated_dock.tree.root.children == []
     finally:
         await bus.stop()
+
+
+from voidx.ui.output.events import (
+    GoalSpecChoicePayload,
+    GoalSpecDecisionSubmitted,
+    GoalSpecPayload,
+    GoalSpecPromptShown,
+)
+
+
+@pytest.mark.asyncio
+async def test_goal_spec_prompt_event_renders_spec_and_decision(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.emit(GoalSpecPromptShown(
+            prompt_id="gs_1",
+            spec=GoalSpecPayload(
+                objective="Fix flaky tests",
+                acceptance_condition="Suite green 3 runs in a row",
+                achievement_method="Stabilize retries first",
+                max_attempts=12,
+            ),
+            choices=[
+                GoalSpecChoicePayload(
+                    label="Approve and start",
+                    value="approved",
+                    description="Accept the goal spec and start the goal",
+                )
+            ],
+        ))
+        await bus.drain()
+
+        rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(120))
+        nodes = _tree_nodes(isolated_dock.tree.root)
+        spec_node = next(node for node in nodes if node.node_type == "goal_spec")
+
+        assert "goal spec" in rendered
+        assert "Goal: Fix flaky tests" in rendered
+        assert "Suite green 3 runs in a row" in rendered
+        assert "Stabilize retries first" in rendered
+        assert "12" in rendered
+        assert spec_node.payload["prompt_id"] == "gs_1"
+
+        await bus.emit(GoalSpecDecisionSubmitted(
+            prompt_id="gs_1",
+            decision="approved",
+            response="",
+        ))
+        await bus.drain()
+
+        rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(120))
+        assert spec_node.status == "done"
+        assert "goal spec approved" in rendered
+        assert "Decision: approved" in rendered
+        assert spec_node.payload["decision"] == "approved"
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_goal_spec_decision_for_unknown_id_does_not_fail(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.emit(GoalSpecDecisionSubmitted(
+            prompt_id="missing",
+            decision="approved",
+        ))
+        await bus.drain()
+    finally:
+        await bus.stop()
