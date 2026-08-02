@@ -24,7 +24,6 @@ from voidx.tools.git import GitTool
 from voidx.tools.lsp import LspTool, LspFormatTool
 from voidx.tools.agent import AgentInput, AgentTool
 from voidx.tools.task_tracker import TaskTracker
-from voidx.tools.task_status import TaskStatusTool
 from voidx.tools.todo import TodoInput, TodoWriteTool
 from voidx.tools.registry import ToolRegistry
 from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
@@ -280,8 +279,6 @@ class TestToolSchemas:
 
         assert "independent delegated task" in AgentTool(runner=None).description
         assert "return its run_id immediately" in AgentTool(runner=None).description
-        assert "tasks recorded by the child-agent tracker" in TaskStatusTool.description
-        assert "current step" not in TaskStatusTool.description
         assert "self-contained" in agent_schema["properties"]["task"]["description"]
         assert "Use empty string if not needed" in agent_schema["properties"]["success_criteria"]["description"]
         assert "built-in document" in DocumentTool.description

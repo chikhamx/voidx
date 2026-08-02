@@ -142,7 +142,7 @@ class TestToolDisplayPolicy:
 
 class TestDefaultDisplayRules:
     def test_hidden_tools(self):
-        hidden_tools = ["todo", "task_status", "document", "checkpoint",
+        hidden_tools = ["todo", "document", "checkpoint",
                         "compact", "workflow", "skill", "clarify"]
         for name in hidden_tools:
             assert DEFAULT_DISPLAY_RULES[name].mode == ToolDisplayMode.HIDDEN, f"{name} should be hidden"

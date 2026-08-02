@@ -41,7 +41,6 @@ BASIC_RULES: Ruleset = [
     Rule(permission="checkpoint", pattern="*", action="allow"),
     Rule(permission="workflow", pattern="*", action="allow"),
     Rule(permission="compact", pattern="*", action="allow"),
-    Rule(permission="task_status", pattern="*", action="allow"),
     Rule(permission="document", pattern="*", action="allow"),
     Rule(permission="skill", pattern="*", action="allow"),
     Rule(permission="skill", pattern="create", action="ask"),
@@ -393,7 +392,7 @@ def _is_read_only_git_ref_command(subcommand: str, args: list[str]) -> bool:
 
 def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
     if tool in {
-        "read", "find", "search", "webfetch", "websearch", "todo", "task_status",
+        "read", "find", "search", "webfetch", "websearch", "todo",
         "document",
         "workflow", "compact",
         "lsp",

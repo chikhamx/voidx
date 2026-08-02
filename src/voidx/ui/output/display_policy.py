@@ -109,7 +109,6 @@ DEFAULT_DISPLAY_RULES: dict[str, ToolDisplayRule] = {
     # ── Hidden：runtime-only / barrier / 状态工具 ──
     # These tools are hidden in UI output, but their ToolMessage stays in replay context.
     "todo": ToolDisplayRule(tool_name="todo", mode=ToolDisplayMode.HIDDEN),
-    "task_status": ToolDisplayRule(tool_name="task_status", mode=ToolDisplayMode.HIDDEN),
     "document": ToolDisplayRule(tool_name="document", mode=ToolDisplayMode.HIDDEN),
     "checkpoint": ToolDisplayRule(tool_name="checkpoint", mode=ToolDisplayMode.HIDDEN),
     "compact": ToolDisplayRule(tool_name="compact", mode=ToolDisplayMode.HIDDEN),

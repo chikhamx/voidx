@@ -43,7 +43,7 @@ class VoidConsole:
         "read": "reading", "manage": "manage", "write": "editing", "replace": "replacing",
         "find": "finding", "search": "searching", "bash": "running", "powershell": "running",
         "agent": "delegating", "webfetch": "fetching", "websearch": "searching",
-        "todo": "updating", "task_status": "checking",
+        "todo": "updating",
         "lsp": "using",
         "checkpoint": "checking",
         "git": "git",

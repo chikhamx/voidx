@@ -67,10 +67,10 @@ def test_loop_tool_view_is_closed_world_for_automatic_wakeups() -> None:
 
 def test_loop_tool_view_can_expose_workflow_subset_when_enabled() -> None:
     view = LoopToolView.default(workflow_enabled=True).bind(
-        {"loop", "workflow", "task_status", "todo", "clarify"}
+        {"loop", "workflow", "todo", "clarify"}
     )
 
-    assert {"loop", "workflow", "task_status", "todo"}.issubset(view.bound_tool_ids)
+    assert {"loop", "workflow", "todo"}.issubset(view.bound_tool_ids)
     assert "clarify" not in view.bound_tool_ids
 
 

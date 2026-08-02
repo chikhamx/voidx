@@ -391,7 +391,7 @@ class PermissionService:
         ):
             if paths:
                 lines.append(f"  {label}: [dim]{', '.join(paths)}[/dim]")
-        lines.append("  [green]Always allowed:[/green] read, glob, grep, webfetch, websearch, todo, task_status, lsp, read-only agents, read-only bash")
+        lines.append("  [green]Always allowed:[/green] read, glob, grep, webfetch, websearch, todo, lsp, read-only agents, read-only bash")
         if self._session_allow:
             lines.append(f"  [green]Session allow:[/green] {', '.join(sorted(format_session_rule(rule) for rule in self._session_allow))}")
         if self._session_deny:

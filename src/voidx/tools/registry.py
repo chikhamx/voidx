@@ -10,7 +10,6 @@ from voidx.tools.git import GitTool
 from voidx.tools.lsp import LspFormatTool, LspTool
 from voidx.tools.search import FindTool, SearchTool
 from voidx.tools.bash import BashTool
-from voidx.tools.task_status import TaskStatusTool
 from voidx.tools.todo import TodoWriteTool
 from voidx.tools.skills import SkillsTool
 from voidx.tools.web import WebFetchTool, WebSearchTool
@@ -66,8 +65,6 @@ class ToolRegistry:
         # Tools with optional dependency injection
         todo_tool = TodoWriteTool(tracker=self._tracker)
         self.register(todo_tool.id, todo_tool, todo_tool.description, todo_tool.parameters_schema())
-        task_status_tool = TaskStatusTool(tracker=self._tracker)
-        self.register(task_status_tool.id, task_status_tool, task_status_tool.description, task_status_tool.parameters_schema())
         skills_tool = SkillsTool(settings=self._settings)
         self.register(skills_tool.id, skills_tool, skills_tool.description, skills_tool.parameters_schema())
         retry_config = self._settings.get_retry_config() if self._settings else None
@@ -136,7 +133,7 @@ class ToolRegistry:
             "loop",
         }
         if workflow_enabled:
-            allowed.update({"workflow", "task_status", "todo"})
+            allowed.update({"workflow", "todo"})
         return self.filtered_copy(allowed)
 
     def ids(self) -> list[str]:

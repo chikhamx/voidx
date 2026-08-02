@@ -22,7 +22,6 @@ from voidx.tools.search import FindInput, SearchInput
 from voidx.tools.bash import BashInput
 from voidx.tools.agent import AgentInput, AgentTool
 from voidx.tools.task_tracker import TaskTracker
-from voidx.tools.task_status import TaskStatusTool
 from voidx.tools.todo import TodoInput, TodoWriteTool
 from voidx.tools.registry import ToolRegistry
 from voidx.tools.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
@@ -174,18 +173,5 @@ class TestTaskTracker:
         assert result.metadata.get("reason") == "no_tracker"
         assert "not available" in result.output.lower()
 
-    @pytest.mark.asyncio
-    async def test_task_status_tool(self, tmp_path):
-        tracker = TaskTracker()
-        tracker.start("t1", "explore", "scan directory")
-        tool = TaskStatusTool(tracker=tracker)
-        ctx = ToolContext(workspace=str(tmp_path))
-
-        result = await tool.execute({}, ctx)
-        assert "explore" in result.output
-        assert "running" in result.output
-
-        result2 = await tool.execute({"task_id": "t1"}, ctx)
-        assert "t1" in result2.output
 
 

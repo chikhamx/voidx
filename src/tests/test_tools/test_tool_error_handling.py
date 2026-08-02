@@ -15,7 +15,6 @@ from voidx.tools.lsp import LspTool, LspFormatTool
 from voidx.tools.bash import BashInput
 from voidx.tools.bash.tool import BashTool
 from voidx.tools.todo import TodoWriteTool
-from voidx.tools.task_status import TaskStatusTool
 from voidx.tools.clarify import ClarifyTool
 from voidx.tools.workflow import WorkflowTool
 from voidx.tools.checkpoint import PlanCheckpointTool
@@ -115,11 +114,6 @@ async def test_todo_invalid_args_returns_error():
     assert result.metadata.get("error") is True
 
 
-@pytest.mark.asyncio
-async def test_task_status_invalid_args_returns_error():
-    result = await TaskStatusTool().execute({"task_id": 123}, _CTX)
-    assert isinstance(result, ToolResult)
-    assert result.metadata.get("error") is True
 
 
 @pytest.mark.asyncio
@@ -207,13 +201,6 @@ async def test_grep_path_not_found_has_error_metadata():
     assert result.metadata.get("error") is True
 
 
-@pytest.mark.asyncio
-async def test_task_status_not_found_has_error_metadata():
-    """task_status.py:41 — Task not found must set error: True."""
-    tool = TaskStatusTool()
-    tool._tracker = None
-    result = await tool.execute({"task_id": "nonexistent"}, _CTX)
-    assert result.metadata.get("error") is True
 
 
 # ── P3: todo error metadata consistency ─────────────────────────────────────

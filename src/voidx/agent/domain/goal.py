@@ -61,7 +61,6 @@ class GoalToolView(BoundToolView):
             "webfetch",
             "mcp",
             "skill",
-            "task_status",
         }
         if self.phase == "work":
             allowed.update({"bash", "write", "replace", "manage", "lsp_format"})

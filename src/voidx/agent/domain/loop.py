@@ -124,5 +124,5 @@ class LoopToolView(BoundToolView):
             "bash",
         }
         if self.workflow_enabled:
-            allowed.update({"workflow", "task_status", "todo"})
+            allowed.update({"workflow", "todo"})
         return self.model_copy(update={"bound_tool_ids": frozenset(available & allowed)})

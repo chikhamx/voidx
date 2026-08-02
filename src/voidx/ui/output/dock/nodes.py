@@ -398,7 +398,6 @@ def _tool_display_name(tool_name: str, label: str) -> str:
         "webfetch": "Fetch",
         "websearch": "Search",
         "todo": "Todo",
-        "task_status": "Status",
         "checkpoint": "Checkpoint",
     }
     label_mapping = {

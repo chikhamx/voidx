@@ -363,7 +363,4 @@ async def test_subagent_tool_filter_always_blocks_nested_agent_tool(tmp_path, mo
         assert output == "done"
 
     assert "agent" not in captured[0]
-    assert "task_status" in captured[0]
-    assert "agent" not in captured[1]
-    assert "task_status" in captured[1]
 

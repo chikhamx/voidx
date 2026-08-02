@@ -206,7 +206,6 @@ def _available_goal_tool_ids() -> set[str]:
         "webfetch",
         "mcp",
         "skill",
-        "task_status",
         "goal",
         "workflow",
         "todo",

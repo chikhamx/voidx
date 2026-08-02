@@ -64,7 +64,6 @@ def test_goal_tool_view_excludes_interactive_protocol_tools() -> None:
         "websearch",
         "workflow",
         "todo",
-        "task_status",
         "clarify",
         "checkpoint",
         "turn",
@@ -81,7 +80,7 @@ def test_goal_tool_view_excludes_interactive_protocol_tools() -> None:
     assert {"clarify", "checkpoint", "turn", "loop", "goal", "workflow", "todo"}.isdisjoint(
         default.bound_tool_ids
     )
-    assert {"workflow", "todo", "task_status"}.issubset(workflow.bound_tool_ids)
+    assert {"workflow", "todo"}.issubset(workflow.bound_tool_ids)
     assert {"clarify", "checkpoint", "turn", "loop", "goal"}.isdisjoint(workflow.bound_tool_ids)
 
 

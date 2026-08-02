@@ -625,7 +625,6 @@ def _subagent_tool_action(tool_name: str, label: str, raw_args: dict[str, Any] |
         "webfetch": "Fetching",
         "websearch": "Searching",
         "todo": "Updating tasks",
-        "task_status": "Updating status",
         "checkpoint": "Checking plan",
         "clarify": "Waiting for input",
     }

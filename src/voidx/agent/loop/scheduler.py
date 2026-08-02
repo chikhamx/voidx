@@ -186,6 +186,5 @@ def _available_loop_tool_ids() -> set[str]:
         "skill",
         "bash",
         "workflow",
-        "task_status",
         "todo",
     }
