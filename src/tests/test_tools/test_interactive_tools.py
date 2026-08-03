@@ -544,9 +544,7 @@ async def test_agent_tool_spawn_uses_gateway_when_available(tmp_path):
     assert result.metadata["run_id"] in result.output
     assert "Use agent(wait)" not in result.output
     assert "Use agent(wait)" in (result.next_step_hint or "")
-    assert result.display
-    assert result.metadata["run_id"] not in result.display
-    assert "spawned" in result.display.lower() or "Spawned" in result.display
+    assert result.display == ""
 
     wait_result = await tool.execute(
         {

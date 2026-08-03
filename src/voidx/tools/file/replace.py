@@ -27,7 +27,7 @@ from .replace_resolve import (
     _validate_resolved_edits,
     remap_line_range,
 )
-from .overlap import LineOverlap, resolve_overlap
+from .overlap import CollapsedBlock, LineOverlap, collapse_adjacent_duplicate_blocks, resolve_overlap
 from .read import _join_display_lines, _split_display_lines, _split_edit_lines
 from .types import DisplayLines, ResolvedEdit
 from .io import safe_read_text as _safe_read_text, safe_write_text as _safe_write_text
@@ -415,6 +415,11 @@ async def _execute_text_replace(
 
     kept_before = before[:-overlap.head] if overlap.head else before
     lines = [*kept_before, *new_lines, *after[overlap.tail:]]
+    head_pos = len(kept_before)
+    tail_pos = head_pos + len(new_lines)
+    collapse = collapse_adjacent_duplicate_blocks(lines, boundaries=[head_pos, tail_pos])
+    lines = collapse.lines
+    collapsed_blocks = collapse.collapsed
 
     # Trailing newline: preserve the original file's trailing newline.
     # _split_edit_lines already strips a trailing \n from new_string, so
@@ -424,11 +429,14 @@ async def _execute_text_replace(
     content = _join_display_lines(lines, trailing_newline=trailing_newline)
     overlap_metadata = {"head": overlap.head, "tail": overlap.tail}
     overlap_hint = _format_overlap_hint(overlap)
+    collapse_metadata = [{"size": b.size, "gap": b.gap} for b in collapsed_blocks]
+    collapse_hint = _format_collapse_hint(collapsed_blocks)
 
     if content == original:
         output = f"No changes: {file_path}"
-        if overlap_hint:
-            output = f"{overlap_hint}\n{output}"
+        for hint in (collapse_hint, overlap_hint):
+            if hint:
+                output = f"{hint}\n{output}"
         return ToolResult(
             title="No changes",
             output=output,
@@ -439,6 +447,7 @@ async def _execute_text_replace(
                 "start_line": actual_start_line,
                 "end_line": actual_end_line,
                 "overlap": overlap_metadata,
+                "collapsed_blocks": collapse_metadata,
             },
         )
 
@@ -471,6 +480,8 @@ async def _execute_text_replace(
         output = f"{drift_hint}{output}"
     if overlap_hint:
         output = f"{overlap_hint}\n{output}"
+    if collapse_hint:
+        output = f"{collapse_hint}\n{output}"
     if numbered_diff:
         output = f"{output}\n{numbered_diff}"
     return ToolResult(
@@ -483,6 +494,7 @@ async def _execute_text_replace(
             "start_line": actual_start_line,
             "end_line": actual_end_line,
             "overlap": overlap_metadata,
+            "collapsed_blocks": collapse_metadata,
             "formatting_status": formatting.status,
         },
         diff=diff,
@@ -545,6 +557,7 @@ async def _apply_resolved_edits(
     old_ranges = coverage_ranges_snapshot(ctx, path)
 
     trailing_newline = _result_trailing_newline(edits, total_lines, display.trailing_newline)
+    collapse_boundaries: list[int] = []
     for edit in sorted(edits, key=lambda item: item.start_line, reverse=True):
         new_lines = _split_edit_lines(edit.new_string)
         if edit.operation == "replace":
@@ -557,8 +570,15 @@ async def _apply_resolved_edits(
             after = lines[edit.start_line:]
             kept_before = before[:-overlap.head] if overlap.head else before
             lines = [*kept_before, *new_lines, *after[overlap.tail:]]
+            collapse_boundaries.extend([len(kept_before), len(kept_before) + len(new_lines)])
         else:
             lines[edit.start_line:edit.start_line] = new_lines
+
+    collapsed_blocks: list[CollapsedBlock] = []
+    if collapse_boundaries:
+        collapse = collapse_adjacent_duplicate_blocks(lines, boundaries=collapse_boundaries)
+        lines = collapse.lines
+        collapsed_blocks = collapse.collapsed
 
     if overlap is not None and lines == display.lines:
         trailing_newline = display.trailing_newline
@@ -566,6 +586,8 @@ async def _apply_resolved_edits(
     content = _join_display_lines(lines, trailing_newline=trailing_newline)
     overlap_metadata = None if overlap is None else {"head": overlap.head, "tail": overlap.tail}
     overlap_hint = "" if overlap is None else _format_overlap_hint(overlap)
+    collapse_metadata = [{"size": b.size, "gap": b.gap} for b in collapsed_blocks]
+    collapse_hint = _format_collapse_hint(collapsed_blocks)
 
     if content == original:
         metadata = {"file": file_path, "operations": 0}
@@ -574,6 +596,10 @@ async def _apply_resolved_edits(
         output = f"No changes: {file_path}"
         if overlap_hint:
             output = f"{overlap_hint}\n{output}"
+        if collapse_hint:
+            output = f"{collapse_hint}\n{output}"
+        if collapse_boundaries:
+            metadata["collapsed_blocks"] = collapse_metadata
         return ToolResult(
             title="No changes",
             output=output,
@@ -606,7 +632,7 @@ async def _apply_resolved_edits(
 
     numbered_diff = render_numbered_diff(file_diff)
     details = "\n".join(
-        part for part in [overlap_hint, *hints, *_line_shift_hints(edits, overlap=overlap), numbered_diff] if part
+        part for part in [overlap_hint, collapse_hint, *hints, *_line_shift_hints(edits, overlap=overlap), numbered_diff] if part
     )
     output = f"File edited: {file_path} ({len(edits)} operations)"
     if details:
@@ -619,6 +645,8 @@ async def _apply_resolved_edits(
     }
     if overlap_metadata is not None:
         metadata["overlap"] = overlap_metadata
+    if collapse_boundaries:
+        metadata["collapsed_blocks"] = collapse_metadata
     return ToolResult(
         title=f"Edited ({len(edits)} edits)",
         output=output,
@@ -635,6 +663,17 @@ def _format_overlap_hint(overlap: LineOverlap) -> str:
         f"[Boundary overlap: consumed {overlap.head} preceding and "
         f"{overlap.tail} following lines.]"
     )
+
+
+def _format_collapse_hint(collapsed: list[CollapsedBlock]) -> str:
+    if not collapsed:
+        return ""
+    removed = sum(b.size + b.gap for b in collapsed)
+    return (
+        f"[Adjacent collapse: removed {len(collapsed)} duplicate block(s), "
+        f"{removed} line(s) total.]"
+    )
+
 
 
 def _line_shift_hints(edits: list[ResolvedEdit], *, overlap: LineOverlap | None = None) -> list[str]:

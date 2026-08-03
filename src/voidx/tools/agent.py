@@ -327,7 +327,6 @@ class AgentTool(BaseTool):
             return ToolResult(
                 title=f"{agent_def_name}: {normalized.description[:60]}",
                 output=f"Child agent '{agent_def_name}' spawned with run_id {run.run_id}.",
-                display=f"Spawned {subagent_display_name(run.run_id)}.",
                 summary=f"{agent_def_name} spawned",
                 metadata=metadata,
                 next_step_hint=(

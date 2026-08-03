@@ -692,3 +692,162 @@ class TestReplaceOverlapIntegration:
         assert result.metadata["overlap"] == {"head": 1, "tail": 1}
         assert "Boundary overlap" in result.output
         assert writes == []
+
+
+class TestAdjacentCollapseIntegration:
+    """L2: fold adjacent / blank-separated duplicate blocks near edit boundaries."""
+
+    @pytest.mark.asyncio
+    async def test_replace_folds_blank_separated_duplicate_block(self, tmp_path):
+        """Screenshot case: new line + blank + old block left a duplicated pair."""
+        f = tmp_path / "screenshot.cpp"
+        original = (
+            '    std::string type_str = "single";\n'
+            '\n'
+            '    std::string type_str = "single";\n'
+            '    int ct = feed.value("chat_type", 0);\n'
+            '    if (ct == 1) type_str = "group";\n'
+        )
+        f.write_text(original)
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "screenshot.cpp"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "screenshot.cpp",
+                "bounds": [{"line_no": 1, "anchor": "type_str"}],
+                "new_string": '    std::string type_str = "single";\n    int ct = feed.value("chat_type", 0);',
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["overlap"] == {"head": 0, "tail": 0}
+        assert result.metadata["collapsed_blocks"] == [{"size": 2, "gap": 1}]
+        assert "Adjacent collapse" in result.output
+        assert f.read_text() == (
+            '    std::string type_str = "single";\n'
+            '    int ct = feed.value("chat_type", 0);\n'
+            '    if (ct == 1) type_str = "group";\n'
+        )
+
+    @pytest.mark.asyncio
+    async def test_replace_folds_strictly_adjacent_duplicate_block(self, tmp_path):
+        f = tmp_path / "adjacent.cpp"
+        f.write_text("head\nA\nB\nA\nB\nfoot\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "adjacent.cpp"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "adjacent.cpp",
+                "bounds": [{"line_no": 2, "anchor": "A"}],
+                "new_string": "A\nB",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        # L1 tail eats one line ("B"), leaving A B adjacent to A B → L2 folds.
+        assert result.metadata["collapsed_blocks"] == [{"size": 2, "gap": 0}]
+        assert f.read_text() == "head\nA\nB\nfoot\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_preserves_single_line_repeats(self, tmp_path):
+        """k=1 must never fold: consecutive identical single lines are legal."""
+        f = tmp_path / "single.cpp"
+        f.write_text("head\nslot\n};\n};\nfoot\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "single.cpp"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "single.cpp",
+                "bounds": [{"line_no": 2, "anchor": "slot"}],
+                "new_string": "x = 1\nx = 1",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["collapsed_blocks"] == []
+        assert f.read_text() == "head\nx = 1\nx = 1\n};\n};\nfoot\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_preserves_two_blank_gap_blocks(self, tmp_path):
+        f = tmp_path / "twoblank.cpp"
+        original = "head\nA\nB\n\n\nA\nB\nfoot\n"
+        f.write_text(original)
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "twoblank.cpp"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "twoblank.cpp",
+                "bounds": [{"line_no": 1, "anchor": "head"}],
+                "new_string": "head\nA\nB",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["collapsed_blocks"] == []
+        assert f.read_text() == "head\nA\nB\n\n\nA\nB\nfoot\n"
+
+    @pytest.mark.asyncio
+    async def test_write_insert_folds_duplicate_block(self, tmp_path):
+        """Insert a block that duplicates following lines beyond L1 tail reach."""
+        f = tmp_path / "insert.cpp"
+        f.write_text("head\n\nX\nA\nfoot\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "insert.cpp"}, ctx)
+
+        # Insert "X\nA" before the blank line 2 → X A ‖ blank ‖ X A.
+        # L1 tail is blocked by the blank; L2 folds with k=2, gap=1.
+        result = await r.execute_tool(
+            "write",
+            {
+                "file_path": "insert.cpp",
+                "op": "insert",
+                "lineno": 2,
+                "new_string": "X\nA",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["collapsed_blocks"] == [{"size": 2, "gap": 1}]
+        assert f.read_text() == "head\nX\nA\nfoot\n"
+
+    @pytest.mark.asyncio
+    async def test_l1_boundary_overlap_still_works_alone(self, tmp_path):
+        """Classic L1 decorator case must not be affected by L2."""
+        f = tmp_path / "decorator.py"
+        f.write_text("before\nslot\n@pytest.mark.asyncio\nasync def existing():\n    pass\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = ToolRegistry()
+        await r.execute_tool("read", {"file_path": "decorator.py", "offset": 2, "limit": 3}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "decorator.py",
+                "bounds": [{"line_no": 2, "anchor": "slot"}],
+                "new_string": "new_test = True\n\n@pytest.mark.asyncio\nasync def existing():",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.metadata["overlap"] == {"head": 0, "tail": 2}
+        assert result.metadata["collapsed_blocks"] == []
+        assert f.read_text() == "before\nnew_test = True\n\n@pytest.mark.asyncio\nasync def existing():\n    pass\n"

@@ -93,9 +93,9 @@ _INIT_APPROVAL_TIMEOUT_SECONDS = 300.0
 
 async def _submit_init(inp: GoalInput, ctx: ToolContext) -> ToolResult:
     controller = ctx.goal_intake_controller
-    if ctx.goal_phase != "intake" or controller is None:
+    if ctx.goal_phase not in {"intake", "idle"} or controller is None:
         return ToolResult(
-            output="Goal init is intake-only; this call was not submitted.",
+            output="Goal init is only available while shaping a goal; this call was not submitted.",
             metadata={"goal_init_submitted": False, "guidance_only": True},
         )
     try:

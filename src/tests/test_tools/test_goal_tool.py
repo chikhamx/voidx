@@ -292,3 +292,55 @@ async def test_goal_tool_init_timeout_auto_approves() -> None:
     assert result.metadata["goal_init_submitted"] is True
     assert result.metadata["goal_init_decision"] == "auto_approved"
     assert controller.final_spec() is not None
+
+
+@pytest.mark.asyncio
+async def test_goal_tool_init_submits_in_idle_phase() -> None:
+    controller = IntakeController()
+    ctx = ToolContext(workspace="/tmp", goal_intake_controller=controller, goal_phase="idle")
+
+    result = await GoalTool().execute(
+        {
+            "op": "init",
+            "objective": "ship feature",
+            "acceptance_condition": "tests pass",
+            "achievement_method": "",
+            "max_attempts": 20,
+            "status": "",
+            "summary": "",
+            "evidence": "",
+            "next": "",
+            "reason": "",
+            "progress": "none",
+        },
+        ctx,
+    )
+
+    assert result.metadata["goal_init_submitted"] is True
+    assert isinstance(controller.final_spec(), GoalSpec)
+
+
+@pytest.mark.asyncio
+async def test_goal_tool_init_still_rejected_in_work_phase() -> None:
+    controller = IntakeController()
+    ctx = ToolContext(workspace="/tmp", goal_intake_controller=controller, goal_phase="work")
+
+    result = await GoalTool().execute(
+        {
+            "op": "init",
+            "objective": "ship feature",
+            "acceptance_condition": "tests pass",
+            "achievement_method": "",
+            "max_attempts": 20,
+            "status": "",
+            "summary": "",
+            "evidence": "",
+            "next": "",
+            "reason": "",
+            "progress": "none",
+        },
+        ctx,
+    )
+
+    assert result.metadata["goal_init_submitted"] is False
+    assert controller.final_spec() is None
