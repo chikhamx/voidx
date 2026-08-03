@@ -86,7 +86,8 @@ def test_turn_tool_definition_describes_start_and_stop_usage():
 
     assert "At turn start" in description
     assert "At turn end" in description
-    assert "Do not combine turn with other tool calls" in description
+    assert "start may be combined with regular tools" in description
+    assert "stop may be combined with regular tools" in description
     assert definition["parameters"]["properties"]["operation"]["description"] == (
         "start declares intent and goal; stop commits the pending final answer."
     )
@@ -98,6 +99,34 @@ def _mixed_chunk() -> AIMessageChunk:
         tool_calls=[
             {"name": "read", "args": {"file_path": "x.py"}, "id": "tc3", "type": "tool_call"},
             {"name": "turn", "args": _turn_args(), "id": "tc4", "type": "tool_call"},
+        ],
+    )
+
+
+def _start_with_regular_tools_chunk(
+    intent: str = "coding",
+    goal: str = "Inspect file",
+) -> AIMessageChunk:
+    return AIMessageChunk(
+        content="",
+        tool_calls=[
+            {
+                "name": "turn",
+                "args": _turn_args(operation="start", intent=intent, goal=goal),
+                "id": "tc-start-mixed",
+                "type": "tool_call",
+            },
+            {"name": "read", "args": {"file_path": "x.py"}, "id": "tc-read-mixed", "type": "tool_call"},
+        ],
+    )
+
+
+def _stop_with_regular_tools_chunk(text: str = "Done after reading.") -> AIMessageChunk:
+    return AIMessageChunk(
+        content=text,
+        tool_calls=[
+            {"name": "read", "args": {"file_path": "x.py"}, "id": "tc-read-stop", "type": "tool_call"},
+            {"name": "turn", "args": _turn_args(), "id": "tc-stop-mixed", "type": "tool_call"},
         ],
     )
 
@@ -430,11 +459,11 @@ async def test_invalid_turn_continue_recovers_with_regular_tool(tmp_path, monkey
     assert model.call_index == 3
 
 
-# ── Test 7: mixed turn + regular tool is rejected ───────────────────────────
+# ── Test 7: mixed turn stop without text is repaired ────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_mixed_turn_and_regular_rejected(tmp_path, monkeypatch):
+async def test_mixed_turn_stop_without_text_is_repaired(tmp_path, monkeypatch):
     model = ScriptedStreamingModel([
         [_mixed_chunk()],
         [_regular_tool_chunk()],
@@ -451,6 +480,207 @@ async def test_mixed_turn_and_regular_rejected(tmp_path, monkeypatch):
     assert result["messages"][0].tool_calls[0]["name"] == "read"
     assert result["messages"][0].content == ""
     assert model.call_index == 2
+    assert getattr(graph, "_pending_turn_stop_commit", None) is None
+
+
+# ── Test 7a: stop + regular tools with text defers stop after tools ─────────
+
+
+@pytest.mark.asyncio
+async def test_stop_with_regular_tools_defers_commit(tmp_path, monkeypatch):
+    model = ScriptedStreamingModel([
+        [_stop_with_regular_tools_chunk("Done after reading.")],
+    ])
+    graph = _make_graph(tmp_path, model, monkeypatch)
+
+    result = await graph._call_llm({
+        "messages": [HumanMessage(content="hello")],
+        "step_count": 0,
+        "persona": "coordinate",
+        "turn_state": "running",
+    })
+
+    msgs = result["messages"]
+    assert result["turn_state"] == "running"
+    assert len(msgs) == 1
+    assert [tc["name"] for tc in msgs[0].tool_calls] == ["read"]
+    assert msgs[0].content == "Done after reading."
+    pending = getattr(graph, "_pending_turn_stop_commit", None)
+    assert pending is not None
+    assert pending["terminal_msg"].content == "Done after reading."
+    assert pending["terminal_msg"].tool_calls == []
+    assert model.call_index == 1
+
+
+@pytest.mark.asyncio
+async def test_pending_stop_commits_after_execute_tools(tmp_path, monkeypatch):
+    model = ScriptedStreamingModel([
+        [_stop_with_regular_tools_chunk("Done after reading.")],
+    ])
+    graph = _make_graph(tmp_path, model, monkeypatch)
+
+    class FakeReadTool:
+        id = "read"
+        description = "fake read"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx):
+            from voidx.tools.base import ToolResult
+
+            return ToolResult(output="file contents")
+
+    graph.tools.register("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
+
+    async def allow_all(tool_calls, plan_mode: bool, session_id: str, interaction_mode=None):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+
+    llm_result = await graph._call_llm({
+        "messages": [HumanMessage(content="hello")],
+        "step_count": 0,
+        "persona": "coordinate",
+        "turn_state": "running",
+    })
+    assert getattr(graph, "_pending_turn_stop_commit", None) is not None
+
+    tool_result = await graph._execute_tools({
+        "messages": [HumanMessage(content="hello"), llm_result["messages"][0]],
+        "workspace": str(tmp_path),
+        "persona": "coordinate",
+        "plan_mode": False,
+        "turn_state": "running",
+        "step_count": 1,
+    })
+
+    assert getattr(graph, "_pending_turn_stop_commit", None) is None
+    assert tool_result["should_continue"] is False
+    assert tool_result["turn_state"] == "committed"
+    assert any(
+        isinstance(msg, AIMessage) and msg.content == "Done after reading." and not msg.tool_calls
+        for msg in tool_result["messages"]
+    )
+    assert any(
+        isinstance(msg, ToolMessage) and msg.tool_call_id == "tc-read-stop"
+        for msg in tool_result["messages"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_pending_stop_cleared_when_execute_tools_has_no_tool_calls(tmp_path, monkeypatch):
+    graph = _make_graph(tmp_path, ScriptedStreamingModel([]), monkeypatch)
+    graph._pending_turn_stop_commit = {
+        "terminal_msg": AIMessage(content="stale pending"),
+        "terminal_msg_visible": True,
+    }
+
+    result = await graph._execute_tools({
+        "messages": [AIMessage(content="no tools")],
+        "workspace": str(tmp_path),
+        "persona": "coordinate",
+        "plan_mode": False,
+    })
+
+    assert result == {}
+    assert getattr(graph, "_pending_turn_stop_commit", None) is None
+
+
+@pytest.mark.asyncio
+async def test_pending_stop_cleared_on_execute_tools_exception(tmp_path, monkeypatch):
+    graph = _make_graph(tmp_path, ScriptedStreamingModel([]), monkeypatch)
+    graph._pending_turn_stop_commit = {
+        "terminal_msg": AIMessage(content="should clear"),
+        "terminal_msg_visible": True,
+    }
+
+    class BoomReadTool:
+        id = "read"
+        description = "boom"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx):
+            raise RuntimeError("tool boom")
+
+    graph.tools.register("read", BoomReadTool(), "boom", {"type": "object", "properties": {}})
+
+    async def allow_all(tool_calls, plan_mode: bool, session_id: str, interaction_mode=None):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+
+    parent = AIMessage(
+        content="Done after reading.",
+        tool_calls=[{"name": "read", "args": {"file_path": "x.py"}, "id": "tc-boom", "type": "tool_call"}],
+    )
+
+    # Force an unexpected exception path before normal return by breaking authorize.
+    async def boom_authorize(*args, **kwargs):
+        raise RuntimeError("authorize boom")
+
+    graph._authorize_tool_calls = boom_authorize
+
+    with pytest.raises(RuntimeError, match="authorize boom"):
+        await graph._execute_tools({
+            "messages": [parent],
+            "workspace": str(tmp_path),
+            "persona": "coordinate",
+            "plan_mode": False,
+            "step_count": 1,
+        })
+
+    assert getattr(graph, "_pending_turn_stop_commit", None) is None
+
+
+@pytest.mark.asyncio
+async def test_start_with_tools_when_already_running_strips_start(tmp_path, monkeypatch):
+    model = ScriptedStreamingModel([
+        [_start_with_regular_tools_chunk(goal="Should not replace")],
+    ])
+    graph = _make_graph(tmp_path, model, monkeypatch)
+
+    result = await graph._call_llm({
+        "messages": [HumanMessage(content="continue")],
+        "step_count": 1,
+        "persona": "coordinate",
+        "turn_state": "running",
+        "task_state": {"current_goal": {"desc": "Existing goal"}},
+    })
+
+    assert result["turn_state"] == "running"
+    assert result["task_state"]["current_goal"] == {"desc": "Existing goal"}
+    assert [tc["name"] for tc in result["messages"][0].tool_calls] == ["read"]
+    assert model.call_index == 1
+
+
+# ── Test 7b: start + regular tools in one message is accepted ───────────────
+
+
+@pytest.mark.asyncio
+async def test_start_with_regular_tools_breaks_to_execute(tmp_path, monkeypatch):
+    model = ScriptedStreamingModel([
+        [_start_with_regular_tools_chunk(goal="Inspect x.py")],
+    ])
+    graph = _make_graph(tmp_path, model, monkeypatch)
+
+    result = await graph._call_llm({
+        "messages": [HumanMessage(content="start work")],
+        "step_count": 0,
+        "persona": "coordinate",
+        "turn_state": "initial",
+    })
+
+    msgs = result["messages"]
+    assert result["turn_state"] == "running"
+    assert result["task_state"]["current_goal"] == {"desc": "Inspect x.py"}
+    assert len(msgs) == 1
+    assert msgs[0].tool_calls
+    assert [tc["name"] for tc in msgs[0].tool_calls] == ["read"]
+    assert msgs[0].tool_calls[0]["args"]["file_path"] == "x.py"
+    assert model.call_index == 1
 
 
 # ── Test 8: turn tool definition is injected for openai protocol ────────────

@@ -56,6 +56,21 @@ def _ai_with_mixed_calls() -> AIMessage:
     )
 
 
+def _ai_with_start_and_regular_tools() -> AIMessage:
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "turn",
+                "args": {"operation": "start", "params": {"intent": "coding", "goal": "Inspect file"}},
+                "id": "call_start_mixed",
+                "type": "tool_call",
+            },
+            {"name": "read", "args": {"file_path": "x.py"}, "id": "call_read_mixed", "type": "tool_call"},
+        ],
+    )
+
+
 def _ai_plain_text(text: str = "Here is the answer.") -> AIMessage:
     return AIMessage(content=text)
 
@@ -155,8 +170,78 @@ def test_classify_regular_tool_call():
     assert classify_turn_call(msg) == TurnClassification.REGULAR_TOOLS
 
 
-def test_classify_mixed_turn_and_regular():
+def test_classify_mixed_turn_stop_and_regular_with_text():
     msg = _ai_with_mixed_calls()
+    assert classify_turn_call(msg) == TurnClassification.VALID_STOP_WITH_TOOLS
+
+
+def test_classify_mixed_turn_stop_and_regular_without_text():
+    msg = AIMessage(
+        content="",
+        tool_calls=[
+            {"name": "read", "args": {"file_path": "x.py"}, "id": "call_3", "type": "tool_call"},
+            {"name": "turn", "args": {"operation": "stop", "params": None}, "id": "call_4", "type": "tool_call"},
+        ],
+    )
+    assert classify_turn_call(msg) == TurnClassification.INVALID_TURN
+
+
+def test_classify_start_with_regular_tools():
+    msg = _ai_with_start_and_regular_tools()
+    assert classify_turn_call(msg) == TurnClassification.VALID_START_WITH_TOOLS
+
+
+def test_classify_start_with_regular_tools_order_independent():
+    msg = AIMessage(
+        content="",
+        tool_calls=[
+            {"name": "read", "args": {"file_path": "x.py"}, "id": "call_read_first", "type": "tool_call"},
+            {
+                "name": "turn",
+                "args": {"operation": "start", "params": {"intent": "coding", "goal": "Inspect file"}},
+                "id": "call_start_second",
+                "type": "tool_call",
+            },
+        ],
+    )
+    assert classify_turn_call(msg) == TurnClassification.VALID_START_WITH_TOOLS
+
+
+def test_classify_stop_with_regular_tools_order_independent():
+    msg = AIMessage(
+        content="Done after reading.",
+        tool_calls=[
+            {"name": "turn", "args": {"operation": "stop", "params": None}, "id": "call_stop_first", "type": "tool_call"},
+            {"name": "read", "args": {"file_path": "x.py"}, "id": "call_read_second", "type": "tool_call"},
+        ],
+    )
+    assert classify_turn_call(msg) == TurnClassification.VALID_STOP_WITH_TOOLS
+
+
+def test_classify_multiple_turn_calls_invalid():
+    msg = AIMessage(
+        content="Done.",
+        tool_calls=[
+            {"name": "turn", "args": {"operation": "stop", "params": None}, "id": "call_stop_1", "type": "tool_call"},
+            {"name": "turn", "args": {"operation": "start", "params": {"intent": "coding", "goal": "x"}}, "id": "call_start_2", "type": "tool_call"},
+        ],
+    )
+    assert classify_turn_call(msg) == TurnClassification.INVALID_TURN
+
+
+def test_classify_start_with_tools_rejects_empty_goal():
+    msg = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "turn",
+                "args": {"operation": "start", "params": {"intent": "coding", "goal": "  "}},
+                "id": "call_start_empty",
+                "type": "tool_call",
+            },
+            {"name": "read", "args": {"file_path": "x.py"}, "id": "call_read", "type": "tool_call"},
+        ],
+    )
     assert classify_turn_call(msg) == TurnClassification.INVALID_TURN
 
 

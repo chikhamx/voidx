@@ -25,8 +25,10 @@ TURN_TOOL_DEFINITION: dict[str, Any] = {
         "name": TURN_TOOL_NAME,
         "description": (
             "Turn lifecycle control. At turn start, call operation='start' with intent and a short goal. "
+            "start may be combined with regular tools in the same message; start is applied first, then the other tools run. "
             "At turn end, call operation='stop' with params=null only after the pending final answer is complete. "
-            "Do not combine turn with other tool calls. Do not output text with this call."
+            "stop may be combined with regular tools in the same message when the final answer text is already present; tools run first, then stop commits. "
+            "Do not output text with this call when stop is alone."
         ),
         "strict": True,
         "parameters": {
@@ -63,6 +65,8 @@ TURN_TOOL_DEFINITION: dict[str, Any] = {
 class TurnClassification(str, Enum):
     VALID_TURN = "valid_turn"
     VALID_START = "valid_start"
+    VALID_START_WITH_TOOLS = "valid_start_with_tools"
+    VALID_STOP_WITH_TOOLS = "valid_stop_with_tools"
     REGULAR_TOOLS = "regular_tools"
     INVALID_TURN = "invalid_turn"
     PLAIN_TEXT = "plain_text"
@@ -132,6 +136,31 @@ def classify_turn_call(msg: AIMessage) -> TurnClassification:
             and set(args) == {"operation", "params"}
         ):
             return TurnClassification.VALID_START
+        return TurnClassification.INVALID_TURN
+
+    if turn_count == 1 and regular_count > 0:
+        turn_call = next(call for call in calls if str(call.get("name") or "") == TURN_TOOL_NAME)
+        args = turn_call.get("args")
+        if not isinstance(args, dict) or "operation" not in args:
+            return TurnClassification.INVALID_TURN
+        operation = args.get("operation")
+        params = args.get("params")
+        if (
+            operation == TurnOperation.START
+            and isinstance(params, dict)
+            and set(params) == {"intent", "goal"}
+            and params.get("intent") in {"coding", "general"}
+            and _is_non_empty_text(params.get("goal"))
+            and set(args) == {"operation", "params"}
+        ):
+            return TurnClassification.VALID_START_WITH_TOOLS
+        if (
+            operation == TurnOperation.STOP
+            and params is None
+            and set(args).issubset({"operation", "params"})
+            and _is_non_empty_text(msg.content)
+        ):
+            return TurnClassification.VALID_STOP_WITH_TOOLS
 
     return TurnClassification.INVALID_TURN
 

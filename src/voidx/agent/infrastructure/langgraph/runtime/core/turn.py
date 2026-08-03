@@ -75,7 +75,10 @@ async def handle_turn_control_response(
             repair_prompt=protocol.repair_prompt(),
         )
 
-    if classification == TurnClassification.VALID_START:
+    if classification in {
+        TurnClassification.VALID_START,
+        TurnClassification.VALID_START_WITH_TOOLS,
+    }:
         return await _handle_turn_start(
             graph=graph,
             assistant_msg=assistant_msg,
@@ -86,6 +89,7 @@ async def handle_turn_control_response(
             state_messages=state_messages,
             estimate_tokens=estimate_tokens,
             rerender_task_context=rerender_task_context,
+            with_tools=classification == TurnClassification.VALID_START_WITH_TOOLS,
         )
 
     if classification == TurnClassification.VALID_TURN:
@@ -98,6 +102,16 @@ async def handle_turn_control_response(
             runtime_task_state=runtime_task_state,
             has_text=has_text,
             estimate_tokens=estimate_tokens,
+        )
+
+    if classification == TurnClassification.VALID_STOP_WITH_TOOLS:
+        return _handle_turn_stop_with_tools(
+            graph=graph,
+            assistant_msg=assistant_msg,
+            llm_messages=llm_messages,
+            loop=loop,
+            turn_state=turn_state,
+            runtime_task_state=runtime_task_state,
         )
 
     if classification == TurnClassification.REGULAR_TOOLS:
@@ -220,10 +234,26 @@ async def _handle_turn_start(
     state_messages: list[BaseMessage],
     estimate_tokens: Any,
     rerender_task_context: Any,
+    with_tools: bool = False,
 ) -> TurnControlResult:
-    start_call = assistant_msg.tool_calls[0]
-    tool_call_id = str(start_call.get("id") or "")
+    start_call = _turn_call_from_message(assistant_msg)
+    tool_call_id = str((start_call or {}).get("id") or "")
+    regular_calls = [
+        call
+        for call in (getattr(assistant_msg, "tool_calls", None) or [])
+        if isinstance(call, dict) and str(call.get("name") or "") != "turn"
+    ]
+
     if turn_state != "initial":
+        if with_tools and regular_calls:
+            loop.terminal_msg = _message_with_tool_calls(assistant_msg, regular_calls)
+            return TurnControlResult(
+                "break",
+                llm_messages,
+                loop.context_tokens,
+                turn_state,
+                runtime_task_state,
+            )
         llm_messages = [
             *llm_messages,
             assistant_msg,
@@ -236,7 +266,7 @@ async def _handle_turn_start(
         loop.context_tokens = estimate_tokens(llm_messages)
         return TurnControlResult("retry", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
 
-    start_args = start_call.get("args") or {}
+    start_args = (start_call or {}).get("args") or {}
     start_params = start_args.get("params") or {}
     intent_value = str(start_params.get("intent") or "coding")
     goal_text = str(start_params.get("goal") or "").strip()
@@ -263,6 +293,17 @@ async def _handle_turn_start(
     turn_state = "running"
     loop.turn_prompt_active = False
     llm_messages = rerender_task_context(llm_messages, "running", runtime_task_state)
+
+    if with_tools and regular_calls:
+        loop.terminal_msg = _message_with_tool_calls(assistant_msg, regular_calls)
+        return TurnControlResult(
+            "break",
+            llm_messages,
+            estimate_tokens(llm_messages),
+            turn_state,
+            runtime_task_state,
+        )
+
     llm_messages = [
         *llm_messages,
         assistant_msg,
@@ -277,6 +318,86 @@ async def _handle_turn_start(
     ]
     loop.context_tokens = estimate_tokens(llm_messages)
     return TurnControlResult("retry", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
+
+
+def _turn_call_from_message(assistant_msg: AIMessage) -> dict[str, Any] | None:
+    for call in getattr(assistant_msg, "tool_calls", None) or []:
+        if isinstance(call, dict) and str(call.get("name") or "") == "turn":
+            return call
+    return None
+
+
+def _message_with_tool_calls(assistant_msg: AIMessage, tool_calls: list[dict[str, Any]]) -> AIMessage:
+    return assistant_msg.model_copy(
+        update={
+            "tool_calls": tool_calls,
+            "invalid_tool_calls": [],
+            "additional_kwargs": {
+                key: value
+                for key, value in assistant_msg.additional_kwargs.items()
+                if key != "tool_calls"
+            },
+        }
+    )
+
+
+def _handle_turn_stop_with_tools(
+    *,
+    graph: Any,
+    assistant_msg: AIMessage,
+    llm_messages: list[BaseMessage],
+    loop: LlmLoopState,
+    turn_state: str,
+    runtime_task_state: TaskState,
+) -> TurnControlResult:
+    regular_calls = [
+        call
+        for call in (getattr(assistant_msg, "tool_calls", None) or [])
+        if isinstance(call, dict) and str(call.get("name") or "") != "turn"
+    ]
+    if not regular_calls:
+        return _handle_invalid_turn(
+            graph=graph,
+            assistant_msg=assistant_msg,
+            llm_messages=llm_messages,
+            loop=loop,
+            turn_state=turn_state,
+            runtime_task_state=runtime_task_state,
+            estimate_tokens=lambda messages: loop.context_tokens,
+        )
+
+    if loop.pending_provisional is not None:
+        terminal = normalize_terminal_message(loop.pending_provisional)
+        terminal_visible = loop.pending_provisional_visible
+    else:
+        terminal = normalize_terminal_message(assistant_msg)
+        terminal_visible = not loop.turn_prompt_active
+
+    if not extract_text(terminal).strip():
+        return _handle_invalid_turn(
+            graph=graph,
+            assistant_msg=assistant_msg,
+            llm_messages=llm_messages,
+            loop=loop,
+            turn_state=turn_state,
+            runtime_task_state=runtime_task_state,
+            estimate_tokens=lambda messages: loop.context_tokens,
+        )
+
+    graph._turn_metrics.increment("turn_control_called")
+    graph._pending_turn_stop_commit = {
+        "terminal_msg": terminal,
+        "terminal_msg_visible": terminal_visible,
+    }
+    loop.terminal_msg = _message_with_tool_calls(assistant_msg, regular_calls)
+    loop.terminal_msg_visible = True
+    return TurnControlResult(
+        "break",
+        llm_messages,
+        loop.context_tokens,
+        turn_state,
+        runtime_task_state,
+    )
 
 
 def _handle_turn_stop(

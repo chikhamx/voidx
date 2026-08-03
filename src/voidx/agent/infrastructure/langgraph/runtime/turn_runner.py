@@ -128,6 +128,7 @@ class TurnRunner:
         ):
             t_turn_start = time.monotonic()
             host._usage_stats.begin_turn()
+            host._pending_turn_stop_commit = None
             self.idle_event.clear()
             user_message_id: int | None = None
             streamed_messages: list = []
@@ -432,6 +433,7 @@ class TurnRunner:
                 raise
             finally:
                 host._usage_stats.end_turn()
+                host._pending_turn_stop_commit = None
                 pending_guidance = getattr(host, "_pending_guidance", None)
                 if pending_guidance is not None:
                     if pending_guidance:

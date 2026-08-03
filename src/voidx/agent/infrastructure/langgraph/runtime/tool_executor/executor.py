@@ -118,6 +118,28 @@ async def _publish_loop_terminal_message(host, message: AIMessage) -> None:
         host._ui.ui.print(text)
 
 
+async def _apply_pending_turn_stop_commit(host: Any, result: dict) -> dict:
+    pending_stop = getattr(host, "_pending_turn_stop_commit", None)
+    if pending_stop is None:
+        return result
+
+    host._pending_turn_stop_commit = None
+    terminal_msg = pending_stop.get("terminal_msg")
+    if not isinstance(terminal_msg, AIMessage):
+        return result
+
+    messages = list(result.get("messages") or [])
+    if bool(pending_stop.get("terminal_msg_visible", True)):
+        await _publish_loop_terminal_message(host, terminal_msg)
+    messages.append(terminal_msg)
+    return {
+        **result,
+        "messages": messages,
+        "should_continue": False,
+        "turn_state": "committed",
+    }
+
+
 UI_EVENT_BUS_TIMEOUT_KIND = "ui_event_bus_timeout"
 TOOL_HEARTBEAT_INITIAL_SECONDS = 15.0
 TOOL_HEARTBEAT_INTERVAL_SECONDS = 15.0
@@ -136,9 +158,23 @@ class ToolExecutorAdapter:
         tool_result_ok: ToolResultOk | None = None,
     ) -> dict:
         host = self.host
+        try:
+            return await self._execute_tools_body(state, tool_result_ok=tool_result_ok)
+        except Exception:
+            host._pending_turn_stop_commit = None
+            raise
+
+    async def _execute_tools_body(
+        self,
+        state,
+        *,
+        tool_result_ok: ToolResultOk | None = None,
+    ) -> dict:
+        host = self.host
         result_ok = tool_result_ok or self.tool_result_ok
         last = state["messages"][-1]
         if not isinstance(last, AIMessage) or not last.tool_calls:
+            host._pending_turn_stop_commit = None
             return {}
 
         if host._ui.dock.active and host._ui.dock.current_agent is not None:
@@ -247,7 +283,7 @@ class ToolExecutorAdapter:
                     AIMessage(content=repetitive_decision.message),
                 ]
                 result["should_continue"] = False
-            return result
+            return await _apply_pending_turn_stop_commit(host, result)
 
         async def execute_one(tc):
             tid = tc["name"]
@@ -408,7 +444,7 @@ class ToolExecutorAdapter:
                 host._ui.session_tracker.record_diff(result.diff)
                 await notify_tool_diff(host, result, tool_event_id, tool_node)
             else:
-if tid == "agent":
+                if tid == "agent":
                     # Prefer explicit UI display; successful spawn has none (subagent tree covers it).
                     ui_output = result.display or (
                         "" if ok else _agent_result_preview(result.output)
@@ -613,10 +649,13 @@ if tid == "agent":
         if no_progress_decision.action == "terminate":
             tool_messages.append(AIMessage(content=no_progress_decision.message))
             state_update["should_continue"] = False
-        return {
-            "messages": tool_messages,
-            **state_update,
-        }
+        return await _apply_pending_turn_stop_commit(
+            host,
+            {
+                "messages": tool_messages,
+                **state_update,
+            },
+        )
 
     tool_result_ok = staticmethod(_tool_result_ok)
 

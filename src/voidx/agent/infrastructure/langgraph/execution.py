@@ -374,6 +374,7 @@ class LangGraphExecution:
         self._successful_dangerous_calls_session_id: str | None = None
         self._runtime_guards = RuntimeGuardState()
         self._turn_metrics = TurnControlMetrics()
+        self._pending_turn_stop_commit: dict[str, Any] | None = None
         self._pending_guidance: list[tuple[str, bool, Literal["user", "guard"]]] = []
         self._clear_session_tasks: set[asyncio.Task[None]] = set()
         self._title_generation: int = 0
