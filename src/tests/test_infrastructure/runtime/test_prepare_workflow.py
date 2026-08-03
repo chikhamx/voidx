@@ -265,7 +265,7 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
 
     class FakeModel:
         def bind_tools(self, tool_defs):
-            captured["tool_ids"] = [tool.get("name") for tool in tool_defs]
+            captured["tool_ids"] = [tool.get("function", {}).get("name") for tool in tool_defs]
             return self
 
     async def fake_stream_llm(_model, messages, _renderer, _protocol):
@@ -313,6 +313,8 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
     assert "agent" not in captured["tool_ids"]
     assert "clarify" not in captured["tool_ids"]
     assert "checkpoint" not in captured["tool_ids"]
+    assert "goal" not in captured["tool_ids"]
+    assert "loop" not in captured["tool_ids"]
     task_payload = next(
         message.content
         for message in captured["messages"]

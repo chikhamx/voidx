@@ -145,13 +145,61 @@ def test_goal_phase_directive_covers_intake_and_evaluator() -> None:
     from types import SimpleNamespace
 
     from voidx.agent.domain.goal import GOAL_EVALUATOR_DIRECTIVE, GOAL_INTAKE_DIRECTIVE
-    from voidx.agent.infrastructure.langgraph.runtime.llm_turn import _goal_phase_directive
+    from voidx.agent.domain.prompt_policy import GoalPromptPolicy
 
-    intake_ctx = SimpleNamespace(turn_context=SimpleNamespace(goal_phase="intake"))
-    evaluator_ctx = SimpleNamespace(turn_context=SimpleNamespace(goal_phase="evaluator"))
-    work_ctx = SimpleNamespace(turn_context=SimpleNamespace(goal_phase="work"))
+    policy = GoalPromptPolicy()
 
-    assert _goal_phase_directive(intake_ctx, GOAL_PROFILE) == GOAL_INTAKE_DIRECTIVE
-    assert _goal_phase_directive(evaluator_ctx, GOAL_PROFILE) == GOAL_EVALUATOR_DIRECTIVE
-    assert _goal_phase_directive(work_ctx, GOAL_PROFILE) == ""
-    assert _goal_phase_directive(evaluator_ctx, None) == ""
+    intake_ctx = SimpleNamespace(goal_phase="intake")
+    evaluator_ctx = SimpleNamespace(goal_phase="evaluator")
+    work_ctx = SimpleNamespace(goal_phase="work")
+
+    assert policy.profile_sections(intake_ctx)[0].content == GOAL_INTAKE_DIRECTIVE
+    assert policy.profile_sections(evaluator_ctx)[0].content == GOAL_EVALUATOR_DIRECTIVE
+    assert policy.profile_sections(work_ctx) == []
+    assert policy.profile_sections(None) == []
+
+
+def test_goal_tool_view_idle_phase_binds_readonly_clarify_and_goal() -> None:
+    available = {
+        "read", "find", "search", "lsp", "document",
+        "bash", "write", "replace", "manage", "lsp_format",
+        "websearch", "webfetch", "mcp", "skill",
+        "clarify", "goal", "checkpoint", "turn", "loop", "workflow", "todo",
+    }
+
+    view = GoalToolView.default(phase="idle").bind(available)
+
+    assert {"read", "find", "search", "lsp", "document", "clarify", "goal"}.issubset(
+        view.bound_tool_ids
+    )
+    # no execution or write tools in idle
+    assert {"bash", "write", "replace", "manage", "lsp_format"}.isdisjoint(view.bound_tool_ids)
+    # no web/mcp/skill in idle
+    assert {"websearch", "webfetch", "mcp", "skill"}.isdisjoint(view.bound_tool_ids)
+    # no interactive protocol tools besides clarify/goal
+    assert {"checkpoint", "turn", "loop", "workflow", "todo"}.isdisjoint(view.bound_tool_ids)
+
+
+def test_goal_tool_view_idle_phase_denies_bash() -> None:
+    view = GoalToolView.default(phase="idle").bind({"bash", "read", "goal"})
+
+    assert view.check_tool_call("bash", {"command": "pytest -q"}).allowed is False
+    assert view.check_tool_call("read", {"file_path": "/tmp/x"}).allowed is True
+
+
+def test_goal_idle_directive_exists_for_idle_phase() -> None:
+    from voidx.agent.domain.goal import GOAL_IDLE_DIRECTIVE
+
+    assert "goal" in GOAL_IDLE_DIRECTIVE.lower()
+    assert "init" in GOAL_IDLE_DIRECTIVE.lower()
+
+
+def test_goal_phase_directive_covers_idle() -> None:
+    from types import SimpleNamespace
+
+    from voidx.agent.domain.goal import GOAL_IDLE_DIRECTIVE
+    from voidx.agent.domain.prompt_policy import GoalPromptPolicy
+
+    idle_ctx = SimpleNamespace(goal_phase="idle")
+
+    assert GoalPromptPolicy().profile_sections(idle_ctx)[0].content == GOAL_IDLE_DIRECTIVE

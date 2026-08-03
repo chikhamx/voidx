@@ -35,8 +35,12 @@ class GoalStatus:
 
 
 class GoalService(AutonomousServiceBase[GoalSpec, GoalScheduler]):
-    def __init__(self, *, store: ThreadStore, scheduler: GoalScheduler, workspace: str) -> None:
+    def __init__(self, *, store: ThreadStore, scheduler: GoalScheduler, workspace: str, result_notifier=None) -> None:
         super().__init__(store=store, scheduler=scheduler, workspace=workspace)
+        # Optional callable(parent_thread_id, text) invoked once when a goal
+        # reaches a terminal lifecycle, so the host session can record the result.
+        self._result_notifier = result_notifier
+        self._terminal_notified: set[str] = set()
 
     def _spec_thread_id(self, spec: GoalSpec, parent: str) -> str:
         return spec.goal_thread_id(parent)
@@ -106,6 +110,7 @@ class GoalService(AutonomousServiceBase[GoalSpec, GoalScheduler]):
             if not include_terminal:
                 return None
             self._active_specs.pop(parent, None)
+            self._notify_terminal_once(parent, spec, loaded)
         state = GoalState.model_validate(loaded.state.context["goal_run"])
         return GoalStatus(
             active=loaded.state.lifecycle not in TERMINAL_LIFECYCLES,
@@ -118,6 +123,23 @@ class GoalService(AutonomousServiceBase[GoalSpec, GoalScheduler]):
             last_evaluator_summary=state.last_evaluator_summary,
             state=loaded.state.lifecycle.value,
         )
+
+    def _notify_terminal_once(self, parent: str, spec: GoalSpec, loaded) -> None:
+        if self._result_notifier is None:
+            return
+        goal_thread_id = spec.goal_thread_id(parent)
+        if goal_thread_id in self._terminal_notified:
+            return
+        self._terminal_notified.add(goal_thread_id)
+        state = GoalState.model_validate(loaded.state.context["goal_run"])
+        summary = state.last_evaluator_summary or state.blocked_reason or ""
+        text = (
+            f"[goal finished] objective: {spec.objective_summary()}\n"
+            f"outcome: {loaded.state.lifecycle.value} "
+            f"(attempts {state.attempt_count}/{state.max_attempts})"
+            + (f"\nsummary: {summary}" if summary else "")
+        )
+        self._result_notifier(parent, text)
 
     async def stop(self, parent_thread_id: str | None) -> bool:
         parent = parent_id(parent_thread_id)

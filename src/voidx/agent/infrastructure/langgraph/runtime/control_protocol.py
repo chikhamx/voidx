@@ -132,7 +132,11 @@ class LoopProtocol:
 
     def controller(self, ctx: ControlContext | TurnExecutionContext | None) -> Any | None:
         turn_context = turn_context_from(ctx)
-        return getattr(turn_context, "loop_controller", None) if turn_context else None
+        if turn_context is None:
+            return None
+        if getattr(turn_context, "loop_phase", "") == "idle":
+            return getattr(turn_context, "loop_intake_controller", None)
+        return getattr(turn_context, "loop_controller", None)
 
     def classify(self, msg: AIMessage) -> TurnClassification:
         return classify_turn_call(msg)
@@ -141,6 +145,8 @@ class LoopProtocol:
         self, msg: AIMessage, loop: LlmLoopState, *, controller: Any | None
     ) -> bool:
         if controller is None:
+            return False
+        if not hasattr(controller, "final_decision"):
             return False
         if self.classify(msg) not in _BARRIER_CLASSIFICATIONS:
             return False

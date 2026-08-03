@@ -601,6 +601,13 @@ class AgentService:
             )
             return True
 
+        if profile == "goal":
+            await self._run_goal_idle_turn(user_input, parent=parent)
+            return True
+        if profile == "loop":
+            await self._run_loop_idle_turn(user_input, parent=parent)
+            return True
+
         from voidx.runtime.ui import ui
 
         ui.print(
@@ -609,6 +616,72 @@ class AgentService:
             f"or /coding to switch to coding.[/dim]"
         )
         return True
+
+    async def _run_goal_idle_turn(self, user_input: str, *, parent: str | None) -> None:
+        """Run a conversational goal-profile turn in the host session.
+
+        When no goal is active, the session is conversational: the turn may
+        answer directly, or submit a GoalSpec via goal(op="init") which starts
+        the autonomous loop. The session stays in goal mode after it ends.
+        """
+        from voidx.agent.application.goal_idle import GoalIdleTurnService
+        from voidx.agent.domain.thread import AgentThread
+
+        goal_service = getattr(self._execution, "goal_service", None)
+        if goal_service is None:
+            return
+        session = getattr(self._execution, "session", None)
+        workspace = (
+            getattr(session, "workspace", None)
+            or getattr(session, "directory", None)
+            or getattr(self._execution, "workspace", "")
+            or ""
+        )
+        thread = AgentThread(
+            thread_id=getattr(session, "id", None) or parent or "goal",
+            session_id=getattr(session, "id", None) or parent or "",
+            workspace=workspace,
+        )
+        idle = GoalIdleTurnService(self._runtime, goal_service)
+        status = await idle.run(user_input, thread, parent_thread_id=parent)
+        if status is not None and getattr(status, "active", False):
+            ui.print(
+                f"[dim]/goal started: [cyan]{status.objective_summary}[/cyan] "
+                f"attempt {status.attempt_count}/{status.max_attempts}[/dim]"
+            )
+
+    async def _run_loop_idle_turn(self, user_input: str, *, parent: str | None) -> None:
+        """Run a conversational loop-profile turn in the host session.
+
+        When no loop is active, the session is conversational: the turn may
+        answer directly, or submit a LoopSpec via loop(op="init") which starts
+        the autonomous loop. The session stays in loop mode after it ends.
+        """
+        from voidx.agent.application.loop_idle import LoopIdleTurnService
+        from voidx.agent.domain.thread import AgentThread
+
+        loop_service = getattr(self._execution, "loop_service", None)
+        if loop_service is None:
+            return
+        session = getattr(self._execution, "session", None)
+        workspace = (
+            getattr(session, "workspace", None)
+            or getattr(session, "directory", None)
+            or getattr(self._execution, "workspace", "")
+            or ""
+        )
+        thread = AgentThread(
+            thread_id=getattr(session, "id", None) or parent or "loop",
+            session_id=getattr(session, "id", None) or parent or "",
+            workspace=workspace,
+        )
+        idle = LoopIdleTurnService(self._runtime, loop_service)
+        status = await idle.run(user_input, thread, parent_thread_id=parent)
+        if status is not None and getattr(status, "active", False):
+            ui.print(
+                f"[dim]/loop started: [cyan]{status.prompt_summary}[/cyan] "
+                f"· {status.loop_thread_id}[/dim]"
+            )
 
     async def _route_chat_turn(self, user_input: str, *, thread_id: str) -> bool:
         """Route a turn to ChatService when the target thread is a chat session.
@@ -664,45 +737,36 @@ class AgentService:
         session.message_count = (getattr(session, "message_count", 0) or 0) + 1
 
     async def _handle_loop_first_message(self, user_input: str, *, thread_id: str) -> bool:
-        """Start a dynamic loop from the first message of a loop-profile session."""
+        """Run the first message as an in-session loop idle turn.
+
+        The turn may start a loop via loop(op="init") or simply converse; either
+        way the session stays in loop mode. A persistent user-input record keeps
+        the first message in the host session history.
+        """
         service = getattr(self._execution, "loop_service", None)
         if service is None:
             return False
         parent = thread_id or self._execution.session_id or ""
         if not parent:
             return False
-        from voidx.agent.domain.loop import LoopSpec
-
-        status = await service.start(parent, LoopSpec(prompt=user_input, interval_seconds=None))
-        ui.print(f"[dim]/loop started · {status.loop_thread_id}.[/dim]")
+        await self._run_loop_idle_turn(user_input, parent=parent)
         await self._persist_first_message(user_input)
         return True
 
     async def _handle_goal_first_message(self, user_input: str, *, thread_id: str) -> bool:
-        """Confirm a GoalSpec from the first message, then start the goal."""
+        """Run the first message as an in-session goal idle turn.
+
+        The turn may start a goal via goal(op="init") or simply converse; either
+        way the session stays in goal mode. A persistent user-input record keeps
+        the first message in the host session history.
+        """
         goal_service = getattr(self._execution, "goal_service", None)
         if goal_service is None:
             return False
         parent = thread_id or self._execution.session_id or ""
         if not parent:
             return False
-        from voidx.agent.application.goal_intake import GoalIntakeError, GoalIntakeService
-
-        intake = GoalIntakeService(self._runtime, goal_service)
-        try:
-            status = await intake.run(
-                user_input,
-                parent,
-                workspace=getattr(self._execution, "workspace", "") or "",
-            )
-        except GoalIntakeError as exc:
-            ui.print(f"[dim]{exc}[/dim]")
-            await self._persist_first_message(user_input)
-            return True
-        ui.print(
-            f"[dim]/goal started: [cyan]{status.objective_summary}[/cyan] "
-            f"attempt {status.attempt_count}/{status.max_attempts}[/dim]"
-        )
+        await self._run_goal_idle_turn(user_input, parent=parent)
         await self._persist_first_message(user_input)
         return True
 

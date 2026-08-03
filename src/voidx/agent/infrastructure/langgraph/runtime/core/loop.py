@@ -26,7 +26,7 @@ class LlmLoopState:
     pending_provisional: AIMessage | None = None
     missing_turn_count: int = 0
     protocol_repairs: int = 0
-    invalid_turn_repaired: bool = False
+    invalid_turn_repairs: int = 0
     turn_prompt_active: bool = False
     start_prompt_injected: bool = False
     terminal_msg: AIMessage | None = None

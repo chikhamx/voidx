@@ -185,3 +185,84 @@ async def test_goal_service_new_instance_recovers_status_and_stop_from_store(tmp
     assert await recovered.stop("parent-1") is True
     assert recovered_scheduler.unregistered == [started.goal_thread_id]
     assert await recovered.status("parent-1") is None
+
+
+@pytest.mark.asyncio
+async def test_goal_service_notifies_parent_on_terminal_completion(tmp_path) -> None:
+    store = ThreadStore()
+    notified: list[str] = []
+
+    class CompletingScheduler(FakeGoalScheduler):
+        async def run_goal(self, parent_thread_id: str, spec: GoalSpec):
+            self.calls.append((parent_thread_id, spec))
+            loaded = await store.load(spec.goal_thread_id(parent_thread_id))
+            assert loaded is not None
+            await store.save_state(
+                loaded.thread.thread_id,
+                loaded.state.model_copy(update={"lifecycle": "completed"}),
+                expected_state_version=loaded.state_version,
+            )
+
+    service = GoalService(
+        store=store,
+        scheduler=CompletingScheduler(),
+        workspace=str(tmp_path),
+        result_notifier=lambda parent, text: notified.append((parent, text)),
+    )
+
+    await service.start("parent-1", GoalSpec(objective="ship", acceptance_condition="tests pass"))
+
+    assert len(notified) == 1
+    parent, text = notified[0]
+    assert parent == "parent-1"
+    assert "ship" in text
+    assert "completed" in text.lower() or "finished" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_goal_service_terminal_notification_only_once(tmp_path) -> None:
+    store = ThreadStore()
+    notified: list[str] = []
+
+    class CompletingScheduler(FakeGoalScheduler):
+        async def run_goal(self, parent_thread_id: str, spec: GoalSpec):
+            loaded = await store.load(spec.goal_thread_id(parent_thread_id))
+            await store.save_state(
+                loaded.thread.thread_id,
+                loaded.state.model_copy(update={"lifecycle": "completed"}),
+                expected_state_version=loaded.state_version,
+            )
+
+    service = GoalService(
+        store=store,
+        scheduler=CompletingScheduler(),
+        workspace=str(tmp_path),
+        result_notifier=lambda parent, text: notified.append(text),
+    )
+
+    await service.start("parent-1", GoalSpec(objective="ship", acceptance_condition="done"))
+    # subsequent status polls must not re-notify
+    await service._status("parent-1", include_terminal=True)
+    await service._status("parent-1", include_terminal=True)
+
+    assert len(notified) == 1
+
+
+@pytest.mark.asyncio
+async def test_goal_service_no_notification_without_notifier(tmp_path) -> None:
+    store = ThreadStore()
+
+    class CompletingScheduler(FakeGoalScheduler):
+        async def run_goal(self, parent_thread_id: str, spec: GoalSpec):
+            loaded = await store.load(spec.goal_thread_id(parent_thread_id))
+            await store.save_state(
+                loaded.thread.thread_id,
+                loaded.state.model_copy(update={"lifecycle": "completed"}),
+                expected_state_version=loaded.state_version,
+            )
+
+    # default: no notifier -> must not raise
+    service = GoalService(store=store, scheduler=CompletingScheduler(), workspace=str(tmp_path))
+    status = await service.start("parent-1", GoalSpec(objective="ship", acceptance_condition="done"))
+
+    assert status.active is False
