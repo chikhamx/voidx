@@ -1,5 +1,6 @@
 """Tests for turn control tool: schema, classification, validation, normalization."""
 
+import pytest
 from langchain_core.messages import AIMessage
 
 from voidx.agent.infrastructure.langgraph.runtime.turn_control import (
@@ -164,6 +165,57 @@ def test_classify_legacy_empty_turn_call_invalid():
         tool_calls=[{"name": "turn", "args": {}, "id": "call_legacy", "type": "tool_call"}],
     )
     assert classify_turn_call(msg) == TurnClassification.INVALID_TURN
+
+
+def test_classify_turn_rejects_multiple_turn_calls_without_treating_them_as_valid():
+    msg = AIMessage(
+        content="",
+        tool_calls=[
+            {"name": "turn", "args": {}, "id": "call_empty", "type": "tool_call"},
+            {"name": "turn", "args": {}, "id": "call_empty_2", "type": "tool_call"},
+        ],
+    )
+    assert classify_turn_call(msg) == TurnClassification.INVALID_TURN
+
+
+@pytest.mark.asyncio
+async def test_invalid_turn_is_repaired_twice_before_failing():
+    from types import SimpleNamespace
+    from voidx.agent.infrastructure.langgraph.runtime.core.loop import LlmLoopState
+    from voidx.agent.infrastructure.langgraph.runtime.core.turn import handle_turn_control_response
+    from voidx.runtime.task_state import TaskState
+
+    graph = SimpleNamespace(_turn_metrics=SimpleNamespace(increment=lambda _name: None))
+    loop = LlmLoopState(context_tokens=0)
+    runtime_task_state = TaskState()
+    assistant = AIMessage(
+        content="",
+        tool_calls=[{"name": "turn", "args": {}, "id": "bad", "type": "tool_call"}],
+    )
+
+    first = await handle_turn_control_response(
+        graph=graph, assistant_msg=assistant, llm_messages=[], loop=loop,
+        turn_state="running", runtime_task_state=runtime_task_state,
+        state_messages=[], interaction_mode_value="auto", estimate_tokens=len,
+        rerender_task_context=lambda messages, _state, _task: messages,
+    )
+    second = await handle_turn_control_response(
+        graph=graph, assistant_msg=assistant, llm_messages=first.llm_messages, loop=loop,
+        turn_state="running", runtime_task_state=runtime_task_state,
+        state_messages=[], interaction_mode_value="auto", estimate_tokens=len,
+        rerender_task_context=lambda messages, _state, _task: messages,
+    )
+    third = await handle_turn_control_response(
+        graph=graph, assistant_msg=assistant, llm_messages=second.llm_messages, loop=loop,
+        turn_state="running", runtime_task_state=runtime_task_state,
+        state_messages=[], interaction_mode_value="auto", estimate_tokens=len,
+        rerender_task_context=lambda messages, _state, _task: messages,
+    )
+
+    assert first.action == "retry"
+    assert second.action == "retry"
+    assert third.action == "fail"
+
 
 def test_classify_regular_tool_call():
     msg = _ai_with_regular_tool_call()

@@ -279,8 +279,9 @@ async def test_turn_without_pending_text_falls_back(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_repeated_turn_without_text_stops_after_one_repair(tmp_path, monkeypatch):
+async def test_repeated_turn_without_text_allows_two_repairs_then_stops(tmp_path, monkeypatch):
     model = ScriptedStreamingModel([
+        [_turn_call_chunk()],
         [_turn_call_chunk()],
         [_turn_call_chunk()],
     ])
@@ -294,7 +295,7 @@ async def test_repeated_turn_without_text_stops_after_one_repair(tmp_path, monke
 
     assert result["should_continue"] is False
     assert "invalid turn control call" in result["messages"][0].content
-    assert model.call_index == 2
+    assert model.call_index == 3
 
 
 # ── Test 3: regular tool call still routes to tool execution ────────────────

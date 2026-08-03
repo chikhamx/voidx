@@ -424,8 +424,9 @@ def _handle_turn_stop(
         turn_state = "committed"
         return TurnControlResult("break", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
     graph._turn_metrics.increment("turn_control_invalid")
-    if not loop.invalid_turn_repaired:
-        loop.invalid_turn_repaired = True
+    if loop.invalid_turn_repairs < 2:
+        loop.invalid_turn_repairs += 1
+        graph._turn_metrics.increment("turn_control_invalid")
         loop.turn_prompt_active = True
         llm_messages = [
             *llm_messages,
@@ -463,10 +464,10 @@ def _handle_invalid_turn(
         loop.terminal_msg_visible = terminal_visible
         turn_state = "committed"
         return TurnControlResult("break", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
-    if not loop.invalid_turn_repaired:
+    if loop.invalid_turn_repairs < 2:
+        loop.invalid_turn_repairs += 1
         graph._turn_metrics.increment("turn_control_mixed_tools")
         graph._turn_metrics.increment("turn_control_invalid")
-        loop.invalid_turn_repaired = True
         loop.turn_prompt_active = True
         llm_messages = [
             *llm_messages,
