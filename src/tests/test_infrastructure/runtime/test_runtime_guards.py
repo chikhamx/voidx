@@ -429,3 +429,37 @@ def test_replace_success_clears_blocks():
     recovered = {"name": "replace", "args": {"file_path": "a.py", "start_no": 5, "end_no": 5, "start_anchor": "x", "end_anchor": "x", "new_string": "y"}}
     guards.tool_failures.record_success(recovered)
     assert guards.tool_failures.should_block(failing) is False
+
+
+def test_failure_loop_aggregates_policy_blocked_calls_across_rephrased_commands():
+    """Policy-blocked calls are static denials: rephrasing args must not reset the loop counter."""
+    from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import ToolFailureLoopState
+
+    guards = ToolFailureLoopState()
+    blocked = ToolResult(
+        output='{"ok": false, "stderr": "shell policy deferred: nested interpreter", "blocked": true}',
+        metadata={"blocked": True, "error": True},
+    )
+    first = build_failure_key({"name": "bash", "args": {"command": "python x.py"}}, blocked)
+    second = build_failure_key({"name": "bash", "args": {"command": "env PYTHONPATH=src python3 x.py"}}, blocked)
+
+    assert first.stable_key == second.stable_key
+    assert guards.record_failure(first, "blocked") is None
+    guidance = guards.record_failure(second, "blocked")
+    assert guidance is not None
+    assert "failed twice" in guidance.message
+
+
+def test_no_progress_subagent_guidance_tells_child_to_return_findings():
+    from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import NoProgressState
+
+    state = NoProgressState(for_subagent=True)
+    summary = ToolCycleSummary(tool_names=["bash"], only_tool="bash", call_count=1)
+
+    guidance = None
+    for _ in range(3):
+        guidance = state.record_cycle(summary) or guidance
+
+    assert guidance is not None
+    assert "cannot ask the user" in guidance.message
+    assert "final answer" in guidance.message

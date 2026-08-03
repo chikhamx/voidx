@@ -40,9 +40,17 @@ class RouteHint:
 # ── result factory functions ────────────────────────────────────────────────
 
 
+_STATIC_POLICY_HINT = (
+    "This shell pattern is statically disallowed in this environment; rephrasing will not help. "
+    "Use the dedicated tools instead (read/write/search/manage for files), "
+    "or run code through the project's documented entry point."
+)
+
+
 def build_blocked_result(command: str, reason: str) -> ToolResult:
     """Build a ToolResult for a blocked command (dangerous pattern or sandbox denial)."""
-    payload = {"ok": False, "exit_code": -1, "stdout": "", "stderr": reason, "blocked": True}
+    stderr = f"{reason}\n{_STATIC_POLICY_HINT}"
+    payload = {"ok": False, "exit_code": -1, "stdout": "", "stderr": stderr, "blocked": True}
     return ToolResult(
         output=json.dumps(payload, ensure_ascii=False, indent=2),
         display=reason,

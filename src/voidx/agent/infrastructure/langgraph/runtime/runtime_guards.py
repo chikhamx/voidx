@@ -207,6 +207,21 @@ class NoProgressState(BaseModel):
     terminate_threshold: int = 5
     warned: bool = False
     seen_evidence_keys: set[str] = Field(default_factory=set)
+    for_subagent: bool = False
+
+    def _warn_message(self) -> str:
+        head = f"No meaningful progress has been detected across the last {self.consecutive} model/tool cycles."
+        if self.for_subagent:
+            return (
+                f"{head}\n"
+                "You are a subagent and cannot ask the user for input. Stop retrying blocked or failing actions.\n"
+                "Summarize your findings so far and the blocker, and return them as your final answer now."
+            )
+        return (
+            f"{head}\n"
+            "Do not start broad new exploration. Summarize what is known, state the blocker,\n"
+            "and either choose one concrete next action or ask the user for input."
+        )
 
     def record_cycle(self, summary: ToolCycleSummary) -> GuardGuidance | None:
         unseen_evidence = [key for key in summary.evidence_keys if key not in self.seen_evidence_keys]
@@ -223,11 +238,7 @@ class NoProgressState(BaseModel):
             return GuardGuidance(
                 kind="no_progress",
                 level="light",
-                message=(
-                    f"No meaningful progress has been detected across the last {self.consecutive} model/tool cycles.\n"
-                    "Do not start broad new exploration. Summarize what is known, state the blocker,\n"
-                    "and either choose one concrete next action or ask the user for input."
-                ),
+                message=self._warn_message(),
                 metadata={"count": self.consecutive},
             )
         return None
@@ -235,11 +246,16 @@ class NoProgressState(BaseModel):
     def decision(self) -> GuardDecision:
         if self.consecutive < self.terminate_threshold:
             return GuardDecision()
+        tail = (
+            "Runtime guard stopped this subagent; return the findings gathered so far and the blocker."
+            if self.for_subagent
+            else "Runtime guard stopped this turn; summarize the current state and ask for the missing input."
+        )
         return GuardDecision(
             action="terminate",
             message=(
                 f"No meaningful progress has been detected across {self.consecutive} model/tool cycles. "
-                "Runtime guard stopped this turn; summarize the current state and ask for the missing input."
+                f"{tail}"
             ),
             metadata={"guard": "no_progress", "count": self.consecutive},
         )
@@ -290,9 +306,16 @@ class RuntimeGuardState(BaseModel):
 
 
 def build_failure_key(tool_call: dict[str, Any], result: Any) -> FailureKey:
+    tool_name = str(tool_call.get("name") or "")
+    normalized_args = normalize_tool_args(tool_name, tool_call.get("args") or {})
+    metadata = getattr(result, "metadata", {}) or {}
+    if metadata.get("blocked"):
+        # Policy/sandbox denials are static: rephrased commands hit the same wall,
+        # so aggregate by tool+error_kind instead of letting arg edits reset the loop.
+        normalized_args = "<policy-blocked>"
     return FailureKey(
-        tool_name=str(tool_call.get("name") or ""),
-        normalized_args=normalize_tool_args(str(tool_call.get("name") or ""), tool_call.get("args") or {}),
+        tool_name=tool_name,
+        normalized_args=normalized_args,
         error_kind=error_kind_from_result(result),
     )
 

@@ -12,6 +12,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from voidx.agent.application.agents import AgentDef, child_run_agent_def
 from voidx.agent.application.prompts import WORKFLOW_RUNTIME, build_base_system, persona_prompt
 from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import (
+    NoProgressState,
     RuntimeGuardState,
     WallClockGuardState,
     build_failure_key,
@@ -31,6 +32,8 @@ from voidx.runtime.task_state import GoalResolution, TaskState, WorkflowRoute
 from voidx.agent.application.tool_messages import sanitize_tool_message_content
 from voidx.agent.infrastructure.tool_result_storage import maybe_persist_tool_result
 from voidx.agent.application.tool_filters import filter_unavailable_lsp_tools, strip_gemini_unsupported_schema_keys
+from voidx.agent.domain.profile import RuntimeProfile
+from voidx.agent.infrastructure.langgraph.runtime.llm_turn import filter_profile_tool_definitions
 from voidx.config import Config
 from voidx.llm.service import create_chat_model, resolve_protocol
 from voidx.agent.application.instruction import WorkflowRuntimeContext
@@ -110,6 +113,10 @@ async def run_subagent(
         agent_tools = agent_tools.filtered_copy(set(agent_tools.ids()) - blocked_child_tools)
     model = create_chat_model(api_key, model_cfg)
     tool_defs = agent_tools.tools_for_llm()
+    tool_defs = filter_profile_tool_definitions(
+        tool_defs,
+        RuntimeProfile(profile_id="coding", revision=1, name="Coding"),
+    )
     tool_defs = filter_unavailable_lsp_tools(tool_defs, lsp_manager)
     tool_defs = strip_gemini_unsupported_schema_keys(tool_defs, resolve_protocol(config.model))
 
@@ -130,7 +137,10 @@ async def run_subagent(
         workflow_route=WorkflowRoute(join=plan.join, leave=plan.leave) if plan is not None else None,
         workflow_runs={run.name: run for run in workflow_context.runs},
     )
-    guard_state = RuntimeGuardState(wall_clock=WallClockGuardState.for_subagent())
+    guard_state = RuntimeGuardState(
+        no_progress=NoProgressState(for_subagent=True),
+        wall_clock=WallClockGuardState.for_subagent(),
+    )
     pending_guard_guidance: list[str] = []
     contract_retry_count = 0
     has_successful_tool_work = False
@@ -350,12 +360,13 @@ async def run_subagent(
                 messages.extend(guard_tool_msgs)
                 sub_messages.extend(guard_tool_msgs)
                 if repetitive_decision.action == "terminate":
+                    final_text = _guard_termination_result(messages, repetitive_decision.message)
                     if tracker:
-                        tracker.update(task_id, last_output=repetitive_decision.message[:200])
+                        tracker.update(task_id, last_output=final_text[:200])
                         tracker.finish(task_id, "completed")
-                    await report_result(repetitive_decision.message)
+                    await report_result(final_text)
                     mark_finished("guard_terminated")
-                    return repetitive_decision.message
+                    return final_text
                 continue
 
             if authorize_tools:
@@ -398,7 +409,7 @@ async def run_subagent(
                         "args": targs,
                         "content": result.output,
                         "summary": result.summary,
-                        "ok": True,
+                        "ok": result_ok(result),
                     })
                 if capture_tree and parent_node is not None:
                     capture.tool_done(tid, 0.0, True, tool_call_id=cid)
@@ -496,23 +507,25 @@ async def run_subagent(
                 pending_guard_guidance.append(guidance.message)
             no_progress_decision = guard_state.no_progress.decision()
             if no_progress_decision.action == "terminate":
+                final_text = _guard_termination_result(messages, no_progress_decision.message)
                 if tracker:
-                    tracker.update(task_id, last_output=no_progress_decision.message[:200])
+                    tracker.update(task_id, last_output=final_text[:200])
                     tracker.finish(task_id, "completed")
-                await report_result(no_progress_decision.message)
+                await report_result(final_text)
                 mark_finished("guard_terminated")
-                return no_progress_decision.message
+                return final_text
             wall_clock_decision = guard_state.wall_clock.record_check(
                 label=agent_def.name or persona,
                 latest_action=summary.only_tool or ", ".join(summary.tool_names[:3]),
             )
             if wall_clock_decision.action == "terminate":
+                final_text = _guard_termination_result(messages, wall_clock_decision.message)
                 if tracker:
-                    tracker.update(task_id, last_output=wall_clock_decision.message[:200])
+                    tracker.update(task_id, last_output=final_text[:200])
                     tracker.finish(task_id, "completed")
-                await report_result(wall_clock_decision.message)
+                await report_result(final_text)
                 mark_finished("guard_terminated")
-                return wall_clock_decision.message
+                return final_text
 
         if tracker:
             tracker.finish(task_id, "completed")
@@ -561,6 +574,30 @@ def _gateway_run_by_id(gateway, run_id: str):
     except Exception:
         return None
     return None
+
+
+def _guard_termination_result(messages: list, guard_message: str) -> str:
+    """Compose the child result when a runtime guard terminates the run.
+
+    The parent receives this text as the run result, so it must carry the
+    findings gathered before termination, not just the guard message.
+    """
+    findings: list[str] = []
+    for message in reversed(messages):
+        if isinstance(message, AIMessage):
+            text = extract_text(message).strip()
+            if text and text not in findings:
+                findings.append(text)
+        if len(findings) >= 3:
+            break
+    parts = [guard_message]
+    if findings:
+        parts.append("Findings gathered before termination:\n" + "\n---\n".join(reversed(findings)))
+    parts.append(
+        "Blocker: recent tool cycles made no progress (blocked or failing actions); "
+        "the runtime stopped this subagent before the task completed."
+    )
+    return "\n\n".join(parts)
 
 
 def _result_text(result: dict | None) -> str:

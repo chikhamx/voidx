@@ -31,3 +31,10 @@ def test_build_timeout_result_json_is_indented():
     parsed = json.loads(result.output)
     assert parsed["timeout"] is True
     assert "\n  " in result.output, "JSON output should be indented with newlines"
+
+
+def test_build_blocked_result_includes_static_policy_hint():
+    result = build_blocked_result("python x.py", "shell policy deferred: nested interpreter")
+    parsed = json.loads(result.output)
+    assert parsed["blocked"] is True
+    assert "rephrasing" in parsed["stderr"]
