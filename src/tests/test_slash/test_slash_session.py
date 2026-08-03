@@ -541,3 +541,43 @@ async def test_switch_profile_creates_goal_session_when_no_session(monkeypatch, 
     assert created[0].runtime_profile == "goal"
     assert resumed == created
     assert not output
+
+
+@pytest.mark.asyncio
+async def test_resume_lists_workspace_matches_first_then_by_recency(monkeypatch, isolated_memory_store):
+    """/resume with no id lists sessions with current workspace first, then by updated_at desc."""
+    current = "/current"
+    other = "/other"
+
+    s_other_new = await create_session(workspace=other, title="other-new")
+    s_cur_old = await create_session(workspace=current, title="cur-old")
+    s_cur_new = await create_session(workspace=current, title="cur-new")
+
+    await store._execute_commit(
+        "UPDATE sessions SET updated_at = ? WHERE id = ?",
+        ("2026-01-01T00:00:00+00:00", s_cur_old.id),
+    )
+    await store._execute_commit(
+        "UPDATE sessions SET updated_at = ? WHERE id = ?",
+        ("2026-03-01T00:00:00+00:00", s_cur_new.id),
+    )
+    await store._execute_commit(
+        "UPDATE sessions SET updated_at = ? WHERE id = ?",
+        ("2026-02-01T00:00:00+00:00", s_other_new.id),
+    )
+
+    captured: list[str] = []
+
+    class ListApp:
+        async def ask_choice(self, prompt, choices):
+            captured.extend(choices)
+            return None
+
+    graph = command_context(workspace=current, app=ListApp())
+    _capture_output(monkeypatch)
+
+    await SlashHandler(graph).dispatch("/resume")
+
+    assert len(captured) == 3
+    ids_in_order = [item[0].split(" | ")[0] for item in captured]
+    assert ids_in_order == [s_cur_new.id[:8], s_cur_old.id[:8], s_other_new.id[:8]]

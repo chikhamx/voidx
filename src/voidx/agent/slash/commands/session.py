@@ -6,6 +6,11 @@ from voidx.runtime.ui import get_dock, session_tracker, ui
 from voidx.agent.slash.helpers import _format_bytes
 
 
+def _order_sessions_by_workspace(sessions, workspace):
+    by_recency = sorted(sessions, key=lambda s: getattr(s, "updated_at", "") or "", reverse=True)
+    return sorted(by_recency, key=lambda s: s.workspace != workspace)
+
+
 class SessionCommandsMixin:
     async def _session(self, args: str) -> None:
         subcommand, _, rest = args.strip().partition(" ")
@@ -223,7 +228,9 @@ class SessionCommandsMixin:
     async def _list_sessions(self) -> None:
         from voidx.memory.service import list_sessions
 
-        sessions = await list_sessions()
+        sessions = _order_sessions_by_workspace(
+            await list_sessions(), getattr(self.host, "workspace", "")
+        )
         if not sessions:
             ui.print("No saved sessions.")
             return
@@ -250,7 +257,9 @@ class SessionCommandsMixin:
 
         sid = cmd.removeprefix("/resume").strip()
         if not sid:
-            sessions = await list_sessions()
+            sessions = _order_sessions_by_workspace(
+                await list_sessions(), getattr(self.host, "workspace", "")
+            )
             if not sessions:
                 ui.print("[dim]No saved sessions.[/dim]")
                 return
