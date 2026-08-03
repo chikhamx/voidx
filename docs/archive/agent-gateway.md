@@ -1,3 +1,5 @@
+> **Status: Done** — Archived on 2026-08-04.
+
 ---
 name: agent-gateway
 display_name: Agent Gateway
