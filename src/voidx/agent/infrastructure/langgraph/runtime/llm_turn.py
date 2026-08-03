@@ -77,22 +77,6 @@ MALFORMED_TOOL_CALL_REPAIR_INSTRUCTION = (
 )
 
 
-def _goal_phase_directive(state_context, active_profile) -> str:
-    if getattr(active_profile, "protocol", "") != "goal":
-        return ""
-    turn_context = getattr(state_context, "turn_context", None) if state_context else None
-    goal_phase = getattr(turn_context, "goal_phase", "")
-    if goal_phase == "intake":
-        from voidx.agent.domain.goal import GOAL_INTAKE_DIRECTIVE
-
-        return GOAL_INTAKE_DIRECTIVE
-    if goal_phase == "evaluator":
-        from voidx.agent.domain.goal import GOAL_EVALUATOR_DIRECTIVE
-
-        return GOAL_EVALUATOR_DIRECTIVE
-    return ""
-
-
 def _tool_definition_name(tool: dict[str, Any]) -> str:
     name = tool.get("name")
     if name:
@@ -511,35 +495,24 @@ class LlmTurn:
         state_context = current_thread_execution_state()
         active_profile = getattr(state_context, "runtime_profile", None) if state_context else None
         prompt_policy = getattr(active_profile, "prompt_policy", None)
-        persona_prompt_value = (
-            prompt_policy.persona_prompt
-            if prompt_policy is not None and prompt_policy.persona_prompt is not None
-            else rendered_persona_prompt
+        turn_context = getattr(state_context, "turn_context", None) if state_context else None
+        persona_prompt_value = rendered_persona_prompt
+        workflow_runtime_value = WORKFLOW_RUNTIME
+        profile_sections_value = (
+            prompt_policy.profile_sections(turn_context)
+            if prompt_policy is not None
+            else []
         )
-        workflow_runtime_value = (
-            prompt_policy.workflow_runtime
-            if prompt_policy is not None and prompt_policy.workflow_runtime is not None
-            else WORKFLOW_RUNTIME
-        )
-        policy_directive = (
-            prompt_policy.profile_directive
-            if prompt_policy is not None and prompt_policy.profile_directive is not None
-            else ""
-        )
-        profile_system_prompt = str(getattr(active_profile, "system_prompt", "") or "").strip()
-        phase_directive = _goal_phase_directive(state_context, active_profile)
-        profile_directive_value = "\n\n".join(
-            part for part in (policy_directive, phase_directive, profile_system_prompt) if part.strip()
-        )
-        task_state_suppressed = (
-            prompt_policy is not None and prompt_policy.task_state_section == ""
+        suppress_sections_value = (
+            prompt_policy.suppress_sections()
+            if prompt_policy is not None
+            else set()
         )
         base_system_spec = (
-            prompt_policy.base_system_spec
-            if prompt_policy is not None and prompt_policy.base_system_spec is not None
+            prompt_policy.base_system_spec()
+            if prompt_policy is not None and prompt_policy.base_system_spec() is not None
             else CODING_PROFILE_SPEC
         )
-        state_context = current_thread_execution_state()
         active_tool_view = getattr(state_context, "tool_policy", None) if state_context else None
         available_tools = (
             set(active_tool_view.bound_tool_ids)
@@ -596,8 +569,8 @@ class LlmTurn:
             task_state=task_state,
             session_date=host._session_date,
             turn_state=state.get("turn_state", "initial"),
-            profile_directive=profile_directive_value,
-            suppress_task_state=task_state_suppressed,
+            profile_sections=profile_sections_value,
+            suppress_sections=suppress_sections_value,
         )
         context, host._context_cache = host._last_context_builder.build_incremental(host._context_cache)
         context.apply_to_messages(state.get("messages", []))

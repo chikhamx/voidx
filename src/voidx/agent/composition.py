@@ -29,6 +29,32 @@ if TYPE_CHECKING:
     from voidx.memory.service import SessionInfo
 
 
+def _make_goal_result_notifier():
+    """Persist a goal's terminal result into the parent (host) session."""
+    import asyncio
+
+    def _notify(parent_thread_id: str, text: str) -> None:
+        async def _save() -> None:
+            from voidx.memory.service import MessageRow, memory_now, save_message
+
+            try:
+                await save_message(
+                    MessageRow(
+                        session_id=parent_thread_id,
+                        role="assistant",
+                        content=text,
+                        content_format="text",
+                        created_at=memory_now(),
+                    )
+                )
+            except Exception:
+                pass  # best-effort; /goal status remains authoritative
+
+        asyncio.get_running_loop().create_task(_save())
+
+    return _notify
+
+
 def build_agent_app(
     config: Config,
     api_key: str | None,
@@ -71,6 +97,7 @@ def build_agent_app(
             store=loop_store,
             scheduler=goal_scheduler,
             workspace=getattr(config, "workspace", ""),
+            result_notifier=_make_goal_result_notifier(),
         )
     if hasattr(execution, "__dict__"):
         execution.loop_service = loop_service

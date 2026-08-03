@@ -11,6 +11,7 @@ import voidx.memory.store as store
 
 from voidx.agent.application.chat_service import ChatService
 from voidx.agent.domain.profile import RuntimeProfile
+from voidx.agent.domain.prompt_policy import LoopPromptPolicy
 from voidx.agent.application.prompts import BaseSystemProfile
 from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
@@ -216,7 +217,6 @@ async def test_custom_profile_policy_selects_base_system_without_profile_branch(
         captured = {}
 
         class CustomPromptPolicy:
-            @property
             def base_system_spec(self):
                 return BaseSystemProfile(
                     identity="You are voidx, a research assistant.",
@@ -226,21 +226,13 @@ async def test_custom_profile_policy_selects_base_system_without_profile_branch(
                     },
                 )
 
-            @property
-            def persona_prompt(self):
-                return ""
+            def profile_sections(self, turn_context):
+                from voidx.agent.application.runtime_context import ContextSection
 
-            @property
-            def workflow_runtime(self):
-                return ""
+                return [ContextSection(name="Profile Directive", content="Custom profile directive.")]
 
-            @property
-            def task_state_section(self):
-                return ""
-
-            @property
-            def profile_directive(self):
-                return "Custom profile directive."
+            def suppress_sections(self):
+                return {"Persona", "Workflow Runtime", "Current Task State"}
 
         profile = RuntimeProfile(
             profile_id="research",
@@ -338,6 +330,7 @@ async def test_profile_system_prompt_is_injected_into_stable_system_context(tmp_
             name="Loop",
             protocol="loop",
             system_prompt="## Loop Goal\ncheck build every minute",
+            prompt_policy=LoopPromptPolicy(),
         )
         context = TurnExecutionContext(
             thread_id=coding.id,

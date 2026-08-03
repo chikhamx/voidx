@@ -15,40 +15,40 @@ from voidx.agent.domain.thread import AgentThread
 from voidx.agent.domain.turn_context import TurnExecutionContext
 
 
-def test_coding_prompt_policy_returns_none_for_all_overrides():
+def test_coding_prompt_policy_returns_empty_sections():
     policy = CodingPromptPolicy()
 
-    assert policy.persona_prompt is None
-    assert policy.workflow_runtime is None
-    assert policy.task_state_section is None
-    assert policy.profile_directive is None
+    assert policy.base_system_spec() is None
+    assert policy.profile_sections(None) == []
+    assert policy.suppress_sections() == set()
 
 
 def test_chat_prompt_policy_suppresses_coding_sections():
     policy = ChatPromptPolicy()
 
-    assert policy.persona_prompt == ""
-    assert policy.workflow_runtime == ""
-    assert policy.task_state_section == ""
-    assert policy.profile_directive is not None
-    assert "chat" in policy.profile_directive.lower()
+    suppress = policy.suppress_sections()
+    assert "Persona" in suppress
+    assert "Workflow Runtime" in suppress
+    assert "Current Task State" in suppress
 
 
 def test_chat_prompt_policy_selects_chat_base_system_spec():
     policy = ChatPromptPolicy()
 
-    assert policy.base_system_spec is CHAT_PROFILE_SPEC
+    assert policy.base_system_spec() is CHAT_PROFILE_SPEC
 
 
 def test_coding_prompt_policy_keeps_default_base_system_spec():
     policy = CodingPromptPolicy()
 
-    assert policy.base_system_spec is None
+    assert policy.base_system_spec() is None
 
 
 def test_chat_prompt_policy_directive_states_bound_tools_and_restrictions():
     policy = ChatPromptPolicy()
-    directive = policy.profile_directive
+    sections = policy.profile_sections(None)
+    assert len(sections) == 1
+    directive = sections[0].content
 
     assert "read-only" in directive.lower() or "read only" in directive.lower()
     assert "shell" in directive.lower() or "write" in directive.lower()
@@ -77,6 +77,6 @@ def test_turn_request_default_coding_profile_has_no_prompt_policy():
 
 
 def test_prompt_policy_is_protocol():
-    import typing
+    from typing import Protocol
 
-    assert typing.get_type_hints(PromptPolicy) or hasattr(PromptPolicy, "persona_prompt")
+    assert isinstance(PromptPolicy, type(Protocol))

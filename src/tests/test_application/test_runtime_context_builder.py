@@ -85,6 +85,29 @@ def test_runtime_context_section_order_places_runtime_state_before_task_state(tm
     assert "- Approval policy: untrusted" in system
 
 
+def test_suppress_sections_filters_persona_workflow_and_task_state(tmp_path):
+    from voidx.agent.application.runtime_context import ContextSection
+
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        workflow_runtime="Workflow definitions.",
+        persona="voidx",
+        persona_prompt="Coordinate work.",
+        interaction_mode="goal",
+        profile_sections=[ContextSection(name="Profile Directive", content="Custom directive.")],
+        suppress_sections={"Persona", "Workflow Runtime", "Current Task State"},
+    ).build()
+
+    names = context.section_names()
+    assert "Persona" not in names
+    assert "Workflow Runtime" not in names
+    assert "Profile Directive" in names
+    assert "Runtime State" in names
+    assert "Current Task State" not in context.render_task_context()
+
+
 def test_runtime_context_system_omits_stable_workflow_dag_overview(tmp_path):
     context = RuntimeContextBuilder(
         config=Config(workspace=str(tmp_path)),

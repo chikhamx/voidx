@@ -179,13 +179,13 @@ class RuntimeContextBuilder:
         task_state: "TaskState | None" = None,
         session_date: str | None = None,
         turn_state: str = "initial",
-        profile_directive: str = "",
-        suppress_task_state: bool = False,
+        profile_sections: Iterable[ContextSection] = (),
+        suppress_sections: Iterable[str] = (),
     ) -> None:
         from voidx.runtime.task_state import TaskState as _TaskState
 
         ts = task_state if isinstance(task_state, _TaskState) else _TaskState()
-        self._task_state_suppressed = suppress_task_state
+        self._suppress_sections = set(suppress_sections)
         self.config = config
         self.workspace = workspace
         self.structured_prompts = isinstance(base_system_prompt, BaseSystemPrompt) or workflow_runtime is not None
@@ -204,7 +204,7 @@ class RuntimeContextBuilder:
         self.todo_state = ts.todo_state
         self.user_profile = config.user_profile
         self.turn_state = turn_state.strip() or "initial"
-        self.profile_directive = profile_directive.strip()
+        self.profile_sections = list(profile_sections)
         now = datetime.now().astimezone()
         self.session_date = (session_date or now.strftime("%Y-%m-%d %Z")).strip()
 
@@ -244,14 +244,11 @@ class RuntimeContextBuilder:
         sections = [
             ContextSection(name="Base System", content=self.base_system_prompt),
         ]
-        if self.profile_directive:
-            sections.append(ContextSection(
-                name="Profile Directive", content=self.profile_directive,
-            ))
-        if self.persona_prompt:
+        sections.extend(self.profile_sections)
+        if self.persona_prompt and not self._suppress_sections.intersection({"Persona", "Agent Role"}):
             persona_section = "Persona" if self.structured_prompts else "Agent Role"
             sections.append(ContextSection(name=persona_section, content=self.persona_prompt))
-        if self.workflow_runtime:
+        if self.workflow_runtime and "Workflow Runtime" not in self._suppress_sections:
             sections.append(ContextSection(
                 name="Workflow Runtime",
                 content=_strip_section_heading("Workflow Runtime", self.workflow_runtime),
@@ -275,7 +272,7 @@ class RuntimeContextBuilder:
         return sections
 
     def _build_task_sections(self) -> list[ContextSection]:
-        if self._task_state_suppressed:
+        if "Current Task State" in self._suppress_sections:
             return []
         return [
             ContextSection(name="Current Task State", content=self._current_task_state()),
