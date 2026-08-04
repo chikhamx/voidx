@@ -488,7 +488,7 @@ def _inline_refs(schema: dict[str, Any], defs: dict[str, Any]) -> None:
 
 def _disallow_extra_properties(schema: dict[str, Any]) -> None:
     if schema.get("type") == "object":
-        schema.setdefault("additionalProperties", False)
+        schema["additionalProperties"] = False
         props = schema.get("properties")
         if props:
             schema["required"] = list(props.keys())

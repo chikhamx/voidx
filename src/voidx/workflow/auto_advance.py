@@ -56,9 +56,9 @@ def auto_advance_events(
     Only produces events for active nodes that have matching outgoing edges.
     """
     active_names = {
-        run.name
+        run.name.strip().lower()
         for run in workflow_runs
-        if run.status == WorkflowRunStatus.ACTIVE
+        if run.status == WorkflowRunStatus.ACTIVE and run.name.strip()
     }
     if not active_names:
         return []

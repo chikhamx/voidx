@@ -399,6 +399,8 @@ class DockEventConsumer:
                 details: list[str] = []
                 if e.finish_reason:
                     details.append(e.finish_reason.replace("_", " "))
+                if e.error:
+                    details.append(e.error)
                 if e.elapsed is not None:
                     details.append(f"{e.elapsed:.1f}s")
                 suffix = f" ({', '.join(details)})" if details else ""

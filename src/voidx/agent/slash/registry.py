@@ -40,7 +40,6 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand("/lsp", "Manage language servers", "_lsp", "args"),
     SlashCommand("/mcp", "Manage MCP servers", "_mcp", "args"),
     SlashCommand("/model", "Switch configured model", "_dispatch_model", "args"),
-    SlashCommand("/parallel", "Toggle parallel subagent execution", "_parallel", "args"),
     SlashCommand("/paste", "Paste an image from the clipboard", "_paste_clipboard_image", "none"),
     SlashCommand("/permission", "Choose permission mode", "_permission_mode", "args"),
     SlashCommand("/permissions", "Show current permission rules", "_cmd_permissions", "none"),

@@ -22,7 +22,6 @@ export const COMMAND_CATALOG: SlashCommand[] = [
   { command: "/lsp", description: "Manage language servers", category: "code", execution: "open-ui", dangerous: false, requiresArgs: false, uiTarget: "integrations:lsp" },
   { command: "/mcp", description: "Manage MCP servers", category: "integrations", execution: "open-ui", dangerous: false, requiresArgs: false, uiTarget: "integrations:mcp" },
   { command: "/model", description: "Switch model or adjust reasoning", category: "model", execution: "fill", dangerous: false, requiresArgs: false },
-  { command: "/parallel", description: "Toggle parallel subagent execution", category: "preference", execution: "fill", dangerous: false, requiresArgs: false },
   { command: "/paste", description: "Paste an image from the clipboard", category: "code", execution: "run", dangerous: false, requiresArgs: false },
   { command: "/permission", description: "Choose permission preset", category: "permission", execution: "open-ui", dangerous: false, requiresArgs: false, uiTarget: "settings:permissions" },
   { command: "/permissions", description: "Show current permission rules", category: "permission", execution: "open-ui", dangerous: false, requiresArgs: false, uiTarget: "settings:permissions" },

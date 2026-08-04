@@ -70,6 +70,15 @@ class TestToolSchemas:
                 f"multi-type 'type' arrays over anyOf for optional fields"
             )
 
+    def test_message_payload_schema_disallows_extra_properties(self):
+        from voidx.tools.base import model_to_json_schema
+        from voidx.tools.message import MessageInput
+
+        schema = model_to_json_schema(MessageInput)
+
+        assert schema["properties"]["payload"]["type"] == "string"
+        assert "additionalProperties" not in schema["properties"]["payload"]
+
     def test_replace_anyof_preserves_null_and_array_types(self):
         from voidx.tools.base import _replace_anyof
 

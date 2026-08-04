@@ -22,7 +22,6 @@ describe("renderSettingsModal", () => {
       profiles: [{ name: "openai-default", provider: "openai", model: "gpt-5.5", base_url: null, protocol: null, configured: true }],
       permissions: { permission_mode: "safe" },
       user_profile: { language: "en", tone: "direct" },
-      parallel_subagents: { enabled: true, max_concurrent: 4 },
       code_ide: "cursor",
       update_check: { enabled: true },
       paths: { workspace_settings: "/tmp/.voidx/settings.json", global_settings: "/tmp/.voidx/settings.json", skills_state: "/tmp/.voidx/skills_state.json" },
@@ -73,7 +72,7 @@ describe("renderSettingsModal", () => {
 
   it("renders preferences tab", () => {
     initSettingsModal();
-    renderSettingsModal({ user_profile: { language: "zh-CN", tone: "concise" }, parallel_subagents: { enabled: false, max_concurrent: 2 } });
+    renderSettingsModal({ user_profile: { language: "zh-CN", tone: "concise" } });
     document.querySelector(".settings-tab[data-tab='preferences']").click();
     // input values are not in textContent, query directly
     const langInput = document.querySelector('[name="language"]');

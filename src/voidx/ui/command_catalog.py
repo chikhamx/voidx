@@ -42,7 +42,7 @@ CATEGORY_PREFIXES: tuple[tuple[tuple[str, ...], CommandCategory], ...] = (
     (("/permission", "/allow", "/deny", "/permissions", "/goal", "/plan", "/unplan"), "permission"),
     (("/mcp", "/tavily", "/skills"), "integrations"),
     (("/lsp", "/code-ide", "/diff", "/paste"), "code"),
-    (("/lang", "/tone", "/parallel"), "preference"),
+    (("/lang", "/tone"), "preference"),
     (("/compact", "/debug", "/log", "/usage", "/upgrade", "/rollback"), "maintenance"),
 )
 
@@ -70,7 +70,6 @@ OPEN_UI_TARGETS: dict[str, str] = {
 DIRECT_RUN_COMMANDS = {
     "/usage",
     "/lsp status",
-    "/parallel status",
     "/tavily show",
     "/mcp list",
     "/skills list",

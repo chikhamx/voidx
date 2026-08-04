@@ -11,7 +11,6 @@ from voidx.agent.domain.compaction import CompactionResult, PreflightCompactionR
 from voidx.agent.infrastructure.langgraph.runtime.streaming import extract_text, stream_llm
 from voidx.agent.infrastructure.message_rows import messages_from_rows
 from voidx.agent.application.runtime_context import raw_semantic_messages
-from voidx.agent.application.todo_state import sanitize_todo_replay_messages
 from voidx.llm.compaction import (
     COMPACTION_MAX_RETRIES,
     COMPACTION_REQUEST,
@@ -152,10 +151,7 @@ class CompactionCoordinator:
             )
 
         runtime_prefix = _runtime_prefix(messages)
-        semantic_messages = sanitize_todo_replay_messages(
-            raw_semantic_messages(messages),
-            preserve_trailing_ai_tool_calls=True,
-        )
+        semantic_messages = raw_semantic_messages(messages)
         if preflight:
             selection = host._compaction.select_preflight_details(
                 semantic_messages,

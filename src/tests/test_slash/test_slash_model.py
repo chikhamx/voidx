@@ -15,7 +15,6 @@ from voidx.config import (
     Config,
     McpServerConfig,
     ModelConfig,
-    ParallelSubagentsConfig,
     PermissionMode,
     Settings,
     UserProfile,
@@ -700,23 +699,6 @@ async def test_permission_ai_approval_accepts_explicit_profile(tmp_path):
     assert await SlashHandler(graph).dispatch(f"/permission ai_approval {profile_name}") is True
 
     assert settings.get_ai_approval_config().profile_name == profile_name
-@pytest.mark.asyncio
-async def test_parallel_toggle_on_persists_without_live_config_update(tmp_path, monkeypatch):
-    output = _capture_handler_output(monkeypatch)
-    settings = Settings(str(tmp_path))
-    graph = command_context(
-        config=Config(workspace=str(tmp_path)),
-        settings=settings,
-    )
-
-    assert await SlashHandler(graph).dispatch("/parallel on") is True
-
-    assert graph.config.parallel_subagents.enabled is False
-    assert Settings(str(tmp_path)).get_parallel_subagents() == ParallelSubagentsConfig(enabled=True)
-    assert output == [
-        "[dim]Saved parallel subagents on (max_concurrent=4). Run /clear or restart to apply.[/dim]"
-    ]
-
 
 
 @pytest.mark.asyncio

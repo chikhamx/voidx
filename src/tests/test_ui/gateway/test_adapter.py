@@ -328,6 +328,24 @@ async def test_subagent_finished_to_item_completed():
     assert params["data"]["ok"] is True
 
 
+
+
+@pytest.mark.asyncio
+async def test_subagent_finished_forwards_error():
+    adapter = _adapter()
+    await adapter.handle(
+        SubagentStarted(agent_id=1, subagent_id="sub1", name="reviewer")
+    )
+    msg = await adapter.handle(
+        SubagentFinished(
+            agent_id=1,
+            subagent_id="sub1",
+            ok=False,
+            finish_reason="error",
+            error="runner failed",
+        )
+    )
+    assert _item_params(msg)["data"]["error"] == "runner failed"
 # ── prompt items ────────────────────────────────────────────────────────
 
 

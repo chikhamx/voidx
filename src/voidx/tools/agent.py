@@ -199,20 +199,11 @@ class AgentTool(BaseTool):
         agent_resolver: Callable[[str], Any | None] | None = None,
         child_agent_descriptions: str = "",
         available_agents: Iterable[str] = (),
-        parallel_subagents_enabled: bool = False,
     ):
         super().__init__()
         self._run_child_agent = runner
         self._agent_resolver = agent_resolver
         self._available_agents = list(available_agents)
-        self._parallel_subagents_enabled = parallel_subagents_enabled
-        if parallel_subagents_enabled:
-            self.description = (
-                self.description
-                + "\n\n"
-                + "When independent child-agent tasks are available, issue multiple "
-                "`agent` tool calls in the same response to let them run concurrently."
-            )
         if child_agent_descriptions:
             self.description = (
                 self.description

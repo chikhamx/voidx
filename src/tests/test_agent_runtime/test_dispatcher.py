@@ -54,6 +54,8 @@ async def test_dispatcher_claims_outbox_runs_runtime_and_commits_decision() -> N
         attempt_id=attempt.attempt_id,
         decision=RuntimeDecision(outcome="continue", summary="seed"),
         expected_state_version=attempt.state_version,
+        lease_owner="seed-worker",
+        fencing_token=attempt.fencing_token,
     )
     assert committed.next_outbox_id is not None
     runner = FakeRuntimeRunner([RuntimeDecision(outcome="completed", summary="done")])
@@ -99,6 +101,8 @@ async def _seed_committed_wakeup(store: ThreadStore):
         attempt_id=attempt.attempt_id,
         decision=RuntimeDecision(outcome="continue", summary="seed", next_delay_seconds=0),
         expected_state_version=attempt.state_version,
+        lease_owner="seed-worker",
+        fencing_token=attempt.fencing_token,
     )
     return committed
 
@@ -131,6 +135,8 @@ async def test_dispatcher_acks_and_skips_already_committed_attempt() -> None:
         attempt_id=attempt.attempt_id,
         decision=RuntimeDecision(outcome="completed", summary="done"),
         expected_state_version=attempt.state_version,
+        lease_owner="w0",
+        fencing_token=attempt.fencing_token,
     )
     runner = FakeRuntimeRunner([RuntimeDecision(outcome="completed", summary="again")])
     dispatcher = RuntimeDispatcher(store=store, runner=runner, lease_owner="worker-a")
@@ -182,6 +188,68 @@ class _CancellingRunner:
         return RuntimeDecision(outcome="continue", summary="late", next_delay_seconds=0)
 
 
+@dataclass
+class _FailingRunner:
+    error: Exception = RuntimeError("runner failed")
+
+    async def run_turn(self, *, thread, profile, input_frame):
+        raise self.error
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_marks_user_review_when_runner_fails_after_side_effect_start():
+    store = await _make_loop_store()
+    await _seed_committed_wakeup(store)
+    dispatcher = RuntimeDispatcher(
+        store=store,
+        runner=_FailingRunner(),
+        lease_owner="worker-a",
+    )
+
+    result = await dispatcher.dispatch_once()
+
+    assert result is None
+    loaded = await store.load("loop-1")
+    assert loaded is not None
+    assert loaded.state.lifecycle is LifecycleState.NEEDS_USER
+    assert loaded.state.lifecycle_decision is not None
+    assert "runner failed" in loaded.state.lifecycle_decision.reason
+    assert await store.claim_next_outbox(lease_owner="worker-b", lease_seconds=60) is None
+
+
+
+class _NeedsUserWriteFailingStore(ThreadStore):
+    def __init__(self, db_path=None):
+        super().__init__(db_path=db_path)
+        self.acked_outbox_ids = []
+
+    async def set_needs_user_for_attempt(self, *args, **kwargs):
+        raise RuntimeError("needs_user write failed")
+
+    async def ack_outbox(self, outbox_id):
+        self.acked_outbox_ids.append(outbox_id)
+        await super().ack_outbox(outbox_id)
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_does_not_ack_when_needs_user_persistence_fails():
+    store = _NeedsUserWriteFailingStore()
+    await store.create_thread(
+        AgentThread(thread_id="loop-1"),
+        profile=RuntimeProfile(profile_id="loop", revision=1, name="Loop"),
+    )
+    await _seed_committed_wakeup(store)
+    dispatcher = RuntimeDispatcher(
+        store=store,
+        runner=_FailingRunner(),
+        lease_owner="worker-a",
+    )
+
+    with pytest.raises(RuntimeError, match="needs_user write failed"):
+        await dispatcher.dispatch_once()
+
+    assert store.acked_outbox_ids == []
+    assert await store.claim_next_outbox(lease_owner="worker-b", lease_seconds=60) is not None
 @pytest.mark.asyncio
 async def test_dispatcher_acks_outbox_when_commit_conflicts_after_stop() -> None:
     store = await _make_loop_store()
@@ -303,3 +371,33 @@ async def test_discard_pending_outbox_prefix_only_touches_matching_threads() -> 
     assert discarded == 1
     assert await store.list_pending_outbox("loop-1") == []
     assert len(await store.list_pending_outbox("loop-2")) == 1
+
+
+@dataclass
+class _SlowRunner:
+    delay: float
+    decision: RuntimeDecision
+
+    async def run_turn(self, *, thread, profile, input_frame):
+        await asyncio.sleep(self.delay)
+        return self.decision
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_renews_short_lease_during_long_turn() -> None:
+    store = await _make_loop_store()
+    await _seed_committed_wakeup(store)
+    runner = _SlowRunner(0.2, RuntimeDecision(outcome="completed", summary="done"))
+    dispatcher = RuntimeDispatcher(
+        store=store,
+        runner=runner,
+        lease_owner="worker-a",
+        lease_seconds=0.06,
+    )
+
+    result = await dispatcher.dispatch_once()
+
+    assert result is not None
+    loaded = await store.load("loop-1")
+    assert loaded is not None
+    assert loaded.state.lifecycle is LifecycleState.COMPLETED

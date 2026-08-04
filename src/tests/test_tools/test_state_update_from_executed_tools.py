@@ -195,6 +195,8 @@ class TestStateUpdateFromExecutedTools:
         )
         executed = [_ExecutedTool(message=msg, result=result, tool_call={"name": "bash"})]
         update = _state_update_from_executed_tools(executed, current_workflow_runs=current)
+
+
         assert "workflow_runs" in update
         by_name = {r.name: r for r in update["workflow_runs"]}
         assert by_name["verify"].status == WorkflowRunStatus.SATISFIED
@@ -264,3 +266,147 @@ class TestStateUpdateFromExecutedTools:
         update = _state_update_from_executed_tools(executed, current_workflow_runs=current)
         assert "workflow_runs" not in update
 
+    def test_explicit_advance_at_route_end_satisfies_without_successor(self):
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import (
+            _ExecutedTool,
+            _state_update_from_executed_tools,
+        )
+
+        current = [
+            WorkflowRunState(
+                name="review",
+                status=WorkflowRunStatus.ACTIVE,
+                transition_to=["tdd"],
+            ),
+        ]
+        result = ToolResult(
+            output="workflow result",
+            metadata={
+                "workflow_transition": {
+                    "action": "advance",
+                    "from": "review",
+                    "condition": "issues_found",
+                    "activated": ["tdd"],
+                },
+                "state_patch": ToolStatePatch(
+                    workflow_runs=[
+                        current[0].model_copy(update={"status": WorkflowRunStatus.SATISFIED}),
+                        WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE),
+                    ]
+                ).model_dump(mode="json", exclude_unset=True),
+            },
+        )
+        executed = [_ExecutedTool(
+            message=None,
+            result=result,
+            tool_call={"name": "workflow", "args": {"action": "advance"}},
+        )]
+
+        update = _state_update_from_executed_tools(
+            executed,
+            current_workflow_runs=current,
+            current_workflow_route={"join": "review", "leave": "review"},
+            turn_count=7,
+        )
+
+        by_name = {run.name: run for run in update["workflow_runs"]}
+        assert by_name["review"].status == WorkflowRunStatus.SATISFIED
+        assert "tdd" not in by_name
+        assert by_name["review"].updated_turn == 7
+        assert update["should_continue"] is False
+
+    def test_auto_advance_route_transition_replay_is_idempotent(self):
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import (
+            _ExecutedTool,
+            _state_update_from_executed_tools,
+        )
+
+        current = [WorkflowRunState(name="review", status=WorkflowRunStatus.ACTIVE)]
+        result = ToolResult(
+            output="verdict: FAIL\n\n## Issues\n- regression",
+            metadata={"agent": "review"},
+        )
+        executed = [_ExecutedTool(
+            message=None,
+            result=result,
+            tool_call={"name": "agent", "args": {}},
+        )]
+
+        first = _state_update_from_executed_tools(
+            executed,
+            current_workflow_runs=current,
+            current_workflow_route={"join": "tdd", "leave": "review"},
+            turn_count=4,
+        )
+        second = _state_update_from_executed_tools(
+            executed,
+            current_workflow_runs=first["workflow_runs"],
+            current_workflow_route={"join": "tdd", "leave": "review"},
+            turn_count=5,
+        )
+
+        first_review = {run.name: run for run in first["workflow_runs"]}["review"]
+        assert first_review.status == WorkflowRunStatus.SATISFIED
+        assert "workflow_runs" not in second
+
+    def test_explicit_patch_and_auto_event_merge_without_duplicate_successor(self):
+        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import (
+            _ExecutedTool,
+            _state_update_from_executed_tools,
+        )
+
+        current = [WorkflowRunState(name="review", status=WorkflowRunStatus.ACTIVE)]
+        patch_runs = [
+            current[0].model_copy(update={"status": WorkflowRunStatus.SATISFIED}),
+            WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE),
+        ]
+        workflow_result = ToolResult(
+            output="workflow result",
+            metadata={
+                "workflow_transition": {
+                    "action": "advance",
+                    "from": "review",
+                    "condition": "issues_found",
+                },
+                "state_patch": ToolStatePatch(workflow_runs=patch_runs).model_dump(
+                    mode="json", exclude_unset=True
+                ),
+            },
+        )
+        executed = [
+            _ExecutedTool(
+                message=None,
+                result=workflow_result,
+                tool_call={"name": "workflow", "args": {"action": "advance"}},
+            ),
+            _ExecutedTool(
+                message=None,
+                result=ToolResult(output="verdict: PASS", metadata={"agent": "review"}),
+                tool_call={"name": "agent", "args": {}},
+            ),
+        ]
+
+        update = _state_update_from_executed_tools(
+            executed,
+            current_workflow_runs=current,
+            current_workflow_route={"join": "tdd", "leave": "verify"},
+        )
+
+        by_name = {run.name: run for run in update["workflow_runs"]}
+        assert list(by_name).count("tdd") == 1
+        assert by_name["tdd"].status == WorkflowRunStatus.ACTIVE
+
+
+
+def test_auto_advance_normalizes_active_workflow_name():
+    from voidx.workflow.auto_advance import auto_advance_events
+    from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
+
+    result = type("Result", (), {"metadata": {"exit_code": 1, "command": "pytest tests/"}, "output": "pytest failed"})()
+    events = auto_advance_events(
+        [{"name": "bash", "result": result}],
+        workflow_runs=[WorkflowRunState(name=" Verify ", status=WorkflowRunStatus.ACTIVE)],
+    )
+
+    assert events
+    assert events[0].workflow == "verify"

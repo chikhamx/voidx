@@ -10,10 +10,10 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
-from voidx.agent.application.todo_state import _DSML_MARKER_RE, sanitize_todo_replay_messages
-from voidx.agent.application.tool_call_ids import ai_tool_call_ids
-from voidx.agent.application.tool_exchange_sanitizer import sanitize_failed_tool_exchanges
 from voidx.runtime.ui_port import AgentUiPort, runtime_ui_port
+from voidx.agent.application.tool_call_ids import ai_tool_call_ids
+
+_DSML_MARKER_RE = r"\|\|DSML\|\|"
 
 _PROTOCOL_DEEPSEEK = "deepseek"
 
@@ -134,11 +134,6 @@ def _sanitize_messages_for_replay(messages: list, *, protocol: str = "") -> list
                 sanitized.append(message.model_copy(update={"content": content}))
                 continue
         sanitized.append(message)
-    sanitized = sanitize_todo_replay_messages(
-        sanitized,
-        preserve_latest_tool_exchange=True,
-    )
-    sanitized = sanitize_failed_tool_exchanges(sanitized, preserve_latest=True, preserve_rounds=2)
     return _repair_tool_result_adjacency(sanitized)
 
 

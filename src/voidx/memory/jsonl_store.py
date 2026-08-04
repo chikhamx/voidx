@@ -1,4 +1,9 @@
-"""JSONL append helpers for per-session storage."""
+"""JSONL helpers for per-session storage.
+
+Writes are serialized by asyncio locks within one process. Callers must not
+share a session directory across processes; use the SQLite-backed stores when
+cross-process coordination is required.
+"""
 
 from __future__ import annotations
 
@@ -26,11 +31,8 @@ async def _get_lock(session_id: str) -> asyncio.Lock:
         if lock is None:
             lock = asyncio.Lock()
             _session_locks[session_id] = lock
-            if len(_session_locks) > _MAX_SESSION_LOCKS:
-                for sid in [k for k, v in _session_locks.items() if not v.locked()]:
-                    del _session_locks[sid]
-                    if len(_session_locks) <= _MAX_SESSION_LOCKS:
-                        break
+            # Do not evict locks while callers may retain references or be queued on them.
+            # Session ids are bounded by the process lifetime and explicit drop_session_lock.
         return lock
 
 
@@ -127,6 +129,7 @@ async def append_session_record(
     filename: str,
     record: dict[str, Any],
 ) -> int:
+    """Append one record; safe for concurrent callers in this process only."""
     lock = await _get_lock(session_id)
     path = session_dir(session_id) / filename
     async with lock:
@@ -139,6 +142,7 @@ async def append_session_records(
     filename: str,
     records: list[dict[str, Any]],
 ) -> tuple[list[int], int]:
+    """Append records atomically within this process; not cross-process safe."""
     lock = await _get_lock(session_id)
     path = session_dir(session_id) / filename
     async with lock:
@@ -174,7 +178,9 @@ async def read_session_records(
     path = session_dir(session_id) / filename
     if not path.exists():
         return None
-    return await asyncio.to_thread(_read_jsonl_sync, path)
+    lock = await _get_lock(session_id)
+    async with lock:
+        return await asyncio.to_thread(_read_jsonl_sync, path)
 
 
 async def read_session_records_from_offset(
@@ -185,4 +191,6 @@ async def read_session_records_from_offset(
     path = session_dir(session_id) / filename
     if not path.exists():
         return None
-    return await asyncio.to_thread(_read_jsonl_from_offset_sync, path, offset)
+    lock = await _get_lock(session_id)
+    async with lock:
+        return await asyncio.to_thread(_read_jsonl_from_offset_sync, path, offset)

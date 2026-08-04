@@ -8,6 +8,7 @@ scheduler protocols they depend on.
 from __future__ import annotations
 
 import asyncio
+from abc import ABC, abstractmethod
 import uuid
 from datetime import datetime
 from typing import Generic, Protocol, TypeVar
@@ -45,7 +46,7 @@ class LoopScheduler(Protocol):
     ) -> DispatchResult | None: ...
 
 
-class AutonomousServiceBase(Generic[SpecT, SchedulerT]):
+class AutonomousServiceBase(ABC, Generic[SpecT, SchedulerT]):
     """Parent-scoped lifecycle bookkeeping shared by goal and loop services."""
 
     def __init__(self, *, store: ThreadStore, scheduler: SchedulerT, workspace: str) -> None:
@@ -58,12 +59,15 @@ class AutonomousServiceBase(Generic[SpecT, SchedulerT]):
     def _lock_for(self, parent: str) -> asyncio.Lock:
         return self._parent_locks.setdefault(parent, asyncio.Lock())
 
+    @abstractmethod
     def _spec_thread_id(self, spec: SpecT, parent: str) -> str:
         raise NotImplementedError
 
+    @abstractmethod
     def _register_thread(self, thread_id: str) -> None:
         raise NotImplementedError
 
+    @abstractmethod
     def _unregister_thread(self, thread_id: str) -> None:
         raise NotImplementedError
 

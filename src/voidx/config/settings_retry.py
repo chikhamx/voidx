@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from voidx.config.models import RetryConfig
+
+logger = logging.getLogger(__name__)
 
 
 class SettingsRetryMixin:
@@ -17,7 +20,8 @@ class SettingsRetryMixin:
                 k: v for k, v in data.items()
                 if k in {"max_attempts", "base_delay", "max_delay", "jitter"}
             })
-        except Exception:
+        except Exception as exc:
+            logger.warning("Invalid retry settings; using defaults: %s", exc)
             return RetryConfig()
 
     def set_retry_config(self, config: RetryConfig):

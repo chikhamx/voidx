@@ -15,7 +15,6 @@
 | `/plan` `/unplan` | 进入/退出 plan 模式 |
 | `/goal` | 设置/查看当前目标 |
 | `/guide` | 向运行中的 agent 注入指导 |
-| `/parallel` | 切换并行子 agent 执行 |
 | `/permissions` | 查看权限规则 |
 | `/permission` | 选择权限预设 |
 | `/allow` `/deny` | 临时允许/拒绝某个工具 |

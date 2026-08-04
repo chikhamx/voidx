@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from threading import RLock
 
@@ -10,6 +11,8 @@ from voidx.config.models import AiApprovalConfig
 from voidx.config.settings_utils import string_list as _string_list
 from voidx.config.grants import GrantDelta
 
+
+logger = logging.getLogger(__name__)
 _PERMISSION_TRANSACTION_LOCK = RLock()
 
 
@@ -19,7 +22,8 @@ class SettingsPermissionMixin:
         raw = self._effective_data().get("ai_approval", {})
         try:
             return AiApprovalConfig.model_validate(raw if isinstance(raw, dict) else {})
-        except Exception:
+        except Exception as exc:
+            logger.warning("Invalid AI approval settings; using defaults: %s", exc)
             return AiApprovalConfig()
 
     def set_ai_approval_config(self, config: AiApprovalConfig) -> Path:

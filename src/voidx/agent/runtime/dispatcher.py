@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -75,38 +77,106 @@ class RuntimeDispatcher:
                 lease_seconds=self._lease_seconds,
             )
         except ThreadStateConflict:
-            # Stale row from a superseded thread generation (stop/restart): poison, ack and skip.
             await self._store.ack_outbox(outbox.outbox_id)
             return None
         if attempt.status == "committed":
-            # Redelivery after a crash between commit and ack: do not re-run the turn.
             await self._store.ack_outbox(outbox.outbox_id)
             return None
         if attempt.side_effect_started:
-            # Another worker already started this attempt.  The outbox lease may
-            # expire during a long turn, but that must not duplicate side effects.
             await self._store.release_outbox_claim(outbox.outbox_id)
             return None
-        attempt = await self._store.mark_side_effect_started(attempt.attempt_id)
-        decision = await self._runner.run_turn(
-            thread=loaded.thread,
-            profile=loaded.profile,
-            input_frame=input_frame,
+        attempt = await self._store.mark_side_effect_started(
+            attempt.attempt_id,
+            lease_owner=self._lease_owner,
+            fencing_token=attempt.fencing_token,
         )
-        decision = self._lifecycle.normalize_decision(decision)
-        try:
-            await self._store.commit_decision(
-                attempt_id=attempt.attempt_id,
-                decision=decision,
-                expected_state_version=attempt.state_version,
-            )
-        except ThreadStateConflict:
-            # The thread moved on while the turn ran (e.g. user stop): ack, never retry.
-            await self._store.ack_outbox(outbox.outbox_id)
+        if attempt is None:
+            await self._store.release_outbox_claim(outbox.outbox_id)
             return None
-        await self._store.ack_outbox(outbox.outbox_id)
-        return DispatchResult(
-            attempt_id=attempt.attempt_id,
-            thread_id=outbox.thread_id,
-            decision=decision,
-        )
+        lease_lost = asyncio.Event()
+
+        async def renew_lease() -> None:
+            interval = max(0.005, self._lease_seconds / 3)
+            while not lease_lost.is_set():
+                try:
+                    await asyncio.wait_for(lease_lost.wait(), timeout=interval)
+                    return
+                except asyncio.TimeoutError:
+                    try:
+                        renewed = await self._store.renew_attempt_lease(
+                            attempt.attempt_id,
+                            lease_owner=self._lease_owner,
+                            fencing_token=attempt.fencing_token,
+                            lease_seconds=self._lease_seconds,
+                        )
+                    except Exception:
+                        renewed = False
+                    if not renewed:
+                        lease_lost.set()
+                        return
+
+        renewal_task = asyncio.create_task(renew_lease())
+        try:
+            try:
+                decision = await self._runner.run_turn(
+                    thread=loaded.thread,
+                    profile=loaded.profile,
+                    input_frame=input_frame,
+                )
+            except Exception as exc:
+                try:
+                    await self._store.set_needs_user_for_attempt(
+                        attempt.attempt_id,
+                        reason=f"Runtime turn failed after side effect started: {exc}",
+                        lease_owner=self._lease_owner,
+                        fencing_token=attempt.fencing_token,
+                    )
+                except ThreadStateConflict:
+                    await self._store.release_outbox_claim(outbox.outbox_id)
+                    return None
+                except Exception:
+                    await self._store.release_outbox_claim(outbox.outbox_id)
+                    raise
+                await self._store.ack_outbox(outbox.outbox_id)
+                return None
+            if lease_lost.is_set():
+                try:
+                    await self._store.set_needs_user_for_attempt(
+                        attempt.attempt_id,
+                        reason="Runtime turn lease was lost before commit.",
+                        lease_owner=self._lease_owner,
+                        fencing_token=attempt.fencing_token,
+                    )
+                except ThreadStateConflict:
+                    await self._store.release_outbox_claim(outbox.outbox_id)
+                    return None
+                except Exception:
+                    await self._store.release_outbox_claim(outbox.outbox_id)
+                    raise
+                await self._store.ack_outbox(outbox.outbox_id)
+                return None
+            decision = self._lifecycle.normalize_decision(decision)
+            try:
+                await self._store.commit_decision(
+                    attempt_id=attempt.attempt_id,
+                    decision=decision,
+                    expected_state_version=attempt.state_version,
+                    lease_owner=self._lease_owner,
+                    fencing_token=attempt.fencing_token,
+                )
+            except (ThreadStateConflict, ValueError):
+                await self._store.ack_outbox(outbox.outbox_id)
+                return None
+            await self._store.ack_outbox(outbox.outbox_id)
+            return DispatchResult(
+                attempt_id=attempt.attempt_id,
+                thread_id=outbox.thread_id,
+                decision=decision,
+            )
+        finally:
+            lease_lost.set()
+            renewal_task.cancel()
+            try:
+                await renewal_task
+            except asyncio.CancelledError:
+                pass

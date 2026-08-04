@@ -204,21 +204,23 @@ async def test_stream_llm_sanitizes_replayed_failed_tool_exchanges():
 
     replay_ai = model.messages[1]
     assert isinstance(replay_ai, AIMessage)
-    assert [call["id"] for call in replay_ai.tool_calls] == ["call_ok"]
+    assert [call["id"] for call in replay_ai.tool_calls] == ["call_error", "call_ok"]
     assert replay_ai.content == [
+        {"type": "tool_use", "id": "call_error", "name": "read", "input": {}},
         {"type": "tool_use", "id": "call_ok", "name": "search", "input": {}},
     ]
     assert replay_ai.additional_kwargs["tool_calls"] == [
+        {"id": "call_error", "function": {"name": "read", "arguments": "{}"}},
         {"id": "call_ok", "function": {"name": "search", "arguments": "{}"}},
     ]
     assert isinstance(model.messages[2], ToolMessage)
-    assert model.messages[2].tool_call_id == "call_ok"
-    assert model.messages[3].content == "I will recover from the failed read."
-    assert model.messages[4].content == "next"
-    assert not any(
-        isinstance(message, ToolMessage) and message.tool_call_id == "call_error"
-        for message in model.messages
-    )
+    assert model.messages[2].tool_call_id == "call_error"
+    assert model.messages[2].content == "failed"
+    assert model.messages[2].status == "error"
+    assert isinstance(model.messages[3], ToolMessage)
+    assert model.messages[3].tool_call_id == "call_ok"
+    assert model.messages[4].content == "I will recover from the failed read."
+    assert model.messages[5].content == "next"
 
 
 @pytest.mark.asyncio
@@ -266,8 +268,7 @@ async def test_stream_llm_preserves_compact_tool_calls_when_not_sanitized():
         "anthropic",
     )
 
-    # compact is not in _REPLAY_SANITIZED_TOOL_NAMES, so its tool call and
-    # ToolMessage are preserved for the LLM.
+    # Tool results remain available to the LLM during replay.
     assert [type(message) for message in model.messages] == [HumanMessage, AIMessage, ToolMessage, HumanMessage]
 
 

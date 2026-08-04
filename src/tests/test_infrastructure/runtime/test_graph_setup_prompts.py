@@ -27,7 +27,7 @@ from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.infrastructure.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
-from voidx.config import Config, ParallelSubagentsConfig, Settings, UserProfile
+from voidx.config import Config, Settings, UserProfile
 from voidx.llm.compaction import CompactionSelection
 from voidx.agent.application.instruction import InstructionService, WorkflowRuntimeContext
 from voidx.memory.session import (
@@ -158,30 +158,6 @@ def test_persona_prompt_does_not_render_child_agent_scheduling():
     assert "multiple `agent` tool calls" not in prompt
 
 
-def test_agent_tool_description_hides_parallel_when_disabled(tmp_path):
-    graph = _graph(tmp_path)
-    agent_def = graph.tools.get_def("agent")
-
-    assert agent_def is not None
-    assert "run concurrently" not in agent_def.description
-    assert "multiple `agent` tool calls" not in agent_def.description
-
-
-def test_agent_tool_description_exposes_parallel_when_enabled(tmp_path):
-    graph = LangGraphExecution(
-        Config(
-            workspace=str(tmp_path),
-            parallel_subagents=ParallelSubagentsConfig(enabled=True),
-        ),
-        api_key=None,
-    )
-    agent_def = graph.tools.get_def("agent")
-
-    assert agent_def is not None
-    assert "multiple `agent` tool calls" in agent_def.description
-    assert "run concurrently" in agent_def.description
-
-
 def test_agent_tool_description_owns_delegation_gate():
     prompt = BASE_SYSTEM.render()
     tool_description = AgentTool(runner=None).description
@@ -224,61 +200,6 @@ def test_voidx_persona_prompt_declares_core_rules():
 def test_base_system_prompt_registers_all_runtime_personas():
     for persona in ("coordinate", "explore", "plan", "implement", "review"):
         assert f"**{persona}**" in PERSONA_MODEL.render()
-
-
-@pytest.mark.asyncio
-async def test_clear_applies_saved_parallel_subagents_config(tmp_path):
-    session = await create_session(
-        workspace=str(tmp_path),
-        provider="mimo",
-        model="mimo-v2.5",
-    )
-    settings = Settings(str(tmp_path))
-    settings.set_parallel_subagents(ParallelSubagentsConfig(enabled=True, max_concurrent=3))
-    graph = LangGraphExecution(
-        Config(workspace=str(tmp_path)),
-        api_key=None,
-        session=session,
-        settings=settings,
-    )
-
-    assert graph.config.parallel_subagents == ParallelSubagentsConfig()
-    assert "multiple `agent` tool calls" not in graph.tools.get_def("agent").description
-
-    await graph.clear_current_session()
-
-    assert graph.config.parallel_subagents == ParallelSubagentsConfig(enabled=True, max_concurrent=3)
-    agent_def = graph.tools.get_def("agent")
-    assert agent_def is not None
-    assert "multiple `agent` tool calls" in agent_def.description
-    assert "run concurrently" in agent_def.description
-
-
-@pytest.mark.asyncio
-async def test_resume_applies_saved_parallel_subagents_config(tmp_path):
-    session = await create_session(
-        workspace=str(tmp_path),
-        provider="mimo",
-        model="mimo-v2.5",
-    )
-    settings = Settings(str(tmp_path))
-    settings.set_parallel_subagents(ParallelSubagentsConfig(enabled=True, max_concurrent=3))
-    graph = LangGraphExecution(
-        Config(workspace=str(tmp_path)),
-        api_key=None,
-        settings=settings,
-    )
-
-    assert graph.config.parallel_subagents == ParallelSubagentsConfig()
-    assert "multiple `agent` tool calls" not in graph.tools.get_def("agent").description
-
-    await graph.resume_session(session)
-
-    assert graph.config.parallel_subagents == ParallelSubagentsConfig(enabled=True, max_concurrent=3)
-    agent_def = graph.tools.get_def("agent")
-    assert agent_def is not None
-    assert "multiple `agent` tool calls" in agent_def.description
-    assert "run concurrently" in agent_def.description
 
 
 def test_graph_session_date_uses_session_creation_date(tmp_path):

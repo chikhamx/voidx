@@ -52,7 +52,6 @@ def register_agent_tool(
         agent_resolver=get_agent,
         child_agent_descriptions=child_agent_descriptions_for_llm(),
         available_agents=[agent.name for agent in get_subagents()],
-        parallel_subagents_enabled=config.parallel_subagents.enabled,
     )
     registry.register("agent", agent_tool, agent_tool.description, agent_tool.parameters_schema())
 

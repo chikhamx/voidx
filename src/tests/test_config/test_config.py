@@ -1,5 +1,8 @@
+import asyncio
 import pytest
 import json
+import importlib
+import os
 import sys
 from pathlib import Path
 
@@ -7,7 +10,6 @@ from pathlib import Path
 from voidx.config import (
     CodeIde,
     McpServerConfig,
-    ParallelSubagentsConfig,
     Profile,
     Settings,
     UserProfile,
@@ -50,6 +52,62 @@ def test_lsp_format_after_edit_defaults_true_and_is_workspace_scoped(tmp_path):
     assert data["lsp"]["format_after_edit"] is False
 
 
+
+def test_settings_save_removes_legacy_parallel_subagents_config(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    settings_path = workspace / ".voidx" / "settings.json"
+    settings_path.parent.mkdir()
+    settings_path.write_text(
+        json.dumps({"parallel_subagents": {"enabled": True, "max_concurrent": 8}}),
+        encoding="utf-8",
+    )
+
+    settings = Settings(str(workspace))
+    settings.set_lsp_format_after_edit(False)
+
+    data = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert "parallel_subagents" not in data
+
+
+
+def test_settings_save_replaces_file_atomically(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    settings = Settings(str(workspace))
+    replacements: list[tuple[Path, Path]] = []
+    original_replace = __import__("os").replace
+
+    def record_replace(source, target):
+        replacements.append((Path(source), Path(target)))
+        return original_replace(source, target)
+
+    settings_module = importlib.import_module("voidx.config.settings")
+    monkeypatch.setattr(settings_module, "os", os, raising=False)
+    monkeypatch.setattr(os, "replace", record_replace)
+
+    saved = settings.set_lsp_format_after_edit(False)
+
+    assert len(replacements) == 1
+    assert replacements[0][1] == saved
+    assert replacements[0][0].parent == saved.parent
+    assert replacements[0][0].name.endswith(".tmp")
+    assert json.loads(saved.read_text(encoding="utf-8"))["lsp"]["format_after_edit"] is False
+
+
+def test_settings_logs_invalid_json(tmp_path, caplog):
+    workspace = tmp_path / "workspace"
+    settings_path = workspace / ".voidx" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text("{invalid", encoding="utf-8")
+
+    with caplog.at_level("WARNING", logger="voidx.config.settings"):
+        settings = Settings(str(workspace))
+
+    assert settings.get_lsp_format_after_edit() is True
+    assert "Failed to load settings" in caplog.text
+
+
 def test_lsp_format_after_edit_ignores_invalid_value(tmp_path):
     workspace = tmp_path / "workspace"
     config_dir = workspace / ".voidx"
@@ -72,7 +130,6 @@ async def test_settings_reads_global_values_before_workspace_overrides(monkeypat
             "current_profile": "global/provider",
             "tavily_api_key": "global-key",
             "update_check": {"enabled": False},
-            "parallel_subagents": {"enabled": True, "max_concurrent": 7},
         }),
         encoding="utf-8",
     )
@@ -80,19 +137,14 @@ async def test_settings_reads_global_values_before_workspace_overrides(monkeypat
     workspace.mkdir()
     (workspace / ".voidx").mkdir()
     (workspace / ".voidx" / "settings.json").write_text(
-        json.dumps({
-            "current_profile": "workspace/provider",
-            "userProfile": {"language": "zh-CN"},
-        }),
+        json.dumps({"userProfile": {"language": "zh-CN"}}),
         encoding="utf-8",
     )
-
     settings = Settings(str(workspace))
 
     assert settings.get_code_ide() == CodeIde.GHOSTTY
     assert settings.get_tavily_api_key() == "global-key"
     assert settings.get_update_check_enabled() is False
-    assert settings.get_parallel_subagents() == ParallelSubagentsConfig(enabled=True, max_concurrent=7)
     assert settings.get_user_profile() == UserProfile(language="zh-CN")
 
 
@@ -415,3 +467,48 @@ def test_set_mcp_server_auto_raises_keyerror_for_unknown_server(tmp_path):
     settings = Settings(str(tmp_path))
     with pytest.raises(KeyError):
         settings.set_mcp_server_auto("nope", True)
+
+
+def test_invalid_ai_approval_config_logs_warning(tmp_path, caplog):
+    settings = Settings(str(tmp_path))
+    settings._set_setting("ai_approval", {"timeout_seconds": 0})
+
+    with caplog.at_level("WARNING", logger="voidx.config.settings_permissions"):
+        config = settings.get_ai_approval_config()
+
+    assert config == type(config)()
+    assert "Invalid AI approval settings" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_settings_concurrent_saves_do_not_fail(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    settings_a = Settings(str(workspace))
+    settings_b = Settings(str(workspace))
+
+    await asyncio.gather(
+        asyncio.to_thread(settings_a.set_lsp_format_after_edit, False),
+        asyncio.to_thread(settings_b.set_lsp_format_after_edit, True),
+    )
+
+    saved = workspace / ".voidx" / "settings.json"
+    assert saved.exists()
+    assert json.loads(saved.read_text(encoding="utf-8"))["lsp"]["format_after_edit"] in {True, False}
+
+
+@pytest.mark.asyncio
+async def test_settings_concurrent_saves_merge_different_keys(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    settings_a = Settings(str(workspace))
+    settings_b = Settings(str(workspace))
+
+    await asyncio.gather(
+        asyncio.to_thread(settings_a.set_lsp_format_after_edit, False),
+        asyncio.to_thread(settings_b._set_setting, "ask_compact", True),
+    )
+
+    data = json.loads((workspace / ".voidx" / "settings.json").read_text(encoding="utf-8"))
+    assert data["lsp"]["format_after_edit"] is False
+    assert data["ask_compact"] is True

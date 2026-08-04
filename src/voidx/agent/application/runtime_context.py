@@ -13,7 +13,6 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, To
 from pydantic import BaseModel, ConfigDict, Field
 
 from voidx.agent.application.prompts import BaseSystemPrompt, WorkflowRuntimePrompt
-from voidx.agent.application.todo_state import sanitize_todo_replay_messages
 from voidx.runtime.task_state import GoalSpec, TodoRunState
 from voidx.config import Config, UserProfile
 from voidx.runtime.intent import InteractionMode, TaskIntent
@@ -136,7 +135,6 @@ class ContextCompiler:
         semantic_messages = raw_semantic_messages(messages)
         skill_context_cutoff = _tool_skill_context_cutoff(semantic_messages)
         semantic_messages = _strip_historical_tool_skill_context(semantic_messages, skill_context_cutoff)
-        semantic_messages = sanitize_todo_replay_messages(semantic_messages)
 
         system_content = self.context.render_system()
         cached_system = self.context.system_message

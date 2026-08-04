@@ -15,7 +15,6 @@ from voidx.config import (
     Config,
     McpServerConfig,
     ModelConfig,
-    ParallelSubagentsConfig,
     PermissionMode,
     Settings,
     UserProfile,
@@ -60,79 +59,6 @@ def _capture_handler_output(monkeypatch):
         lambda text="": output.append(f"ERROR: {text}"),
     )
     return output
-
-
-@pytest.mark.asyncio
-async def test_parallel_toggle_off_persists_without_live_config_update(tmp_path, monkeypatch):
-    output = _capture_handler_output(monkeypatch)
-    settings = Settings(str(tmp_path))
-    settings.set_parallel_subagents(ParallelSubagentsConfig(enabled=True, max_concurrent=3))
-    graph = command_context(
-        config=Config(
-            workspace=str(tmp_path),
-            parallel_subagents=ParallelSubagentsConfig(enabled=True, max_concurrent=3),
-        ),
-        settings=settings,
-    )
-
-    assert await SlashHandler(graph).dispatch("/parallel off") is True
-
-    assert graph.config.parallel_subagents == ParallelSubagentsConfig(enabled=True, max_concurrent=3)
-    assert Settings(str(tmp_path)).get_parallel_subagents() == ParallelSubagentsConfig(
-        enabled=False,
-        max_concurrent=3,
-    )
-    assert output == [
-        "[dim]Saved parallel subagents off (max_concurrent=3). Run /clear or restart to apply.[/dim]"
-    ]
-
-
-@pytest.mark.asyncio
-async def test_parallel_toggle_no_arg_uses_saved_state(tmp_path, monkeypatch):
-    _capture_handler_output(monkeypatch)
-    settings = Settings(str(tmp_path))
-    graph = command_context(
-        config=Config(workspace=str(tmp_path)),
-        settings=settings,
-    )
-    handler = SlashHandler(graph)
-
-    assert await handler.dispatch("/parallel") is True
-    assert Settings(str(tmp_path)).get_parallel_subagents().enabled is True
-
-    assert await handler.dispatch("/parallel") is True
-    assert Settings(str(tmp_path)).get_parallel_subagents().enabled is False
-
-
-@pytest.mark.asyncio
-async def test_parallel_status_shows_active_and_saved_state(tmp_path, monkeypatch):
-    output = _capture_handler_output(monkeypatch)
-    settings = Settings(str(tmp_path))
-    settings.set_parallel_subagents(ParallelSubagentsConfig(enabled=True, max_concurrent=3))
-    graph = command_context(
-        config=Config(workspace=str(tmp_path)),
-        settings=settings,
-    )
-
-    assert await SlashHandler(graph).dispatch("/parallel status") is True
-
-    assert output == [
-        "[dim]parallel subagents current off (max_concurrent=4); saved on "
-        "(max_concurrent=3). Run /clear or restart to apply.[/dim]"
-    ]
-
-
-@pytest.mark.asyncio
-async def test_parallel_invalid_arg(tmp_path, monkeypatch):
-    output = _capture_handler_output(monkeypatch)
-    graph = command_context(
-        config=Config(workspace=str(tmp_path)),
-        settings=Settings(str(tmp_path)),
-    )
-
-    assert await SlashHandler(graph).dispatch("/parallel maybe") is True
-
-    assert output == ["ERROR: Usage: /parallel [on|off|status]"]
 
 
 @pytest.mark.asyncio
@@ -312,16 +238,6 @@ def test_language_and_tone_reset_commands_are_hidden_from_palette():
     assert "/tone" in names
     assert "/lang auto" not in names
     assert "/tone default" not in names
-
-
-def test_parallel_command_is_in_palette():
-    from voidx.ui.commands import COMMANDS
-
-    assert ("/parallel", "Toggle parallel subagent execution") in COMMANDS
-    assert ("/parallel on", "Enable parallel subagent execution") in COMMANDS
-    assert ("/parallel off", "Disable parallel subagent execution") in COMMANDS
-    assert ("/parallel status", "Show parallel subagent config") in COMMANDS
-
 
 
 def test_model_ctx_command_is_in_palette():

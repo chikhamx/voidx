@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
+import tempfile
+import threading
 from copy import deepcopy
 from pathlib import Path
 from typing import Literal
@@ -22,6 +26,10 @@ from voidx.config.settings_skills import SettingsSkillsMixin
 from voidx.config.settings_update import SettingsUpdateMixin
 from voidx.config.settings_web import SettingsWebMixin
 from voidx.paths import SETTINGS_FILE, SKILLS_STATE_FILE
+
+logger = logging.getLogger(__name__)
+_SETTINGS_WRITE_LOCK = threading.RLock()
+
 _LEGACY_SETTINGS_FILE = "voidx.json"
 _PROFILE_UNSET = object()
 ModelProfileScope = Literal["local", "global"]
@@ -33,7 +41,6 @@ GLOBAL_KEYS = frozenset({
     "userProfile",
     "web",
     "update_check",
-    "parallel_subagents",
     "retry",
 })
 WORKSPACE_ONLY_KEYS = frozenset({
@@ -51,6 +58,9 @@ WORKSPACE_ONLY_KEYS = frozenset({
     "skills",
     "lsp",
 })
+
+
+_REMOVED_SETTINGS_KEYS = frozenset({"parallel_subagents"})
 
 
 def _settings_home() -> Path:
@@ -79,6 +89,8 @@ class Settings(
         self._migrate_legacy_file()
         self._data: dict = self._load()
         self._global_data: dict = {} if self._global_path == self._path else self._load_path(self._global_path)
+        self._data_snapshot = deepcopy(self._data)
+        self._global_data_snapshot = deepcopy(self._global_data)
         self._runtime_keys: dict[str, str] = {}
         self._effective_cache: dict | None = None
 
@@ -91,6 +103,8 @@ class Settings(
         settings._migrate_legacy_file()
         settings._data = settings._load()
         settings._global_data = {} if settings._global_path == settings._path else settings._load_path(settings._global_path)
+        settings._data_snapshot = deepcopy(settings._data)
+        settings._global_data_snapshot = deepcopy(settings._global_data)
         settings._runtime_keys = {}
         settings._effective_cache = None
         await settings._migrate_legacy_profiles()
@@ -105,13 +119,19 @@ class Settings(
             legacy.rename(self._path)
 
     def _load(self) -> dict:
-        return self._migrate_permission_schema(self._load_path(self._path))
+        return self._migrate_removed_settings(self._migrate_permission_schema(self._load_path(self._path)))
+
+    def _migrate_removed_settings(self, data: dict) -> dict:
+        for key in _REMOVED_SETTINGS_KEYS:
+            data.pop(key, None)
+        return data
 
     def _load_path(self, path: Path) -> dict:
         if path.exists():
             try:
                 return self._migrate_permission_schema(json.loads(path.read_text(encoding="utf-8")))
-            except (json.JSONDecodeError, OSError):
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.warning("Failed to load settings from %s: %s", path, exc)
                 pass
         return {}
 
@@ -136,16 +156,51 @@ class Settings(
 
     def _save(self) -> None:
         self._effective_cache = None
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(self._data, indent=2, ensure_ascii=False), encoding="utf-8")
+        with _SETTINGS_WRITE_LOCK:
+            self._write_json(self._path, self._merge_with_disk(self._path, self._data))
+            self._data_snapshot = deepcopy(self._data)
 
     def _save_global(self) -> None:
         self._effective_cache = None
-        self._global_path.parent.mkdir(parents=True, exist_ok=True)
-        self._global_path.write_text(
-            json.dumps(self._global_data, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        with _SETTINGS_WRITE_LOCK:
+            self._write_json(self._global_path, self._merge_with_disk(self._global_path, self._global_data))
+            self._global_data_snapshot = deepcopy(self._global_data)
+
+    def _merge_with_disk(self, path: Path, value: dict) -> dict:
+        current: dict = {}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    current = loaded
+            except (OSError, json.JSONDecodeError):
+                pass
+        snapshot = self._global_data_snapshot if path == self._global_path and self._global_path != self._path else self._data_snapshot
+        merged = deepcopy(current)
+        for key in set(snapshot) | set(value):
+            if snapshot.get(key) != value.get(key):
+                if key in value:
+                    merged[key] = deepcopy(value[key])
+                else:
+                    merged.pop(key, None)
+        for key in _REMOVED_SETTINGS_KEYS:
+            merged.pop(key, None)
+        return merged
+
+    @staticmethod
+    def _write_json(path: Path, value: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with _SETTINGS_WRITE_LOCK:
+            fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+            tmp_path = Path(tmp_name)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as file:
+                    json.dump(value, file, indent=2, ensure_ascii=False)
+                    file.flush()
+                    os.fsync(file.fileno())
+                os.replace(tmp_path, path)
+            finally:
+                tmp_path.unlink(missing_ok=True)
 
     def _effective_data(self) -> dict:
         if self._effective_cache is not None:
@@ -374,7 +429,6 @@ class Settings(
             cfg.protocol = protocol
         return Config(
             model=cfg,
-            parallel_subagents=self.get_parallel_subagents(),
             lsp_format_after_edit=self.get_lsp_format_after_edit(),
             permission_mode=self.get_permission_mode(),
             sandbox_readable_files=self.get_sandbox_readable_files(),

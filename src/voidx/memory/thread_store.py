@@ -190,6 +190,35 @@ class ThreadStore:
                 (source_outbox_id,),
             ).fetchone()
             if existing is not None:
+                if (
+                    existing["status"] == "prepared"
+                    and not existing["side_effect_started"]
+                    and float(existing["lease_expires_at"]) <= time.time()
+                ):
+                    now = _now()
+                    next_token = int(existing["fencing_token"]) + 1
+                    conn.execute(
+                        """UPDATE runtime_turn_attempts
+                           SET lease_owner = ?, fencing_token = ?,
+                               lease_expires_at = ?, updated_at = ?
+                           WHERE id = ? AND status = 'prepared'
+                             AND side_effect_started = 0
+                             AND fencing_token = ?
+                             AND lease_expires_at <= ?""",
+                        (
+                            lease_owner,
+                            next_token,
+                            time.time() + lease_seconds,
+                            now,
+                            existing["id"],
+                            existing["fencing_token"],
+                            time.time(),
+                        ),
+                    )
+                    existing = conn.execute(
+                        "SELECT * FROM runtime_turn_attempts WHERE id = ?",
+                        (existing["id"],),
+                    ).fetchone()
                 return _attempt_from_row(existing)
             loaded = _loaded_from_conn(conn, thread_id)
             if loaded.state_version != expected_state_version:
@@ -231,24 +260,60 @@ class ThreadStore:
                 source_outbox_id=source_outbox_id,
                 state_version=expected_state_version + 1,
                 fencing_token=fencing_token,
+                lease_owner=lease_owner,
                 status="prepared",
             )
 
         return await self._write(_tx)
 
-    async def mark_side_effect_started(self, attempt_id: str) -> ThreadAttempt:
+    async def renew_attempt_lease(
+        self,
+        attempt_id: str,
+        *,
+        lease_owner: str,
+        fencing_token: int,
+        lease_seconds: float,
+    ) -> bool:
+        def _tx(conn):
+            cur = conn.execute(
+                """UPDATE runtime_turn_attempts
+                   SET lease_expires_at = ?, updated_at = ?
+                   WHERE id = ? AND status = 'prepared'
+                     AND lease_owner = ? AND fencing_token = ?
+                     AND lease_expires_at > ?""",
+                (
+                    time.time() + lease_seconds,
+                    _now(),
+                    attempt_id,
+                    lease_owner,
+                    fencing_token,
+                    time.time(),
+                ),
+            )
+            return cur.rowcount == 1
+
+        return await self._write(_tx)
+
+    async def mark_side_effect_started(
+        self,
+        attempt_id: str,
+        *,
+        lease_owner: str,
+        fencing_token: int,
+    ) -> ThreadAttempt | None:
         def _tx(conn):
             now = _now()
-            conn.execute(
+            cur = conn.execute(
                 """UPDATE runtime_turn_attempts
                    SET side_effect_started = 1, updated_at = ?
-                   WHERE id = ?""",
-                (now, attempt_id),
+                   WHERE id = ? AND side_effect_started = 0 AND status = 'prepared'
+                     AND lease_owner = ? AND fencing_token = ? AND lease_expires_at > ?""",
+                (now, attempt_id, lease_owner, fencing_token, time.time()),
             )
             row = conn.execute("SELECT * FROM runtime_turn_attempts WHERE id = ?", (attempt_id,)).fetchone()
             if row is None:
                 raise KeyError(attempt_id)
-            return _attempt_from_row(row)
+            return _attempt_from_row(row) if cur.rowcount else None
 
         return await self._write(_tx)
 
@@ -258,7 +323,11 @@ class ThreadStore:
         attempt_id: str,
         decision: RuntimeDecision,
         expected_state_version: int,
+        lease_owner: str,
+        fencing_token: int,
     ) -> CommitResult:
+        commit_now = time.time()
+
         def _tx(conn):
             attempt = conn.execute(
                 "SELECT * FROM runtime_turn_attempts WHERE id = ?", (attempt_id,)
@@ -275,6 +344,12 @@ class ThreadStore:
                     lifecycle="committed",
                     next_outbox_id=existing["id"] if existing is not None else None,
                 )
+            if (
+                attempt["lease_owner"] != lease_owner
+                or int(attempt["fencing_token"]) != int(fencing_token)
+                or float(attempt["lease_expires_at"]) <= commit_now
+            ):
+                raise ThreadStateConflict("attempt lease conflict")
             thread_id = attempt["thread_id"]
             loaded = _loaded_from_conn(conn, thread_id)
             if loaded.state_version != expected_state_version:
@@ -548,13 +623,26 @@ class ThreadStore:
             raise KeyError(attempt_id)
         return json.loads(row["input_frame_json"] or "{}")
 
-    async def set_needs_user_for_attempt(self, attempt_id: str, *, reason: str) -> LoadedThread:
+    async def set_needs_user_for_attempt(
+        self,
+        attempt_id: str,
+        *,
+        reason: str,
+        lease_owner: str,
+        fencing_token: int,
+    ) -> LoadedThread:
         def _tx(conn):
             attempt = conn.execute(
                 "SELECT * FROM runtime_turn_attempts WHERE id = ?", (attempt_id,)
             ).fetchone()
             if attempt is None:
                 raise KeyError(attempt_id)
+            if (
+                attempt["lease_owner"] != lease_owner
+                or int(attempt["fencing_token"]) != int(fencing_token)
+                or float(attempt["lease_expires_at"]) <= time.time()
+            ):
+                raise ThreadStateConflict("attempt lease conflict")
             loaded = _loaded_from_conn(conn, attempt["thread_id"])
             decision = RuntimeDecision(
                 outcome="needs_user",
@@ -639,6 +727,7 @@ def _attempt_from_row(row) -> ThreadAttempt:
         source_outbox_id=row["source_outbox_id"],
         state_version=int(row["base_state_version"]) + 1,
         fencing_token=int(row["fencing_token"]),
+        lease_owner=row["lease_owner"],
         status=row["status"],
         side_effect_started=bool(row["side_effect_started"]),
     )

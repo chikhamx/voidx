@@ -24,7 +24,6 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from voidx.agent.application.runtime_context import ContextCompilerCache, InteractionMode, raw_semantic_messages
 from voidx.agent.infrastructure.langgraph.state import AgentState
 from voidx.runtime.task_state import TaskState, goal_type_from_join
-from voidx.agent.application.todo_state import sanitize_todo_replay_messages
 from voidx.agent.infrastructure.langgraph.runtime.streaming import extract_text
 from voidx.agent.infrastructure.langgraph.runtime.topology import latest_ai_message
 from voidx.llm.usage import estimate_context_tokens
@@ -678,7 +677,6 @@ class LangGraphExecution:
         self._session_msg_cache = []
         self._context_cache = ContextCompilerCache()
         self._reset_runtime_state_memory()
-        self._reload_parallel_subagents_from_settings()
         self._tracker.clear_todos()
         self._permission.clear_session_permissions()
         self._usage_stats.reset()
@@ -704,15 +702,6 @@ class LangGraphExecution:
         except Exception as exc:
             self._ui.ui.print(f"[red]Clear cleanup failed: {exc}[/red]")
 
-    def _reload_parallel_subagents_from_settings(self) -> None:
-        if self._settings is None:
-            return
-        self.config.parallel_subagents = self._settings.get_parallel_subagents()
-        register_agent_tool(
-            self.tools,
-            config=self.config,
-            subagent_runner=self._subagent_runner,
-        )
 
     async def resume_session(self, session: SessionInfo) -> None:
         self._invalidate_session_title_generation()
@@ -726,7 +715,6 @@ class LangGraphExecution:
         self._session_msg_cache = None
         self._context_cache = ContextCompilerCache()
         await self.restore_runtime_state()
-        self._reload_parallel_subagents_from_settings()
         await self._resume_loop_for_session(session)
 
     async def _resume_loop_for_session(self, session: SessionInfo) -> None:
@@ -774,13 +762,35 @@ class LangGraphExecution:
         plan = goal_resolution.plan
         workflow_start = plan.join if plan is not None else ""
         goal_type = goal_type_from_join(workflow_start)
-        workflow_runtime_context = await self._workflow_context_for(
-            goal_type=goal_type,
-            scope=goal.label if goal is not None else description,
-            workflow_start=workflow_start,
-        )
-        runtime_persona = _persona_for_child_workflow(workflow_runtime_context.runs, workflow_start)
-        interaction_mode = _interaction_mode_for_persona(runtime_persona)
+        try:
+            workflow_runtime_context = await self._workflow_context_for(
+                goal_type=goal_type,
+                scope=goal.label if goal is not None else description,
+                workflow_start=workflow_start,
+            )
+            runtime_persona = _persona_for_child_workflow(workflow_runtime_context.runs, workflow_start)
+            interaction_mode = _interaction_mode_for_persona(runtime_persona)
+        except Exception as exc:
+            error = str(exc).strip()[:500] or exc.__class__.__name__
+            if self._ui.via_events():
+                await self._ui.events.emit(SubagentFinished(
+                    agent_id=agent_id,
+                    subagent_id=agent_run_id,
+                    ok=False,
+                    elapsed=time.monotonic() - started_at,
+                    finish_reason="error",
+                    error=error,
+                ))
+            if self._session:
+                await append_subagent_event(session_id, agent_run_id, {
+                    "type": "subagent_finish",
+                    "agent_id": agent_id,
+                    "ok": False,
+                    "elapsed": time.monotonic() - started_at,
+                    "finish_reason": "error",
+                    "error": error,
+                })
+            raise
 
         async def authorize(calls):
             return await self._authorize_tool_calls(
@@ -816,6 +826,7 @@ class LangGraphExecution:
         ok = False
         run_metadata: dict[str, object] = {}
         result = ""
+        error = ""
         try:
             kwargs = {
                 "sub_messages": sub_buffer,
@@ -851,6 +862,9 @@ class LangGraphExecution:
             )
             ok = True
             return result
+        except Exception as exc:
+            error = str(exc).strip()[:500] or exc.__class__.__name__
+            raise
         finally:
             if self._ui.via_events():
                 await self._ui.events.emit(SubagentFinished(
@@ -860,6 +874,7 @@ class LangGraphExecution:
                     elapsed=time.monotonic() - started_at,
                     finish_reason=str(run_metadata.get("finish_reason") or ("final_answer" if ok else "error")),
                     summary=result if ok else "",
+                    error=error,
                 ))
             if self._session:
                 await append_subagent_event(session_id, agent_run_id, {
@@ -1136,7 +1151,7 @@ class LangGraphExecution:
         if total_tokens < self._compaction.usable_window():
             return None
 
-        semantic_messages = sanitize_todo_replay_messages(raw_semantic_messages(messages))
+        semantic_messages = raw_semantic_messages(messages)
         selection = self._compaction.select_details(semantic_messages)
         if not selection.should_compact:
             return None

@@ -567,6 +567,46 @@ async def test_agent_tool_spawn_uses_gateway_when_available(tmp_path):
         target_run_id=str(captured["agent_run_id"]),
     ).result == {"result": "gateway child result"}
 
+
+@pytest.mark.asyncio
+async def test_agent_tool_wait_returns_child_error(tmp_path):
+    gateway = AgentGateway()
+    root_id = gateway.ensure_root("session-1")
+
+    async def runner(*args, **kwargs):
+        raise RuntimeError("provider schema rejected tool definitions")
+
+    tool = AgentTool(
+        runner,
+        agent_resolver=lambda name: type("Agent", (), {"name": name, "model": None})(),
+        available_agents=["voidx"],
+    )
+    ctx = ToolContext(
+        workspace=str(tmp_path),
+        session_id="session-1",
+        agent_gateway=gateway,
+        agent_run_id=root_id,
+    )
+    spawned = await tool.execute(
+        {
+            "action": "spawn",
+            "name": "voidx",
+            "mode": "review",
+            "task": "Trigger a child failure",
+            "target": "src/voidx/tools/registry.py",
+        },
+        ctx,
+    )
+
+    failed = await tool.execute(
+        {"action": "wait", "target_run_id": spawned.metadata["run_id"], "timeout": 1},
+        ctx,
+    )
+
+    assert failed.output == "provider schema rejected tool definitions"
+    assert failed.metadata["status"] == "failed"
+    assert failed.metadata["run"]["error"] == "provider schema rejected tool definitions"
+
 @pytest.mark.asyncio
 async def test_agent_tool_wait_timeout_returns_running_without_error(tmp_path):
     gateway = AgentGateway()

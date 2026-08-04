@@ -27,7 +27,7 @@ from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.infrastructure.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
-from voidx.config import Config, ParallelSubagentsConfig, Settings, UserProfile
+from voidx.config import Config, Settings, UserProfile
 from voidx.llm.compaction import CompactionSelection
 from voidx.agent.application.instruction import InstructionService, WorkflowRuntimeContext
 from voidx.memory.session import (
@@ -143,7 +143,6 @@ async def test_execute_tools_does_not_inject_parallel_child_agent_buffers(tmp_pa
     graph = LangGraphExecution(
         Config(
             workspace=str(tmp_path),
-            parallel_subagents=ParallelSubagentsConfig(enabled=True),
         ),
         api_key=None,
     )

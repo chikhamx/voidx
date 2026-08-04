@@ -244,6 +244,7 @@ class SubagentFinished(UiEventBase):
     elapsed: float | None = None
     finish_reason: str = ""
     summary: str = ""
+    error: str = ""
 
 
 class PermissionToolDetail(BaseModel):

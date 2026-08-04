@@ -15,7 +15,6 @@ from voidx.config import (
     Config,
     McpServerConfig,
     ModelConfig,
-    ParallelSubagentsConfig,
     Settings,
     UserProfile,
 )

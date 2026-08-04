@@ -73,6 +73,15 @@ class TestSettingsRetryMixin:
         assert rc.max_delay == 30.0
         assert rc.jitter is False
 
+
+    def test_get_retry_config_invalid_logs_warning(self, tmp_path, caplog):
+        settings = Settings(str(tmp_path))
+        settings._set_setting("retry", {"max_attempts": "not-a-number"})
+
+        with caplog.at_level("WARNING", logger="voidx.config.settings_retry"):
+            settings.get_retry_config()
+
+        assert "Invalid retry settings" in caplog.text
     def test_get_retry_config_invalid_falls_back_to_default(self, tmp_path):
         settings = Settings(str(tmp_path))
         settings._set_setting("retry", {"max_attempts": "not-a-number"})

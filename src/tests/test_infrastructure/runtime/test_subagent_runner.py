@@ -27,7 +27,7 @@ from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.infrastructure.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
-from voidx.config import Config, ParallelSubagentsConfig, Settings, UserProfile
+from voidx.config import Config, Settings, UserProfile
 from voidx.llm.compaction import CompactionSelection
 from voidx.agent.application.instruction import InstructionService, WorkflowRuntimeContext
 from voidx.memory.session import (
@@ -211,6 +211,41 @@ async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, mo
     assert calls[0]["kwargs"]["goal_type"] == "feature"
     assert calls[0]["kwargs"]["scope"] == "Implement the feature"
     assert calls[0]["kwargs"]["workflow_start"] == "tdd"
+
+
+
+
+@pytest.mark.asyncio
+async def test_subagent_runner_reports_initialization_error(tmp_path, monkeypatch):
+    import voidx.agent.infrastructure.langgraph.execution as core_module
+    from voidx.runtime.ui_port import RuntimeUiPort
+
+    graph = _graph(tmp_path)
+    emitted: list[object] = []
+
+    class RecordingEvents:
+        async def emit(self, event):
+            emitted.append(event)
+
+    async def fail_workflow_context_for(*_args, **_kwargs):
+        raise RuntimeError("provider schema rejected tool definitions")
+
+    graph._instruction.workflow_context_for = fail_workflow_context_for
+    graph._ui.__dict__.pop("via_events", None)
+    monkeypatch.setattr(RuntimeUiPort, "events", property(lambda _self: RecordingEvents()))
+    monkeypatch.setattr(RuntimeUiPort, "via_events", lambda _self: True)
+
+    with pytest.raises(RuntimeError, match="provider schema rejected tool definitions"):
+        await graph._subagent_runner(
+            get_agent("voidx"),
+            "Inspect the backend",
+            _child_goal_resolution("inspect"),
+            _child_result_contract("inspection_result"),
+        )
+
+    assert emitted[-1].kind == "subagent.finished"
+    assert emitted[-1].ok is False
+    assert emitted[-1].error == "provider schema rejected tool definitions"
 
 
 @pytest.mark.asyncio

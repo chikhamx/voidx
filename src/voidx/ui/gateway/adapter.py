@@ -343,6 +343,7 @@ class UiEventItemAdapter:
                 "ok": event.ok,
                 "elapsed": event.elapsed,
                 "summary": event.summary,
+                "error": event.error,
             },
         )
 

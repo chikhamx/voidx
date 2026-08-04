@@ -52,6 +52,15 @@ class TestToolDisplayPolicy:
         rule = policy.rule_for("todo")
         assert rule.mode == ToolDisplayMode.HIDDEN
 
+    def test_agent_spawn_output_is_hidden_but_failures_remain_visible(self):
+        policy = ToolDisplayPolicy(rules=DEFAULT_DISPLAY_RULES)
+
+        mode, _ = policy.resolve_display_mode("agent", "Child agent spawned", result_ok=True)
+        assert mode == ToolDisplayMode.HIDDEN
+
+        mode, _ = policy.resolve_display_mode("agent", "provider failure", result_ok=False)
+        assert mode == ToolDisplayMode.SHOW
+
     def test_rule_for_unknown_tool_returns_default(self):
         policy = ToolDisplayPolicy(default_mode=ToolDisplayMode.SUMMARY)
         rule = policy.rule_for("unknown_tool")
@@ -158,7 +167,8 @@ class TestDefaultDisplayRules:
             assert DEFAULT_DISPLAY_RULES[name].mode == ToolDisplayMode.SUMMARY, f"{name} should be summary"
 
     def test_show_tools(self):
-        show_tools = ["bash", "read", "manage", "write", "replace", "agent", "webfetch", "git"]
+        """Tools explicitly rendered in the UI remain visible."""
+        show_tools = ["bash", "read", "manage", "write", "replace", "webfetch", "git"]
         for name in show_tools:
             assert DEFAULT_DISPLAY_RULES[name].mode == ToolDisplayMode.SHOW, f"{name} should be show"
 

@@ -230,7 +230,6 @@ async def test_settings_get_returns_desktop_settings_snapshot(tmp_path):
     assert settings["user_profile"] == {"language": "", "tone": ""}
     assert settings["code_ide"]
     assert settings["update_check"]["enabled"] is True
-    assert settings["parallel_subagents"]["max_concurrent"] == 4
     assert settings["paths"]["workspace_settings"].endswith(".voidx/settings.json")
 
 
@@ -245,7 +244,6 @@ async def test_settings_update_persists_preferences_and_permissions(tmp_path):
                 "permission_mode": "read_only",
             },
             "user_profile": {"language": "zh-CN", "tone": "concise"},
-            "parallel_subagents": {"enabled": True, "max_concurrent": 3},
             "update_check": {"enabled": False},
         }
     }))
@@ -255,7 +253,6 @@ async def test_settings_update_persists_preferences_and_permissions(tmp_path):
     settings = result.result["settings"]
     assert settings["permissions"]["permission_mode"] == "read_only"
     assert settings["user_profile"] == {"language": "zh-CN", "tone": "concise"}
-    assert settings["parallel_subagents"] == {"enabled": True, "max_concurrent": 3}
     assert settings["update_check"]["enabled"] is False
 
 

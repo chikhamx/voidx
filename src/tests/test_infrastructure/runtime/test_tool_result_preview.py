@@ -27,7 +27,7 @@ from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.infrastructure.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
-from voidx.config import Config, ParallelSubagentsConfig, Settings, UserProfile
+from voidx.config import Config, Settings, UserProfile
 from voidx.llm.compaction import CompactionSelection
 from voidx.agent.application.instruction import InstructionService, WorkflowRuntimeContext
 from voidx.memory.session import (
@@ -159,6 +159,16 @@ def test_agent_tool_result_preview_caps_long_single_line():
 
 async def _execute_fake_agent_tool_with_output(tmp_path, output: str, *, debug: bool = False):
     graph = _graph(tmp_path)
+    from voidx.ui.output.display_policy import ToolDisplayMode, ToolDisplayRule
+
+    graph._display_policy = graph._display_policy.model_copy(
+        update={
+            "rules": {
+                **graph._display_policy.rules,
+                "agent": ToolDisplayRule(tool_name="agent", mode=ToolDisplayMode.SHOW),
+            }
+        }
+    )
     graph.set_debug(debug)
 
     class FakeTools:

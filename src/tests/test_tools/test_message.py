@@ -7,6 +7,14 @@ from voidx.tools.base import ToolContext
 from voidx.tools.message import MessageTool
 
 
+def test_message_tool_schema_has_strict_object_properties():
+    schema = MessageTool().parameters_schema()
+    payload = schema["properties"]["payload"]
+
+    assert payload["type"] == "string"
+    assert "payload" in schema["required"]
+
+
 @pytest.mark.asyncio
 async def test_message_tool_sends_and_receives_between_child_and_parent(tmp_path):
     gateway = AgentGateway()
@@ -79,6 +87,39 @@ async def test_message_tool_sends_and_receives_between_child_and_parent(tmp_path
     release.set()
     await spawn_task
 
+
+
+@pytest.mark.asyncio
+async def test_message_tool_accepts_json_string_payload(tmp_path):
+    gateway = AgentGateway()
+    root_id = gateway.ensure_root("session-1")
+    child = await gateway.spawn(
+        session_id="session-1",
+        parent_run_id=root_id,
+        agent_name="child",
+        description="child",
+        runner=lambda _run_id: asyncio.sleep(60),
+    )
+    ctx = ToolContext(
+        workspace=str(tmp_path),
+        session_id="session-1",
+        agent_gateway=gateway,
+        agent_run_id=child.run_id,
+    )
+
+    result = await MessageTool().execute(
+        {
+            "action": "send",
+            "message_type": "progress",
+            "payload": '{"step": "working"}',
+        },
+        ctx,
+    )
+
+    assert result.metadata["message_type"] == "progress"
+    message = await gateway.receive(run_id=root_id, limit=1, timeout=0)
+    assert message[0].payload == {"step": "working"}
+    await gateway.cancel(requester_run_id=root_id, target_run_id=child.run_id)
 
 @pytest.mark.asyncio
 async def test_message_tool_reports_gateway_and_route_errors(tmp_path):

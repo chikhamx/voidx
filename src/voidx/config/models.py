@@ -99,19 +99,11 @@ class UserProfile(BaseModel):
     tone: str = ""
 
 
-class ParallelSubagentsConfig(BaseModel):
-    """Runtime gate for concurrent child-agent execution."""
-
-    enabled: bool = False
-    max_concurrent: int = Field(default=4, ge=1, le=8)
-
-
 class Config(BaseModel):
     model: ModelConfig = Field(default_factory=ModelConfig)
     agent: AgentConfig = Field(default_factory=lambda: AgentConfig(
         name="build", description="Primary coding agent.",
     ))
-    parallel_subagents: ParallelSubagentsConfig = Field(default_factory=ParallelSubagentsConfig)
     lsp_format_after_edit: bool = True
     workspace: str = "."
     permission_mode: PermissionMode = PermissionMode.SAFE

@@ -18,7 +18,7 @@ class SettingsMethods:
 
     async def _method_settings_update(self, params: dict) -> dict:
         from voidx.config.enums import CodeIde, PermissionMode
-        from voidx.config.models import AiApprovalConfig, ParallelSubagentsConfig, Profile
+        from voidx.config.models import AiApprovalConfig, Profile
         from voidx.config.settings import Settings
 
         patch = params.get("patch", {})
@@ -75,18 +75,6 @@ class SettingsMethods:
             if "tone" in user_profile:
                 settings.set_user_tone(str(user_profile["tone"] or ""))
 
-        parallel = patch.get("parallel_subagents")
-        if parallel is not None:
-            if not isinstance(parallel, dict):
-                raise MethodParamsError("invalid parallel_subagents")
-            try:
-                current = settings.get_parallel_subagents()
-                settings.set_parallel_subagents(ParallelSubagentsConfig(
-                    enabled=bool(parallel.get("enabled", current.enabled)),
-                    max_concurrent=int(parallel.get("max_concurrent", current.max_concurrent)),
-                ))
-            except Exception as exc:
-                raise MethodParamsError("invalid parallel_subagents") from exc
 
         update_check = patch.get("update_check")
         if update_check is not None:
@@ -218,7 +206,6 @@ class SettingsMethods:
             "reasoning_effort": settings._effective_data().get("reasoning_effort") or "xhigh",
             "context_window": settings._effective_data().get("context_window"),
         }
-        parallel = settings.get_parallel_subagents()
         return {
             "model": model,
             "profiles": [
@@ -247,7 +234,6 @@ class SettingsMethods:
                 "last_checked_at": settings.get_update_check_last_checked_at(),
                 "latest_version": settings.get_update_check_latest_version(),
             },
-            "parallel_subagents": parallel.model_dump(),
             "paths": {
                 "workspace_settings": str(settings.path),
                 "global_settings": str(settings._global_path),

@@ -255,17 +255,6 @@ def _restore_deduped_read_results(
     return restored
 
 
-def _parallel_subagent_limit(config) -> int:
-    parallel = getattr(config, "parallel_subagents", None)
-    if not bool(getattr(parallel, "enabled", False)):
-        return 1
-    raw = getattr(parallel, "max_concurrent", 4)
-    try:
-        return max(1, int(raw))
-    except (TypeError, ValueError):
-        return 4
-
-
 def _agent_result_preview(text: object) -> str:
     raw = str(text)
     stripped = raw.strip()
@@ -611,11 +600,7 @@ async def _execute_approved_batch(
         restored = _restore_deduped_read_results(runnable, executed, duplicate_sources)
         return _restore_runtime_guard_blocked_results(approved, restored, blocked)
 
-    agent_limit = _parallel_subagent_limit(host.config)
-    agent_semaphore = __import__("asyncio").Semaphore(agent_limit)
-    parallel_agent_count = sum(1 for tc in unique_calls if tc.get("name") == "agent")
-    aggregate_status_id = ""
-    show_parallel_status = agent_limit > 1 and parallel_agent_count > 1
+    # --- file read-write lock manager (per-batch) ---
 
     # --- file read-write lock manager (per-batch) ---
     file_lock_manager: dict[str, _FileRWLock] = {}
@@ -639,9 +624,6 @@ async def _execute_approved_batch(
             await _release_file_locks(acquired, is_write=is_write)
 
     async def execute_one_no_file_lock(tc):
-        if tc.get("name") == "agent":
-            async with agent_semaphore:
-                return await execute_one_fn(tc)
         return await execute_one_fn(tc)
 
     # Split into file ops (rwlock) and non-file ops (bash, etc.).
@@ -658,16 +640,6 @@ async def _execute_approved_batch(
     # Reorder same-file writes by line number descending so that earlier edits
     # don't shift line numbers for later edits on the same file.
     file_calls = _sort_file_calls_by_line_descending(file_calls)
-
-    from voidx.runtime.ui import StatusFinished, StatusUpdated
-    if show_parallel_status and host._ui.via_events():
-        last = getattr(host, "_current_messages", [None])[-1]
-        aggregate_status_id = f"parallel-subagents:{id(last)}:{id(unique_calls)}"
-        await host._ui.events.emit(StatusUpdated(
-            status_id=aggregate_status_id,
-            label=f"Running {parallel_agent_count} child agents",
-            stage="working",
-        ))
 
     # Run file ops first (rwlock), then non-file ops (bash, etc.).
     # Results are collected back into original unique_calls order.
@@ -722,22 +694,15 @@ async def _execute_approved_batch(
             raise
 
     executed = []
-    try:
-        terminal_seen = await _run_and_place(file_calls, execute_one_file_locked)
-        if terminal_seen:
-            for tc in other_calls:
-                results[call_index[tc.get("id", id(tc))]] = _infrastructure_skipped_tool(
-                    tc,
-                    reason="was skipped",
-                )
-        else:
-            await _run_and_place(other_calls, execute_one_no_file_lock)
-        executed = [r for r in results if r is not None]
-    finally:
-        if aggregate_status_id:
-            await host._ui.events.emit(StatusFinished(
-                status_id=aggregate_status_id,
-                label=f"Finished {parallel_agent_count} child agents",
-            ))
+    terminal_seen = await _run_and_place(file_calls, execute_one_file_locked)
+    if terminal_seen:
+        for tc in other_calls:
+            results[call_index[tc.get("id", id(tc))]] = _infrastructure_skipped_tool(
+                tc,
+                reason="was skipped",
+            )
+    else:
+        await _run_and_place(other_calls, execute_one_no_file_lock)
+    executed = [r for r in results if r is not None]
     restored = _restore_deduped_read_results(runnable, executed, duplicate_sources)
     return _restore_runtime_guard_blocked_results(approved, restored, blocked)

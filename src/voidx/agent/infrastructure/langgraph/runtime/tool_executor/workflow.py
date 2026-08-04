@@ -256,19 +256,21 @@ def _satisfy_workflow_without_transition(
     updated: list[WorkflowRunState] = []
     for run in workflow_runs:
         copy = run.model_copy(deep=True)
-        if copy.name == target and copy.status == WorkflowRunStatus.ACTIVE:
-            copy.status = WorkflowRunStatus.SATISFIED
-            copy.updated_turn = turn_count
-            copy.blocked_reason = ""
-            copy.evidence.append(
-                WorkflowEvidence(
-                    kind=event.kind.value,
-                    ref=event.ref,
-                    ok=event.ok,
-                    summary=event.summary,
-                    condition=event.condition,
-                )
-            )
+        if copy.name.strip().lower() != target or copy.status != WorkflowRunStatus.ACTIVE:
+            updated.append(copy)
+            continue
+        evidence = WorkflowEvidence(
+            kind=event.kind.value,
+            ref=event.ref,
+            ok=event.ok,
+            summary=event.summary,
+            condition=event.condition,
+        )
+        if evidence not in copy.evidence:
+            copy.evidence.append(evidence)
+        copy.status = WorkflowRunStatus.SATISFIED
+        copy.updated_turn = turn_count
+        copy.blocked_reason = ""
         updated.append(copy)
     return updated
 
@@ -282,5 +284,10 @@ def _merge_workflow_runs_for_state(*groups: object) -> list[WorkflowRunState]:
                 run = item if isinstance(item, WorkflowRunState) else WorkflowRunState.model_validate(item)
             except (TypeError, ValueError):
                 continue
-            merged[run.name] = run
+            key = run.name.strip().lower()
+            if not key:
+                continue
+            normalized = run.model_copy(deep=True)
+            normalized.name = key
+            merged[key] = normalized
     return list(merged.values())

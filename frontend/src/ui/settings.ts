@@ -8,7 +8,6 @@ export interface SettingsSnapshot {
   paths?: Record<string, string>;
   permissions?: Record<string, unknown>;
   user_profile?: { language?: string; tone?: string };
-  parallel_subagents?: { enabled?: boolean; max_concurrent?: number };
   code_ide?: string;
   update_check?: { enabled?: boolean; last_checked_at?: number; latest_version?: string };
   [k: string]: unknown;
@@ -163,10 +162,6 @@ export function collectSettingsPatch(): Record<string, unknown> {
         user_profile: {
           language: value("language"),
           tone: value("tone"),
-        },
-        parallel_subagents: {
-          enabled: checked("parallel_enabled"),
-          max_concurrent: Number(value("parallel_max") || 4),
         },
       };
     case "code":
@@ -327,17 +322,12 @@ function renderPermissionsTab(snapshot: SettingsSnapshot = {}): DocumentFragment
 
 function renderPreferencesTab(snapshot: SettingsSnapshot = {}): DocumentFragment {
   const userProfile = snapshot.user_profile || {};
-  const parallel = snapshot.parallel_subagents || {};
   const frag = document.createDocumentFragment();
   frag.append(
     section("外观", [themeRow()]),
     section("回复偏好", [
       inputRow("Language", "language", userProfile.language || ""),
       inputRow("Tone", "tone", userProfile.tone || ""),
-    ]),
-    section("并行子代理", [
-      checkboxRow("Parallel subagents", "parallel_enabled", Boolean(parallel.enabled)),
-      numberRow("Max concurrent", "parallel_max", parallel.max_concurrent || 4, 1, 8),
     ]),
   );
   return frag;

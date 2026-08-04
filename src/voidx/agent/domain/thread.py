@@ -101,6 +101,7 @@ class ThreadAttempt(BaseModel):
     source_outbox_id: str
     state_version: int
     fencing_token: int
+    lease_owner: str
     status: str
     side_effect_started: bool = False
 

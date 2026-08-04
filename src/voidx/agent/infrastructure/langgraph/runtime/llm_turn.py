@@ -30,8 +30,6 @@ from voidx.runtime.task_state import (
     goal_label,
     goal_type_from_join,
 )
-from voidx.agent.application.todo_state import sanitize_todo_replay_messages
-from voidx.agent.application.tool_exchange_sanitizer import sanitize_failed_tool_exchanges
 from voidx.agent.infrastructure.langgraph.runtime.tool_surface import (
     ToolSurfaceContext,
     resolve_tool_surface,
@@ -142,15 +140,7 @@ class LlmTurn:
                         source="user",
                     )
                 )
-        state_messages = sanitize_todo_replay_messages(
-            list(state["messages"]),
-            preserve_latest_tool_exchange=True,
-        )
-        state_messages = sanitize_failed_tool_exchanges(
-            state_messages,
-            preserve_latest=True,
-            preserve_rounds=2,
-        )
+        state_messages = list(state["messages"])
         compaction_happened = False
         raw_todo_state = (
             state["todo_state"]

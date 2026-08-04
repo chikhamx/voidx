@@ -55,6 +55,8 @@ class ToolDisplayPolicy(BaseModel):
         auto_chars = rule.auto_summary_chars
 
         if mode == ToolDisplayMode.HIDDEN:
+            if tool_name == "agent" and not result_ok:
+                return ToolDisplayMode.SHOW, summary_lines
             return mode, summary_lines
 
         if not result_ok:
@@ -131,6 +133,6 @@ DEFAULT_DISPLAY_RULES: dict[str, ToolDisplayRule] = {
     "manage": ToolDisplayRule(tool_name="manage", mode=ToolDisplayMode.SHOW),
     "write": ToolDisplayRule(tool_name="write", mode=ToolDisplayMode.SHOW),
     "replace": ToolDisplayRule(tool_name="replace", mode=ToolDisplayMode.SHOW),
-    "agent": ToolDisplayRule(tool_name="agent", mode=ToolDisplayMode.SHOW),
+    "agent": ToolDisplayRule(tool_name="agent", mode=ToolDisplayMode.HIDDEN),
     "git": ToolDisplayRule(tool_name="git", mode=ToolDisplayMode.SHOW),
 }

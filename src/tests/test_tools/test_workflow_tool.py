@@ -32,6 +32,8 @@ from voidx.runtime.task_state import GoalSpec, GoalResolution, IntentResolution,
 from voidx.agent.application.runtime_context import TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
+from voidx.tools.workflow_guidance import track_repeat, reset_repeat, repeat_key
+
 from voidx.workflow.types import WorkflowStateEventKind
 import voidx.memory.store as store
 
@@ -50,6 +52,15 @@ class TestWorkflowTool:
         assert "advance after its gate is satisfied" in description
         assert "done only to close active nodes" in description
 
+
+    def test_workflow_repeat_tracker_helpers_use_context_state(self, tmp_path):
+        ctx = ToolContext(workspace=str(tmp_path))
+        key = repeat_key("advance", "tdd", "implemented")
+
+        assert track_repeat(ctx, key) == 1
+        assert track_repeat(ctx, key) == 2
+        reset_repeat(ctx, key)
+        assert track_repeat(ctx, key) == 1
     @pytest.mark.asyncio
     async def test_workflow_advance_activates_matching_successor(self, tmp_path):
         ctx = ToolContext(
@@ -465,6 +476,30 @@ class TestWorkflowTool:
 
         assert len(active) == 1
         assert active[0].name == "debug"
+
+    @pytest.mark.asyncio
+    async def test_workflow_enter_matches_active_run_by_normalized_name(self, tmp_path):
+        ctx = ToolContext(
+            workspace=str(tmp_path),
+            workflow_runs=[
+                WorkflowRunState(name=" Debug ", status=WorkflowRunStatus.ACTIVE),
+            ],
+        )
+
+        result = await ToolRegistry().execute_tool(
+            "workflow",
+            {"action": "enter", "workflow": "debug", "goal": "调试当前问题"},
+            ctx,
+        )
+
+        payload = json.loads(result.output)
+        patch = ToolStatePatch.model_validate(result.metadata["state_patch"])
+        active = [run for run in patch.workflow_runs if run.status == WorkflowRunStatus.ACTIVE]
+
+        assert payload["already_active"] is True
+        assert len(active) == 1
+        assert active[0].name == " Debug "
+
 
     @pytest.mark.asyncio
     async def test_workflow_enter_sets_goal_state_patch_and_run_goal(self, tmp_path):

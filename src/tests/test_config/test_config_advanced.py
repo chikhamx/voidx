@@ -7,7 +7,6 @@ from pathlib import Path
 from voidx.config import (
     CodeIde,
     McpServerConfig,
-    ParallelSubagentsConfig,
     PermissionMode,
     Profile,
     Settings,
@@ -200,7 +199,6 @@ def test_permission_mode_preserves_path_grants(tmp_path):
 async def test_build_config_defaults_and_reads_ask_compact(tmp_path):
     cfg = await (await Settings.create(str(tmp_path))).build_config()
     assert cfg.ask_compact is False
-    assert cfg.parallel_subagents == ParallelSubagentsConfig()
 
     (tmp_path / "voidx.json").write_text(
         json.dumps({"askCompact": True}),
@@ -222,24 +220,6 @@ async def test_build_config_reads_context_window(tmp_path):
 
     cfg = await (await Settings.create(str(tmp_path))).build_config()
     assert cfg.model.context_window == 256000
-
-
-async def test_parallel_subagents_settings_round_trip(tmp_path):
-    settings = Settings(str(tmp_path))
-
-    assert settings.get_parallel_subagents() == ParallelSubagentsConfig()
-
-    settings.set_parallel_subagents(ParallelSubagentsConfig(enabled=True, max_concurrent=3))
-
-    loaded = Settings(str(tmp_path))
-    assert loaded.get_parallel_subagents() == ParallelSubagentsConfig(
-        enabled=True,
-        max_concurrent=3,
-    )
-    assert (await loaded.build_config()).parallel_subagents == ParallelSubagentsConfig(
-        enabled=True,
-        max_concurrent=3,
-    )
 
 
 def test_update_check_settings_round_trip(tmp_path):

@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from voidx.agent.application.todo_state import sanitize_todo_replay_messages
 from voidx.agent.application.attachments import build_user_message_payload, serialize_message_content
 from voidx.agent.infrastructure.message_rows import messages_from_rows_incremental
 from voidx.agent.application.goal_resolver import build_goal_resolution, resolve_plan_mode
@@ -382,7 +381,6 @@ class TurnRunner:
                                 turn_index = i
                                 break
                     new_messages = final["messages"][turn_index + 1:] if turn_index is not None else []
-                    new_messages = sanitize_todo_replay_messages(list(new_messages))
                     await _persist_new_messages(host, new_messages)
 
 # Update session title to match current goal after turn completes
@@ -533,7 +531,6 @@ async def _persist_streamed_messages(host: Any, streamed_messages: list, payload
             turn_index = i
             break
     new_messages = streamed_messages[turn_index + 1:] if turn_index is not None else []
-    new_messages = sanitize_todo_replay_messages(list(new_messages))
     await _persist_new_messages(host, new_messages)
 
 

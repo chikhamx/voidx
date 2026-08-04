@@ -453,6 +453,7 @@ async def test_subagent_finish_failure_keeps_reason_status_without_summary(isola
             ok=False,
             elapsed=1.2,
             finish_reason="permission_denied",
+            error="provider schema rejected tool definitions",
         ))
         await bus.drain()
 
@@ -462,7 +463,8 @@ async def test_subagent_finish_failure_keeps_reason_status_without_summary(isola
 
         assert _rich_plain(status_node.header) == "✗ Failed: permission denied"
         expected = _expected_subagent_title("agent_0", "Task: review permission flow")
-        assert f"{expected} failed (permission denied, 1.2s)" in _rich_plain(agent_node.header)
+        rendered_agent = _rich_plain(agent_node.header)
+        assert f"{expected} failed (permission denied, provider schema rejected tool definitions, 1.2s)" in rendered_agent
     finally:
         await bus.stop()
 
