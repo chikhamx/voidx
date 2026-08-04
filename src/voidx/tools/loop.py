@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
-from voidx.runtime.task_state import GoalSpec, ToolStatePatch
+from voidx.runtime.task_state import GoalSpec, LoopSpec, ToolStatePatch
 from voidx.tools.base import (
     BaseTool,
     ToolContext,
@@ -18,7 +18,6 @@ from voidx.tools.base import (
     keep_tool_args,
     model_to_json_schema,
 )
-from voidx.agent.domain.loop import LoopSpec
 
 
 class LoopDecisionInput(BaseModel):

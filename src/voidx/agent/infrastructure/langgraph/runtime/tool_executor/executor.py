@@ -447,7 +447,7 @@ class ToolExecutorAdapter:
                 if tid == "agent":
                     # Prefer explicit UI display; successful spawn has none (subagent tree covers it).
                     ui_output = result.display or (
-                        "" if ok else _agent_result_preview(result.output)
+                        _agent_result_preview(result.output) if ok else result.output
                     )
                 else:
                     ui_output = result.display or result.output

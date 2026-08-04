@@ -244,7 +244,7 @@ async def test_subagent_tool_definitions_do_not_contain_turn(tmp_path, monkeypat
     ])
     graph = _make_graph(tmp_path, model, monkeypatch)
 
-    # The subagent path uses its own tools_for_llm() call
+    # The subagent path uses its own serialize_definitions() call
     # Verify that the turn tool is not in the subagent's tool definitions
     # by checking that the subagent's tool registry doesn't have it
     subagent_tool_ids = graph.tools.ids()

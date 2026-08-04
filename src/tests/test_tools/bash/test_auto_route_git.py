@@ -521,8 +521,20 @@ class TestPowerShellGitAutoRoute:
 
 class TestBashGitHiddenFromLlm:
     def test_git_is_hidden_from_llm_but_registered_for_routing(self):
+        from voidx.agent.domain.profile import RuntimeProfile
+        from voidx.agent.infrastructure.langgraph.runtime.tool_surface import (
+            ToolSurfaceContext,
+            resolve_tool_surface,
+        )
+
         r = _make_registry()
-        names = [tool["function"]["name"] for tool in r.tools_for_llm()]
+        surface = resolve_tool_surface(
+            r,
+            ToolSurfaceContext(
+                runtime_profile=RuntimeProfile(profile_id="coding", revision=1, name="Coding"),
+            ),
+        )
+        names = [tool["function"]["name"] for tool in surface.definitions]
 
         assert "git" not in names
         assert r.get("git") is not None

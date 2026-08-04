@@ -216,17 +216,6 @@ def test_interactive_runtime_tools_are_allowed(tmp_path, tool_name):
     assert decision.action == "allow"
 
 
-def test_permission_service_session_wildcards_apply_to_mcp_tools():
-    service = PermissionService()
-    tool = "mcp__web-reader__read_url_12345678"
-
-    assert service.decide(tool) == "ask"
-
-    service.allow_silent("mcp__web-reader__*")
-    assert service.decide(tool) == "allow"
-
-    service.deny_silent("mcp/web-reader/*")
-    assert service.decide(tool) == "deny"
 
 
 def test_mcp_tool_execution_requires_permission(tmp_path):

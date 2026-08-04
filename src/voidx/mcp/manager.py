@@ -25,7 +25,6 @@ from voidx.mcp.catalog import McpCatalog, McpServerCatalogEntry
 from voidx.mcp.description_cache import McpDescriptionCache, description_fingerprint
 from voidx.mcp.descriptions import configured_server_description
 from voidx.mcp.schema import McpCallResult, McpRuntimeStatus, McpToolDef
-from voidx.mcp.tool import mcp_tool_id
 from voidx.permission.service import PermissionService
 from voidx.tools.registry import ToolRegistry
 
@@ -79,7 +78,6 @@ class McpManager:
         if self._started:
             return
         self._started = True
-        self._registry.unregister_prefix("mcp__")
         self._tool_counts.clear()
         self._catalog.clear()
         self._generated_descriptions.clear()
@@ -149,8 +147,6 @@ class McpManager:
                 disallowed = self._resolve_tool_filter(server_config, allow_mode=False)
                 if disallowed:
                     for tool_name in disallowed:
-                        tool_id = mcp_tool_id(server_name, tool_name)
-                        self._permission.deny_silent(tool_id)
                         self._permission.deny_silent(f"mcp@pattern:mcp:{server_name}:{tool_name}")
 
                 log_tool_event("mcp_tools_cataloged", tool_name=server_name, message=f"MCP server '{server_name}': {len(filtered)} tools cataloged")
@@ -244,7 +240,6 @@ class McpManager:
             await asyncio.gather(self._description_task, return_exceptions=True)
         self._description_task = None
 
-        self._registry.unregister_prefix("mcp__")
         self._tool_counts.clear()
         self._catalog.clear()
         self._generated_descriptions.clear()

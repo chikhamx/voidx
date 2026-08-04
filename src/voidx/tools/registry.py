@@ -34,7 +34,6 @@ class ToolDef(BaseModel):
 class ToolRegistry:
     """Manages all available tools. No dynamic discovery — everything explicit."""
 
-    _HIDDEN_FROM_LLM = frozenset({"git", "lsp_format"})
 
     def __init__(self, settings=None, tracker=None) -> None:
         self._tools: dict[str, ToolDef] = {}
@@ -139,22 +138,20 @@ class ToolRegistry:
     def ids(self) -> list[str]:
         return list(self._tools.keys())
 
-    def tools_for_llm(self) -> list[dict]:
-        """Generate OpenAI/Anthropic-compatible tool definitions."""
+    def serialize_definitions(self) -> list[dict]:
+        """Serialize every registered tool definition; no LLM visibility filtering.
+
+        The MCP gateway passes through third-party arguments, so it stays non-strict.
+        """
         result = []
         for t in self._tools.values():
-            if t.id in self._HIDDEN_FROM_LLM:
-                continue
-            # The MCP gateway passes through third-party arguments, and legacy
-            # wrappers may carry non-strict external schemas. Keep MCP non-strict.
-            is_mcp = t.id == "mcp" or t.id.startswith("mcp__")
             result.append({
                 "type": "function",
                 "function": {
                     "name": t.id,
                     "description": t.description,
                     "parameters": t.parameters,
-                    **({"strict": True} if not is_mcp else {}),
+                    **({"strict": True} if t.id != "mcp" else {}),
                 },
             })
         return result

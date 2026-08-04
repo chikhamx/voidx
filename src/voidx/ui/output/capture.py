@@ -8,7 +8,7 @@ from voidx.ui.output.agent_display import agent_display_name
 from voidx.ui.output.tree import OutputTree, OutputNode
 from voidx.ui.output.console import _fmt_args, _title, VoidConsole
 from voidx.ui.output.dock import dock
-from voidx.ui.output.dock.nodes import _bash_markdown_lines, _tool_header
+from voidx.ui.output.dock.nodes import _bash_markdown_lines
 from voidx.ui.output.events import (
     ErrorAppended,
     SubagentStepStarted,
@@ -77,9 +77,6 @@ class CaptureConsole:
             command = str(args.get("command") or "")
             detail = ""
             body_lines = _bash_markdown_lines(command, self._dummy.width)
-        elif tool_name.startswith("mcp__"):
-            gerund = _tool_header(tool_name, gerund, _fmt_args(args), args)
-            detail = ""
         self._current_tool = self._tree.new_node(
             parent=self._parent, node_type="tool_call",
             header=f"● {gerund}{detail}",

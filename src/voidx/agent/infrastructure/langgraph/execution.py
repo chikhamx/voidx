@@ -51,7 +51,6 @@ from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeG
 from voidx.agent.infrastructure.langgraph.runtime.session_runtime import SessionRuntime
 from voidx.agent.infrastructure.langgraph.runtime.llm_turn import LlmTurn
 from voidx.agent.infrastructure.langgraph.runtime.permission_flow import PermissionFlow, _tool_call_key
-from voidx.agent.infrastructure.langgraph.runtime.llm_turn import _tool_definition_name
 from voidx.agent.infrastructure.langgraph.runtime.session_runtime import _sanitize_generated_title
 from voidx.agent.infrastructure.langgraph.runtime.tool_executor import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.infrastructure.langgraph.runtime.subagent import run_subagent as _run_subagent
@@ -580,8 +579,6 @@ class LangGraphExecution:
     def debug_enabled(self) -> bool:
         return self._debug
 
-    def _turn_control_enabled(self) -> bool:
-        return True
 
     def set_task_state(self, task_state: TaskState) -> None:
         self._task_state = task_state

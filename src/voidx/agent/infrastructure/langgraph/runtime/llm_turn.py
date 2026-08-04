@@ -32,7 +32,10 @@ from voidx.runtime.task_state import (
 )
 from voidx.agent.application.todo_state import sanitize_todo_replay_messages
 from voidx.agent.application.tool_exchange_sanitizer import sanitize_failed_tool_exchanges
-from voidx.agent.application.tool_filters import filter_unavailable_lsp_tools, strip_gemini_unsupported_schema_keys
+from voidx.agent.infrastructure.langgraph.runtime.tool_surface import (
+    ToolSurfaceContext,
+    resolve_tool_surface,
+)
 from voidx.agent.infrastructure.langgraph.runtime.streaming import (
     extract_text,
     is_malformed_tool_call_response,
@@ -59,42 +62,10 @@ from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_
 from voidx.llm.message_markers import GUIDANCE_MARKER
 
 
-def filter_profile_tool_definitions(tool_defs: list[dict[str, Any]], profile) -> list[dict[str, Any]]:
-    protocol = getattr(profile, "protocol", "turn")
-    if protocol == "goal":
-        return tool_defs
-    return [
-        tool
-        for tool in tool_defs
-        if _tool_definition_name(tool) != "goal"
-        and (protocol == "loop" or _tool_definition_name(tool) != "loop")
-    ]
-
-
 MALFORMED_TOOL_CALL_REPAIR_INSTRUCTION = (
     "Your previous response looked like an incomplete tool call. Re-emit a valid "
     "tool call using the bound tool schema, or answer normally without tool-call markup."
 )
-
-
-def _tool_definition_name(tool: dict[str, Any]) -> str:
-    name = tool.get("name")
-    if name:
-        return str(name)
-    function = tool.get("function")
-    if isinstance(function, dict):
-        return str(function.get("name") or "")
-    return ""
-def _dedupe_tool_definitions(tool_defs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    seen: set[str] = set()
-    result: list[dict[str, Any]] = []
-    for tool in tool_defs:
-        name = _tool_definition_name(tool)
-        if name in seen:
-            continue
-        seen.add(name)
-        result.append(tool)
-    return result
 
 
 
@@ -122,7 +93,6 @@ class LlmTurn:
             InteractionMode.PLAN.value if state.get("plan_mode", False) else host._interaction_mode.value
         )
         turn_state = str(state.get("turn_state") or "initial")
-        tool_defs = host.tools.tools_for_llm()
         state_context = current_thread_execution_state()
         chat_tool_view = getattr(state_context, "tool_policy", None) if state_context else None
         loop_turn_context = getattr(state_context, "turn_context", None) if state_context else None
@@ -136,25 +106,22 @@ class LlmTurn:
                 turn_state=turn_state,
             )
         )
-        tool_defs = filter_profile_tool_definitions(tool_defs, runtime_profile)
-        if chat_tool_view is not None:
-            tool_defs = [tool for tool in tool_defs if chat_tool_view.allows(_tool_definition_name(tool))]
-        turn_control_active = host._turn_control_enabled()
-        if turn_control_active:
-            tool_defs = _dedupe_tool_definitions(
-                [*tool_defs, *control_protocol.tool_definitions()]
-            )
-        if chat_tool_view is not None:
-            tool_defs = [
-                tool for tool in tool_defs
-                if chat_tool_view.allows(_tool_definition_name(tool))
-            ]
+        tool_defs = resolve_tool_surface(
+            host.tools,
+            ToolSurfaceContext(
+                runtime_profile=runtime_profile,
+                goal_phase=getattr(loop_turn_context, "goal_phase", None),
+                loop_phase=getattr(loop_turn_context, "loop_phase", None),
+                tool_policy=chat_tool_view,
+                turn_context=loop_turn_context,
+                lsp_manager=getattr(host, "_lsp_manager", None),
+                model_protocol=resolve_protocol(host.config.model),
+            ),
+        ).definitions
         runtime_task_state = _task_state_for_context(
             state.get("task_state"),
             getattr(host, "_task_state", None),
         )
-        tool_defs = filter_unavailable_lsp_tools(tool_defs, getattr(host, "_lsp_manager", None))
-        tool_defs = strip_gemini_unsupported_schema_keys(tool_defs, resolve_protocol(host.config.model))
 
         guidance_pairs = host._drain_pending_guidance()
         guidance_messages = [msg for msg, _, _ in guidance_pairs]
@@ -393,35 +360,34 @@ class LlmTurn:
                 if loop.retry_status_active and host._ui.via_events():
                     await host._ui.events.emit(StatusFinished(status_id="llm:retry"))
 
-                if turn_control_active:
-                    turn_result = await handle_turn_control_response(
-                        graph=host,
-                        assistant_msg=assistant_msg,
-                        llm_messages=llm_messages,
-                        loop=loop,
-                        turn_state=turn_state,
-                        runtime_task_state=runtime_task_state,
-                        state_messages=state_messages,
-                        interaction_mode_value=interaction_mode_value,
-                        estimate_tokens=estimate_llm_context_tokens,
-                        rerender_task_context=_rerender_task_context,
-                        loop_controller=protocol_controller,
-                        protocol=control_protocol,
-                    )
-                    llm_messages = turn_result.llm_messages
-                    turn_state = turn_result.turn_state
-                    runtime_task_state = turn_result.runtime_task_state
-                    if turn_result.action == "retry":
-                        host._usage_stats.update_context(turn_result.context_tokens)
-                        continue
-                    if turn_result.action == "fail":
-                        return {
-                            "messages": replacement_messages(turn_result.failure_msg),
-                            "step_count": step + 1,
-                            "should_continue": False,
-                        }
-                    if turn_result.action == "break":
-                        break
+                turn_result = await handle_turn_control_response(
+                    graph=host,
+                    assistant_msg=assistant_msg,
+                    llm_messages=llm_messages,
+                    loop=loop,
+                    turn_state=turn_state,
+                    runtime_task_state=runtime_task_state,
+                    state_messages=state_messages,
+                    interaction_mode_value=interaction_mode_value,
+                    estimate_tokens=estimate_llm_context_tokens,
+                    rerender_task_context=_rerender_task_context,
+                    loop_controller=protocol_controller,
+                    protocol=control_protocol,
+                )
+                llm_messages = turn_result.llm_messages
+                turn_state = turn_result.turn_state
+                runtime_task_state = turn_result.runtime_task_state
+                if turn_result.action == "retry":
+                    host._usage_stats.update_context(turn_result.context_tokens)
+                    continue
+                if turn_result.action == "fail":
+                    return {
+                        "messages": replacement_messages(turn_result.failure_msg),
+                        "step_count": step + 1,
+                        "should_continue": False,
+                    }
+                if turn_result.action == "break":
+                    break
 
                 break
             except Exception as e:

@@ -67,10 +67,10 @@ class TestToolRegistry:
         assert "lsp" in ids
         assert "lsp_format" in ids
 
-    def test_tools_for_llm(self):
+    def test_serialize_definitions(self):
         r = ToolRegistry()
-        tools = r.tools_for_llm()
-        assert len(tools) == len(r.ids()) - 2
+        tools = r.serialize_definitions()
+        assert len(tools) == len(r.ids())
         assert len(tools) >= 10
         names = [t["function"]["name"] for t in tools]
         assert "manage" in names
@@ -79,25 +79,23 @@ class TestToolRegistry:
         assert "replace" in names
         assert "line" not in names
         assert "edit" not in names
-        assert "git" not in names
-        assert "lsp_format" not in names
+        # Execution-only tools stay in the catalog serialization; the resolver hides them.
+        assert "git" in names
+        assert "lsp_format" in names
         for t in tools:
             assert t["type"] == "function"
             assert "name" in t["function"]
             assert "description" in t["function"]
             assert "parameters" in t["function"]
 
-    def test_builtin_tools_have_strict_mcp_tools_and_gateway_do_not(self):
+    def test_builtin_tools_are_strict_and_mcp_gateway_is_not(self):
         r = ToolRegistry()
         r.register("mcp", object(), "MCP gateway", {"type": "object", "properties": {}})
-        r.register("mcp__tavily__search_abc12345", object(), "MCP search", {"type": "object", "properties": {}})
-        tools = r.tools_for_llm()
+        tools = r.serialize_definitions()
         builtin = next(t for t in tools if t["function"]["name"] == "read")
         gateway = next(t for t in tools if t["function"]["name"] == "mcp")
-        mcp = next(t for t in tools if t["function"]["name"].startswith("mcp__"))
         assert builtin["function"]["strict"] is True
         assert "strict" not in gateway["function"]
-        assert "strict" not in mcp["function"]
 
     def test_nested_tool_schemas_keep_defs_and_checkpoint_is_flat(self):
         r = ToolRegistry()
@@ -122,5 +120,5 @@ class TestToolRegistry:
         assert set(r.ids()) == {"read", "search"}
         assert r.get("read") is not None
         assert r.get("file") is None
-        names = [tool["function"]["name"] for tool in r.tools_for_llm()]
+        names = [tool["function"]["name"] for tool in r.serialize_definitions()]
         assert names == ["read", "search"]

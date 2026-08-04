@@ -298,7 +298,7 @@ async def test_subagent_final_step_fallback_does_not_leak_hint_to_sub_messages(t
         def ids(self):
             return ["read"]
 
-        def tools_for_llm(self):
+        def serialize_definitions(self):
             return [{
                 "type": "function",
                 "function": {
@@ -368,7 +368,7 @@ async def test_subagent_requires_structured_contract_after_tool_work(tmp_path, m
         def ids(self):
             return ["search"]
 
-        def tools_for_llm(self):
+        def serialize_definitions(self):
             return [{
                 "type": "function",
                 "function": {
@@ -449,7 +449,7 @@ async def test_subagent_contract_retry_exhausted_returns_contract_unsatisfied(tm
         def ids(self):
             return ["search"]
 
-        def tools_for_llm(self):
+        def serialize_definitions(self):
             return [{
                 "type": "function",
                 "function": {

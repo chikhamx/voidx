@@ -54,8 +54,6 @@ BASIC_RULES: Ruleset = [
     Rule(permission="mcp", pattern="*", action="ask"),
     Rule(permission="mcp", pattern="list", action="allow"),
     Rule(permission="mcp", pattern="load", action="allow"),
-    Rule(permission="mcp__*", pattern="*", action="ask"),
-    Rule(permission="mcp/*", pattern="*", action="ask"),
 ]
 
 
@@ -420,8 +418,6 @@ def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
         if str(args.get("op") or "") == "call":
             return PermissionCapability.MCP_TOOLS
         return PermissionCapability.READ_TOOLS
-    if tool.startswith("mcp__") or tool.startswith("mcp/"):
-        return PermissionCapability.MCP_TOOLS
     return PermissionCapability.OTHER
 
 

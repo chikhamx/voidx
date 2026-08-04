@@ -10,7 +10,6 @@ from voidx.ui.output.agent_display import subagent_display_name
 from voidx.ui.output.dock.formatting import short_path
 from voidx.ui.output.manage_display import manage_display
 
-_MCP_TOOL_ID_RE = re.compile(r"^mcp__(?P<server>.+?)__(?P<tool>.+)_(?P<hash>[0-9a-f]{8})$", re.IGNORECASE)
 _ACRONYMS = {
     "api": "API",
     "http": "HTTP",
@@ -89,11 +88,6 @@ def _agent_display_value(raw_args: dict[str, Any]) -> object:
         return subagent_display_name(run_id) if run_id else ""
     return raw_args.get("name") or raw_args.get("description") or ""
 
-def mcp_tool_display_name(tool_name: str) -> str:
-    match = _MCP_TOOL_ID_RE.match(tool_name)
-    if match is None:
-        return ""
-    return _mcp_action_display_name(match.group("server"), match.group("tool"))
 
 
 _MCP_GATEWAY_VALUE_KEYS = ("query", "url", "urls", "path", "pattern", "name", "text")

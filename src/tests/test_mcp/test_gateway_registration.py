@@ -22,7 +22,7 @@ def _registry_with_mcp(tmp_path) -> ToolRegistry:
 
 def test_gateway_tool_registered_with_mcp_manager(tmp_path):
     registry = _registry_with_mcp(tmp_path)
-    tool_names = [t["function"]["name"] for t in registry.tools_for_llm()]
+    tool_names = [t["function"]["name"] for t in registry.serialize_definitions()]
     assert "mcp" in tool_names
 
 
@@ -38,7 +38,7 @@ def test_gateway_tool_schema_is_stable_and_catalog_free(tmp_path):
     )
     registry = _registry_with_mcp(tmp_path)
 
-    mcp_defs = [t for t in registry.tools_for_llm() if t["function"]["name"] == "mcp"]
+    mcp_defs = [t for t in registry.serialize_definitions() if t["function"]["name"] == "mcp"]
     assert len(mcp_defs) == 1
     serialized = json.dumps(mcp_defs[0])
     assert "tavily" not in serialized

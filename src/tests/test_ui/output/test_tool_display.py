@@ -1,6 +1,5 @@
 from voidx.ui.output.tool_display import (
     extract_tool_display_value,
-    mcp_tool_display_name,
     strip_rich_markup,
 )
 
@@ -59,9 +58,6 @@ def test_strip_rich_markup_removes_markup_and_key_prefix():
     assert strip_rich_markup('[bold]file_path[/bold]="src/app.py"') == "src/app.py"
 
 
-def test_mcp_tool_display_name_removes_prefix_and_hash():
-    assert mcp_tool_display_name("mcp__tavily__tavily_search_943584b9") == "Tavily Search"
-    assert mcp_tool_display_name("mcp__github__list_issues_1234abcd") == "Github List Issues"
 
 def test_extract_tool_display_value_for_agent_wait_and_cancel():
     from voidx.ui.output.agent_display import subagent_display_name

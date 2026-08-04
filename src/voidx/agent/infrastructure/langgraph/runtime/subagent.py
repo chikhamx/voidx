@@ -31,9 +31,11 @@ from voidx.agent.application.runtime_context import (
 from voidx.runtime.task_state import GoalResolution, TaskState, WorkflowRoute
 from voidx.agent.application.tool_messages import sanitize_tool_message_content
 from voidx.agent.infrastructure.tool_result_storage import maybe_persist_tool_result
-from voidx.agent.application.tool_filters import filter_unavailable_lsp_tools, strip_gemini_unsupported_schema_keys
 from voidx.agent.domain.profile import RuntimeProfile
-from voidx.agent.infrastructure.langgraph.runtime.llm_turn import filter_profile_tool_definitions
+from voidx.agent.infrastructure.langgraph.runtime.tool_surface import (
+    ToolSurfaceContext,
+    resolve_tool_surface,
+)
 from voidx.config import Config
 from voidx.llm.service import create_chat_model, resolve_protocol
 from voidx.agent.application.instruction import WorkflowRuntimeContext
@@ -108,17 +110,19 @@ async def run_subagent(
             description="Report results or progress to your parent agent, and read messages from your parent."
         )
         agent_tools.register(message_tool.id, message_tool, message_tool.description, message_tool.parameters_schema())
-    blocked_child_tools = _BLOCKED_CHILD_TOOLS
-    if not agent_def.can_delegate:
-        agent_tools = agent_tools.filtered_copy(set(agent_tools.ids()) - blocked_child_tools)
+    # Child constraints are fixed: delegation/interaction tools never reach a child,
+    # regardless of AgentDef.can_delegate.
+    agent_tools = agent_tools.filtered_copy(set(agent_tools.ids()) - _BLOCKED_CHILD_TOOLS)
     model = create_chat_model(api_key, model_cfg)
-    tool_defs = agent_tools.tools_for_llm()
-    tool_defs = filter_profile_tool_definitions(
-        tool_defs,
-        RuntimeProfile(profile_id="coding", revision=1, name="Coding"),
-    )
-    tool_defs = filter_unavailable_lsp_tools(tool_defs, lsp_manager)
-    tool_defs = strip_gemini_unsupported_schema_keys(tool_defs, resolve_protocol(config.model))
+    tool_defs = resolve_tool_surface(
+        agent_tools,
+        ToolSurfaceContext(
+            runtime_profile=RuntimeProfile(profile_id="coding", revision=1, name="Coding"),
+            child_agent=True,
+            lsp_manager=lsp_manager,
+            model_protocol=resolve_protocol(config.model),
+        ),
+    ).definitions
 
     if sub_messages is None:
         sub_messages = []

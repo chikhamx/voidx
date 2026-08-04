@@ -13,7 +13,6 @@ from voidx.mcp.client import McpClient
 from voidx.mcp.gateway import McpGatewayTool
 from voidx.mcp.manager import McpManager
 from voidx.mcp.schema import McpCallResult, McpInitializeParams, McpToolDef
-from voidx.mcp.tool import McpToolWrapper
 from voidx.permission.service import PermissionService
 from voidx.tools.base import ToolContext
 from voidx.tools.registry import ToolRegistry
@@ -87,7 +86,7 @@ for raw in sys.stdin:
     try:
         mcp_tool_names = [
             tool["function"]["name"]
-            for tool in registry.tools_for_llm()
+            for tool in registry.serialize_definitions()
             if tool["function"]["name"].startswith("mcp__")
         ]
         assert mcp_tool_names == []
@@ -507,58 +506,6 @@ async def test_mcp_manager_reports_startup_errors(tmp_path):
     assert "Command not found" in status.error_message
 
 
-def test_mcp_tool_wrapper_id_and_description_are_instance_attributes():
-    class FakeClient:
-        healthy = True
-        status = "connected"
-        error_message = ""
-
-        async def call_tool(self, name, arguments):
-            return McpCallResult(content=[])
-
-    wrapper = McpToolWrapper(FakeClient(), McpToolDef(name="read/url"), "my-server")
-
-    assert isinstance(wrapper.id, str)
-    assert wrapper.id.startswith("mcp__my-server__read_url_")
-    assert isinstance(wrapper.description, str)
-    assert "[MCP:my-server]" in wrapper.description
-
-    # Instance attribute, not a property descriptor
-    assert not isinstance(type(wrapper).id, property)
-    assert not isinstance(type(wrapper).description, property)
-
-
-@pytest.mark.asyncio
-async def test_mcp_tool_wrapper_preserves_non_text_content(tmp_path):
-    class FakeClient:
-        healthy = True
-        status = "connected"
-        error_message = ""
-
-        async def call_tool(self, name, arguments):
-            return McpCallResult(
-                content=[
-                    {"type": "image", "mimeType": "image/png", "data": "abcd"},
-                    {
-                        "type": "resource",
-                        "resource": {
-                            "uri": "file:///tmp/report.txt",
-                            "mimeType": "text/plain",
-                            "text": "report body",
-                        },
-                    },
-                ],
-                structured_content={"rows": 2},
-            )
-
-    wrapper = McpToolWrapper(FakeClient(), McpToolDef(name="snapshot"), "zai/server")
-
-    result = await wrapper.execute({}, ToolContext(workspace=str(tmp_path)))
-
-    assert "image/png" in result.output
-    assert "file:///tmp/report.txt" in result.output
-    assert "report body" in result.output
-    assert '"rows": 2' in result.output
 
 
 @pytest.mark.asyncio
@@ -676,26 +623,6 @@ class TestMcpRequestRetry:
 
 
 @pytest.mark.asyncio
-async def test_mcp_tool_wrapper_classifies_timeout(tmp_path):
-    from voidx.mcp.client import McpTimeoutError
-
-    class FakeClient:
-        healthy = True
-        status = "connected"
-        error_message = ""
-
-        async def call_tool(self, name, arguments):
-            raise McpTimeoutError("request timed out")
-
-    wrapper = McpToolWrapper(FakeClient(), McpToolDef(name="slow"), "test-server")
-
-    result = await wrapper.execute({}, ToolContext(workspace=str(tmp_path)))
-
-    assert result.metadata["error"] is True
-    assert result.metadata["timeout"] is True
-    assert result.metadata["error_kind"] == "tool_timeout"
-    assert result.metadata["timeout_source"] == "mcp"
-    assert result.metadata["server"] == "test-server"
 
 
 @pytest.mark.asyncio

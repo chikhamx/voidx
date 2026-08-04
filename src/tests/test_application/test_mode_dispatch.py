@@ -14,7 +14,11 @@ class FakeLoopService:
 
     async def start(self, parent_thread_id, spec):
         self.started.append((parent_thread_id, spec))
-        return SimpleNamespace(active=True, loop_thread_id="loop:1")
+        return SimpleNamespace(
+            active=True,
+            loop_thread_id="loop:1",
+            prompt_summary=spec.prompt[:80],
+        )
 
 
 class FakeGoalService:
@@ -30,11 +34,18 @@ class FakeIntakeRuntime:
     def __init__(self, summary: str = "", spec: dict | None = None):
         self.summary = summary
         self.spec = spec
+        self.loop_spec = spec
         self.requests = []
 
     async def run_turn(self, request):
         self.requests.append(request)
         controller = getattr(request.context, "goal_intake_controller", None)
+        if self.loop_spec is not None:
+            from voidx.runtime.task_state import LoopSpec
+
+            loop_controller = getattr(request.context, "loop_intake_controller", None)
+            if loop_controller is not None:
+                await loop_controller.submit_init(LoopSpec(**self.loop_spec))
         if self.spec is not None and controller is not None:
             from voidx.agent.domain.goal import GoalSpec
 
@@ -57,6 +68,7 @@ async def test_loop_profile_first_message_starts_dynamic_loop() -> None:
     from voidx.agent.domain.loop import LoopSpec
 
     service = _service("loop")
+    service._runtime.loop_spec = {"prompt": "fix the flaky test"}
 
     handled = await service._handle_loop_first_message("fix the flaky test", thread_id="")
 

@@ -3,13 +3,77 @@
 from __future__ import annotations
 
 
-from pydantic import BaseModel, Field, model_validator
+from enum import Enum
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from voidx.runtime.intent import InteractionMode, TaskIntent
 from enum import Enum
 from voidx.workflow.types import WorkflowRunState
 
 
+
+
+class LoopMode(str, Enum):
+    FIXED = "fixed"
+    DYNAMIC = "dynamic"
+
+
+class LoopSpec(BaseModel):
+    model_config = {"frozen": True}
+
+    prompt: str
+    interval_seconds: float | None = Field(default=None, gt=0)
+    workflow_enabled: bool = False
+    generation: str = "active"
+
+    @field_validator("prompt")
+    @classmethod
+    def require_prompt(cls, value: str) -> str:
+        prompt = value.strip()
+        if not prompt:
+            raise ValueError("prompt must not be empty")
+        return prompt
+
+    @field_validator("generation")
+    @classmethod
+    def require_generation(cls, value: str) -> str:
+        generation = value.strip()
+        if not generation:
+            raise ValueError("generation must not be empty")
+        return generation
+
+    @property
+    def mode(self) -> LoopMode:
+        return LoopMode.FIXED if self.interval_seconds is not None else LoopMode.DYNAMIC
+
+    def loop_thread_id(self, parent_thread_id: str | None) -> str:
+        parent = (parent_thread_id or "default").strip() or "default"
+        return f"loop:{parent}:{self.generation}"
+
+    def loop_session_id(self, parent_thread_id: str | None) -> str:
+        return self.loop_thread_id(parent_thread_id)
+
+    def prompt_summary(self) -> str:
+        return self.prompt.replace("\n", " ")[:80]
+
+
+class LoopDecision(BaseModel):
+    model_config = {"frozen": True}
+
+    outcome: Literal["continue", "completed", "blocked", "needs_user", "failed", "stop"]
+    summary: str
+    progress: Literal["none", "partial", "meaningful"] = "none"
+    next_delay_seconds: float | None = None
+    reason: str = ""
+
+    @field_validator("summary")
+    @classmethod
+    def require_summary(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("summary must not be empty")
+        return value
 _INTENT_WINDOW_SIZE = 4
 _INTENT_WINDOW_SEPARATOR = " [SEP] "
 

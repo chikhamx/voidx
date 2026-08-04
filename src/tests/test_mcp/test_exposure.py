@@ -92,7 +92,7 @@ class TestGatewayMode:
         await manager.start_all()
         await manager.wait_ready()
         try:
-            tool_names = [t["function"]["name"] for t in registry.tools_for_llm()]
+            tool_names = [t["function"]["name"] for t in registry.serialize_definitions()]
             assert not any(name.startswith("mcp__") for name in tool_names)
 
             entries = {e.name: e for e in manager.catalog_snapshot()}
@@ -119,7 +119,7 @@ class TestAutoExposure:
         await manager.start_all()
         await manager.wait_ready()
         try:
-            tool_names = [t["function"]["name"] for t in registry.tools_for_llm()]
+            tool_names = [t["function"]["name"] for t in registry.serialize_definitions()]
             assert not any(name.startswith("mcp__") for name in tool_names)
             assert manager.catalog_snapshot()[0].name == "fake"
         finally:
@@ -134,7 +134,7 @@ class TestAutoExposure:
         await manager.start_all()
         await manager.wait_ready()
         try:
-            tool_names = [t["function"]["name"] for t in registry.tools_for_llm()]
+            tool_names = [t["function"]["name"] for t in registry.serialize_definitions()]
             assert not any(name.startswith("mcp__") for name in tool_names)
             assert manager.catalog_snapshot()[0].name == "fake"
         finally:
@@ -149,7 +149,7 @@ class TestAutoExposure:
         await manager.start_all()
         await manager.wait_ready()
         try:
-            tool_names = [t["function"]["name"] for t in registry.tools_for_llm()]
+            tool_names = [t["function"]["name"] for t in registry.serialize_definitions()]
             assert not any(name.startswith("mcp__") for name in tool_names)
             assert manager.catalog_snapshot()[0].name == "fake"
         finally:

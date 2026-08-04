@@ -77,7 +77,16 @@ async def test_loop_profile_injects_loop_tool_and_not_turn(tmp_path, monkeypatch
     model = ScriptedStreamingModel([[_loop_commit_chunk()]])
     graph = _make_graph(tmp_path, model, monkeypatch)
     token = _CURRENT_THREAD_EXECUTION_STATE.set(
-        ThreadExecutionState(runtime_profile=LOOP_PROFILE)
+        ThreadExecutionState(
+            runtime_profile=LOOP_PROFILE,
+            turn_context=TurnExecutionContext(
+                thread_id="loop:t",
+                session_id="loop:t",
+                runtime_profile=LOOP_PROFILE,
+                workspace=str(tmp_path),
+                loop_phase="work",
+            ),
+        )
     )
     try:
         await graph._call_llm({
@@ -99,7 +108,16 @@ async def test_goal_profile_injects_goal_tool_and_not_turn(tmp_path, monkeypatch
     model = ScriptedStreamingModel([[_text_chunk("Done.")]])
     graph = _make_graph(tmp_path, model, monkeypatch)
     token = _CURRENT_THREAD_EXECUTION_STATE.set(
-        ThreadExecutionState(runtime_profile=GOAL_PROFILE)
+        ThreadExecutionState(
+            runtime_profile=GOAL_PROFILE,
+            turn_context=TurnExecutionContext(
+                thread_id="goal:t",
+                session_id="goal:t",
+                runtime_profile=GOAL_PROFILE,
+                workspace=str(tmp_path),
+                goal_phase="intake",
+            ),
+        )
     )
     try:
         result = await graph._call_llm({

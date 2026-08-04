@@ -85,6 +85,4 @@ def _tool_rule_matches(tool: str, rule: str) -> bool:
         return True
     if wildcard_match(tool, rule):
         return True
-    if rule.startswith("mcp/"):
-        return wildcard_match(tool, rule.replace("/", "__"))
     return False

@@ -190,7 +190,7 @@ async def test_run_subagent_persists_tool_results_to_subagent_jsonl(tmp_path, mo
         def ids(self):
             return ["read"]
 
-        def tools_for_llm(self):
+        def serialize_definitions(self):
             return [{"name": "read", "description": "read", "input_schema": {}}]
 
         async def execute_tool(self, tid, _targs, _ctx):
@@ -260,7 +260,7 @@ async def test_run_subagent_injects_failure_loop_guidance(tmp_path, monkeypatch)
         def ids(self):
             return ["read"]
 
-        def tools_for_llm(self):
+        def serialize_definitions(self):
             return [{"name": "read", "description": "read", "input_schema": {}}]
 
         async def execute_tool(self, tid, targs, _ctx):
@@ -329,7 +329,7 @@ async def test_run_subagent_terminates_after_no_progress_cycles(tmp_path, monkey
         def ids(self):
             return ["checkpoint", "todo"]
 
-        def tools_for_llm(self):
+        def serialize_definitions(self):
             return [
                 {"name": "checkpoint", "description": "checkpoint", "input_schema": {}},
                 {"name": "todo", "description": "manage tasks", "input_schema": {"properties": {"op": {"type": "string"}}}},

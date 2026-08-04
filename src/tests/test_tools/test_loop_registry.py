@@ -8,7 +8,7 @@ def test_loop_tool_is_registered_but_not_visible_in_default_llm_tools() -> None:
 
     assert "loop" in registry.ids()
     assert registry.get("loop") is not None
-    assert "loop" in {tool["function"]["name"] for tool in registry.tools_for_llm()}
+    assert "loop" in {tool["function"]["name"] for tool in registry.serialize_definitions()}
 
 
 def test_schedule_wakeup_not_registered() -> None:
@@ -51,19 +51,25 @@ def test_loop_tool_view_binds_closed_world_tools_with_stable_loop_tool() -> None
     assert "write" not in ids
 
 
-def test_loop_tool_view_filters_real_llm_tool_definitions_by_function_name() -> None:
+def test_loop_tool_view_filters_real_llm_tool_definitions_via_resolver() -> None:
     from voidx.agent.domain.loop import LoopToolView
-    from voidx.agent.infrastructure.langgraph.execution import _tool_definition_name
+    from voidx.agent.domain.profile import RuntimeProfile
+    from voidx.agent.infrastructure.langgraph.runtime.tool_surface import (
+        ToolSurfaceContext,
+        resolve_tool_surface,
+    )
 
     registry = ToolRegistry()
     tool_view = LoopToolView.default(workflow_enabled=False).bind(registry.ids())
-    tool_defs = registry.tools_for_llm()
-
-    visible_tool_names = {
-        name
-        for tool in tool_defs
-        if (name := _tool_definition_name(tool)) and tool_view.allows(name)
-    }
+    surface = resolve_tool_surface(
+        registry,
+        ToolSurfaceContext(
+            runtime_profile=RuntimeProfile(profile_id="loop", revision=1, name="Loop", protocol="loop"),
+            loop_phase="work",
+            tool_policy=tool_view,
+        ),
+    )
+    visible_tool_names = {tool["function"]["name"] for tool in surface.definitions}
 
     assert "loop" in visible_tool_names
     assert "read" in visible_tool_names

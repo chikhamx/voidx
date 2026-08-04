@@ -148,7 +148,7 @@ async def test_run_subagent_wall_clock_guard_terminates_at_boundary(tmp_path, mo
         def ids(self):
             return ["read"]
 
-        def tools_for_llm(self):
+        def serialize_definitions(self):
             return [{"name": "checkpoint", "description": "checkpoint", "input_schema": {}}]
 
         async def execute_tool(self, tid, _targs, _ctx):
@@ -219,7 +219,7 @@ async def test_run_subagent_repetitive_guard_runs_before_authorization(tmp_path,
         def ids(self):
             return ["read"]
 
-        def tools_for_llm(self):
+        def serialize_definitions(self):
             return [{"name": "todo", "description": "todo", "input_schema": {}}]
 
         async def execute_tool(self, tid, _targs, _ctx):
