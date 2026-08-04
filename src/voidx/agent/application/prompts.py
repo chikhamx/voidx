@@ -68,12 +68,33 @@ class WorkflowRuntimePrompt(BaseModel):
     node_definitions: str = ""
 
     def render(self) -> str:
-        parts: list[str] = []
+        parts = []
         if self.rules:
             parts.append("## Workflow Runtime\n\n" + _render_bullets(self.rules))
         if self.node_definitions:
             parts.append(self.node_definitions.strip())
         return "\n\n".join(parts)
+
+
+def child_workflow_runtime(mode: str) -> WorkflowRuntimePrompt:
+    routes = {
+        "review": ("review", "review"),
+        "debug": ("debug", "debug"),
+        "implement": ("tdd", "verify"),
+    }
+    join, leave = routes[mode]
+    service = WorkflowService()
+    nodes = [service.get(name) for name in (join, leave)]
+    definitions = "\n\n".join(
+        service.render_instruction(node) for node in nodes if node is not None
+    )
+    return WorkflowRuntimePrompt(
+        rules=[
+            PromptRule(detail="Current Task State is the sole source of active workflow nodes."),
+            PromptRule(detail=f"Active route joins at {join} and leaves at {leave}."),
+        ],
+        node_definitions=definitions,
+    )
 
 
 class PersonaPrompt(BaseModel):

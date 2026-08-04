@@ -66,20 +66,19 @@ def test_extract_tool_display_value_for_agent_wait_and_cancel():
     display_name = subagent_display_name(run_id)
     wait_args = {
         "action": "wait",
-        "target_run_id": run_id,
-        "timeout": 0.0,
-        "result_preset": "auto",
+        "run_id": run_id,
+        "wait": "until_complete",
     }
     cancel_args = {
         "action": "cancel",
-        "target_run_id": run_id,
+        "run_id": run_id,
     }
-    assert extract_tool_display_value("agent", wait_args, "") == display_name
-    assert extract_tool_display_value("agent", cancel_args, "") == display_name
+    assert extract_tool_display_value("agent_control", wait_args, "") == display_name
+    assert extract_tool_display_value("agent_control", cancel_args, "") == display_name
     assert run_id not in extract_tool_display_value(
-        "agent",
+        "agent_control",
         wait_args,
-        f'action="wait", target_run_id="{run_id}", timeout=0.0',
+        f'action="wait", run_id="{run_id}", wait="until_complete"',
     )
 
 
@@ -92,33 +91,32 @@ def test_agent_tool_header_for_wait_and_cancel_is_clean():
     display_name = subagent_display_name(run_id)
     wait_args = {
         "action": "wait",
-        "target_run_id": run_id,
-        "timeout": 0.0,
-        "result_preset": "auto",
+        "run_id": run_id,
+        "wait": "until_complete",
     }
     cancel_args = {
         "action": "cancel",
-        "target_run_id": run_id,
+        "run_id": run_id,
     }
     spawn_args = {
-        "action": "spawn",
-        "name": "voidx",
         "mode": "review",
-        "task": "review gateway",
-        "target": "docs/design/agent-gateway.md",
+        "goal": "Review gateway",
+        "detail": "Review the gateway behavior.",
+        "scope": "docs/design/agent-gateway.md",
     }
 
-    wait_header = _tool_header("agent", "Agenting", _fmt_args(wait_args), wait_args)
-    cancel_header = _tool_header("agent", "Agenting", _fmt_args(cancel_args), cancel_args)
+    wait_header = _tool_header("agent_control", "Agent control", _fmt_args(wait_args), wait_args)
+    cancel_header = _tool_header("agent_control", "Agent control", _fmt_args(cancel_args), cancel_args)
     spawn_header = _tool_header("agent", "Agenting", _fmt_args(spawn_args), spawn_args)
 
     assert "Wait" in wait_header
     assert display_name in wait_header
     assert run_id not in wait_header
     assert 'wait"' not in wait_header
+    assert "wait" not in wait_header
     assert "result_preset" not in wait_header
     assert "Cancel" in cancel_header
     assert display_name in cancel_header
     assert run_id not in cancel_header
-    assert "voidx" in spawn_header
+    assert "Review gateway" in spawn_header
 

@@ -10,7 +10,7 @@ import time
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from voidx.agent.application.agents import AgentDef, child_run_agent_def
-from voidx.agent.application.prompts import WORKFLOW_RUNTIME, build_base_system, persona_prompt
+from voidx.agent.application.prompts import build_base_system, child_workflow_runtime, persona_prompt
 from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import (
     NoProgressState,
     RuntimeGuardState,
@@ -153,7 +153,11 @@ async def run_subagent(
         config=context_config,
         workspace=config.workspace,
         base_system_prompt=build_base_system(context_config.user_profile.language),
-        workflow_runtime=WORKFLOW_RUNTIME,
+        workflow_runtime=child_workflow_runtime(
+            {"review": "review", "debug": "debug", "tdd": "implement"}.get(
+                plan.join if plan is not None else "", "review"
+            )
+        ),
         persona_prompt=persona_prompt(),
         persona=persona,
         interaction_mode=interaction_mode,

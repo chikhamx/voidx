@@ -36,7 +36,7 @@ class TestExtractFilePaths:
         assert paths == []
 
     def test_agent_no_path(self):
-        paths = _extract_file_paths({"name": "agent", "args": {"mode": "inspect"}})
+        paths = _extract_file_paths({"name": "agent", "args": {"mode": "review", "goal": "Review files", "detail": "Check paths.", "scope": "src"}})
         assert paths == []
 
     def test_normalizes_relative_dots(self):

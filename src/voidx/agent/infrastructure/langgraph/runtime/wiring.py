@@ -12,7 +12,7 @@ from voidx.llm.service import create_resolver_model, get_context_limit
 from voidx.llm.usage import UsageStats
 from voidx.permission.grants import persistent_grants_from_paths
 from voidx.permission.service import PermissionService
-from voidx.tools.service import AgentTool, ToolRegistry, TaskTracker
+from voidx.tools.service import AgentControlTool, AgentTool, ToolRegistry, TaskTracker
 
 
 def bind_settings_to_catalog(settings: Settings | None) -> None:
@@ -54,6 +54,13 @@ def register_agent_tool(
         available_agents=[agent.name for agent in get_subagents()],
     )
     registry.register("agent", agent_tool, agent_tool.description, agent_tool.parameters_schema())
+    agent_control = AgentControlTool()
+    registry.register(
+        "agent_control",
+        agent_control,
+        agent_control.description,
+        agent_control.parameters_schema(),
+    )
 
 
 def build_permission_service(

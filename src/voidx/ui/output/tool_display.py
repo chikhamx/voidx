@@ -61,7 +61,7 @@ def extract_tool_display_value(
         value = str(raw_args.get("command") or "").replace("\n", "; ")
     elif tool_name == "git":
         value = raw_args.get("args")
-    elif tool_name == "agent":
+    elif tool_name in {"agent", "agent_control"}:
         value = _agent_display_value(raw_args)
     elif tool_name == "checkpoint":
         value = raw_args.get("goal")
@@ -84,7 +84,7 @@ def extract_tool_display_value(
 def _agent_display_value(raw_args: dict[str, Any]) -> object:
     action = str(raw_args.get("action") or "spawn").strip().lower()
     if action in {"wait", "cancel"}:
-        run_id = str(raw_args.get("target_run_id") or "").strip()
+        run_id = str(raw_args.get("run_id") or raw_args.get("target_run_id") or "").strip()
         return subagent_display_name(run_id) if run_id else ""
     return raw_args.get("name") or raw_args.get("description") or ""
 

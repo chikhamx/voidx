@@ -20,15 +20,13 @@ class EmptyTodoTracker:
 
 
 @pytest.mark.asyncio
-async def test_agent_inspect_ignores_optional_noise(tmp_path) -> None:
+async def test_agent_spawn_accepts_current_schema(tmp_path) -> None:
     result = await AgentTool().execute(
         {
-            "name": "voidx",
-            "mode": "inspect",
-            "task": "Inspect the target and report concrete findings.",
-            "target": "src/voidx/tools/agent.py",
-            "success_criteria": {"ignored": True},
-            "result_preset": "null",
+            "mode": "review",
+            "goal": "Inspect the target and report concrete findings.",
+            "detail": "Return structured findings.",
+            "scope": "src/voidx/tools/agent.py",
         },
         ToolContext(workspace=str(tmp_path)),
     )
@@ -37,22 +35,17 @@ async def test_agent_inspect_ignores_optional_noise(tmp_path) -> None:
     assert result.metadata.get("reason") == "no_resolver"
 
 
-
-
 @pytest.mark.asyncio
-async def test_agent_rejects_non_string_name_identity(tmp_path) -> None:
+async def test_agent_rejects_unknown_control_fields(tmp_path) -> None:
     result = await AgentTool().execute(
-        {
-            "mode": "inspect",
-            "task": "Inspect the target and report concrete findings.",
-            "target": "src/voidx/tools/agent.py",
-            "name": {"not": "a-string"},
-        },
+        {"action": "wait", "run_id": "run_123", "wait": "brief"},
         ToolContext(workspace=str(tmp_path)),
     )
 
-    assert result.metadata.get("validation_error") is True
+    assert result.metadata.get("reason") == "gateway_unavailable"
     assert result.metadata.get("error") is True
+
+
 @pytest.mark.asyncio
 async def test_todo_read_ignores_write_update_noise(tmp_path) -> None:
     result = await TodoWriteTool(EmptyTodoTracker()).execute(

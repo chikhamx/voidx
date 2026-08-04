@@ -11,6 +11,7 @@ from voidx.permission.grants import AccessGrant, AccessGrants
 from voidx.permission.service import PermissionService
 from voidx.agent.gateway import AgentGateway
 from voidx.tools.agent import AgentTool
+from voidx.tools.agent_control import AgentControlTool
 from voidx.tools.base import ToolContext
 from voidx.tools.lsp import LspTool
 
@@ -177,17 +178,17 @@ async def test_agent_tool_passes_subagent_permission_snapshot(tmp_path):
 
     result = await tool.execute(
         {
-            "name": "voidx",
             "mode": "review",
-            "task": "Review permission snapshot propagation",
-            "target": "src/voidx/tools/agent.py",
+            "goal": "Review permission snapshot propagation",
+            "detail": "Verify the permission snapshot remains stable while the child runs.",
+            "scope": "src/voidx/tools/agent.py",
         },
         ctx,
     )
 
     assert result.metadata.get("error") is not True
-    await tool.execute(
-        {"action": "wait", "target_run_id": result.metadata["run_id"], "timeout": 1},
+    await AgentControlTool().execute(
+        {"action": "wait", "run_id": result.metadata["run_id"], "wait": "brief"},
         ctx,
     )
     snapshot = captured["snapshot"]

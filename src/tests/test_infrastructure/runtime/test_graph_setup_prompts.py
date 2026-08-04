@@ -167,11 +167,7 @@ def test_agent_tool_description_owns_delegation_gate():
     assert "Delegate only independent parallel work" in prompt
     assert "simple searches" not in tool_description
     assert "straightforward tasks you can do directly" not in tool_description
-    assert {
-        "mode",
-        "task",
-        "target",
-    }.issubset(set(schema["required"]))
+    assert {"mode", "goal", "detail", "scope"}.issubset(set(schema["required"]))
     assert "goal_resolution" not in schema["required"]
     assert "result" not in schema["required"]
 
@@ -183,9 +179,9 @@ def test_orchestrator_prompt_matches_agent_workflow_schema():
 
     # Tool description is concise; parameter requirements are in the schema.
     assert "isolated child agent" in tool_description
-    assert {"mode", "task", "target"}.issubset(set(schema["required"]))
-    assert "success_criteria" in schema["properties"]
-    assert "result_preset" in schema["properties"]
+    assert {"mode", "goal", "detail", "scope"}.issubset(set(schema["required"]))
+    assert "success_criteria" not in schema["properties"]
+    assert "result_preset" not in schema["properties"]
     assert "persona" not in child_descriptions
     assert "requested runtime persona" not in child_descriptions
 

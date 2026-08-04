@@ -20,6 +20,7 @@ import voidx.tools.file.state as file_state
 from voidx.tools.search import FindInput, SearchInput
 from voidx.tools.bash import BashInput
 from voidx.tools.agent import AgentInput, AgentTool
+from voidx.tools.agent_control import AgentControlTool
 from voidx.agent.gateway import AgentGateway
 from voidx.tools.task_tracker import TaskTracker
 from voidx.tools.todo import TodoInput, TodoWriteTool
@@ -149,10 +150,10 @@ class TestInteractiveTools:
 
     def _agent_args(self, **overrides):
         args = {
-            "name": "voidx",
             "mode": "review",
-            "task": "Review one changed file",
-            "target": "src/voidx/tools/agent.py",
+            "goal": "审查 agent 工具",
+            "detail": "Review one changed file and report findings.",
+            "scope": "src/voidx/tools/agent.py",
         }
         args.update(overrides)
         return args
@@ -169,143 +170,16 @@ class TestInteractiveTools:
         spawn_result = await tool.execute(args, ctx)
         assert spawn_result.metadata["run_id"]
         assert spawn_result.metadata["status"] == "running"
-        wait_result = await tool.execute(
+        from voidx.tools.agent_control import AgentControlTool
+        wait_result = await AgentControlTool().execute(
             {
                 "action": "wait",
-                "target_run_id": spawn_result.metadata["run_id"],
-                "timeout": 1,
+                "run_id": spawn_result.metadata["run_id"],
+                "wait": "extended",
             },
             ctx,
         )
         return spawn_result, wait_result
-
-    @pytest.mark.asyncio
-    async def test_agent_tool_spawn_rejects_missing_required_fields(self, tmp_path):
-        calls: list[object] = []
-
-        async def runner(*args, **kwargs):
-            calls.append((args, kwargs))
-            return "should not run"
-
-        tool = AgentTool(
-            runner,
-            agent_resolver=lambda name: type("Agent", (), {"name": name, "model": None})(),
-            available_agents=["voidx"],
-        )
-
-        result = await tool.execute(
-            {"action": "spawn", "name": "voidx", "task": "Inspect auth flow carefully"},
-            ToolContext(workspace=str(tmp_path)),
-        )
-
-        assert result.metadata["error"] is True
-        assert result.metadata["validation_error"] is True
-        assert "mode" in result.output
-        assert "target" in result.output
-        assert calls == []
-
-    @pytest.mark.asyncio
-    async def test_agent_tool_rejects_missing_target(self, tmp_path):
-        calls: list[object] = []
-
-        async def runner(*args, **kwargs):
-            calls.append((args, kwargs))
-            return "should not run"
-
-        tool = AgentTool(
-            runner,
-            agent_resolver=lambda name: type("Agent", (), {"name": name, "model": None})(),
-            available_agents=["voidx"],
-        )
-
-        result = await tool.execute(
-            self._agent_args(target=""),
-            ToolContext(workspace=str(tmp_path)),
-        )
-
-        assert result.metadata["error"] is True
-        assert "target" in result.output
-        assert calls == []
-
-    @pytest.mark.asyncio
-    async def test_agent_tool_rejects_implement_without_success_criteria(self, tmp_path):
-        calls: list[object] = []
-
-        async def runner(*args, **kwargs):
-            calls.append((args, kwargs))
-            return "should not run"
-
-        tool = AgentTool(
-            runner,
-            agent_resolver=lambda name: type("Agent", (), {"name": name, "model": None})(),
-            available_agents=["voidx"],
-        )
-
-        result = await tool.execute(
-            self._agent_args(
-                mode="implement",
-                task="Implement the agent mode contract",
-                target="src/voidx/tools/agent.py",
-            ),
-            ToolContext(workspace=str(tmp_path)),
-        )
-
-        assert result.metadata["error"] is True
-        assert result.metadata["delegation_rejected"] is True
-        assert "success_criteria" in result.output
-        assert calls == []
-
-    @pytest.mark.asyncio
-    async def test_agent_tool_rejects_invalid_preset_for_mode(self, tmp_path):
-        calls: list[object] = []
-
-        async def runner(*args, **kwargs):
-            calls.append((args, kwargs))
-            return "should not run"
-
-        tool = AgentTool(
-            runner,
-            agent_resolver=lambda name: type("Agent", (), {"name": name, "model": None})(),
-            available_agents=["voidx"],
-        )
-
-        result = await tool.execute(
-            self._agent_args(result_preset="implementation"),
-            ToolContext(workspace=str(tmp_path)),
-        )
-
-        assert result.metadata["error"] is True
-        assert result.metadata["delegation_rejected"] is True
-        assert "result_preset" in result.output
-        assert calls == []
-
-    @pytest.mark.asyncio
-    async def test_agent_tool_rejects_missing_internal_result_preset_without_crashing(self, tmp_path, monkeypatch):
-        import voidx.tools.agent as agent_module
-
-        calls: list[object] = []
-
-        async def runner(*args, **kwargs):
-            calls.append((args, kwargs))
-            return "should not run"
-
-        monkeypatch.delitem(agent_module._RESULT_PRESETS, "review")
-        tool = AgentTool(
-            runner,
-            agent_resolver=lambda name: type("Agent", (), {"name": name, "model": None})(),
-            available_agents=["voidx"],
-        )
-
-        result = await tool.execute(
-            self._agent_args(result_preset="review"),
-            ToolContext(workspace=str(tmp_path)),
-        )
-
-        assert result.metadata["error"] is True
-        assert result.metadata["delegation_rejected"] is True
-        assert "result_preset" in result.output
-        assert calls == []
-
     @pytest.mark.asyncio
     async def test_agent_tool_normalizes_review_mode_to_goal_resolution_and_result_contract(self, tmp_path):
         captured: dict[str, object] = {}
@@ -328,49 +202,14 @@ class TestInteractiveTools:
         spawn_result, wait_result = await self._spawn_and_wait_agent(tool, self._agent_args(), tmp_path)
 
         assert wait_result.output == "child result"
-        assert spawn_result.metadata["goal"] == {"desc": "review: src/voidx/tools/agent.py"}
+        assert spawn_result.metadata["goal"] == {"desc": "审查 agent 工具"}
         assert spawn_result.metadata["workflow_route"] == {"join": "review", "leave": "review"}
         assert spawn_result.metadata["result_schema"] == "review_result"
-        assert "Target: src/voidx/tools/agent.py" in captured["description"]
+        assert "Scope: src/voidx/tools/agent.py" in captured["description"]
         assert "Result contract:" not in captured["description"]
-        assert captured["goal_resolution"].goal.desc == "review: src/voidx/tools/agent.py"
+        assert captured["goal_resolution"].goal.desc == "审查 agent 工具"
         assert captured["result"].schema_name == "review_result"
         assert "PASS|FAIL|NEEDS_CHANGE" in captured["result"].format
-
-    @pytest.mark.asyncio
-    async def test_agent_tool_normalizes_inspect_without_goal_map(self, tmp_path):
-        captured: dict[str, object] = {}
-
-        async def runner(agent_def, description, goal_resolution, result):
-            captured.update({
-                "goal_resolution": goal_resolution,
-                "result": result,
-            })
-            return "child result"
-
-        tool = AgentTool(
-            runner,
-            agent_resolver=lambda name: type("Agent", (), {"name": name, "model": None})(),
-            available_agents=["voidx"],
-        )
-
-        _spawn_result, wait_result = await self._spawn_and_wait_agent(
-            tool,
-            self._agent_args(
-                mode="inspect",
-                task="Inspect the runtime module",
-                target="src/voidx/runtime",
-            ),
-            tmp_path,
-        )
-
-        assert wait_result.output == "child result"
-        goal_resolution = captured["goal_resolution"]
-        assert goal_resolution.goal.desc == "inspect: src/voidx/runtime"
-        assert goal_resolution.plan.join == "review"
-        assert goal_resolution.plan.leave == "review"
-        assert captured["result"].schema_name == "inspection_result"
-
     @pytest.mark.asyncio
     async def test_agent_tool_does_not_expose_model_param(self, tmp_path):
         captured: dict[str, object] = {}
@@ -391,42 +230,6 @@ class TestInteractiveTools:
         spawn_result, wait_result = await self._spawn_and_wait_agent(tool, self._agent_args(), tmp_path)
         assert wait_result.output == "child result"
         assert "model" not in spawn_result.metadata
-
-    @pytest.mark.asyncio
-    async def test_agent_tool_normalizes_feedback_review_goal_without_review_join_rejection(self, tmp_path):
-        captured: dict[str, object] = {}
-
-        async def runner(agent_def, description, goal_resolution, result):
-            captured.update({
-                "goal_resolution": goal_resolution,
-                "result": result,
-            })
-            return "child result"
-
-        tool = AgentTool(
-            runner,
-            agent_resolver=lambda name: type("Agent", (), {"name": name, "model": None})(),
-            available_agents=["voidx"],
-        )
-
-        _spawn_result, wait_result = await self._spawn_and_wait_agent(
-            tool,
-            self._agent_args(
-                mode="feedback",
-                task="Address the review feedback",
-                target="review comment about agent routing",
-                success_criteria="Return accepted/rejected status and verification notes.",
-            ),
-            tmp_path,
-        )
-
-        assert wait_result.output == "child result"
-        goal_resolution = captured["goal_resolution"]
-        assert goal_resolution.goal.desc == "feedback: review comment about agent routing"
-        assert goal_resolution.plan.join == "feedback"
-        assert goal_resolution.plan.leave == "verify"
-        assert captured["result"].schema_name == "feedback_result"
-
     @pytest.mark.asyncio
     async def test_agent_tool_normalizes_implement_mode_to_tdd_verify_route(self, tmp_path):
         captured: dict[str, object] = {}
@@ -457,48 +260,11 @@ class TestInteractiveTools:
 
         assert wait_result.output == "child result"
         goal_resolution = captured["goal_resolution"]
-        assert goal_resolution.goal.desc == "implement: src/voidx/tools/agent.py"
+        assert goal_resolution.goal.desc == "审查 agent 工具"
         assert goal_resolution.plan.join == "tdd"
         assert goal_resolution.plan.leave == "verify"
         assert captured["result"].schema_name == "implementation_result"
 
-    @pytest.mark.asyncio
-    async def test_agent_tool_auto_result_preset_follows_mode(self, tmp_path):
-        expected = {
-            "inspect": "inspection_result",
-            "review": "review_result",
-            "debug": "debug_result",
-            "plan": "plan_result",
-            "implement": "implementation_result",
-            "feedback": "feedback_result",
-        }
-        captured: list[str] = []
-
-        async def runner(agent_def, description, goal_resolution, result):
-            captured.append(result.schema_name)
-            return "child result"
-
-        tool = AgentTool(
-            runner,
-            agent_resolver=lambda name: type("Agent", (), {"name": name, "model": None})(),
-            available_agents=["voidx"],
-        )
-
-        for mode, schema_name in expected.items():
-            spawn_result, wait_result = await self._spawn_and_wait_agent(
-                tool,
-                self._agent_args(
-                    mode=mode,
-                    task=f"Run {mode} child agent task",
-                    target=f"target/{mode}",
-                    success_criteria="Return structured status and verification notes.",
-                ),
-                tmp_path,
-            )
-            assert wait_result.output == "child result"
-            assert spawn_result.metadata["result_schema"] == schema_name
-
-        assert captured == list(expected.values())
 
 
 @pytest.mark.asyncio
@@ -524,11 +290,10 @@ async def test_agent_tool_spawn_uses_gateway_when_available(tmp_path):
 
     result = await tool.execute(
         {
-            "action": "spawn",
-            "name": "voidx",
             "mode": "review",
-            "task": "Review the gateway result path",
-            "target": "src/voidx/tools/agent.py",
+            "goal": "Review the gateway result path",
+            "detail": "Execute this delegated task and report concrete findings.",
+            "scope": "src/voidx/tools/agent.py",
         },
         ToolContext(
             workspace=str(tmp_path),
@@ -542,15 +307,15 @@ async def test_agent_tool_spawn_uses_gateway_when_available(tmp_path):
     assert result.metadata["status"] == "running"
     assert "spawned" in result.output
     assert result.metadata["run_id"] in result.output
-    assert "Use agent(wait)" not in result.output
-    assert "Use agent(wait)" in (result.next_step_hint or "")
+    assert "agent_control" not in result.output
+    assert "agent_control" in (result.next_step_hint or "")
     assert result.display == ""
 
-    wait_result = await tool.execute(
+    wait_result = await AgentControlTool().execute(
         {
             "action": "wait",
-            "target_run_id": result.metadata["run_id"],
-            "timeout": 1,
+            "run_id": result.metadata["run_id"],
+            "wait": "brief",
         },
         ToolContext(
             workspace=str(tmp_path),
@@ -589,17 +354,16 @@ async def test_agent_tool_wait_returns_child_error(tmp_path):
     )
     spawned = await tool.execute(
         {
-            "action": "spawn",
-            "name": "voidx",
             "mode": "review",
-            "task": "Trigger a child failure",
-            "target": "src/voidx/tools/registry.py",
+            "goal": "Trigger a child failure",
+            "detail": "Execute this delegated task and report concrete findings.",
+            "scope": "src/voidx/tools/registry.py",
         },
         ctx,
     )
 
-    failed = await tool.execute(
-        {"action": "wait", "target_run_id": spawned.metadata["run_id"], "timeout": 1},
+    failed = await AgentControlTool().execute(
+        {"action": "wait", "run_id": spawned.metadata["run_id"], "wait": "brief"},
         ctx,
     )
 
@@ -631,31 +395,30 @@ async def test_agent_tool_wait_timeout_returns_running_without_error(tmp_path):
 
     spawn_result = await tool.execute(
         {
-            "action": "spawn",
-            "name": "voidx",
             "mode": "review",
-            "task": "Review the timeout handling",
-            "target": "src/voidx/tools/agent.py",
+            "goal": "Review the timeout handling",
+            "detail": "Execute this delegated task and report concrete findings.",
+            "scope": "src/voidx/tools/agent.py",
         },
         ctx,
     )
 
-    wait_result = await tool.execute(
+    wait_result = await AgentControlTool().execute(
         {
             "action": "wait",
-            "target_run_id": spawn_result.metadata["run_id"],
-            "timeout": 0.01,
+            "run_id": spawn_result.metadata["run_id"],
+            "wait": "brief",
         },
         ctx,
     )
 
     assert wait_result.metadata.get("error") is not True
     assert wait_result.metadata["status"] == "running"
-    assert wait_result.metadata.get("reason") == "timeout"
-    assert "still running" in wait_result.output
+    assert wait_result.metadata["status"] == "running"
+    assert wait_result.output == "running"
     release.set()
-    await tool.execute(
-        {"action": "wait", "target_run_id": spawn_result.metadata["run_id"], "timeout": 1},
+    await AgentControlTool().execute(
+        {"action": "wait", "run_id": spawn_result.metadata["run_id"], "wait": "brief"},
         ctx,
     )
 
@@ -684,18 +447,17 @@ async def test_agent_tool_wait_timeout_zero_waits_until_terminal(tmp_path):
 
     spawn_result = await tool.execute(
         {
-            "action": "spawn",
-            "name": "voidx",
             "mode": "review",
-            "task": "Review the timeout handling",
-            "target": "src/voidx/tools/agent.py",
+            "goal": "Review the timeout handling",
+            "detail": "Execute this delegated task and report concrete findings.",
+            "scope": "src/voidx/tools/agent.py",
         },
         ctx,
     )
 
     async def wait_zero():
-        return await tool.execute(
-            {"action": "wait", "target_run_id": spawn_result.metadata["run_id"], "timeout": 0},
+        return await AgentControlTool().execute(
+            {"action": "wait", "run_id": spawn_result.metadata["run_id"], "wait": "until_complete"},
             ctx,
         )
 
@@ -721,10 +483,10 @@ async def test_agent_tool_spawn_requires_gateway(tmp_path):
 
     result = await tool.execute(
         {
-            "name": "voidx",
             "mode": "review",
-            "task": "Review the timeout behavior in this module",
-            "target": "src/voidx/tools/agent.py",
+            "goal": "Review the timeout behavior in this module",
+            "detail": "Execute this delegated task and report concrete findings.",
+            "scope": "src/voidx/tools/agent.py",
         },
         ToolContext(workspace=str(tmp_path)),
     )

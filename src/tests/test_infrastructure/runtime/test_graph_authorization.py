@@ -149,10 +149,10 @@ async def test_graph_authorization_auto_allows_readonly_agent(tmp_path):
         [{
             "name": "agent",
             "args": {
-                "name": "voidx",
-                "description": "Review current change",
-                "goal_resolution": _child_goal_resolution("review", desc="Review current change", join="review", leave="review").model_dump(mode="json"),
-                "result": _child_result_contract("review_result").model_dump(mode="json"),
+                "mode": "review",
+                "goal": "Review current change",
+                "detail": "Report concrete findings.",
+                "scope": "src",
             },
             "id": "call_1",
         }],
@@ -180,10 +180,10 @@ async def test_graph_authorization_prompts_for_implement_agent(tmp_path):
         [{
             "name": "agent",
             "args": {
-                "name": "voidx",
-                "description": "Implement feature",
-                "goal_resolution": _child_goal_resolution("feature", desc="Implement feature", join="tdd", leave="verify").model_dump(mode="json"),
-                "result": _child_result_contract().model_dump(mode="json"),
+                "mode": "implement",
+                "goal": "Implement feature",
+                "detail": "Implement and verify the feature.",
+                "scope": "src",
             },
             "id": "call_1",
         }],
@@ -194,7 +194,8 @@ async def test_graph_authorization_prompts_for_implement_agent(tmp_path):
 
     assert [tc["name"] for tc in approved] == ["agent"]
     assert denied == []
-    assert [[tc["args"]["goal_resolution"]["plan"]["join"] for tc in _asked_tool_calls(batch)] for batch in asked] == [["tdd"]]
+    assert asked
+    assert _asked_tool_calls(asked[0])[0]["args"]["mode"] == "implement"
 
 
 @pytest.mark.asyncio

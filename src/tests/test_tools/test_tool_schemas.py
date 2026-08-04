@@ -23,6 +23,7 @@ from voidx.tools.powershell import PowerShellTool
 from voidx.tools.git import GitTool
 from voidx.tools.lsp import LspTool, LspFormatTool
 from voidx.tools.agent import AgentInput, AgentTool
+from voidx.tools.agent_control import AgentControlInput, AgentControlTool
 from voidx.tools.task_tracker import TaskTracker
 from voidx.tools.todo import TodoInput, TodoWriteTool
 from voidx.tools.registry import ToolRegistry
@@ -239,46 +240,29 @@ class TestToolSchemas:
         assert "Load/list are read-only" in SkillsTool.description
         assert "Required for op=load and op=create" in skill_schema["properties"]["name"]["description"]
 
-    def test_agent_input_uses_child_agent_schema(self):
+    def test_agent_input_uses_spawn_schema(self):
         inp = AgentInput.model_validate({
-            "name": "voidx",
-            "mode": "inspect",
-            "task": "Inspect auth flow",
-            "target": "src/voidx/auth.py",
+            "mode": "review",
+            "goal": "Inspect auth flow",
+            "detail": "Report concrete findings.",
+            "scope": "src/voidx/auth.py",
         })
-        assert inp.name == "voidx"
-        assert inp.mode == "inspect"
-        assert inp.task == "Inspect auth flow"
-        assert inp.target == "src/voidx/auth.py"
-        assert inp.result_preset == "auto"
+        assert inp.mode == "review"
+        assert inp.goal == "Inspect auth flow"
+        assert inp.detail == "Report concrete findings."
+        assert inp.scope == "src/voidx/auth.py"
         schema = AgentInput.model_json_schema()
-        assert "name" in schema["properties"]
-        assert "agent" not in schema["properties"]
-        assert "sub-voidx" not in str(schema)
-        assert "name" not in schema.get("required", [])
-        assert "mode" not in schema.get("required", [])
-        assert "task" not in schema.get("required", [])
-        assert "target" not in schema.get("required", [])
-        wait_inp = AgentInput.model_validate({
-            "action": "wait",
-            "target_run_id": "run_123",
-            "timeout": 1,
+        assert set(schema["properties"]) == {"mode", "goal", "detail", "scope"}
+
+    def test_agent_control_uses_control_schema(self):
+        inp = AgentControlInput.model_validate({
+            "action": "wait", "run_id": "run_123", "wait": "brief"
         })
-        assert wait_inp.action == "wait"
-        assert wait_inp.name is None
-        assert wait_inp.mode is None
-        assert wait_inp.task is None
-        assert wait_inp.target is None
-        required = schema.get("required", [])
-        assert "description" not in required
-        assert "goal_resolution" not in required
-        assert "result" not in required
-        assert "persona" not in required
-        assert "max_steps" not in required
-        assert "delegation_reason" not in required
-        assert "expected_output" not in required
-        assert "parent_evidence" not in required
-        assert "subagent_type" not in schema["properties"]
+        assert inp.action == "wait"
+        assert inp.run_id == "run_123"
+        assert inp.wait == "brief"
+        schema = AgentControlTool().parameters_schema()
+        assert set(schema["properties"]) == {"action", "run_id", "wait"}
 
     def test_interaction_tool_descriptions_are_precise_for_llms(self):
         agent_schema = AgentTool(runner=None).parameters_schema()
@@ -286,10 +270,10 @@ class TestToolSchemas:
         clarify_schema = ClarifyTool().parameters_schema()
         checkpoint_schema = PlanCheckpointTool().parameters_schema()
 
-        assert "independent delegated task" in AgentTool(runner=None).description
-        assert "return its run_id immediately" in AgentTool(runner=None).description
-        assert "self-contained" in agent_schema["properties"]["task"]["description"]
-        assert "Use empty string if not needed" in agent_schema["properties"]["success_criteria"]["description"]
+        assert "independent task" in AgentTool(runner=None).description
+        assert "return its run_id" in AgentTool(runner=None).description
+        assert "outcome" in agent_schema["properties"]["goal"]["description"]
+        assert "acceptance criteria" in agent_schema["properties"]["detail"]["description"]
         assert "built-in document" in DocumentTool.description
         assert "does not read workspace files" in DocumentTool.description
         assert "list reads a directory README index" in document_schema["properties"]["action"]["description"]
@@ -299,16 +283,3 @@ class TestToolSchemas:
         assert "approval gate" in PlanCheckpointTool.description
         assert "no code changes" in PlanCheckpointTool.description
         assert "one small action" in checkpoint_schema["properties"]["steps"]["description"]
-
-    def test_agent_input_allows_control_actions_without_spawn_fields(self):
-        wait_inp = AgentInput.model_validate({"action": "wait", "target_run_id": "run_123", "timeout": 1})
-        cancel_inp = AgentInput.model_validate({"action": "cancel", "target_run_id": "run_123"})
-
-        assert wait_inp.name is None
-        assert wait_inp.mode is None
-        assert wait_inp.task is None
-        assert wait_inp.target is None
-        assert cancel_inp.name is None
-        assert cancel_inp.mode is None
-        assert cancel_inp.task is None
-        assert cancel_inp.target is None

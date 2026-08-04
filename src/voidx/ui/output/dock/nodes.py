@@ -357,7 +357,7 @@ def _tool_header(
     args: str,
     raw_args: dict[str, Any],
 ) -> str:
-    if tool_name == "agent":
+    if tool_name in {"agent", "agent_control"}:
         action = str(raw_args.get("action") or "spawn").strip().lower()
         if action in {"wait", "cancel"}:
             name = "Wait" if action == "wait" else "Cancel"

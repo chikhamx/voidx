@@ -399,11 +399,10 @@ async def test_subagent_full_output_reaches_orchestrator(tmp_path, monkeypatch):
                 tool_calls=[{
                     "name": "agent",
                     "args": {
-                        "name": "voidx",
-                        "mode": "inspect",
-                        "task": "Inspect the auth flow",
-                        "target": "src/voidx/auth.py",
-                        "result_preset": "inspection",
+                        "mode": "review",
+                        "goal": "审查 auth flow",
+                        "detail": "Inspect the auth flow and report concrete findings.",
+                        "scope": "src/voidx/auth.py",
                     },
                     "id": "call_agent",
                     "type": "tool_call",
@@ -426,11 +425,11 @@ async def test_subagent_full_output_reaches_orchestrator(tmp_path, monkeypatch):
         wait_parent = AIMessage(
             content="",
             tool_calls=[{
-                "name": "agent",
+                "name": "agent_control",
                 "args": {
                     "action": "wait",
-                    "target_run_id": child_run.run_id,
-                    "timeout": 1,
+                    "run_id": child_run.run_id,
+                    "wait": "brief",
                 },
                 "id": "call_wait_agent",
                 "type": "tool_call",
