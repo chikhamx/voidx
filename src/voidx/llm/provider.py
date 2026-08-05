@@ -94,6 +94,9 @@ def _reasoning_stream_chunk_timeout(reasoning_kwargs: dict) -> int | None:
     if _STREAM_CHUNK_TIMEOUT_ENV in os.environ or not reasoning_kwargs:
         return None
 
+    if reasoning_kwargs.get("reasoning_effort") == "none":
+        return None
+
     extra_body = reasoning_kwargs.get("extra_body")
     if isinstance(extra_body, dict):
         if extra_body.get("enable_thinking") is False:
@@ -122,6 +125,7 @@ _REASONING_EXTRA_BODY_KEYS = {
     "thinking",
     "reasoning",
     "reasoning_split",
+    "reasoning_effort",
 }
 
 

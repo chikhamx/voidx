@@ -59,10 +59,10 @@ def supports_openai_reasoning(model: str) -> bool:
 
 
 def openai_reasoning(config: ModelConfig) -> dict:
-    """Nested ``reasoning.effort`` format, gated to known reasoning models.
+    """Top-level ``reasoning_effort`` format for OpenAI reasoning models.
 
-    Used for first-party OpenAI and as the fallback for custom providers
-    on the openai protocol.
+    OpenAI-compatible providers with their own request shape use dedicated
+    provider hooks instead of this standard OpenAI implementation.
     """
     if not supports_openai_reasoning(config.model):
         return {}
@@ -73,7 +73,7 @@ def openai_reasoning(config: ModelConfig) -> dict:
     )
     if effort == ReasoningEffort.NONE.value and not config.model.lower().startswith("gpt-5"):
         effort = ReasoningEffort.LOW.value
-    return {"extra_body": {"reasoning": {"effort": effort}}}
+    return {"reasoning_effort": effort}
 
 
 class ReasoningPreservingChatOpenAI(ChatOpenAI):

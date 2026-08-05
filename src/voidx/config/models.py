@@ -36,7 +36,7 @@ class ModelConfig(BaseModel):
     max_tokens: int = Field(default=8192, ge=1, le=128000)
     reasoning_effort: ReasoningEffort = Field(
         default=ReasoningEffort.XHIGH,
-        description="Reasoning intensity: none, low, medium, high, xhigh, max, ultra",
+        description="Reasoning intensity: none, low, medium, high, xhigh, max",
     )
     context_window: int | None = Field(
         default=None,

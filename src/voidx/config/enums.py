@@ -51,4 +51,3 @@ class ReasoningEffort(StrEnum):
     HIGH = "high"
     XHIGH = "xhigh"
     MAX = "max"
-    ULTRA = "ultra"

@@ -19,7 +19,6 @@ ANTHROPIC_BUDGETS = {
     ReasoningEffort.HIGH: 8_192,
     ReasoningEffort.XHIGH: 8_192,
     ReasoningEffort.MAX: 8_192,
-    ReasoningEffort.ULTRA: 8_192,
 }
 
 GEMINI_THINKING_BUDGETS = {
@@ -28,7 +27,6 @@ GEMINI_THINKING_BUDGETS = {
     ReasoningEffort.HIGH: 16_384,
     ReasoningEffort.XHIGH: 32_768,
     ReasoningEffort.MAX: 65_536,
-    ReasoningEffort.ULTRA: 65_536,
 }
 
 # OpenAI-protocol generic cap used as the final fallback.
@@ -53,7 +51,6 @@ _GEMINI_BUDGET: tuple[ReasoningEffort, ...] = (
     ReasoningEffort.HIGH,
     ReasoningEffort.XHIGH,
     ReasoningEffort.MAX,
-    ReasoningEffort.ULTRA,
 )
 
 _LEVEL_TO_HIGH: tuple[ReasoningEffort, ...] = (
@@ -85,16 +82,6 @@ _CLAUDE_ADAPTIVE: tuple[ReasoningEffort, ...] = (
     ReasoningEffort.MAX,
 )
 
-_OPENAI_TO_ULTRA: tuple[ReasoningEffort, ...] = (
-    ReasoningEffort.NONE,
-    ReasoningEffort.LOW,
-    ReasoningEffort.MEDIUM,
-    ReasoningEffort.HIGH,
-    ReasoningEffort.XHIGH,
-    ReasoningEffort.MAX,
-    ReasoningEffort.ULTRA,
-)
-
 _OPENAI_TO_MAX: tuple[ReasoningEffort, ...] = (
     ReasoningEffort.NONE,
     ReasoningEffort.LOW,
@@ -109,8 +96,8 @@ _OPENAI_TO_MAX: tuple[ReasoningEffort, ...] = (
 # Keep prefixes specific enough to avoid cross-family false positives.
 # (provider_or_None, model_substring, supported)
 _MODEL_EFFORT_TABLE: tuple[tuple[str | None, str, tuple[ReasoningEffort, ...]], ...] = (
-    (None, "gpt-5.6-sol", _OPENAI_TO_ULTRA),
-    (None, "gpt-5.6-terra", _OPENAI_TO_ULTRA),
+    (None, "gpt-5.6-sol", _OPENAI_TO_MAX),
+    (None, "gpt-5.6-terra", _OPENAI_TO_MAX),
     (None, "gpt-5.6", _OPENAI_TO_MAX),
     (None, "gpt-5.5", _OPENAI_GENERIC),
     (None, "claude-opus-5", _CLAUDE_ADAPTIVE),

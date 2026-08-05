@@ -247,10 +247,6 @@ def test_deepseek_chat_reasoning_kwargs_maps_effort_per_provider():
     )
     assert custom_xhigh == {"reasoning_effort": "max", "extra_body": {"thinking": {"type": "enabled"}}}
 
-    custom_ultra = DeepSeekChatOpenAI.reasoning_kwargs(
-        ModelConfig(provider="my-custom-ds", model="some-model", reasoning_effort="ultra"),
-    )
-    assert custom_ultra == {"reasoning_effort": "max", "extra_body": {"thinking": {"type": "enabled"}}}
 
     custom_none = DeepSeekChatOpenAI.reasoning_kwargs(
         ModelConfig(provider="my-custom-ds", model="some-model", reasoning_effort="none"),
@@ -397,10 +393,6 @@ def test_kimi_k3_reasoning_effort_mapping():
     )
     assert k3_xhigh == {"reasoning_effort": "max", "extra_body": {"thinking": {"type": "enabled"}}}
 
-    k3_ultra = DeepSeekChatOpenAI.reasoning_kwargs(
-        ModelConfig(provider="kimi", model="k3", reasoning_effort="ultra"),
-    )
-    assert k3_ultra == {"reasoning_effort": "max", "extra_body": {"thinking": {"type": "enabled"}}}
 
     k3_high = DeepSeekChatOpenAI.reasoning_kwargs(
         ModelConfig(provider="kimi", model="k3", reasoning_effort="high"),

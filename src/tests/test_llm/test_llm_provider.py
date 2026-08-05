@@ -193,8 +193,10 @@ def test_create_resolver_model_uses_provider_minimum_reasoning():
     )
     openai = create_chat_model("test-key", openai_config)
     openai_resolver = create_resolver_model(openai, openai_config)
-    assert openai.extra_body == {"reasoning": {"effort": "high"}}
-    assert openai_resolver.extra_body == {"reasoning": {"effort": "low"}}
+    assert openai.reasoning_effort == "high"
+    assert openai.extra_body is None
+    assert openai_resolver.reasoning_effort == "low"
+    assert openai_resolver.extra_body is None
 
     qwen_config = ModelConfig(
         provider="qwen",
@@ -230,21 +232,15 @@ def test_create_resolver_model_uses_provider_minimum_reasoning():
     assert minimax_resolver.extra_body == {"thinking": {"type": "disabled"}}
 
 
-def test_openai_compatible_reasoning_uses_nested_format():
-    """OpenAI reasoning uses extra_body={reasoning: {effort: ...}} (nested format).
-
-    The flat reasoning_effort parameter is rejected by gpt-5.x on /v1/chat/completions.
-    All OpenAI-compatible reasoning models now use the nested format via extra_body.
-    """
-    # gpt-5.x: effort via extra_body
+def test_openai_reasoning_uses_top_level_format():
+    """First-party OpenAI reasoning models use top-level reasoning_effort."""
     gpt5 = create_chat_model(
         "test-key",
         ModelConfig(provider="openai", model="gpt-5.4-mini", reasoning_effort="medium"),
     )
-    assert gpt5.reasoning_effort is None
-    assert gpt5.extra_body == {"reasoning": {"effort": "medium"}}
+    assert gpt5.reasoning_effort == "medium"
+    assert gpt5.extra_body is None
 
-    # gpt-4o: no reasoning support, no params injected
     gpt4o = create_chat_model(
         "test-key",
         ModelConfig(provider="openai", model="gpt-4o", reasoning_effort="medium"),
@@ -252,36 +248,32 @@ def test_openai_compatible_reasoning_uses_nested_format():
     assert gpt4o.reasoning_effort is None
     assert gpt4o.extra_body is None
 
-    # gpt-5.x off → effort "none" via extra_body
     gpt5_off = create_chat_model(
         "test-key",
         ModelConfig(provider="openai", model="gpt-5.4-mini", reasoning_effort="none"),
     )
-    assert gpt5_off.extra_body == {"reasoning": {"effort": "none"}}
+    assert gpt5_off.reasoning_effort == "none"
+    assert gpt5_off.extra_body is None
 
-    # o3: off → "low" (cannot fully disable)
     o3_off = create_chat_model(
         "test-key",
         ModelConfig(provider="openai", model="o3", reasoning_effort="none"),
     )
-    assert o3_off.extra_body == {"reasoning": {"effort": "low"}}
+    assert o3_off.reasoning_effort == "low"
+    assert o3_off.extra_body is None
 
-    # o4-mini: high effort
     o4 = create_chat_model(
         "test-key",
         ModelConfig(provider="openai", model="o4-mini", reasoning_effort="high"),
     )
-    assert o4.extra_body == {"reasoning": {"effort": "high"}}
+    assert o4.reasoning_effort == "high"
 
-    # gpt-5.x xhigh
-    gpt5_xhigh = create_chat_model(
+    gpt5_clamped = create_chat_model(
         "test-key",
-        ModelConfig(provider="openai", model="gpt-5.4-mini", reasoning_effort="xhigh"),
+        ModelConfig(provider="openai", model="gpt-5.4-mini", reasoning_effort="max"),
     )
-    assert gpt5_xhigh.reasoning_effort is None
-    assert gpt5_xhigh.extra_body == {"reasoning": {"effort": "xhigh"}}
+    assert gpt5_clamped.reasoning_effort == "xhigh"
 
-    # openrouter: already uses extra_body nested format
     openrouter = create_chat_model(
         "test-key",
         ModelConfig(provider="openrouter", model="any/reasoning-model", reasoning_effort="none"),
@@ -347,14 +339,14 @@ def test_reasoning_stream_timeout_respects_environment_override(monkeypatch):
     assert qwen.stream_chunk_timeout == 30
 
 
-def test_custom_provider_reasoning_uses_nested_format():
-    """Custom providers with openai protocol get reasoning via extra_body for reasoning models."""
+def test_custom_provider_reasoning_uses_top_level_format():
+    """Custom providers using the OpenAI protocol share top-level reasoning_effort."""
     custom = create_chat_model(
         "test-key",
         ModelConfig(provider="my-relay", model="gpt-5.5", reasoning_effort="high", protocol="openai"),
     )
-    assert custom.reasoning_effort is None
-    assert custom.extra_body == {"reasoning": {"effort": "high"}}
+    assert custom.reasoning_effort == "high"
+    assert custom.extra_body is None
 
     # Custom provider with non-reasoning model: no params
     custom_plain = create_chat_model(
@@ -369,8 +361,8 @@ def test_custom_provider_reasoning_uses_nested_format():
         "test-key",
         ModelConfig(provider="my-relay", model="gpt-5.5-mini", reasoning_effort="none", protocol="openai"),
     )
-    assert custom_off.reasoning_effort is None
-    assert custom_off.extra_body == {"reasoning": {"effort": "none"}}
+    assert custom_off.reasoning_effort == "none"
+    assert custom_off.extra_body is None
 
 
 def test_custom_provider_strips_stainless_headers():

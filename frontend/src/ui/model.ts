@@ -88,8 +88,8 @@ export function initModelControls(): void {
   });
 }
 
-const REASONING_LEVELS = ["off", "low", "medium", "high", "xhigh"];
-const REASONING_LABELS = ["关闭", "低", "中", "高", "高级"];
+const REASONING_LEVELS = ["none", "low", "medium", "high", "xhigh", "max"];
+const REASONING_LABELS = ["关闭", "低", "中", "高", "极", "最大"];
 
 export function populateCustomModelDropdown(): void {
   const dropdownEl = document.querySelector<HTMLElement>("#model-dropdown");
@@ -480,22 +480,22 @@ export function populateReasoningDropdown(): void {
   const inputRange = document.createElement("input");
   inputRange.type = "range";
   inputRange.min = "0";
-  inputRange.max = "4";
+  inputRange.max = String(REASONING_LEVELS.length - 1);
   inputRange.step = "1";
   inputRange.className = "vx-reasoning-slider";
-  
+
   const initialVal = initialIndex !== -1 ? initialIndex : 4;
   inputRange.value = String(initialVal);
 
   const updateSliderProgress = (val: number) => {
-    const pct = (val / 4) * 100;
+    const pct = (val / (REASONING_LEVELS.length - 1)) * 100;
     inputRange.style.background = `linear-gradient(to right, #2f99ff 0%, #2f99ff ${pct}%, #e5e7eb ${pct}%, #e5e7eb 100%)`;
   };
   updateSliderProgress(initialVal);
 
   const dotsContainer = document.createElement("div");
   dotsContainer.className = "vx-reasoning-dots";
-  for (let i = 0; i <= 4; i++) {
+  for (let i = 0; i < REASONING_LEVELS.length; i++) {
     const dot = document.createElement("span");
     dot.className = `vx-reasoning-dot ${i <= initialVal ? "active" : ""}`;
     dotsContainer.append(dot);
