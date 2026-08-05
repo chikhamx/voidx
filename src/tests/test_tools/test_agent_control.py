@@ -21,3 +21,120 @@ def test_agent_control_cancel_ignores_wait_strategy():
     assert inp.action == "cancel"
     assert inp.run_id == "run_123"
     assert inp.wait == "extended"
+
+
+import asyncio
+
+import pytest
+
+from voidx.agent.gateway import AgentGateway
+from voidx.tools.base import ToolContext
+
+
+@pytest.mark.asyncio
+async def test_agent_control_wait_exposes_timeout_while_child_is_still_running():
+    gateway = AgentGateway()
+    root_id = gateway.ensure_root("session-control-timeout")
+    started = asyncio.Event()
+
+    async def runner(_run_id: str) -> str:
+        started.set()
+        await asyncio.sleep(10)
+        return "late"
+
+    run = await gateway.spawn(
+        session_id="session-control-timeout",
+        parent_run_id=root_id,
+        agent_name="voidx",
+        description="slow child",
+        runner=runner,
+    )
+    await started.wait()
+
+    result = await AgentControlTool().execute(
+        {"action": "wait", "run_id": run.run_id, "wait": "brief"},
+        ToolContext(
+            workspace=".",
+            session_id="session-control-timeout",
+            agent_gateway=gateway,
+            agent_run_id=root_id,
+        ),
+    )
+
+    assert "Agent run status: running" in result.output
+    assert "Wait outcome: timed_out_still_running" in result.output
+    assert "Terminal: false" in result.output
+    assert "Do not call wait repeatedly in a tight loop" in result.output
+    assert result.next_step_hint == f"Run {run.run_id} is still active; do not poll in a tight loop."
+    await gateway.cancel(requester_run_id=root_id, target_run_id=run.run_id)
+
+
+@pytest.mark.asyncio
+async def test_agent_control_wait_stops_polling_after_terminal_result():
+    gateway = AgentGateway()
+    root_id = gateway.ensure_root("session-control-terminal")
+
+    async def runner(_run_id: str) -> str:
+        return "verdict: PASS\nfindings: none"
+
+    run = await gateway.spawn(
+        session_id="session-control-terminal",
+        parent_run_id=root_id,
+        agent_name="voidx",
+        description="fast child",
+        runner=runner,
+    )
+    context = ToolContext(
+        workspace=".",
+        session_id="session-control-terminal",
+        agent_gateway=gateway,
+        agent_run_id=root_id,
+    )
+
+    first = await AgentControlTool().execute(
+        {"action": "wait", "run_id": run.run_id, "wait": "brief"},
+        context,
+    )
+    second = await AgentControlTool().execute(
+        {"action": "wait", "run_id": run.run_id, "wait": "brief"},
+        context,
+    )
+
+    assert "Wait outcome: terminal_reached_during_wait" in first.output
+    assert "Do not call agent_control(wait) again" in first.output
+    assert "Wait outcome: already_terminal" in second.output
+    assert "This wait returned the cached terminal result" in second.output
+    assert "Do not call agent_control(wait) again" in second.output
+
+
+@pytest.mark.asyncio
+async def test_agent_control_wait_marks_contract_unsatisfied_as_terminal_incomplete_result():
+    gateway = AgentGateway()
+    root_id = gateway.ensure_root("session-control-contract")
+
+    async def runner(_run_id: str) -> dict:
+        return {
+            "result": "findings: tests passed, but verdict is missing",
+            "finish_reason": "contract_unsatisfied",
+        }
+
+    run = await gateway.spawn(
+        session_id="session-control-contract",
+        parent_run_id=root_id,
+        agent_name="voidx",
+        description="incomplete review",
+        runner=runner,
+    )
+    result = await AgentControlTool().execute(
+        {"action": "wait", "run_id": run.run_id, "wait": "brief"},
+        ToolContext(
+            workspace=".",
+            session_id="session-control-contract",
+            agent_gateway=gateway,
+            agent_run_id=root_id,
+        ),
+    )
+
+    assert "Result quality: incomplete_contract" in result.output
+    assert "The child run is terminal and cannot produce a new result by waiting" in result.output
+    assert "Do not call agent_control(wait) again" in result.output

@@ -6,6 +6,11 @@ from pydantic import BaseModel
 
 
 AgentRunStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
+AgentWaitOutcome = Literal[
+    "already_terminal",
+    "terminal_reached_during_wait",
+    "timed_out_still_running",
+]
 UserMessageType = Literal["message", "question", "answer", "progress", "result"]
 LifecycleMessageType = Literal["completed", "failed", "cancelled"]
 AgentMessageType = Literal[
@@ -44,3 +49,4 @@ class AgentRun(BaseModel):
     error: str | None = None
     created_at: float
     updated_at: float
+    wait_outcome: AgentWaitOutcome | None = None

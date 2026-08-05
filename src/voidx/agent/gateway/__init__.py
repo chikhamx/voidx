@@ -1,5 +1,11 @@
 from voidx.agent.gateway.gateway import AgentGateway, AgentGatewayError
-from voidx.agent.gateway.models import AgentMessage, AgentMessageType, AgentRun, AgentRunStatus
+from voidx.agent.gateway.models import (
+    AgentMessage,
+    AgentMessageType,
+    AgentRun,
+    AgentRunStatus,
+    AgentWaitOutcome,
+)
 
 __all__ = [
     "AgentGateway",
@@ -8,4 +14,5 @@ __all__ = [
     "AgentMessageType",
     "AgentRun",
     "AgentRunStatus",
+    "AgentWaitOutcome",
 ]

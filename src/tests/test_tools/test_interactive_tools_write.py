@@ -200,7 +200,9 @@ class TestInteractiveTools:
 
         spawn_result, wait_result = await self._spawn_and_wait_agent(tool, self._agent_args(), tmp_path)
 
-        assert wait_result.output == "child result"
+        assert "Agent run status: completed" in wait_result.output
+        assert "Wait outcome: terminal_reached_during_wait" in wait_result.output
+        assert "Final result:\nchild result" in wait_result.output
         assert spawn_result.metadata["goal"] == {"desc": "Review one changed file"}
         assert spawn_result.metadata["workflow_route"] == {"join": "review", "leave": "review"}
         assert spawn_result.metadata["result_schema"] == "review_result"
@@ -237,7 +239,9 @@ class TestInteractiveTools:
             tmp_path,
         )
 
-        assert wait_result.output == "child result"
+        assert "Agent run status: completed" in wait_result.output
+        assert "Wait outcome: terminal_reached_during_wait" in wait_result.output
+        assert "Final result:\nchild result" in wait_result.output
         goal_resolution = captured["goal_resolution"]
         assert goal_resolution.goal.desc == "Review one changed file"
         assert goal_resolution.plan.join == "tdd"

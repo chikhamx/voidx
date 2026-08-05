@@ -520,3 +520,67 @@ async def test_send_rejects_lifecycle_message_types():
     assert gateway.get_run(requester_run_id=root_id, target_run_id=child.run_id).status == "running"
     release.set()
     await gateway.wait(requester_run_id=root_id, target_run_id=child.run_id, timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_wait_marks_timeout_while_run_is_still_active():
+    gateway = AgentGateway()
+    root_id = gateway.ensure_root("session-wait-outcome")
+    started = asyncio.Event()
+
+    async def runner(_run_id: str) -> str:
+        started.set()
+        await asyncio.sleep(10)
+        return "late"
+
+    run = await gateway.spawn(
+        session_id="session-wait-outcome",
+        parent_run_id=root_id,
+        agent_name="slow",
+        description="slow",
+        runner=runner,
+    )
+    await started.wait()
+
+    timed_out = await gateway.wait(
+        requester_run_id=root_id,
+        target_run_id=run.run_id,
+        timeout=0.01,
+    )
+
+    assert timed_out.status == "running"
+    assert timed_out.wait_outcome == "timed_out_still_running"
+    await gateway.cancel(requester_run_id=root_id, target_run_id=run.run_id)
+
+
+@pytest.mark.asyncio
+async def test_wait_distinguishes_terminal_transition_from_cached_terminal_result():
+    gateway = AgentGateway()
+    root_id = gateway.ensure_root("session-wait-terminal")
+
+    async def runner(_run_id: str) -> str:
+        return "done"
+
+    run = await gateway.spawn(
+        session_id="session-wait-terminal",
+        parent_run_id=root_id,
+        agent_name="fast",
+        description="fast",
+        runner=runner,
+    )
+    first = await gateway.wait(
+        requester_run_id=root_id,
+        target_run_id=run.run_id,
+        timeout=1,
+    )
+    second = await gateway.wait(
+        requester_run_id=root_id,
+        target_run_id=run.run_id,
+        timeout=1,
+    )
+
+    assert first.status == "completed"
+    assert first.wait_outcome == "terminal_reached_during_wait"
+    assert second.status == "completed"
+    assert second.wait_outcome == "already_terminal"
+    assert second.result == first.result

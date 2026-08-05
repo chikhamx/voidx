@@ -317,7 +317,7 @@ async def run_subagent(
 
     # Register with tracker
 
-    async def report_result(text: str) -> None:
+    async def report_result(text: str, *, finish_reason: str | None = None) -> None:
         if agent_gateway is None or not run_identity:
             return
         current = _gateway_run_by_id(agent_gateway, run_identity)
@@ -328,11 +328,14 @@ async def run_subagent(
         parent_run_id = current.parent_run_id
         if not parent_run_id:
             return
+        payload: dict[str, object] = {"result": text}
+        if finish_reason and finish_reason != "final_answer":
+            payload["finish_reason"] = finish_reason
         await agent_gateway.send(
             sender_run_id=run_identity,
             target_run_id=parent_run_id,
             message_type="result",
-            payload={"result": text},
+            payload=payload,
         )
     task_id = f"sub_{agent_def.name}_{persona}_{int(time.time())}"
     if tracker:
@@ -469,7 +472,7 @@ async def run_subagent(
                     if tracker:
                         tracker.update(task_id, last_output=text[:200])
                         tracker.finish(task_id, "completed")
-                    await report_result(text)
+                    await report_result(text, finish_reason="contract_unsatisfied")
                     mark_finished("contract_unsatisfied")
                     return text
                 if tracker:
@@ -501,7 +504,7 @@ async def run_subagent(
                     if tracker:
                         tracker.update(task_id, last_output=final_text[:200])
                         tracker.finish(task_id, "completed")
-                    await report_result(final_text)
+                    await report_result(final_text, finish_reason="guard_terminated")
                     mark_finished("guard_terminated")
                     return final_text
                 continue
@@ -670,7 +673,7 @@ async def run_subagent(
                 if tracker:
                     tracker.update(task_id, last_output=final_text[:200])
                     tracker.finish(task_id, "completed")
-                await report_result(final_text)
+                await report_result(final_text, finish_reason="guard_terminated")
                 mark_finished("guard_terminated")
                 return final_text
             wall_clock_decision = guard_state.wall_clock.record_check(
@@ -682,7 +685,7 @@ async def run_subagent(
                 if tracker:
                     tracker.update(task_id, last_output=final_text[:200])
                     tracker.finish(task_id, "completed")
-                await report_result(final_text)
+                await report_result(final_text, finish_reason="guard_terminated")
                 mark_finished("guard_terminated")
                 return final_text
 

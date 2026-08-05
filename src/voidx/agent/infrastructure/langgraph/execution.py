@@ -749,7 +749,9 @@ class LangGraphExecution:
         permission_snapshot=None,
         agent_run_id: str | None = None,
         agent_gateway=None,
+        run_metadata: dict[str, object] | None = None,
     ) -> str:
+        run_metadata = run_metadata if run_metadata is not None else {}
         sub_buffer: list[BaseMessage] = []
         session_id = self._session.id if self._session else "default"
         agent_id = self._next_agent_id
@@ -824,7 +826,6 @@ class LangGraphExecution:
             })
 
         ok = False
-        run_metadata: dict[str, object] = {}
         result = ""
         error = ""
         try:

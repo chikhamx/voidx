@@ -172,14 +172,18 @@ class AgentGateway:
         requester = self._require_run(requester_run_id)
         target = self._require_run(target_run_id)
         self._validate_route(requester, target, operation="control")
+        if target.run.status in _TERMINAL_STATUSES:
+            return self._copy_run(target.run, wait_outcome="already_terminal")
         if timeout == 0:
             await target.done.wait()
-        else:
-            try:
-                await asyncio.wait_for(target.done.wait(), timeout=timeout)
-            except TimeoutError:
-                return self._copy_run(target.run)
-        return self._copy_run(target.run)
+            return self._copy_run(target.run, wait_outcome="terminal_reached_during_wait")
+        try:
+            await asyncio.wait_for(target.done.wait(), timeout=timeout)
+        except TimeoutError:
+            if target.run.status in _TERMINAL_STATUSES:
+                return self._copy_run(target.run, wait_outcome="terminal_reached_during_wait")
+            return self._copy_run(target.run, wait_outcome="timed_out_still_running")
+        return self._copy_run(target.run, wait_outcome="terminal_reached_during_wait")
 
     def get_run(self, *, requester_run_id: str, target_run_id: str) -> AgentRun:
         requester = self._require_run(requester_run_id)
@@ -339,9 +343,9 @@ class AgentGateway:
         return {"result": value}
 
     @staticmethod
-    def _new_run_id() -> str:
-        return f"run_{uuid.uuid4().hex}"
+    def _copy_run(run: AgentRun, *, wait_outcome=None) -> AgentRun:
+        return run.model_copy(deep=True, update={"wait_outcome": wait_outcome})
 
     @staticmethod
-    def _copy_run(run: AgentRun) -> AgentRun:
-        return run.model_copy(deep=True)
+    def _new_run_id() -> str:
+        return f"run_{uuid.uuid4().hex}"

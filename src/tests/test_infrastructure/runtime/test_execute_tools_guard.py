@@ -456,7 +456,14 @@ async def test_subagent_full_output_reaches_orchestrator(tmp_path, monkeypatch):
         assert "child final line 7" not in rendered
         wait_tool_messages = [message for message in wait_result["messages"] if isinstance(message, ToolMessage)]
         assert wait_tool_messages[0].tool_call_id == "call_wait_agent"
-        assert wait_tool_messages[0].content == child_output
+        wait_content = str(wait_tool_messages[0].content)
+        assert "Agent run status: completed" in wait_content
+        assert any(
+            f"Wait outcome: {outcome}" in wait_content
+            for outcome in ("terminal_reached_during_wait", "already_terminal")
+        )
+        assert "Final result:" in wait_content
+        assert child_output in wait_content
         assert not any(isinstance(message, AIMessage) and message.content == child_output for message in wait_result["messages"])
     finally:
         await ui_events.stop()

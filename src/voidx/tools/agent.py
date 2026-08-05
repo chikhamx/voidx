@@ -187,8 +187,9 @@ class AgentTool(BaseTool):
                     metadata={"agent": agent_def_name, "error": True, "reason": "gateway_unavailable"},
                 )
 
-            async def gateway_runner(agent_run_id: str) -> str:
-                return await self._run_child_agent(
+            async def gateway_runner(agent_run_id: str) -> str | dict[str, Any]:
+                run_metadata: dict[str, object] = {}
+                result = await self._run_child_agent(
                     agent_def,
                     normalized.description,
                     normalized.goal_resolution,
@@ -197,8 +198,13 @@ class AgentTool(BaseTool):
                         self._run_child_agent,
                         ctx,
                         agent_run_id=agent_run_id,
+                        run_metadata=run_metadata,
                     ),
                 )
+                finish_reason = str(run_metadata.get("finish_reason") or "")
+                if finish_reason and finish_reason not in {"final_answer", "message_result"}:
+                    return {"result": result, "finish_reason": finish_reason}
+                return result
 
             run = await ctx.agent_gateway.spawn(
                 session_id=ctx.session_id,
@@ -255,7 +261,13 @@ def _result_output(result: dict[str, Any] | None) -> str:
     return json.dumps(result, ensure_ascii=False, default=str)
 
 
-def _runner_kwargs(runner, ctx: ToolContext, *, agent_run_id: str | None = None) -> dict[str, object]:
+def _runner_kwargs(
+    runner,
+    ctx: ToolContext,
+    *,
+    agent_run_id: str | None = None,
+    run_metadata: dict[str, object] | None = None,
+) -> dict[str, object]:
     kwargs = _runner_permission_kwargs(runner, ctx)
     try:
         params = inspect.signature(runner).parameters
@@ -265,6 +277,8 @@ def _runner_kwargs(runner, ctx: ToolContext, *, agent_run_id: str | None = None)
         kwargs["agent_run_id"] = agent_run_id
     if ctx.agent_gateway is not None and "agent_gateway" in params:
         kwargs["agent_gateway"] = ctx.agent_gateway
+    if run_metadata is not None and "run_metadata" in params:
+        kwargs["run_metadata"] = run_metadata
     return kwargs
 
 def _runner_permission_kwargs(runner, ctx: ToolContext) -> dict[str, object]:

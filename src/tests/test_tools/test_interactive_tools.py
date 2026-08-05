@@ -201,7 +201,9 @@ class TestInteractiveTools:
 
         spawn_result, wait_result = await self._spawn_and_wait_agent(tool, self._agent_args(), tmp_path)
 
-        assert wait_result.output == "child result"
+        assert "Agent run status: completed" in wait_result.output
+        assert "Wait outcome: terminal_reached_during_wait" in wait_result.output
+        assert "Final result:\nchild result" in wait_result.output
         assert spawn_result.metadata["goal"] == {"desc": "审查 agent 工具"}
         assert spawn_result.metadata["workflow_route"] == {"join": "review", "leave": "review"}
         assert spawn_result.metadata["result_schema"] == "review_result"
@@ -228,7 +230,9 @@ class TestInteractiveTools:
         assert "model" not in schema.get("properties", {})
 
         spawn_result, wait_result = await self._spawn_and_wait_agent(tool, self._agent_args(), tmp_path)
-        assert wait_result.output == "child result"
+        assert "Agent run status: completed" in wait_result.output
+        assert "Wait outcome: terminal_reached_during_wait" in wait_result.output
+        assert "Final result:\nchild result" in wait_result.output
         assert "model" not in spawn_result.metadata
     @pytest.mark.asyncio
     async def test_agent_tool_normalizes_implement_mode_to_tdd_verify_route(self, tmp_path):
@@ -258,7 +262,9 @@ class TestInteractiveTools:
             tmp_path,
         )
 
-        assert wait_result.output == "child result"
+        assert "Agent run status: completed" in wait_result.output
+        assert "Wait outcome: terminal_reached_during_wait" in wait_result.output
+        assert "Final result:\nchild result" in wait_result.output
         goal_resolution = captured["goal_resolution"]
         assert goal_resolution.goal.desc == "审查 agent 工具"
         assert goal_resolution.plan.join == "tdd"
@@ -325,7 +331,9 @@ async def test_agent_tool_spawn_uses_gateway_when_available(tmp_path):
         ),
     )
 
-    assert wait_result.output == "gateway child result"
+    assert "Agent run status: completed" in wait_result.output
+    assert "Final result:\ngateway child result" in wait_result.output
+    assert wait_result.metadata["wait_outcome"] == "terminal_reached_during_wait"
     assert captured["agent_run_id"] == result.metadata["run_id"]
     assert gateway.get_run(
         requester_run_id=root_id,
@@ -367,7 +375,9 @@ async def test_agent_tool_wait_returns_child_error(tmp_path):
         ctx,
     )
 
-    assert failed.output == "provider schema rejected tool definitions"
+    assert "Agent run status: failed" in failed.output
+    assert "Final result:\nprovider schema rejected tool definitions" in failed.output
+    assert "Wait outcome: terminal_reached_during_wait" in failed.output
     assert failed.metadata["status"] == "failed"
     assert failed.metadata["run"]["error"] == "provider schema rejected tool definitions"
 
@@ -415,7 +425,9 @@ async def test_agent_tool_wait_timeout_returns_running_without_error(tmp_path):
     assert wait_result.metadata.get("error") is not True
     assert wait_result.metadata["status"] == "running"
     assert wait_result.metadata["status"] == "running"
-    assert wait_result.output == "running"
+    assert "Agent run status: running" in wait_result.output
+    assert "Wait outcome: timed_out_still_running" in wait_result.output
+    assert "Terminal: false" in wait_result.output
     release.set()
     await AgentControlTool().execute(
         {"action": "wait", "run_id": spawn_result.metadata["run_id"], "wait": "brief"},
@@ -466,7 +478,9 @@ async def test_agent_tool_wait_timeout_zero_waits_until_terminal(tmp_path):
     assert not wait_task.done()
     release.set()
     wait_result = await asyncio.wait_for(wait_task, timeout=1)
-    assert wait_result.output == "late result"
+    assert "Agent run status: completed" in wait_result.output
+    assert "Final result:\nlate result" in wait_result.output
+    assert wait_result.metadata["wait_outcome"] == "terminal_reached_during_wait"
     assert wait_result.metadata["status"] == "completed"
 
 
