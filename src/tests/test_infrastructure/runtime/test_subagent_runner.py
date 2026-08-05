@@ -460,3 +460,508 @@ async def test_graph_authorization_prompts_for_unsafe_bash(tmp_path):
     assert [tc["name"] for tc in approved] == ["bash"]
     assert denied == []
     assert [[tc["name"] for tc in _asked_tool_calls(batch)] for batch in asked] == [["bash"]]
+
+
+
+
+@pytest.mark.asyncio
+async def test_subagent_tool_result_injects_next_step_hint_into_followup_messages(tmp_path, monkeypatch):
+    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+
+    observed: list[list] = []
+    calls = 0
+
+    class HintTool:
+        id = "hint_tool"
+        description = "Returns a next step hint."
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, _args, _ctx):
+            return ToolResult(
+                output="tool output",
+                next_step_hint="Run the focused verification now.",
+            )
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+        nonlocal calls
+        calls += 1
+        observed.append(list(messages))
+        if calls == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[{"name": "hint_tool", "args": {}, "id": "call-hint"}],
+            )
+        return AIMessage(
+            content=(
+                "status: complete\nfiles_changed: none\n"
+                "tests_run: focused\nrisks: none\nfollowups: none"
+            )
+        )
+
+    model = SimpleNamespace()
+    model.bind_tools = lambda _tool_defs: model
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: model)
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    parent_tools = ToolRegistry()
+    tool = HintTool()
+    parent_tools.register(tool.id, tool, tool.description, tool.parameters_schema())
+
+    from voidx.agent.infrastructure.langgraph.runtime.subagent import run_subagent
+
+    result = await run_subagent(
+        get_agent("voidx"),
+        "Use the hint tool",
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        runtime_persona="implement",
+        goal_resolution=_child_goal_resolution(),
+        result_contract=_child_result_contract(),
+        debug=False,
+        parent_tools=parent_tools,
+        ui_port=SimpleNamespace(
+            ui=SimpleNamespace(step_header=lambda *_args: None, print=lambda *_args: None),
+            console=object(),
+            via_events=lambda: False,
+        ),
+    )
+
+    assert "status: complete" in result
+    followup_tools = [message for message in observed[1] if isinstance(message, ToolMessage)]
+    assert len(followup_tools) == 1
+    assert "Next step hint: Run the focused verification now." in followup_tools[0].content
+
+
+@pytest.mark.asyncio
+async def test_subagent_state_patch_is_applied_to_next_turn_context(tmp_path, monkeypatch):
+    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+
+    observed: list[list] = []
+    calls = 0
+
+    class WorkflowTool:
+        id = "workflow"
+        description = "Updates workflow state."
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, _args, _ctx):
+            from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
+
+            return ToolResult(
+                output="workflow advanced",
+                next_step_hint="Verify the implementation.",
+                metadata={
+                    "state_patch": ToolStatePatch(
+                        workflow_runs=[
+                            WorkflowRunState(
+                                name="verify",
+                                status=WorkflowRunStatus.ACTIVE,
+                                goal="Verify the implementation",
+                            )
+                        ]
+                    ).model_dump(mode="json", exclude_unset=True)
+                },
+            )
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+        nonlocal calls
+        calls += 1
+        observed.append(list(messages))
+        if calls == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[{"name": "workflow", "args": {}, "id": "call-workflow"}],
+            )
+        return AIMessage(
+            content=(
+                "status: complete\nfiles_changed: none\n"
+                "tests_run: focused\nrisks: none\nfollowups: none"
+            )
+        )
+
+    model = SimpleNamespace()
+    model.bind_tools = lambda _tool_defs: model
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: model)
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    parent_tools = ToolRegistry()
+    tool = WorkflowTool()
+    parent_tools.register(tool.id, tool, tool.description, tool.parameters_schema())
+
+    from voidx.agent.infrastructure.langgraph.runtime.subagent import run_subagent
+
+    await run_subagent(
+        get_agent("voidx"),
+        "Advance the child workflow",
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        runtime_persona="implement",
+        goal_resolution=_child_goal_resolution(),
+        result_contract=_child_result_contract(),
+        debug=False,
+        parent_tools=parent_tools,
+        ui_port=SimpleNamespace(
+            ui=SimpleNamespace(step_header=lambda *_args: None, print=lambda *_args: None),
+            console=object(),
+            via_events=lambda: False,
+        ),
+    )
+
+    assert any(
+        "Active workflows: verify" in str(message.content)
+        for message in observed[1]
+    )
+    assert any(
+        "Next step hint: Verify the implementation." in str(message.content)
+        for message in observed[1]
+        if isinstance(message, ToolMessage)
+    )
+
+
+@pytest.mark.asyncio
+async def test_subagent_refreshes_workflow_runtime_after_route_patch(tmp_path, monkeypatch):
+    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+
+    observed: list[list] = []
+    calls = 0
+
+    class RouteTool:
+        id = "route_tool"
+        description = "Changes the child workflow route."
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, _args, _ctx):
+            return ToolResult(
+                output="route changed",
+                metadata={
+                    "state_patch": ToolStatePatch(
+                        plan=PlanResolution(join="review", leave="review"),
+                    ).model_dump(mode="json", exclude_unset=True)
+                },
+            )
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+        nonlocal calls
+        calls += 1
+        observed.append(list(messages))
+        if calls == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[{"name": "route_tool", "args": {}, "id": "call-route"}],
+            )
+        return AIMessage(
+            content=(
+                "status: complete\nfiles_changed: none\n"
+                "tests_run: focused\nrisks: none\nfollowups: none"
+            )
+        )
+
+    model = SimpleNamespace()
+    model.bind_tools = lambda _tool_defs: model
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: model)
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    parent_tools = ToolRegistry()
+    tool = RouteTool()
+    parent_tools.register(tool.id, tool, tool.description, tool.parameters_schema())
+
+    from voidx.agent.infrastructure.langgraph.runtime.subagent import run_subagent
+
+    await run_subagent(
+        get_agent("voidx"),
+        "Change the child workflow route",
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        runtime_persona="implement",
+        goal_resolution=_child_goal_resolution(),
+        result_contract=_child_result_contract(),
+        debug=False,
+        parent_tools=parent_tools,
+        ui_port=SimpleNamespace(
+            ui=SimpleNamespace(step_header=lambda *_args: None, print=lambda *_args: None),
+            console=object(),
+            via_events=lambda: False,
+        ),
+    )
+
+    second_system = next(message for message in observed[1] if isinstance(message, SystemMessage))
+    assert "Active route joins at review and leaves at review." in second_system.content
+    assert "Active route joins at tdd and leaves at verify." not in second_system.content
+
+
+@pytest.mark.asyncio
+async def test_subagent_removes_completed_workflow_from_active_summaries(tmp_path, monkeypatch):
+    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+
+    observed: list[list] = []
+    calls = 0
+
+    class CompleteWorkflowTool:
+        id = "complete_workflow"
+        description = "Completes the current workflow."
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, _args, _ctx):
+            from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
+
+            return ToolResult(
+                output="workflow completed",
+                metadata={
+                    "state_patch": ToolStatePatch(
+                        workflow_runs=[
+                            WorkflowRunState(
+                                name="tdd",
+                                status=WorkflowRunStatus.SATISFIED,
+                                goal="Implement the feature",
+                            )
+                        ]
+                    ).model_dump(mode="json", exclude_unset=True)
+                },
+            )
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+        nonlocal calls
+        calls += 1
+        observed.append(list(messages))
+        if calls == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "complete_workflow", "args": {}, "id": "call-complete"}
+                ],
+            )
+        return AIMessage(
+            content=(
+                "status: complete\nfiles_changed: none\n"
+                "tests_run: focused\nrisks: none\nfollowups: none"
+            )
+        )
+
+    model = SimpleNamespace()
+    model.bind_tools = lambda _tool_defs: model
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: model)
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    parent_tools = ToolRegistry()
+    tool = CompleteWorkflowTool()
+    parent_tools.register(tool.id, tool, tool.description, tool.parameters_schema())
+    initial_run = WorkflowRunState(
+        name="tdd",
+        status=WorkflowRunStatus.ACTIVE,
+        goal="Implement the feature",
+    )
+
+    from voidx.agent.infrastructure.langgraph.runtime.subagent import run_subagent
+
+    await run_subagent(
+        get_agent("voidx"),
+        "Complete the child workflow",
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        runtime_persona="implement",
+        goal_resolution=_child_goal_resolution(),
+        result_contract=_child_result_contract(),
+        debug=False,
+        parent_tools=parent_tools,
+        workflow_runtime_context=WorkflowRuntimeContext(
+            instructions=[],
+            active=["tdd (implement persona)"],
+            runs=[initial_run],
+        ),
+        ui_port=SimpleNamespace(
+            ui=SimpleNamespace(step_header=lambda *_args: None, print=lambda *_args: None),
+            console=object(),
+            via_events=lambda: False,
+        ),
+    )
+
+    second_messages = observed[1]
+    assert not any(
+        "Active workflow nodes: tdd (implement persona)" in str(message.content)
+        for message in second_messages
+    )
+    assert not any(
+        "Active workflows: tdd" in str(message.content)
+        for message in second_messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_subagent_route_patch_counts_as_progress_for_runtime_guard(tmp_path, monkeypatch):
+    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+
+    observed: list[list] = []
+    calls = 0
+    summaries = []
+
+    class RouteTool:
+        id = "route_tool"
+        description = "Changes the child workflow route."
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, _args, _ctx):
+            return ToolResult(
+                output="",
+                metadata={
+                    "workflow_guidance": True,
+                    "state_patch": ToolStatePatch(
+                        plan=PlanResolution(join="review", leave="review"),
+                    ).model_dump(mode="json", exclude_unset=True),
+                },
+            )
+
+    original_cycle_summary = subagent_module.cycle_summary_from_tools
+
+    def record_cycle_summary(*args, **kwargs):
+        summary = original_cycle_summary(*args, **kwargs)
+        summaries.append(summary)
+        return summary
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+        nonlocal calls
+        calls += 1
+        observed.append(list(messages))
+        if calls == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[{"name": "route_tool", "args": {}, "id": "call-route"}],
+            )
+        return AIMessage(
+            content=(
+                "status: complete\nfiles_changed: none\n"
+                "tests_run: focused\nrisks: none\nfollowups: none"
+            )
+        )
+
+    model = SimpleNamespace()
+    model.bind_tools = lambda _tool_defs: model
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: model)
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+    monkeypatch.setattr(subagent_module, "cycle_summary_from_tools", record_cycle_summary)
+
+    parent_tools = ToolRegistry()
+    tool = RouteTool()
+    parent_tools.register(tool.id, tool, tool.description, tool.parameters_schema())
+
+    from voidx.agent.infrastructure.langgraph.runtime.subagent import run_subagent
+
+    await run_subagent(
+        get_agent("voidx"),
+        "Change the child workflow route",
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        runtime_persona="implement",
+        goal_resolution=_child_goal_resolution(),
+        result_contract=_child_result_contract(),
+        debug=False,
+        parent_tools=parent_tools,
+        ui_port=SimpleNamespace(
+            ui=SimpleNamespace(step_header=lambda *_args: None, print=lambda *_args: None),
+            console=object(),
+            via_events=lambda: False,
+        ),
+    )
+
+    assert len(summaries) == 1
+    assert summaries[0].has_progress is True
+
+
+@pytest.mark.asyncio
+async def test_subagent_applies_state_patch_before_terminal_message_result(tmp_path, monkeypatch):
+    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+
+    observed: list[list] = []
+    refreshed_routes: list[str] = []
+    calls = 0
+
+    original_builder = subagent_module.RuntimeContextBuilder
+
+    class RecordingBuilder(original_builder):
+        def build_incremental(self, cache):
+            context, updated_cache = super().build_incremental(cache)
+            if self.workflow_route is not None:
+                refreshed_routes.append(self.workflow_route.join)
+            return context, updated_cache
+
+    monkeypatch.setattr(subagent_module, "RuntimeContextBuilder", RecordingBuilder)
+
+    class ResultMessageTool:
+        id = "message"
+        description = "Returns a terminal result with a state patch."
+
+        def __init__(self, description=None):
+            if description:
+                self.description = description
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, _args, _ctx):
+            return ToolResult(
+                output="terminal result",
+                metadata={
+                    "message_type": "result",
+                    "state_patch": ToolStatePatch(
+                        plan=PlanResolution(join="review", leave="review"),
+                    ).model_dump(mode="json", exclude_unset=True),
+                },
+            )
+
+    monkeypatch.setattr(subagent_module, "MessageTool", ResultMessageTool)
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+        nonlocal calls
+        calls += 1
+        observed.append(list(messages))
+        return AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "message",
+                    "args": {"action": "send", "message_type": "result"},
+                    "id": "call-result",
+                }
+            ],
+        )
+
+    model = SimpleNamespace()
+    model.bind_tools = lambda _tool_defs: model
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: model)
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    parent_tools = ToolRegistry()
+    tool = ResultMessageTool()
+    parent_tools.register(tool.id, tool, tool.description, tool.parameters_schema())
+
+    from voidx.agent.infrastructure.langgraph.runtime.subagent import run_subagent
+
+    result = await run_subagent(
+        get_agent("voidx"),
+        "Return a terminal result",
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        runtime_persona="implement",
+        goal_resolution=_child_goal_resolution(),
+        result_contract=_child_result_contract(),
+        debug=False,
+        parent_tools=parent_tools,
+        ui_port=SimpleNamespace(
+            ui=SimpleNamespace(step_header=lambda *_args: None, print=lambda *_args: None),
+            console=object(),
+            via_events=lambda: False,
+        ),
+    )
+
+    assert result == "terminal result"
+    assert len(observed) == 1
+    assert refreshed_routes[-1] == "review"

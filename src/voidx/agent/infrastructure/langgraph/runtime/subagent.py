@@ -22,13 +22,19 @@ from voidx.agent.infrastructure.langgraph.runtime.streaming import extract_text,
 from voidx.agent.infrastructure.langgraph.runtime.core.helpers import LLMErrorKind, _classify_llm_error, _LLM_MAX_RETRIES, _llm_retry_delay, _llm_retry_sleep_delay, _clean_error_message
 from voidx.agent.infrastructure.langgraph.runtime.todo_events import todo_updated_event
 from voidx.agent.application.todo_state import todo_run_state_from_result
-from voidx.runtime.intent import PersonaName
+from voidx.agent.application.workflow_utils import active_workflow_names
+from voidx.agent.infrastructure.langgraph.runtime.tool_executor.types import _ExecutedTool
+from voidx.agent.infrastructure.langgraph.runtime.tool_executor.workflow import (
+    _state_update_from_executed_tools,
+)
+from voidx.runtime.intent import PersonaName, TaskIntent
+from voidx.llm.message_markers import GUIDANCE_MARKER
 from voidx.agent.application.runtime_context import (
     ContextCompilerCache,
     InteractionMode,
     RuntimeContextBuilder,
 )
-from voidx.runtime.task_state import GoalResolution, TaskState, WorkflowRoute
+from voidx.runtime.task_state import GoalResolution, GoalSpec, TaskState, TodoRunState, WorkflowRoute
 from voidx.agent.application.tool_messages import sanitize_tool_message_content
 from voidx.agent.infrastructure.tool_result_storage import maybe_persist_tool_result
 from voidx.agent.domain.profile import RuntimeProfile
@@ -62,6 +68,20 @@ from voidx.runtime.ui_port import AgentUiPort, runtime_ui_port
 _SAFETY_STEP_LIMIT = 50
 _RESULT_CONTRACT_RETRY_LIMIT = 2
 _BLOCKED_CHILD_TOOLS = {"agent", "clarify", "checkpoint"}
+_CHILD_WORKFLOW_MODE_BY_JOIN = {
+    "review": "review",
+    "debug": "debug",
+    "tdd": "implement",
+}
+
+
+def _child_workflow_mode(route: WorkflowRoute | None) -> str:
+    join = route.join.strip().lower() if route is not None else ""
+    return _CHILD_WORKFLOW_MODE_BY_JOIN.get(join, "review")
+
+
+def _workflow_summary_name(summary: str) -> str:
+    return summary.split(" ", 1)[0].strip().lower()
 
 async def run_subagent(
     agent_def: AgentDef,
@@ -153,11 +173,7 @@ async def run_subagent(
         config=context_config,
         workspace=config.workspace,
         base_system_prompt=build_base_system(context_config.user_profile.language),
-        workflow_runtime=child_workflow_runtime(
-            {"review": "review", "debug": "debug", "tdd": "implement"}.get(
-                plan.join if plan is not None else "", "review"
-            )
-        ),
+        workflow_runtime=child_workflow_runtime(_child_workflow_mode(sub_task_state.workflow_route)),
         persona_prompt=persona_prompt(),
         persona=persona,
         interaction_mode=interaction_mode,
@@ -167,6 +183,100 @@ async def run_subagent(
     ).build_incremental(context_cache)
     context.apply_to_messages(messages)
 
+    def refresh_context() -> None:
+        nonlocal context, context_cache
+        active_names = [
+            name
+            for name in active_workflow_names(sub_task_state.workflow_runs)
+        ]
+        active_name_set = {name.lower() for name in active_names}
+        active_summaries = [
+            summary
+            for summary in workflow_context.active
+            if _workflow_summary_name(summary) in active_name_set
+        ]
+        known_active = {_workflow_summary_name(summary) for summary in active_summaries}
+        for name in active_names:
+            normalized_name = name.lower()
+            if normalized_name not in known_active:
+                active_summaries.append(f"{name} (child state)")
+        context, context_cache = RuntimeContextBuilder(
+            config=context_config,
+            workspace=config.workspace,
+            base_system_prompt=build_base_system(context_config.user_profile.language),
+            workflow_runtime=child_workflow_runtime(_child_workflow_mode(sub_task_state.workflow_route)),
+            persona_prompt=persona_prompt(),
+            persona=persona,
+            interaction_mode=interaction_mode,
+            workflow_runs=list(sub_task_state.workflow_runs.values()),
+            active_workflow_summaries=active_summaries,
+            task_state=sub_task_state,
+        ).build_incremental(context_cache)
+        context.apply_to_messages(messages)
+
+    def apply_state_update(update: dict) -> bool:
+        nonlocal persona
+        if not update:
+            return False
+        if "persona" in update and update.get("persona"):
+            persona = str(update["persona"])
+        if "task_intent" in update:
+            try:
+                sub_task_state.current_intent = TaskIntent(update["task_intent"])
+            except (TypeError, ValueError):
+                pass
+        if "current_goal" in update:
+            raw_goal = update.get("current_goal")
+            sub_task_state.current_goal = (
+                GoalSpec.model_validate(raw_goal) if raw_goal is not None else None
+            )
+        if "workflow_route" in update:
+            sub_task_state.workflow_route = (
+                WorkflowRoute.model_validate(update["workflow_route"])
+                if update.get("workflow_route")
+                else None
+            )
+        if "workflow_runs" in update:
+            sub_task_state.workflow_runs = {
+                run.name: run
+                for run in update.get("workflow_runs") or []
+            }
+        if "todo_state" in update:
+            raw_todo = update.get("todo_state")
+            sub_task_state.todo_state = (
+                TodoRunState.model_validate(raw_todo) if raw_todo is not None else None
+            )
+        ctx.persona = persona
+        ctx.task_intent = sub_task_state.current_intent.value
+        ctx.goal_type = (
+            sub_task_state.workflow_route.join
+            if sub_task_state.workflow_route is not None
+            else ""
+        )
+        ctx.goal_target = sub_task_state.current_goal.label if sub_task_state.current_goal else ""
+        ctx.turn_count = step
+        ctx.active_workflow_names = active_workflow_names(sub_task_state.workflow_runs)
+        ctx.workflow_runs = list(sub_task_state.workflow_runs.values())
+        ctx.workflow_route = (
+            sub_task_state.workflow_route.model_dump(mode="json")
+            if sub_task_state.workflow_route is not None
+            else None
+        )
+        refresh_context()
+        return any(
+            field in update
+            for field in (
+                "persona",
+                "task_intent",
+                "current_goal",
+                "workflow_route",
+                "workflow_runs",
+                "todo_state",
+            )
+        )
+
+    refresh_context()
+
     snapshot_grants = None
     if permission_snapshot is not None:
         snapshot_grants = permission_snapshot.get_access_grants()
@@ -174,6 +284,19 @@ async def run_subagent(
     ctx = ToolContext(
         workspace=config.workspace,
         session_id=session_id or "default",
+        persona=persona,
+        interaction_mode=interaction_mode.value,
+        task_intent=sub_task_state.current_intent.value,
+        goal_type=plan.join if plan is not None else "",
+        goal_target=sub_task_state.current_goal.label if sub_task_state.current_goal else "",
+        turn_count=0,
+        active_workflow_names=active_workflow_names(sub_task_state.workflow_runs),
+        workflow_runs=list(sub_task_state.workflow_runs.values()),
+        workflow_route=(
+            sub_task_state.workflow_route.model_dump(mode="json")
+            if sub_task_state.workflow_route is not None
+            else None
+        ),
         lsp_manager=lsp_manager,
         tool_registry=agent_tools,
         agent_gateway=agent_gateway,
@@ -223,11 +346,16 @@ async def run_subagent(
 
 
     def drain_guard_guidance() -> list[HumanMessage]:
-        messages: list[HumanMessage] = []
+        drained: list[HumanMessage] = []
         while pending_guard_guidance:
             text = pending_guard_guidance.pop(0)
-            messages.append(HumanMessage(content=text))
-        return messages
+            drained.append(
+                HumanMessage(
+                    content=text,
+                    additional_kwargs={GUIDANCE_MARKER: True},
+                )
+            )
+        return drained
 
     try:
         step = 0
@@ -240,6 +368,7 @@ async def run_subagent(
             else:
                 ui_port.ui.step_header(persona)
 
+            ctx.turn_count = step
             llm_messages = [*messages, *drain_guard_guidance()]
             model_with_tools = model.bind_tools(tool_defs) if tool_defs else model
             renderer = StreamingRenderer(ui_port.console, debug=debug, agent_id=agent_id, headless=True)
@@ -429,6 +558,9 @@ async def run_subagent(
                     session_id=ctx.session_id,
                     workspace=ctx.workspace,
                 )
+                next_step_hint = str(getattr(result, "next_step_hint", "") or "").strip()
+                if next_step_hint:
+                    llm_content = f"{llm_content}\n\nNext step hint: {next_step_hint}"
                 return {
                     "tool_message": ToolMessage(
                         content=sanitize_tool_message_content(llm_content, workspace=ctx.workspace),
@@ -458,6 +590,24 @@ async def run_subagent(
             messages.extend(tool_msgs + denied_msgs)
             sub_messages.extend(tool_msgs + denied_msgs)
 
+
+            child_executed = [
+                _ExecutedTool(
+                    message=item["tool_message"],
+                    result=item["result"],
+                    tool_call=item["tool_call"],
+                    todo_state=item["todo_state"],
+                )
+                for item in executed
+            ]
+            previous_todo_state = sub_task_state.todo_state
+            state_update = _state_update_from_executed_tools(
+                child_executed,
+                current_workflow_runs=sub_task_state.workflow_runs,
+                current_workflow_route=sub_task_state.workflow_route,
+                turn_count=step,
+            )
+            workflow_changed = apply_state_update(state_update)
 
             for item in executed:
                 metadata = getattr(item["result"], "metadata", {}) or {}
@@ -495,15 +645,16 @@ async def run_subagent(
                 if guidance is not None:
                     pending_guard_guidance.append(guidance.message)
 
+
             next_todo_state = sub_task_state.todo_state
             for item in executed:
                 if item["todo_state"] is not None:
                     next_todo_state = item["todo_state"]
             summary = cycle_summary_from_tools(
                 executed,
-                previous_todo_state=sub_task_state.todo_state,
+                previous_todo_state=previous_todo_state,
                 next_todo_state=next_todo_state,
-                workflow_changed=False,
+                workflow_changed=workflow_changed,
                 result_ok=result_ok,
             )
             sub_task_state.todo_state = next_todo_state
