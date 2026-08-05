@@ -18,6 +18,34 @@ def _payload(result):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("approved", [False, True])
+async def test_shell_tool_blocks_catastrophic_command_even_when_approved(tmp_path: Path, approved: bool):
+    command = "rm -rf /"
+    approved_risks = (
+        [{
+            "tool_name": "bash",
+            "pattern": command,
+            "risk_level": "blocked",
+            "tags": ["system_destructive"],
+            "reason": "test approval must not bypass hard block",
+            "approved_by": "user",
+        }]
+        if approved
+        else []
+    )
+
+    result = await BashTool().execute(
+        {"command": command},
+        ToolContext(workspace=str(tmp_path), approved_tool_risks=approved_risks),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert payload["blocked"] is True
+    assert "catastrophic" in payload["stderr"]
+
+
+@pytest.mark.asyncio
 async def test_shell_sandbox_contains_child_process(tmp_path: Path):
     workspace = tmp_path / "workspace"
     outside = tmp_path / "outside"

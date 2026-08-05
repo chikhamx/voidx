@@ -27,6 +27,7 @@ class RiskTag(str, Enum):
     MASS_DELETE = "mass_delete"
     SYSTEM_DESTRUCTIVE = "system_destructive"
     PRIVILEGE_ESCALATION = "privilege_escalation"
+    OPAQUE_EXECUTION = "opaque_execution"
 
 
 class ApprovalScope(str, Enum):

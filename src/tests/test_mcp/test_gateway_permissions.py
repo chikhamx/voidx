@@ -46,12 +46,12 @@ class TestAuthorize:
         )
         assert decision.action == "allow"
 
-    def test_call_asks_by_default(self, tmp_path):
+    def test_call_allowed_by_default(self, tmp_path):
         decision = authorize_tool_call(
             {"name": "mcp", "args": {"op": "call", "server": "tavily", "tool": "tavily_search"}},
             _context(tmp_path),
         )
-        assert decision.action == "ask"
+        assert decision.action == "allow"
 
     def test_session_allow_pattern_matches_gateway_resource(self, tmp_path):
         context = _context(tmp_path, session_allow=frozenset({"mcp@pattern:mcp:tavily:*"}))
@@ -73,7 +73,7 @@ class TestAuthorize:
             {"name": "mcp", "args": {"op": "call", "server": "tavily", "tool": "tavily_search"}},
             context,
         )
-        assert allowed.action == "ask"
+        assert allowed.action == "allow"
 
     def test_wildcard_deny_blocks_everything(self, tmp_path):
         context = _context(tmp_path, session_deny=frozenset({"mcp@pattern:mcp:*:*"}))

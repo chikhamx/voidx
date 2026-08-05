@@ -30,6 +30,13 @@ class PermissionCapability(str, Enum):
     OTHER = "other"
 
 
+ALWAYS_ALLOWED_TOOLS = frozenset({"agent", "agent_control", "mcp", "skill"})
+
+
+def is_always_allowed_tool(tool: str) -> bool:
+    return tool in ALWAYS_ALLOWED_TOOLS or tool.startswith("mcp__")
+
+
 BASIC_RULES: Ruleset = [
     Rule(permission="read", pattern="*", action="allow"),
     Rule(permission="find", pattern="*", action="allow"),
@@ -42,18 +49,15 @@ BASIC_RULES: Ruleset = [
     Rule(permission="workflow", pattern="*", action="allow"),
     Rule(permission="compact", pattern="*", action="allow"),
     Rule(permission="document", pattern="*", action="allow"),
-    Rule(permission="skill", pattern="*", action="allow"),
-    Rule(permission="skill", pattern="create", action="ask"),
     Rule(permission="lsp", pattern="*", action="allow"),
-    Rule(permission="agent", pattern="voidx", action="allow"),
+    Rule(permission="agent", pattern="*", action="allow"),
+    Rule(permission="agent_control", pattern="*", action="allow"),
+    Rule(permission="mcp", pattern="*", action="allow"),
+    Rule(permission="skill", pattern="*", action="allow"),
     Rule(permission="edit", pattern="*", action="ask"),
     Rule(permission="git", pattern="write", action="ask"),
     Rule(permission="bash", pattern="*", action="ask"),
     Rule(permission="powershell", pattern="*", action="ask"),
-    Rule(permission="agent", pattern="implement", action="ask"),
-    Rule(permission="mcp", pattern="*", action="ask"),
-    Rule(permission="mcp", pattern="list", action="allow"),
-    Rule(permission="mcp", pattern="load", action="allow"),
 ]
 
 

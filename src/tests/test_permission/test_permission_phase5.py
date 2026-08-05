@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from voidx.permission.engine import PermissionContext, authorize_tool_call
 from voidx.permission.grants import AccessGrants
+from voidx.permission.risk import RiskTag
 from voidx.permission.rules import build_pattern, capability_for_tool, classify_tool_call
 
 
@@ -79,6 +82,38 @@ def test_git_external_path_requires_grant_for_engine(tmp_path: Path):
 
     assert decision.action == "ask"
     assert "outside workspace" in decision.reason
+
+
+@pytest.mark.parametrize("permission_mode", ["ai_approval", "project_trusted"])
+def test_git_external_path_requires_trusted_mode_approval(tmp_path: Path, permission_mode: str):
+    workspace = tmp_path / "workspace"
+    external_repo = tmp_path / "external-repo"
+    workspace.mkdir()
+    external_repo.mkdir()
+
+    decision = authorize_tool_call(
+        {"name": "git", "args": {"path": str(external_repo), "args": "status"}},
+        PermissionContext(workspace=str(workspace), permission_mode=permission_mode),
+    )
+
+    assert decision.action == "ask"
+    assert decision.access_intents
+    assert decision.access_intents[0].access == "read"
+    assert decision.risk is not None
+    assert RiskTag.EXTERNAL_PATH in decision.risk.tags
+
+
+@pytest.mark.parametrize("permission_mode", ["ai_approval", "project_trusted"])
+@pytest.mark.parametrize("args", ["fetch origin", "pull --ff-only"])
+def test_git_network_commands_require_trusted_mode_approval(tmp_path: Path, permission_mode: str, args: str):
+    decision = authorize_tool_call(
+        {"name": "git", "args": {"args": args}},
+        PermissionContext(workspace=str(tmp_path), permission_mode=permission_mode),
+    )
+
+    assert decision.action == "ask"
+    assert decision.risk is not None
+    assert RiskTag.NETWORK in decision.risk.tags
 
 
 def test_git_external_path_with_grant_allowed_by_engine(tmp_path: Path):

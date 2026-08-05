@@ -81,6 +81,8 @@ def _parse_scoped_rule(rule: str) -> tuple[str, str, str] | None:
 
 
 def _tool_rule_matches(tool: str, rule: str) -> bool:
+    if rule == "mcp" and tool.startswith("mcp__"):
+        return True
     if rule == "edit" and tool in {"manage", "write", "replace"}:
         return True
     if wildcard_match(tool, rule):

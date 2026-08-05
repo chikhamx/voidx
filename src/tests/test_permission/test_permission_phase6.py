@@ -9,6 +9,7 @@ import pytest
 from voidx.permission.engine import PermissionContext, authorize_tool_call
 from voidx.permission.grants import AccessGrants
 from voidx.permission.process_sandbox import ProcessSandboxBackend, ProcessSandboxCapability
+from voidx.permission.risk import RiskTag
 from voidx.permission.rules import capability_for_tool
 from voidx.permission.shell_policy import shell_policy_for_command, shell_sandbox_precheck
 
@@ -85,6 +86,104 @@ def test_shell_hard_blocklist_is_blocked_before_approval(tmp_path: Path, permiss
         PermissionContext(
             workspace=str(tmp_path),
             permission_mode=permission_mode,
+        ),
+    )
+
+    assert decision.action == "blocked_ack"
+    assert decision.risk is not None
+    assert decision.risk.level == "blocked"
+
+
+@pytest.mark.parametrize("permission_mode", ["ai_approval", "project_trusted"])
+@pytest.mark.parametrize(
+    ("command", "tag"),
+    [
+        ("git push origin main", RiskTag.GIT_PUSH),
+        ("git -C repo push origin main", RiskTag.GIT_PUSH),
+        ("GIT_DIR=.git git push origin main", RiskTag.GIT_PUSH),
+        ("git fetch origin", RiskTag.NETWORK),
+        ("git pull --ff-only", RiskTag.NETWORK),
+        ("git clone https://example.com/repo.git", RiskTag.NETWORK),
+        ("git ls-remote https://example.com/repo.git", RiskTag.NETWORK),
+        ("bash -c 'curl https://example.com'", RiskTag.NETWORK),
+        ("python -c 'print(1)'", RiskTag.OPAQUE_EXECUTION),
+        ("echo ok && git push origin main", RiskTag.GIT_PUSH),
+        ("echo ok && curl https://example.com", RiskTag.NETWORK),
+    ],
+)
+def test_trusted_modes_ask_for_shell_wrapped_high_risk(
+    tmp_path: Path,
+    permission_mode: str,
+    command: str,
+    tag: RiskTag,
+):
+    decision = authorize_tool_call(
+        {"name": "bash", "args": {"command": command}},
+        PermissionContext(workspace=str(tmp_path), permission_mode=permission_mode),
+    )
+
+    assert decision.action == "ask"
+    assert decision.risk is not None
+    assert tag in decision.risk.tags
+
+
+@pytest.mark.parametrize("permission_mode", ["ai_approval", "project_trusted"])
+@pytest.mark.parametrize(
+    "command",
+    ["python -m pytest", "python scripts/package.py", "bash scripts/test.sh", "pip install requests"],
+)
+def test_trusted_modes_allow_local_interpreters_and_dependency_installs(
+    tmp_path: Path,
+    permission_mode: str,
+    command: str,
+):
+    decision = authorize_tool_call(
+        {"name": "bash", "args": {"command": command}},
+        PermissionContext(workspace=str(tmp_path), permission_mode=permission_mode),
+    )
+
+    assert decision.action == "allow"
+
+
+@pytest.mark.parametrize("permission_mode", ["ai_approval", "project_trusted"])
+def test_trusted_modes_ask_for_external_interpreter_script(tmp_path: Path, permission_mode: str):
+    workspace = tmp_path / "workspace"
+    external = tmp_path / "external"
+    workspace.mkdir()
+    external.mkdir()
+    script = external / "script.py"
+    script.write_text("print('ok')\n", encoding="utf-8")
+
+    decision = authorize_tool_call(
+        {"name": "bash", "args": {"command": f"python {script}"}},
+        PermissionContext(workspace=str(workspace), permission_mode=permission_mode),
+    )
+
+    assert decision.action == "ask"
+    assert decision.risk is not None
+    assert RiskTag.EXTERNAL_PATH in decision.risk.tags
+
+
+@pytest.mark.parametrize("permission_mode", ["ai_approval", "project_trusted"])
+def test_trusted_modes_ask_for_powershell_network_command(tmp_path: Path, permission_mode: str):
+    decision = authorize_tool_call(
+        {"name": "powershell", "args": {"command": "Invoke-WebRequest https://example.com"}},
+        PermissionContext(workspace=str(tmp_path), permission_mode=permission_mode),
+    )
+
+    assert decision.action == "ask"
+    assert decision.risk is not None
+    assert RiskTag.NETWORK in decision.risk.tags
+
+
+@pytest.mark.parametrize("command", ["rm -rf /", "bash -c 'rm -rf /'", "echo ok && rm -rf /"])
+def test_blocked_shell_risk_overrides_full_access_session_allow(tmp_path: Path, command: str):
+    decision = authorize_tool_call(
+        {"name": "bash", "args": {"command": command}},
+        PermissionContext(
+            workspace=str(tmp_path),
+            permission_mode="full_access",
+            session_allow=frozenset({"bash"}),
         ),
     )
 

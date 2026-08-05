@@ -2,7 +2,7 @@ import pytest
 
 from voidx.config import PermissionMode
 from voidx.permission.presets import resolve_mode_decision
-from voidx.permission.risk import ApprovalScope, RiskAssessment
+from voidx.permission.risk import ApprovalScope, RiskAssessment, RiskTag
 
 
 def test_ai_approval_mode_sandbox_and_policy():
@@ -10,16 +10,30 @@ def test_ai_approval_mode_sandbox_and_policy():
     assert PermissionMode.AI_APPROVAL.approval_policy == "untrusted"
 
 
-def test_ai_approval_dangerous_uses_safe_scopes():
-    risk = RiskAssessment.dangerous(tool_name="write", pattern="README.md")
-    decision = resolve_mode_decision(PermissionMode.AI_APPROVAL, risk)
-    assert decision.action == "ask"
-    assert decision.allowed_scopes == (ApprovalScope.ONCE, ApprovalScope.SESSION)
-    assert decision.default_scope == ApprovalScope.ONCE
+@pytest.mark.parametrize(
+    ("risk", "expected_action"),
+    [
+        (RiskAssessment.dangerous(tool_name="write", pattern="README.md"), "allow"),
+        (RiskAssessment.extreme(tool_name="bash", pattern="python script.py"), "allow"),
+        (RiskAssessment.extreme(tool_name="bash", pattern="curl example.com", tags=(RiskTag.NETWORK,)), "ask"),
+        (RiskAssessment.dangerous(tool_name="write", pattern="../outside", tags=(RiskTag.EXTERNAL_PATH,)), "ask"),
+    ],
+)
+def test_ai_approval_uses_project_trusted_risk_boundary(risk, expected_action):
+    ai_decision = resolve_mode_decision(PermissionMode.AI_APPROVAL, risk)
+    trusted_decision = resolve_mode_decision(PermissionMode.PROJECT_TRUSTED, risk)
+
+    assert ai_decision.action == trusted_decision.action == expected_action
+    assert ai_decision.allowed_scopes == trusted_decision.allowed_scopes
+    assert ai_decision.default_scope == trusted_decision.default_scope
 
 
-def test_ai_approval_extreme_stays_once():
-    risk = RiskAssessment.extreme(tool_name="bash", pattern="python script.py")
+def test_ai_approval_extreme_network_stays_once():
+    risk = RiskAssessment.extreme(
+        tool_name="bash",
+        pattern="curl https://example.com",
+        tags=(RiskTag.NETWORK,),
+    )
     decision = resolve_mode_decision(PermissionMode.AI_APPROVAL, risk)
     assert decision.action == "ask"
     assert decision.allowed_scopes == (ApprovalScope.ONCE,)

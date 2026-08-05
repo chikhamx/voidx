@@ -26,16 +26,16 @@ def resolve_mode_decision(preset: PermissionMode, risk: RiskAssessment) -> ModeD
     if risk.level == RiskLevel.NORMAL:
         return ModeDecision(action="allow", risk=risk)
     if risk.level == RiskLevel.EXTREME:
-        if preset == PermissionMode.PROJECT_TRUSTED and _project_trusted_allows(risk):
+        if preset in (PermissionMode.AI_APPROVAL, PermissionMode.PROJECT_TRUSTED) and _project_trusted_allows(risk):
             return ModeDecision(action="allow", risk=risk)
         if preset == PermissionMode.FULL_ACCESS and not _full_access_asks(risk):
             return ModeDecision(action="allow", risk=risk)
         return _ask_once(risk)
     if preset == PermissionMode.READ_ONLY:
         return _ask_once(risk)
-    if preset in (PermissionMode.SAFE, PermissionMode.AI_APPROVAL):
+    if preset == PermissionMode.SAFE:
         return _ask_scoped(risk, (ApprovalScope.ONCE, ApprovalScope.SESSION))
-    if preset == PermissionMode.PROJECT_TRUSTED:
+    if preset in (PermissionMode.AI_APPROVAL, PermissionMode.PROJECT_TRUSTED):
         if _project_trusted_allows(risk):
             return ModeDecision(action="allow", risk=risk)
         return _ask_scoped(risk, (ApprovalScope.ONCE, ApprovalScope.SESSION, ApprovalScope.PROJECT))

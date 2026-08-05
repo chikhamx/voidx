@@ -13,6 +13,7 @@ from voidx.permission.schema import Action
 from voidx.permission.process_sandbox import default_process_sandbox_capability
 from voidx.permission.constants import (
     DYNAMIC_MARKERS,
+    GIT_GLOBAL_OPTIONS_WITH_VALUE,
     NESTED_INTERPRETERS,
     POWERSHELL_READ_COMMANDS,
     READ_COMMANDS,
@@ -98,7 +99,12 @@ def shell_policy_for_command(command: str, *, shell: str = "bash") -> ShellPolic
     return _bash_policy(words)
 
 
-def classify_shell_risk(command: str, *, shell: str = "bash") -> RiskAssessment:
+def classify_shell_risk(
+    command: str,
+    *,
+    shell: str = "bash",
+    workspace: str | None = None,
+) -> RiskAssessment:
     stripped = command.strip()
     tool_name = "powershell" if shell == "powershell" else "bash"
     if not stripped or stripped.startswith("#"):
@@ -108,7 +114,7 @@ def classify_shell_risk(command: str, *, shell: str = "bash") -> RiskAssessment:
             tool_name=tool_name,
             pattern=stripped,
             tags=(RiskTag.SYSTEM_DESTRUCTIVE,),
-            reason="shell policy blocked catastrophic system command",
+            reason="Blocked: catastrophic system command",
         )
     blocked = _blocked_shell_risk(stripped, tool_name=tool_name)
     if blocked is not None:
@@ -151,10 +157,43 @@ def classify_shell_risk(command: str, *, shell: str = "bash") -> RiskAssessment:
     if any(token in {";", "&&", "||", "|", "|&", ">", ">>", "<"} for token in words):
         tags.append(RiskTag.DYNAMIC_SHELL)
         reasons.append("compound shell operator")
+    for segment_words in _compound_command_segments(stripped, shell=shell):
+        segment_risk = classify_shell_risk(" ".join(segment_words), shell=shell, workspace=workspace)
+        propagated_tags = tuple(tag for tag in segment_risk.tags if tag != RiskTag.SAFE_READ)
+        tags.extend(propagated_tags)
+        if propagated_tags:
+            reasons.append("compound command segment")
     program = words[0].lower() if words else ""
     if program in NESTED_INTERPRETERS:
         tags.append(RiskTag.NESTED_INTERPRETER)
         reasons.append("nested interpreter")
+        nested_command = _nested_shell_command(words)
+        if nested_command is not None:
+            nested_risk = classify_shell_risk(nested_command, shell=_nested_shell_kind(program), workspace=workspace)
+            if nested_risk.level == RiskLevel.BLOCKED:
+                return RiskAssessment.blocked(
+                    tool_name=tool_name,
+                    pattern=stripped,
+                    tags=nested_risk.tags,
+                    reason=nested_risk.reason,
+                )
+            tags.extend(nested_risk.tags)
+            reasons.append("nested shell command")
+        elif _has_external_interpreter_path(words, workspace=workspace):
+            tags.append(RiskTag.EXTERNAL_PATH)
+            reasons.append("external interpreter path")
+        elif _uses_inline_interpreter_code(program, words):
+            tags.append(RiskTag.OPAQUE_EXECUTION)
+            reasons.append("inline interpreter code")
+        elif program in {"bash", "sh", "zsh", "fish", "cmd", "powershell", "pwsh"} and not _has_local_script_path(words, workspace=workspace):
+            tags.append(RiskTag.OPAQUE_EXECUTION)
+            reasons.append("opaque nested shell command")
+    if _is_git_push(words):
+        tags.append(RiskTag.GIT_PUSH)
+        reasons.append("git push command")
+    elif _is_git_network_command(words):
+        tags.append(RiskTag.NETWORK)
+        reasons.append("git network command")
     if _is_dependency_install(words):
         tags.append(RiskTag.DEPENDENCY_INSTALL)
         reasons.append("dependency install command")
@@ -423,7 +462,127 @@ def _is_dependency_install(words: list[str]) -> bool:
 
 
 def _is_network_command(words: list[str]) -> bool:
-    return bool(words) and words[0].lower() in {"curl", "wget", "scp", "ssh"}
+    if not words:
+        return False
+    program = words[0].lower()
+    if program in {"curl", "wget", "scp", "ssh", "invoke-webrequest", "invoke-restmethod", "iwr", "irm"}:
+        return True
+    return program in {"start-bitstransfer"}
+
+
+def _compound_command_segments(command: str, *, shell: str) -> tuple[tuple[str, ...], ...]:
+    if shell != "bash":
+        return ()
+    words = _shell_words_with_punctuation(command)
+    if words is None:
+        return ()
+    segments: list[tuple[str, ...]] = []
+    current: list[str] = []
+    for word in words:
+        if word in {";", "&&", "||", "|", "|&"}:
+            if current:
+                segments.append(tuple(current))
+                current = []
+            continue
+        if word in {">", ">>", "<"}:
+            return ()
+        current.append(word)
+    if current:
+        segments.append(tuple(current))
+    return tuple(segments[1:]) if len(segments) > 1 else ()
+
+
+def _nested_shell_command(words: list[str]) -> str | None:
+    if not words or words[0].lower() not in {"bash", "sh", "zsh", "fish", "cmd", "powershell", "pwsh"}:
+        return None
+    for index, word in enumerate(words[1:], start=1):
+        if word in {"-c", "/c", "-command"} and index + 1 < len(words):
+            return " ".join(words[index + 1:])
+        if word.startswith("-c") and len(word) > 2:
+            return word[2:]
+    return None
+
+
+def _nested_shell_kind(program: str) -> str:
+    return "powershell" if program in {"powershell", "pwsh"} else "bash"
+
+
+def _uses_inline_interpreter_code(program: str, words: list[str]) -> bool:
+    inline_flags = {"-c", "-e", "--eval"}
+    if program in {"python", "python3"}:
+        inline_flags = {"-c"}
+    return any(word in inline_flags or any(word.startswith(f"{flag}=") for flag in inline_flags) for word in words[1:])
+
+
+def _has_local_script_path(words: list[str], *, workspace: str | None) -> bool:
+    if workspace is None or len(words) < 2:
+        return False
+    for word in words[1:]:
+        if word.startswith("-"):
+            continue
+        raw = Path(_clean_path_arg(word)).expanduser()
+        if not raw.is_absolute():
+            raw = Path(workspace) / raw
+        try:
+            raw.resolve(strict=False).relative_to(Path(workspace).expanduser().resolve())
+            return True
+        except (OSError, RuntimeError, ValueError):
+            return False
+    return False
+
+
+def _has_external_interpreter_path(words: list[str], *, workspace: str | None) -> bool:
+    if workspace is None or not words:
+        return False
+    workspace_path = Path(workspace).expanduser().resolve()
+    for word in words[1:]:
+        if word.startswith("-"):
+            continue
+        raw = Path(_clean_path_arg(word)).expanduser()
+        if not raw.is_absolute():
+            return False
+        try:
+            raw.resolve(strict=False).relative_to(workspace_path)
+            return False
+        except (OSError, RuntimeError, ValueError):
+            return True
+    return False
+
+
+def _is_git_push(words: list[str]) -> bool:
+    return _git_subcommand(words) == "push"
+
+
+def _is_git_network_command(words: list[str]) -> bool:
+    return _git_subcommand(words) in {"clone", "fetch", "ls-remote", "pull"}
+
+
+def _git_subcommand(words: list[str]) -> str:
+    if not words:
+        return ""
+    index = 0
+    while index < len(words) and _is_env_assignment(words[index]):
+        index += 1
+    if index >= len(words) or words[index].lower() != "git":
+        return ""
+    index += 1
+    while index < len(words):
+        word = words[index]
+        if word in GIT_GLOBAL_OPTIONS_WITH_VALUE:
+            index += 2
+            continue
+        if any(word.startswith(f"{option}=") for option in GIT_GLOBAL_OPTIONS_WITH_VALUE if option.startswith("--")):
+            index += 1
+            continue
+        if word.startswith("-"):
+            index += 1
+            continue
+        return word.lower()
+    return ""
+
+
+def _is_env_assignment(word: str) -> bool:
+    return "=" in word and not word.startswith("=") and word.split("=", 1)[0].isidentifier()
 
 
 def _clean_path_arg(value: str) -> str:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from voidx.config import PermissionMode
 from voidx.permission.context import PermissionContext, PermissionDecision
 from voidx.permission.evaluate import evaluate
-from voidx.permission.git_policy import git_sandbox_precheck
+from voidx.permission.git_policy import git_policy_for_args, git_sandbox_precheck
 from voidx.permission.shell_policy import classify_shell_risk, shell_sandbox_precheck
 from voidx.permission.grants import AccessIntent, resolve_access
 from voidx.permission.presets import resolve_mode_decision
@@ -18,6 +18,7 @@ from voidx.permission.rules import (
     classify_tool_call,
     delegated_agent,
     file_paths_for_tool,
+    is_always_allowed_tool,
     is_safe_bash,
     repair_tool_name,
     tool_call_from_pattern,
@@ -31,6 +32,13 @@ from voidx.permission.schema import Action
 def authorize_tool_call(tool_call: dict, context: PermissionContext) -> PermissionDecision:
     classified = classify_tool_call(tool_call)
     session_action = session_action_for_tool(classified, context)
+
+    if not context.permission_state_ready:
+        return _decision(classified, "deny", "sandbox", "Permission state not ready.", context=context)
+    if session_action == "deny":
+        return _decision(classified, "deny", "session", _reason_for(classified, "deny"), context=context)
+    if is_always_allowed_tool(classified.name):
+        return _decision(classified, "allow", "preset", _reason_for(classified, "allow"), context=context)
 
     sandbox_action, reason, access_intents = sandbox_precheck_action(classified, context)
     if sandbox_action == "deny":
@@ -90,8 +98,6 @@ def sandbox_precheck_action(classified: ClassifiedToolCall, context: PermissionC
             PermissionCapability.GIT_WRITE,
         }:
             return "deny", f"SANDBOX READ-ONLY: '{classified.name}' is not allowed.", ()
-        if classified.capability == PermissionCapability.AGENT_IMPLEMENT:
-            return "deny", "SANDBOX READ-ONLY: cannot delegate to implement.", ()
         return "allow", None, ()
 
     if context.sandbox_mode == "read-only":
@@ -106,8 +112,6 @@ def sandbox_precheck_action(classified: ClassifiedToolCall, context: PermissionC
             PermissionCapability.GIT_WRITE,
         }:
             return "defer", f"READ ONLY requires approval for '{classified.name}'.", ()
-        if classified.capability == PermissionCapability.AGENT_IMPLEMENT:
-            return "defer", "READ ONLY requires approval for implement delegation.", ()
         return "allow", None, ()
 
     if context.sandbox_mode == "workspace-write":
@@ -116,7 +120,7 @@ def sandbox_precheck_action(classified: ClassifiedToolCall, context: PermissionC
             *context.sandbox_writable_dirs,
         ]
         if classified.name == "git":
-            return (*git_sandbox_precheck(classified.args, context), ())
+            return git_sandbox_precheck(classified.args, context)
         path_tool_names = {"read", "write", "replace", "manage", "lsp_format", "lsp"}
         if classified.name in path_tool_names or classified.capability in {PermissionCapability.FILE_WRITE, PermissionCapability.FILE_FORMAT}:
             intents = _collect_external_access_intents(classified, context)
@@ -182,10 +186,13 @@ def _decision(
     context: PermissionContext | None = None,
     access_intents: tuple[AccessIntent, ...] = (),
 ) -> PermissionDecision:
-    risk = _risk_for(classified, action, reason)
+    risk = _risk_for(classified, action, reason, context=context, access_intents=access_intents)
     allowed_scopes = ()
     default_scope = None
-    if action == "ask":
+    if risk.level == RiskLevel.BLOCKED and action != "deny":
+        action = "blocked_ack"
+        reason = risk.reason
+    elif action == "ask":
         preset_decision = _preset_decision_for(risk, context)
         action = preset_decision.action
         if action == "blocked_ack":
@@ -221,17 +228,43 @@ def _preset_decision_for(risk: RiskAssessment, context: PermissionContext | None
         preset = PermissionMode.SAFE
     return resolve_mode_decision(preset, risk)
 
-def _risk_for(classified: ClassifiedToolCall, action: Action, reason: str) -> RiskAssessment:
+def _risk_for(
+    classified: ClassifiedToolCall,
+    action: Action,
+    reason: str,
+    *,
+    context: PermissionContext | None = None,
+    access_intents: tuple[AccessIntent, ...] = (),
+) -> RiskAssessment:
     if classified.name == "bash":
-        return classify_shell_risk(str(classified.args.get("command") or ""), shell="bash")
+        return classify_shell_risk(
+            str(classified.args.get("command") or ""),
+            shell="bash",
+            workspace=context.workspace if context else None,
+        )
     if classified.name == "powershell":
         return classify_shell_risk(str(classified.args.get("command") or ""), shell="powershell")
     if action == "allow":
         return RiskAssessment.normal(tool_name=classified.name, pattern=classified.pattern, tags=(RiskTag.SAFE_READ,), reason=reason)
     if action == "deny":
         return RiskAssessment.blocked(tool_name=classified.name, pattern=classified.pattern, tags=(), reason=reason)
-    tags = (RiskTag.WORKSPACE_EDIT,) if classified.capability in {PermissionCapability.FILE_WRITE, PermissionCapability.FILE_FORMAT} else ()
-    return RiskAssessment.dangerous(tool_name=classified.name, pattern=classified.pattern, tags=tags, reason=reason)
+    tags: list[RiskTag] = []
+    if classified.capability in {PermissionCapability.FILE_WRITE, PermissionCapability.FILE_FORMAT}:
+        tags.append(RiskTag.WORKSPACE_EDIT)
+    if any(not intent.is_workspace_path and not intent.grant_matched for intent in access_intents):
+        tags.append(RiskTag.EXTERNAL_PATH)
+    if classified.name == "git":
+        subcommand = git_policy_for_args(classified.args).subcommand
+        if subcommand == "push":
+            tags.append(RiskTag.GIT_PUSH)
+        elif subcommand in {"fetch", "pull"}:
+            tags.append(RiskTag.NETWORK)
+    return RiskAssessment.dangerous(
+        tool_name=classified.name,
+        pattern=classified.pattern,
+        tags=tuple(tags),
+        reason=reason,
+    )
 
 
 def _reason_for(classified: ClassifiedToolCall, action: Action) -> str:

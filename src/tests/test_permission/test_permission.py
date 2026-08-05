@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from voidx.config import PermissionMode
 from voidx.permission.wildcard import match
 from voidx.permission.evaluate import evaluate, from_config, merge
 from voidx.permission.schema import Rule, Ruleset
@@ -15,7 +16,9 @@ from voidx.permission.engine import (
     PermissionContext,
     authorize_tool_call,
     classify_tool_call,
+    sandbox_precheck_action,
 )
+from voidx.permission.risk import RiskTag
 from voidx.permission.service import PermissionService
 from voidx.permission.sandbox import check_sandbox_bash
 
@@ -139,11 +142,11 @@ def test_permission_service_status_label_ignores_session_overrides():
     assert service.status_label() == "Safe"
 
 
-def test_permission_service_splits_readonly_and_implement_agents():
+def test_permission_service_allows_all_agents():
     service = PermissionService()
 
     assert service.decide("agent", "voidx") == "allow"
-    assert service.decide("agent", "implement") == "ask"
+    assert service.decide("agent", "implement") == "allow"
 
 
 def test_on_intent_is_not_a_runtime_allow_tool(tmp_path):
@@ -191,14 +194,14 @@ def test_skill_list_is_allowed_read_tool(tmp_path):
     }).capability == PermissionCapability.READ_TOOLS
 
 
-def test_skill_create_is_file_write_and_asks(tmp_path):
+def test_skill_create_is_file_write_but_always_allowed(tmp_path):
     context = PermissionContext(workspace=str(tmp_path))
     decision = authorize_tool_call(
         {"name": "skill", "args": {"op": "create", "name": "docs", "description": "d", "body": "b"}},
         context,
     )
 
-    assert decision.action == "ask"
+    assert decision.action == "allow"
     assert classify_tool_call({
         "name": "skill",
         "args": {"op": "create", "name": "docs"},
@@ -218,7 +221,7 @@ def test_interactive_runtime_tools_are_allowed(tmp_path, tool_name):
 
 
 
-def test_mcp_tool_execution_requires_permission(tmp_path):
+def test_mcp_tool_execution_is_always_allowed(tmp_path):
     context = PermissionContext(workspace=str(tmp_path))
     decision = authorize_tool_call(
         {
@@ -233,7 +236,7 @@ def test_mcp_tool_execution_requires_permission(tmp_path):
         context,
     )
 
-    assert decision.action == "ask"
+    assert decision.action == "allow"
     assert decision.capability == PermissionCapability.MCP_TOOLS
 
 
@@ -305,6 +308,71 @@ def test_permission_engine_classifies_basic_capabilities():
     assert classify_tool_call({"name": "compact", "args": {}}).capability == PermissionCapability.READ_TOOLS
 
 
+@pytest.mark.parametrize("permission_mode", [mode.value for mode in PermissionMode])
+@pytest.mark.parametrize(
+    "tool_call",
+    [
+        {"name": "agent", "args": {"mode": "implement", "goal": "Build", "detail": "Build it"}},
+        {"name": "agent_control", "args": {"action": "wait", "run_id": "run-1"}},
+        {"name": "mcp", "args": {"op": "call", "server": "demo", "tool": "write"}},
+        {"name": "mcp__demo__write", "args": {"value": "x"}},
+        {"name": "skill", "args": {"op": "create", "name": "demo", "scope": "project"}},
+    ],
+)
+def test_permission_engine_always_allows_orchestration_tools(tmp_path, permission_mode, tool_call):
+    decision = authorize_tool_call(
+        tool_call,
+        PermissionContext(workspace=str(tmp_path), permission_mode=permission_mode),
+    )
+
+    assert decision.action == "allow"
+
+
+@pytest.mark.parametrize(
+    "tool_call",
+    [
+        {"name": "agent", "args": {"mode": "implement"}},
+        {"name": "agent_control", "args": {"action": "wait", "run_id": "run-1"}},
+        {"name": "mcp", "args": {"op": "call", "server": "demo", "tool": "write"}},
+        {"name": "mcp__demo__write", "args": {"value": "x"}},
+        {"name": "skill", "args": {"op": "create", "name": "demo"}},
+    ],
+)
+def test_orchestration_tools_allow_in_plan_but_respect_global_guards(tmp_path, tool_call):
+    plan = authorize_tool_call(
+        tool_call,
+        PermissionContext(workspace=str(tmp_path), interaction_mode="plan"),
+    )
+    not_ready = authorize_tool_call(
+        tool_call,
+        PermissionContext(workspace=str(tmp_path), permission_state_ready=False),
+    )
+    session_deny = authorize_tool_call(
+        tool_call,
+        PermissionContext(
+            workspace=str(tmp_path),
+            session_deny=frozenset({"mcp" if tool_call["name"].startswith("mcp__") else tool_call["name"]}),
+        ),
+    )
+
+    assert plan.action == "allow"
+    assert not_ready.action == "deny"
+    assert session_deny.action == "deny"
+
+
+def test_plan_sandbox_precheck_allows_implement_agent(tmp_path):
+    classified = classify_tool_call({"name": "agent", "args": {"mode": "implement"}})
+
+    action, reason, intents = sandbox_precheck_action(
+        classified,
+        PermissionContext(workspace=str(tmp_path), interaction_mode="plan"),
+    )
+
+    assert action == "allow"
+    assert reason is None
+    assert intents == ()
+
+
 def test_permission_engine_default_strategy_and_plan_overlay(tmp_path):
     context = PermissionContext(workspace=str(tmp_path))
 
@@ -316,8 +384,8 @@ def test_permission_engine_default_strategy_and_plan_overlay(tmp_path):
     assert authorize_tool_call({"name": "git", "args": {"args": "status"}}, context).action == "allow"
     assert authorize_tool_call({"name": "git", "args": {"args": "commit"}}, context).action == "ask"
     assert authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}, context).action == "ask"
-    assert authorize_tool_call({"name": "agent", "args": {"agent": "implement"}}, context).action == "ask"
-    assert authorize_tool_call({"name": "agent", "args": {"name": "voidx", "mode": "implement"}}, context).action == "ask"
+    assert authorize_tool_call({"name": "agent", "args": {"agent": "implement"}}, context).action == "allow"
+    assert authorize_tool_call({"name": "agent", "args": {"name": "voidx", "mode": "implement"}}, context).action == "allow"
 
     plan = PermissionContext(workspace=str(tmp_path), interaction_mode="plan")
     safe_bash = authorize_tool_call({"name": "bash", "args": {"command": "ls"}}, plan)
@@ -335,8 +403,8 @@ def test_permission_engine_default_strategy_and_plan_overlay(tmp_path):
     assert git_write.action == "deny"
     assert edit.action == "deny"
     assert replace.action == "deny"
-    assert implement.action == "deny"
-    assert mode_implement.action == "deny"
+    assert implement.action == "allow"
+    assert mode_implement.action == "allow"
 
 
 def test_permission_engine_plan_mode_uses_sandbox_source(tmp_path):
@@ -353,8 +421,8 @@ def test_permission_engine_plan_mode_uses_sandbox_source(tmp_path):
     assert git_write.source == "sandbox"
     assert edit.action == "deny"
     assert edit.source == "sandbox"
-    assert implement.action == "deny"
-    assert implement.source == "sandbox"
+    assert implement.action == "allow"
+    assert implement.source == "preset"
 
 
 def test_permission_engine_policy_presets(tmp_path):
@@ -374,6 +442,31 @@ def test_permission_engine_policy_presets(tmp_path):
 
     assert safe_edit.action == "ask"
     assert full_access_edit.action == "allow"
+
+
+@pytest.mark.parametrize("permission_mode", ["ai_approval", "project_trusted"])
+def test_trusted_modes_ask_for_external_paths_and_git_push(tmp_path, permission_mode):
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    context = PermissionContext(workspace=str(workspace), permission_mode=permission_mode)
+
+    external = authorize_tool_call(
+        {"name": "write", "args": {"file_path": str(outside / "result.txt"), "new_string": "x"}},
+        context,
+    )
+    git_push = authorize_tool_call(
+        {"name": "git", "args": {"args": "push origin main"}},
+        context,
+    )
+
+    assert external.action == "ask"
+    assert external.risk is not None
+    assert RiskTag.EXTERNAL_PATH in external.risk.tags
+    assert git_push.action == "ask"
+    assert git_push.risk is not None
+    assert RiskTag.GIT_PUSH in git_push.risk.tags
 
 
 def test_permission_engine_read_only_sandbox_allows_read_bash_but_asks_for_writes(tmp_path):

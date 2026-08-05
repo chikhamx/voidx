@@ -103,7 +103,8 @@ def _normalize_agent_args(args):
 class AgentTool(BaseTool):
     id = "agent"
     description = (
-        "Start one isolated child agent for an independent task and return its run_id. "
+        "Start one isolated child agent for a well-scoped subtask when either it needs an independent context "
+        "or it can proceed in parallel with the parent without overlapping the parent's active scope. "
         "The child does not inherit the caller's conversation history."
     )
 

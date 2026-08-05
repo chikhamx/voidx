@@ -135,11 +135,11 @@ def _tree_nodes(root):
     return nodes
 
 
-def test_permission_decision_splits_readonly_and_implement_agents():
+def test_permission_decision_allows_all_agents():
     service = PermissionService()
 
     assert service.decide("agent", "voidx") == "allow"
-    assert service.decide("agent", "implement") == "ask"
+    assert service.decide("agent", "implement") == "allow"
 
 
 @pytest.mark.asyncio
@@ -165,8 +165,9 @@ async def test_graph_authorization_auto_allows_readonly_agent(tmp_path):
     assert denied == []
 
 
+@pytest.mark.parametrize("plan_mode", [False, True])
 @pytest.mark.asyncio
-async def test_graph_authorization_prompts_for_implement_agent(tmp_path):
+async def test_graph_authorization_auto_allows_implement_agent(tmp_path, plan_mode):
     graph = _graph(tmp_path)
     asked: list[list[dict]] = []
 
@@ -188,14 +189,13 @@ async def test_graph_authorization_prompts_for_implement_agent(tmp_path):
             "id": "call_1",
         }],
         runtime_persona="coordinate",
-        plan_mode=False,
+        plan_mode=plan_mode,
         session_id="test",
     )
 
     assert [tc["name"] for tc in approved] == ["agent"]
     assert denied == []
-    assert asked
-    assert _asked_tool_calls(asked[0])[0]["args"]["mode"] == "implement"
+    assert asked == []
 
 
 @pytest.mark.asyncio
@@ -588,7 +588,7 @@ async def test_ai_approval_reuses_successful_dangerous_call_without_review(tmp_p
 
     graph._ai_approval.review = review
     graph._notice_permission_result = lambda _message: None
-    call = {"name": "write", "args": {"file_path": "app.py", "new_string": "x"}, "id": "call_1"}
+    call = {"name": "git", "args": {"args": "push origin main"}, "id": "call_1"}
 
     first, first_denied = await graph._authorize_tool_calls([call], plan_mode=False, session_id="s")
     graph._record_successful_tool_call(first[0])
@@ -605,7 +605,7 @@ async def test_ai_approval_reuses_successful_dangerous_call_without_review(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_ai_approval_reviews_bounded_shell_extreme_without_prompt(tmp_path):
+async def test_ai_approval_reviews_network_extreme_without_prompt(tmp_path):
     from voidx.config import PermissionMode
     from voidx.permission.ai_approval import AiApprovalResult
     from voidx.permission.risk import RiskLevel, RiskTag
@@ -623,18 +623,18 @@ async def test_ai_approval_reviews_bounded_shell_extreme_without_prompt(tmp_path
         )
 
     async def fail_if_asked(_tool_calls):
-        pytest.fail("bounded shell command should be reviewed by AI before prompting")
+        pytest.fail("network command should be reviewed by AI before prompting")
 
     graph._ai_approval.review = review
     graph._ask_tool_permission = fail_if_asked
     graph._notice_permission_result = lambda _message: None
 
-    call = {"name": "bash", "args": {"command": "python -m pytest -q"}, "id": "call_1"}
+    call = {"name": "bash", "args": {"command": "curl https://example.com"}, "id": "call_1"}
     approved, denied = await graph._authorize_tool_calls([call], plan_mode=False, session_id="s")
 
     assert [item["id"] for item in approved] == ["call_1"]
     assert denied == []
-    assert reviewed == [("python -m pytest -q", RiskLevel.EXTREME, (RiskTag.NESTED_INTERPRETER,))]
+    assert reviewed == [("curl https://example.com", RiskLevel.EXTREME, (RiskTag.NETWORK,))]
     assert approved[0]["metadata"]["approved_risk"]["approved_by"] == "ai"
 
 
@@ -668,7 +668,7 @@ async def test_ai_approval_increments_counter_and_emits_refresh(tmp_path):
         graph._ui.events.emit = fake_emit
         graph._ui.via_events = lambda: True
 
-        call = {"name": "write", "args": {"file_path": "app.py", "new_string": "x"}, "id": "call_1"}
+        call = {"name": "bash", "args": {"command": "curl https://example.com"}, "id": "call_1"}
         first, first_denied = await graph._authorize_tool_calls([call], plan_mode=False, session_id="s")
 
         assert [item["id"] for item in first] == ["call_1"]
@@ -726,7 +726,7 @@ async def test_ai_approval_notice_written_to_log_not_ui(tmp_path, monkeypatch):
 
     monkeypatch.setattr(perms_mod, "log_tool_event", fake_log)
 
-    call = {"name": "bash", "args": {"command": "python -m pytest -q"}, "id": "call_1"}
+    call = {"name": "bash", "args": {"command": "curl https://example.com"}, "id": "call_1"}
     approved, denied = await graph._authorize_tool_calls([call], plan_mode=False, session_id="s")
 
     assert [item["id"] for item in approved] == ["call_1"]
@@ -1076,12 +1076,14 @@ async def test_ai_approval_executor_success_is_reused_without_review(tmp_path):
     from voidx.config import PermissionMode
     from voidx.permission.ai_approval import AiApprovalResult
 
-    graph = _graph(tmp_path)
-    graph._settings = Settings(str(tmp_path))
+    workspace = tmp_path / "workspace"
+    external = tmp_path / "external"
+    workspace.mkdir()
+    external.mkdir()
+    target = external / "result.txt"
+    graph = _graph(workspace)
+    graph._settings = Settings(str(workspace))
     graph._permission.set_permission_mode(PermissionMode.AI_APPROVAL.value)
-    script = tmp_path / "build.sh"
-    script.write_text("#!/usr/bin/env bash\nprintf 'built\\n'\n", encoding="utf-8")
-    script.chmod(0o755)
     reviewed: list[str] = []
 
     async def review(candidates, _settings):
@@ -1096,18 +1098,19 @@ async def test_ai_approval_executor_success_is_reused_without_review(tmp_path):
     for call_id in ("call_first", "call_second"):
         result = await graph._execute_tools({
             "messages": [AIMessage(content="", tool_calls=[{
-                "name": "bash",
-                "args": {"command": "./build.sh"},
+                "name": "write",
+                "args": {"file_path": str(target), "op": "write", "new_string": "built\n"},
                 "id": call_id,
                 "type": "tool_call",
             }])],
-            "workspace": str(tmp_path),
+            "workspace": str(workspace),
             "persona": "voidx",
             "plan_mode": False,
         })
         tool_message = next(message for message in result["messages"] if isinstance(message, ToolMessage))
         assert tool_message.status == "success"
 
+    assert target.read_text(encoding="utf-8") == "built\n"
     assert reviewed == ["call_first"]
 
 
@@ -1117,12 +1120,14 @@ async def test_ai_approval_executor_failure_is_not_reused(tmp_path):
     from voidx.config import PermissionMode
     from voidx.permission.ai_approval import AiApprovalResult
 
-    graph = _graph(tmp_path)
-    graph._settings = Settings(str(tmp_path))
+    workspace = tmp_path / "workspace"
+    external = tmp_path / "external"
+    workspace.mkdir()
+    external.mkdir()
+    target = external / "result.txt"
+    graph = _graph(workspace)
+    graph._settings = Settings(str(workspace))
     graph._permission.set_permission_mode(PermissionMode.AI_APPROVAL.value)
-    script = tmp_path / "fail.sh"
-    script.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
-    script.chmod(0o755)
     reviewed: list[str] = []
 
     async def review(candidates, _settings):
@@ -1134,15 +1139,27 @@ async def test_ai_approval_executor_failure_is_not_reused(tmp_path):
 
     graph._ai_approval.review = review
 
+    class FailingWriteTool:
+        id = "write"
+        description = "failing write"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args, ctx):
+            return ToolResult(output="write failed", metadata={"error": True})
+
+    graph.tools.register("write", FailingWriteTool(), "failing write", {"type": "object", "properties": {}})
+
     for call_id in ("call_first", "call_second"):
         result = await graph._execute_tools({
             "messages": [AIMessage(content="", tool_calls=[{
-                "name": "bash",
-                "args": {"command": "./fail.sh"},
+                "name": "write",
+                "args": {"file_path": str(target), "op": "write", "new_string": "built\n"},
                 "id": call_id,
                 "type": "tool_call",
             }])],
-            "workspace": str(tmp_path),
+            "workspace": str(workspace),
             "persona": "voidx",
             "plan_mode": False,
         })
@@ -1175,7 +1192,7 @@ async def test_ai_approval_failure_reason_is_shown_in_permission_details(tmp_pat
     graph._app = FakeApp()
 
     approved, denied = await graph._authorize_tool_calls(
-        [{"name": "bash", "args": {"command": "./build.sh"}, "id": "call_build"}],
+        [{"name": "bash", "args": {"command": "curl https://example.com"}, "id": "call_network"}],
         plan_mode=False,
         session_id="s",
     )
@@ -1189,29 +1206,27 @@ async def test_ai_approval_failure_reason_is_shown_in_permission_details(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_ai_approval_skipped_candidate_reason_is_shown_in_permission_details(tmp_path):
+async def test_ai_approval_direct_mcp_tool_is_always_allowed(tmp_path):
     from voidx.config import PermissionMode
-    from voidx.permission.ai_approval import AiApprovalResult
 
     graph = _graph(tmp_path)
     graph._settings = Settings(str(tmp_path))
     graph._permission.set_permission_mode(PermissionMode.AI_APPROVAL.value)
-    captured_details = None
+    reviewed = False
+    asked = False
 
     async def review(_candidates, _settings):
-        return AiApprovalResult(
-            reason="reviewed",
-            skipped_reasons={"call_remote": "tool is not supported by AI approval"},
-        )
+        nonlocal reviewed
+        reviewed = True
+        pytest.fail("direct MCP tools must not use AI approval")
 
-    class FakeApp:
-        async def ask_choice(self, _prompt, _choices, details=None):
-            nonlocal captured_details
-            captured_details = details
-            return "n"
+    async def approve(_tool_calls):
+        nonlocal asked
+        asked = True
+        pytest.fail("direct MCP tools must not prompt for approval")
 
     graph._ai_approval.review = review
-    graph._app = FakeApp()
+    graph._ask_tool_permission = approve
 
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "mcp__remote", "args": {"operation": "read"}, "id": "call_remote"}],
@@ -1219,12 +1234,10 @@ async def test_ai_approval_skipped_candidate_reason_is_shown_in_permission_detai
         session_id="s",
     )
 
-    assert approved == []
-    assert len(denied) == 1
-    assert captured_details is not None
-    assert captured_details[0]["ai_approval_failure"] == (
-        "AI approval skipped: tool is not supported by AI approval; requesting human review."
-    )
+    assert [item["id"] for item in approved] == ["call_remote"]
+    assert denied == []
+    assert reviewed is False
+    assert asked is False
 
 
 @pytest.mark.asyncio

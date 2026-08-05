@@ -1,6 +1,6 @@
 """Permission service — user-facing permission state and compatibility helpers.
 
-Default rules: read-only tools are auto-allowed, write/bash/agent implement need approval.
+Default rules: read-only and orchestration tools are auto-allowed; write and shell tools are risk-gated.
 
 Session whitelist: once user says "always", the tool is remembered.
 Manage via /allow <tool>, /deny <tool>, /permissions commands.

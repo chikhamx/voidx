@@ -111,6 +111,6 @@ async def test_config_denied_tool_maps_to_gateway_resource(tmp_path):
             {"name": "mcp", "args": {"op": "call", "server": "fake", "tool": "search"}},
             context,
         )
-        assert not_denied.action == "ask"
+        assert not_denied.action == "allow"
     finally:
         await manager.stop_all()

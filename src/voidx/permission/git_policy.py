@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from voidx.permission.grants import AccessGrants, resolve_access
+from voidx.permission.grants import AccessGrants, AccessIntent, resolve_access
 from voidx.permission.constants import (
     DANGEROUS_CONFIG_PREFIXES,
     FORBIDDEN_GLOBAL_OPTIONS_WITH_VALUE,
@@ -106,28 +106,30 @@ def _raw_git_args(args: dict) -> str:
     return str(raw_args)
 
 
-def git_sandbox_precheck(args: dict, context) -> tuple[str, str | None]:
+def git_sandbox_precheck(args: dict, context) -> tuple[str, str | None, tuple[AccessIntent, ...]]:
     decision = git_policy_for_args(args)
     if not decision.allowed:
         if "dangerous" in decision.reason:
-            return "deny", f"git policy denied: {decision.reason}"
-        return "defer", f"git policy deferred: {decision.reason}"
+            return "deny", f"git policy denied: {decision.reason}", ()
+        return "defer", f"git policy deferred: {decision.reason}", ()
 
     path = str(args.get("path") or "")
     if not path or path == ".":
-        return "allow", None
+        return "allow", None, ()
+    access = "read" if decision.read_only else "write"
     resolution = resolve_access(
         context.workspace,
         path,
-        access="read",
+        access=access,
         access_grants=context.access_grants,
         require_exists=True,
     )
+    intents = (resolution.intent,) if resolution.intent is not None else ()
     if resolution.action == "deny":
-        return "deny", resolution.reason
+        return "deny", resolution.reason, intents
     if resolution.action == "defer":
-        return "defer", "Permission deferred to tool: outside workspace"
-    return "allow", None
+        return "defer", "Permission deferred to tool: outside workspace", intents
+    return "allow", None, ()
 
 
 def _split_global_options(tokens: list[str]) -> tuple[str, str, list[str]]:

@@ -163,10 +163,13 @@ def test_agent_tool_description_owns_delegation_gate():
     tool_description = AgentTool(runner=None).description
     schema = AgentTool(runner=None).parameters_schema()
 
-    # Delegation gate lives in the system prompt, not the tool description.
-    assert "Delegate only independent parallel work" in prompt
-    assert "simple searches" not in tool_description
-    assert "straightforward tasks you can do directly" not in tool_description
+    assert (
+        "when either it needs an independent context or it can proceed in parallel with the parent "
+        "without overlapping the parent's active scope"
+    ) in tool_description
+    assert "does not inherit the caller's conversation history" in tool_description
+    assert "### Delegation Rules" not in prompt
+    assert "Delegate only independent parallel work" not in prompt
     assert {"mode", "goal", "detail", "scope"}.issubset(set(schema["required"]))
     assert "goal_resolution" not in schema["required"]
     assert "result" not in schema["required"]
@@ -178,7 +181,7 @@ def test_orchestrator_prompt_matches_agent_workflow_schema():
     schema = AgentTool(runner=None).parameters_schema()
 
     # Tool description is concise; parameter requirements are in the schema.
-    assert "isolated child agent" in tool_description
+    assert "well-scoped subtask" in tool_description
     assert {"mode", "goal", "detail", "scope"}.issubset(set(schema["required"]))
     assert "success_criteria" not in schema["properties"]
     assert "result_preset" not in schema["properties"]
