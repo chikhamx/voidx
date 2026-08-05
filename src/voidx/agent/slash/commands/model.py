@@ -463,6 +463,9 @@ class ModelCommandsMixin:
         stats = self.host.usage_stats
         if stats is not None:
             stats.context_limit = limit
+        compaction = getattr(self.host, "_compaction", None)
+        if compaction is not None:
+            compaction.context_limit = limit
         app = self.host.app
         if app is not None:
             app.status.context_limit = limit

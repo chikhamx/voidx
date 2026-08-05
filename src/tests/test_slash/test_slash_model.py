@@ -434,6 +434,36 @@ def test_model_status_sync_uses_context_window_override():
     assert status.context_limit == 256_000
 
 
+def test_model_status_sync_updates_compaction_context_limit():
+    from voidx.llm.compaction import CompactionService
+
+    status = SimpleNamespace(
+        provider="mimo",
+        model="mimo-v2.5",
+        reasoning_effort="high",
+        context_limit=0,
+    )
+    graph = command_context(
+        config=SimpleNamespace(
+            model=ModelConfig(
+                provider="mimo",
+                model="mimo-v2.5",
+                reasoning_effort="high",
+                context_window=200_000,
+            )
+        ),
+        usage_stats=UsageStats(context_limit=128_000),
+        _compaction=CompactionService(context_limit=128_000, output_token_max=8_192),
+        app=SimpleNamespace(status=status),
+    )
+
+    SlashHandler(graph)._sync_context_limit()
+
+    assert graph.usage_stats.context_limit == 200_000
+    assert graph._compaction.context_limit == 200_000
+    assert graph._compaction.soft_threshold() == 150_000
+
+
 @pytest.mark.asyncio
 async def test_model_dispatch_without_args_opens_switch_picker():
     graph = command_context()
