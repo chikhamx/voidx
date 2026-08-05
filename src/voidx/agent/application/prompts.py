@@ -288,13 +288,6 @@ GLOBAL_RULE_SECTIONS: dict[str, dict[str, PromptRule]] = {
             detail="Follow user requests unless they conflict with higher-priority instructions or safety constraints.",
         ),
     },
-    "Delegation Rules": {
-        "delegate_independent": PromptRule(
-            name="delegate_independent",
-            detail="Delegate only independent parallel work or explicitly requested delegation; handle simple reads/searches directly.",
-            requires={"agent"},
-        ),
-    },
 }
 
 
@@ -315,7 +308,6 @@ CODING_PROFILE_SPEC = BaseSystemProfile(
         "Workspace Rules": ["workspace_facts", "read_before_edit", "smallest_change", "preserve_dirty"],
         "Verification Rules": ["fresh_verification"],
         "Collaboration Rules": ["min_questions", "follow_requests"],
-        "Delegation Rules": ["delegate_independent"],
     },
 )
 

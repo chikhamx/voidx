@@ -34,10 +34,9 @@ def test_base_system_prompt_has_canonical_rules():
     assert "### Workspace Rules" in rendered
     assert "### Verification Rules" in rendered
     assert "### Collaboration Rules" in rendered
-    assert "### Delegation Rules" in rendered
+    assert "### Delegation Rules" not in rendered
     assert "## Workflow Runtime" not in rendered
     assert "Do not discuss personas, workflow nodes, agents, or runtime mechanics in user-facing replies" in rendered
-    assert "Delegate only independent parallel work" in rendered
     assert "Preserve user work in a dirty tree" in rendered
     assert "Subagents do not interact with the user" not in rendered
     assert "Follow user requests unless they conflict with higher-priority instructions or safety constraints." in rendered
@@ -65,7 +64,6 @@ def test_base_system_prompt_has_canonical_rules():
         "fresh_verification",
         "min_questions",
         "follow_requests",
-        "delegate_independent",
     ]
 
 

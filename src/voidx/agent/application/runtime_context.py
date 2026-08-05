@@ -310,7 +310,7 @@ class RuntimeContextBuilder:
         if todo_lines:
             lines.extend(todo_lines)
         if self.interaction_mode == InteractionMode.PLAN:
-            lines.append("- Constraint: plan mode blocks write/insert/replace/edit, write-capable bash, and implement delegation.")
+            lines.append("- Constraint: plan mode blocks write/insert/replace/edit and write-capable bash.")
         return "\n".join(lines)
 
     def _active_workflow_node_names(self) -> list[str]:

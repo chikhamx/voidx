@@ -19,7 +19,7 @@ def test_coding_profile_spec_assembles_full_base_system_without_capability_filte
     assert "### Workspace Rules" in rendered
     assert "### Verification Rules" in rendered
     assert "### Collaboration Rules" in rendered
-    assert "### Delegation Rules" in rendered
+    assert "### Delegation Rules" not in rendered
     assert [rule.name for rule in prompt.communication_style] == [
         "language",
         "tone",
@@ -39,7 +39,6 @@ def test_coding_profile_spec_assembles_full_base_system_without_capability_filte
         "fresh_verification",
         "min_questions",
         "follow_requests",
-        "delegate_independent",
     ]
 
 
