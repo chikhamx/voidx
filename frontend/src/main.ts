@@ -136,6 +136,24 @@ setTranscriptElement(transcriptEl);
 initTheme();
 initDock();
 initTerminal();
+function submitModeCommand(command: string): void {
+  if (!isRpcConnected() || !uiState.sessionId) return;
+  rpcCall("session.submit", { text: command, thread_id: uiState.sessionId })
+    .catch((error: Error) => {
+      appendMessageItem(`mode-error-${Date.now()}`, {
+        style: "error",
+        text: error.message || `命令失败: ${command}`,
+      });
+      syncEmptyState();
+      scrollToBottom();
+    });
+}
+
+for (const [id, command] of [["mode-status", "status"], ["mode-stop", "stop"]] as const) {
+  document.querySelector<HTMLElement>(`#${id}`)?.addEventListener("click", () => {
+    submitModeCommand(`/${uiState.runtimeProfile} ${command}`);
+  });
+}
 initModelControls();
 initPermissionControls();
 initReasoningControls();
@@ -239,23 +257,38 @@ onGenerateDiff(() => {
 
 showDiffEmpty();
 
+function showSessionError(action: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error || "未知错误");
+  appendMessageItem(`session-error-${Date.now()}`, {
+    style: "error",
+    text: `${action}失败：${message}`,
+  });
+  syncEmptyState();
+  scrollToBottom();
+}
+
 function openIntegrations(): void {
   void openIntegrationsPanel(
     rpcCall("integrations.get", {}) as Promise<IntegrationsSnapshot>,
   );
 }
 
-onThreadSelect((threadId: string) => {
-  rpcCall("session.switch", { thread_id: threadId })
+export function switchThread(threadId: string): Promise<void> {
+  return rpcCall("session.switch", { thread_id: threadId })
     .then((result: unknown) => {
-      uiState.sessionId =
-        ((result as Record<string, string>).active_thread_id as string) ||
-        threadId;
+      const selected = result as Record<string, unknown>;
+      uiState.sessionId = (selected.active_thread_id as string) || threadId;
+      if (typeof selected.runtime_profile === "string") {
+        applyRuntimeState({ runtime_profile: selected.runtime_profile });
+      }
       updateStatusBar();
-    })
-    .catch((err: Error) => {
-      console.warn("voidx: session switch failed", err.message);
     });
+}
+
+onThreadSelect((threadId: string) => {
+  switchThread(threadId).catch((err: Error) => {
+    showSessionError("会话切换", err);
+  });
 });
 
 onNewThread((directory: string, profile?: string) => {
@@ -263,36 +296,45 @@ onNewThread((directory: string, profile?: string) => {
   if (existing) {
     rpcCall("session.switch", { thread_id: existing.thread_id })
       .then((result: unknown) => {
+        const selected = result as Record<string, unknown>;
         uiState.sessionId =
-          ((result as Record<string, string>).active_thread_id as string) ||
-          existing.thread_id;
+          (selected.active_thread_id as string) || existing.thread_id;
+        if (typeof selected.runtime_profile === "string") {
+          existing.runtime_profile = selected.runtime_profile;
+          applyRuntimeState({ runtime_profile: selected.runtime_profile });
+        }
         addThread(existing, uiState.sessionId);
         updateStatusBar();
       })
       .catch((err: Error) => {
-        console.warn("voidx: session switch failed", err.message);
+        showSessionError("会话切换", err);
       });
     return;
   }
 
-  rpcCall("session.create", { directory, profile })
+  rpcCall("session.create", { directory })
     .then((result: unknown) => {
       const r = result as Record<string, string>;
       uiState.sessionId = r.thread_id;
+      const runtimeProfile =
+        typeof r.runtime_profile === "string" ? r.runtime_profile : undefined;
+      if (runtimeProfile) {
+        applyRuntimeState({ runtime_profile: runtimeProfile });
+      }
       addThread(
         {
           thread_id: r.thread_id,
           title: r.title,
           status: r.status,
           workspace: r.workspace || r.directory || directory || uiState.workspace,
-          runtime_profile: profile,
+          runtime_profile: runtimeProfile,
         },
         uiState.sessionId,
       );
       updateStatusBar();
     })
     .catch((err: Error) => {
-      console.warn("voidx: session create failed", err.message);
+      showSessionError("会话创建", err);
     });
 });
 
@@ -402,9 +444,15 @@ export function handleNotification(
   if (method === "workspace.snapshot") {
     const snapshot = params.active_snapshot || { nodes: [] };
     requestCommandCatalogIfNeeded();
-    refreshUsageSnapshot();
+    const activeThread = ((params.threads as Array<Record<string, unknown>> | undefined) || []).find(
+      (thread) => thread.thread_id === params.active_thread_id,
+    );
     uiState.sessionId = (params.active_thread_id as string) || "";
     applyRuntimeState(params);
+    if (typeof activeThread?.runtime_profile === "string") {
+      applyRuntimeState({ runtime_profile: activeThread.runtime_profile });
+    }
+    refreshUsageSnapshot();
     requestStartupSettingsIfNeeded(applySettingsRuntimeState);
     updateStatusBar();
     renderSidebar(

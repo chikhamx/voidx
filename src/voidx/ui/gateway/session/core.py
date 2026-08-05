@@ -297,16 +297,19 @@ class GatewaySession(
         from voidx.memory.session import create_session
 
         runtime_state = self._runtime_state_provider() if self._runtime_state_provider else {}
+        runtime_profile = str(runtime_state.get("runtime_profile") or "coding")
         info = await create_session(
             workspace=self._workspace or ".",
             provider=str(runtime_state.get("provider") or "anthropic"),
             model=str(runtime_state.get("model") or ""),
+            profile=runtime_profile,
         )
         await self.register_thread(
             info.id,
             title=info.title,
             directory=info.directory,
             workspace=info.workspace,
+            runtime_profile=runtime_profile,
         )
         return info.id
 

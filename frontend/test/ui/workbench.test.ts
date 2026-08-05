@@ -76,7 +76,7 @@ beforeEach(() => {
 describe("workbench shell", () => {
   it("renders the fixed sidebar navigation and project sections", () => {
     const sidebar = document.querySelector("#sidebar");
-    expect(sidebar.textContent).toContain("新对话");
+    expect(sidebar.textContent).toContain("新建会话");
     expect(sidebar.textContent).toContain("搜索");
     expect(sidebar.textContent).not.toContain("已安排");
     expect(sidebar.textContent).toContain("项目");

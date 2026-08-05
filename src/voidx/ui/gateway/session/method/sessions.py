@@ -9,13 +9,15 @@ class SessionMethods:
     """Session/command-related JSON-RPC handlers, mixed into GatewaySession."""
 
     async def _method_session_create(self, params: dict) -> dict:
-        from voidx.memory.session import create_session
+        from voidx.memory.session import create_session, validate_runtime_profile
         title = params.get("title", "New session")
         directory = str(params.get("directory", "") or "")
         workspace = directory or self._workspace or "."
         profile = str(params.get("profile", "") or "coding")
-        if profile not in ("coding", "chat"):
-            raise MethodParamsError(f"unknown profile: {profile}")
+        try:
+            validate_runtime_profile(profile)
+        except ValueError as exc:
+            raise MethodParamsError(f"unknown profile: {profile}") from exc
         info = await create_session(
             workspace=workspace,
             title=title,
@@ -84,7 +86,11 @@ class SessionMethods:
     async def _method_session_switch(self, params: dict) -> dict:
         thread_id = params.get("thread_id", "")
         await self.switch_thread(thread_id)
-        return {"active_thread_id": self._active_thread_id}
+        info = self._threads.get(self._active_thread_id)
+        return {
+            "active_thread_id": self._active_thread_id,
+            "runtime_profile": info.runtime_profile if info else "coding",
+        }
 
     async def _method_session_list(self, params: dict) -> dict:
         await self.sync_persisted_threads()

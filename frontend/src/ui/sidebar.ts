@@ -184,8 +184,33 @@ export function renderSidebar(
   const header = document.querySelector<HTMLElement>(".vx-project-name");
   if (header) header.textContent = currentProjectName;
 
-  const codingThreads = threads.filter((t) => t.runtime_profile !== "chat");
+  const isTemporaryThread = (thread: ThreadInfo): boolean => {
+    if (thread.runtime_profile) return false;
+    if (thread.message_count === 0) return true;
+    const title = (thread.title || "").trim();
+    return title === "" || title === "New session" || title === "新对话" || title === "未命名会话";
+  };
+  const hasExplicitProfile = threads.some((thread) => Boolean(thread.runtime_profile));
+  const temporaryThreads = threads.filter((thread) =>
+    !thread.runtime_profile && (hasExplicitProfile || isTemporaryThread(thread))
+  );
+  const codingThreads = threads.filter((thread) =>
+    thread.runtime_profile === "coding" ||
+    (!hasExplicitProfile && !isTemporaryThread(thread))
+  );
   const chatThreads = threads.filter((t) => t.runtime_profile === "chat");
+  const loopThreads = threads.filter((t) => t.runtime_profile === "loop");
+  const goalThreads = threads.filter((t) => t.runtime_profile === "goal");
+
+  const temporarySection = document.querySelector<HTMLElement>("#temporary-session-section");
+  const temporaryList = document.querySelector<HTMLElement>("#temporary-session-list");
+  if (temporaryList) {
+    temporaryList.replaceChildren(...temporaryThreads.map((thread) => _createSessionItem(thread, activeThreadId)));
+  }
+  if (temporarySection) temporarySection.hidden = temporaryThreads.length === 0;
+
+  const codingSection = document.querySelector<HTMLElement>("#coding-session-section");
+  if (codingSection) codingSection.hidden = codingThreads.length === 0;
 
   const groups = groupByWorkspace(codingThreads);
   for (const group of groups) {
@@ -193,28 +218,34 @@ export function renderSidebar(
   }
 
   const chatList = document.querySelector<HTMLElement>("#chat-session-list");
+  const chatSection = document.querySelector<HTMLElement>("#chat-session-section");
   if (chatList) {
-    chatList.replaceChildren();
-    for (const thread of chatThreads) {
-      chatList.append(_createSessionItem(thread, activeThreadId));
-    }
+    chatList.replaceChildren(...chatThreads.map((thread) => _createSessionItem(thread, activeThreadId)));
     chatList.hidden = !chatExpanded;
   }
+  if (chatSection) chatSection.hidden = chatThreads.length === 0;
+
+  for (const [profile, profileThreads] of [["loop", loopThreads], ["goal", goalThreads]] as const) {
+    const modeList = document.querySelector<HTMLElement>(`#${profile}-session-list`);
+    const modeSection = document.querySelector<HTMLElement>(`#${profile}-session-section`);
+    if (modeList) {
+      modeList.replaceChildren(...profileThreads.map((thread) => _createSessionItem(thread, activeThreadId)));
+    }
+    if (modeSection) modeSection.hidden = profileThreads.length === 0;
+  }
+
+  list.hidden = !projectExpanded || codingThreads.length === 0;
 
   const chatHeading = document.querySelector<HTMLElement>("#chat-heading");
   if (chatHeading) {
     if (!chatHeaderBound) {
       chatHeading.addEventListener("click", () => {
         chatExpanded = !chatExpanded;
-        if (chatList) {
-          chatList.hidden = !chatExpanded;
-        }
+        if (chatList) chatList.hidden = !chatExpanded;
       });
       chatHeaderBound = true;
     }
   }
-
-
 
   const sidebarHeader = document.querySelector<HTMLElement>(".vx-project-heading");
   if (sidebarHeader) {
@@ -224,16 +255,12 @@ export function renderSidebar(
       newIcon.className = "vx-sidebar-row-icon";
       folderSpan.replaceWith(newIcon);
     }
-    
     if (!projectHeaderBound) {
       sidebarHeader.style.cursor = "pointer";
       sidebarHeader.addEventListener("click", (e: MouseEvent) => {
-        if ((e.target as HTMLElement).closest("#btn-open-workspace")) {
-          return;
-        }
+        if ((e.target as HTMLElement).closest("#btn-open-workspace")) return;
         projectExpanded = !projectExpanded;
-        list.hidden = !projectExpanded;
-        
+        list.hidden = !projectExpanded || codingThreads.length === 0;
         const fs = sidebarHeader.querySelector<HTMLElement>(".vx-sidebar-row-icon");
         if (fs) {
           const newIcon = _svgIcon(projectExpanded ? "folder-open" : "folder");
@@ -244,8 +271,6 @@ export function renderSidebar(
       projectHeaderBound = true;
     }
   }
-
-  list.hidden = !projectExpanded;
 
   const activeThread = threads.find((t) => t.thread_id === activeThreadId);
   const activeTitle = activeThread ? (activeThread.title || activeThread.thread_id.slice(0, 8)) : (activeThreadId ? "New session" : null);
@@ -286,13 +311,12 @@ export function removeThread(threadId: string, activeThreadId: string | null): v
 
 export function findReusableEmptyThread(directory: string, profile?: string): ThreadInfo | null {
   const workspace = _normalizeWorkspacePath(directory || currentProjectName || "Project");
-  const targetProfile = profile || "coding";
   return (
-    currentThreads.find((thread) => (
+    currentThreads.find((thread) =>
       _sameWorkspace(_threadWorkspace(thread), workspace) &&
       _isReusableEmptyThread(thread) &&
-      (thread.runtime_profile || "coding") === targetProfile
-    )) || null
+      (!profile || thread.runtime_profile === profile)
+    ) || null
   );
 }
 
@@ -599,17 +623,9 @@ export function onNewThread(callback: NewThreadCallback): void {
   newThreadCb = callback;
   if (!newChatBtnBound) {
     const btn = document.querySelector<HTMLElement>("#btn-new-chat");
-    if (btn) {
-      btn.addEventListener("click", () => {
-        if (newThreadCb) newThreadCb("");
-      });
-    }
-    const btnRestricted = document.querySelector<HTMLElement>("#btn-new-chat-restricted");
-    if (btnRestricted) {
-      btnRestricted.addEventListener("click", () => {
-        if (newThreadCb) newThreadCb("", "chat");
-      });
-    }
+    btn?.addEventListener("click", () => {
+      if (newThreadCb) newThreadCb("");
+    });
     newChatBtnBound = true;
   }
 }

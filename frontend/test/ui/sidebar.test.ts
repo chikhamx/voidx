@@ -41,6 +41,35 @@ function expandWorkspace(workspace = "") {
   document.querySelector(selector).click();
 }
 
+  it("uses one unified new-session entry", () => {
+    expect(document.querySelectorAll("#btn-new-chat, #btn-new-chat-restricted, #btn-new-loop, #btn-new-goal")).toHaveLength(1);
+    expect(document.querySelector("#btn-new-chat").textContent).toContain("新建会话");
+  });
+
+  it("keeps an unprofiled session in the temporary section", () => {
+    renderSidebar([
+      { thread_id: "temporary", title: "未命名会话", status: "idle", workspace: "/tmp/voidx" },
+    ], "temporary", "voidx");
+
+    expect(document.querySelector("#temporary-session-list .vx-session-item")).not.toBeNull();
+    expect(document.querySelector("#session-list .vx-workspace-session-group")).toBeNull();
+    expect(document.querySelector("#chat-session-list").parentElement.hidden).toBe(true);
+    expect(document.querySelector("#loop-session-list").parentElement.hidden).toBe(true);
+    expect(document.querySelector("#goal-session-list").parentElement.hidden).toBe(true);
+  });
+
+  it("shows only populated runtime profile sections", () => {
+    renderSidebar([
+      { thread_id: "chat", title: "Chat", status: "idle", runtime_profile: "chat" },
+      { thread_id: "goal", title: "Goal", status: "idle", runtime_profile: "goal" },
+    ], "chat", "voidx");
+
+    expect(document.querySelector("#chat-session-list").parentElement.hidden).toBe(false);
+    expect(document.querySelector("#goal-session-list").parentElement.hidden).toBe(false);
+    expect(document.querySelector("#loop-session-list").parentElement.hidden).toBe(true);
+    expect(document.querySelector("#session-list").parentElement.hidden).toBe(true);
+  });
+
 describe("renderSidebar", () => {
   it("renders session items grouped by workspace", () => {
     const threads = [
@@ -586,6 +615,12 @@ describe("onNewThread", () => {
     btn.click();
 
     expect(cb).toHaveBeenCalledWith("");
+  });
+
+  it("does not expose mode-specific new-session buttons", () => {
+    expect(document.querySelector("#btn-new-chat-restricted")).toBeNull();
+    expect(document.querySelector("#btn-new-loop")).toBeNull();
+    expect(document.querySelector("#btn-new-goal")).toBeNull();
   });
 
   it("calls callback with workspace when workspace new chat button is clicked", () => {

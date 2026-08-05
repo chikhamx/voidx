@@ -28,6 +28,7 @@ from voidx.ui.output.events.schema import (
 from voidx.ui.protocol.v2.envelope import (
     JsonRpcNotification,
     JsonRpcRequest,
+    JsonRpcError,
     JsonRpcResult,
     PROTOCOL_VERSION,
     parse_jsonrpc_message,
@@ -64,6 +65,81 @@ async def test_v2_session_create_method_registers_thread(tmp_path):
     store._conn = None
 
 
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("profile", ["chat", "coding", "loop", "goal"])
+async def test_v2_session_create_persists_all_runtime_profiles(tmp_path, profile):
+    """Every desktop runtime mode is accepted and survives the session round trip."""
+    import voidx.memory.store as store
+    from voidx.memory.session import get_session
+
+    store._conn = None
+    store.DATA_DIR = tmp_path / ".voidx"
+    session = GatewaySession(lambda: BottomInputDock().tree, thread_id="t1")
+
+    result = await session.dispatch_request(JsonRpcRequest(
+        id=20, method="session.create", params={"profile": profile},
+    ))
+
+    assert isinstance(result, JsonRpcResult)
+    thread_id = result.result["thread_id"]
+    assert result.result["runtime_profile"] == profile
+    assert (await get_session(thread_id)).runtime_profile == profile
+    assert next(t for t in session.list_threads() if t.thread_id == thread_id).runtime_profile == profile
+    store._conn = None
+
+
+
+
+@pytest.mark.asyncio
+async def test_session_persistence_rejects_unknown_runtime_profile(tmp_path):
+    import voidx.memory.store as store
+    from voidx.memory.session import create_session
+
+    store._conn = None
+    store.DATA_DIR = tmp_path / ".voidx"
+
+    with pytest.raises(ValueError, match="unknown runtime profile: invalid"):
+        await create_session(workspace=str(tmp_path), profile="invalid")
+    store._conn = None
+
+
+@pytest.mark.asyncio
+async def test_v2_session_switch_returns_runtime_profile(tmp_path):
+    import voidx.memory.store as store
+
+    store._conn = None
+    store.DATA_DIR = tmp_path / ".voidx"
+    session = GatewaySession(lambda: BottomInputDock().tree, thread_id="t1")
+    created = await session.dispatch_request(JsonRpcRequest(
+        id=22, method="session.create", params={"profile": "goal"},
+    ))
+    assert isinstance(created, JsonRpcResult)
+
+    switched = await session.dispatch_request(JsonRpcRequest(
+        id=23,
+        method="session.switch",
+        params={"thread_id": created.result["thread_id"]},
+    ))
+    assert isinstance(switched, JsonRpcResult)
+    assert switched.result["runtime_profile"] == "goal"
+    store._conn = None
+
+@pytest.mark.asyncio
+async def test_v2_session_create_rejects_unknown_runtime_profile(tmp_path):
+    import voidx.memory.store as store
+    store._conn = None
+    store.DATA_DIR = tmp_path / ".voidx"
+    session = GatewaySession(lambda: BottomInputDock().tree, thread_id="t1")
+
+    result = await session.dispatch_request(JsonRpcRequest(
+        id=21, method="session.create", params={"profile": "unknown"},
+    ))
+
+    assert isinstance(result, JsonRpcError)
+    assert "unknown profile" in result.error.message
+    store._conn = None
 
 @pytest.mark.asyncio
 async def test_v2_session_create_with_directory(tmp_path):

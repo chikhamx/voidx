@@ -359,3 +359,31 @@ async def test_v2_snapshot_refreshes_background_thread_persisted_metadata(tmp_pa
     assert threads[saved.id]["message_count"] == 1
     assert threads[saved.id]["title"] == "Background"
     store._conn = None
+
+
+@pytest.mark.asyncio
+async def test_v2_ensure_active_thread_persists_runtime_profile(tmp_path: Path):
+    import voidx.memory.store as store
+    from voidx.memory.session import get_session
+
+    store._conn = None
+    store.DATA_DIR = tmp_path / ".voidx"
+    dock = BottomInputDock()
+    session = GatewaySession(
+        lambda: dock.tree,
+        thread_id="",
+        workspace=str(tmp_path),
+        runtime_state_provider=lambda: {
+            "provider": "deepseek",
+            "model": "deepseek-chat",
+            "runtime_profile": "goal",
+        },
+    )
+
+    thread_id = await session.ensure_active_thread()
+
+    info = await get_session(thread_id)
+    assert info is not None
+    assert info.runtime_profile == "goal"
+    assert session._threads[thread_id].runtime_profile == "goal"
+    store._conn = None

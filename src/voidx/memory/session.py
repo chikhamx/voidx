@@ -38,6 +38,15 @@ class SessionInfo(BaseModel):
     runtime_profile: str = "coding"
 
 
+RUNTIME_PROFILES = ("coding", "chat", "loop", "goal")
+
+
+def validate_runtime_profile(profile: str) -> str:
+    if profile not in RUNTIME_PROFILES:
+        raise ValueError(f"unknown runtime profile: {profile}")
+    return profile
+
+
 class MessageRow(BaseModel):
     id: int | None = None  # auto-increment
     session_id: str
@@ -61,6 +70,7 @@ async def create_session(
     directory: str = "",
     profile: str = "coding",
 ) -> SessionInfo:
+    profile = validate_runtime_profile(profile)
     sid = _uid()
     now = _now()
     await _execute_commit(
@@ -83,6 +93,7 @@ async def ensure_session(
     title: str = "Loop session",
 ) -> None:
     """Insert a session row if missing so FK references from loop threads hold."""
+    profile = validate_runtime_profile(profile)
     now = _now()
     await _execute_commit(
         """INSERT OR IGNORE INTO sessions (id, title, workspace, directory, model_provider, model_name, runtime_profile, created_at, updated_at)

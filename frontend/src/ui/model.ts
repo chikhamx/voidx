@@ -266,6 +266,9 @@ export function applyRuntimeState(params: Record<string, unknown>): void {
   if (typeof params.profile_configured === "boolean") {
     uiState.profileConfigured = params.profile_configured;
   }
+  if (typeof params.runtime_profile === "string" && ["coding", "chat", "loop", "goal"].includes(params.runtime_profile)) {
+    uiState.runtimeProfile = params.runtime_profile as typeof uiState.runtimeProfile;
+  }
   if (typeof params.permission_mode === "string") {
     uiState.permissionMode = params.permission_mode;
   }

@@ -29,6 +29,22 @@ pub mod command_ext {
 #[cfg(not(windows))]
 pub use command_ext::CommandExt;
 
+pub const DESKTOP_RUNTIME_PROFILES: [&str; 4] = ["coding", "chat", "loop", "goal"];
+
+pub fn is_supported_runtime_profile(profile: &str) -> bool {
+    DESKTOP_RUNTIME_PROFILES.contains(&profile)
+}
+
+pub fn runtime_profile_label(profile: &str) -> &'static str {
+    match profile {
+        "coding" => "Coding",
+        "chat" => "Chat",
+        "loop" => "Loop",
+        "goal" => "Goal",
+        _ => "Unknown",
+    }
+}
+
 pub enum BackendStatus {
     Starting,
     Ready { url: String },

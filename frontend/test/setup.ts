@@ -45,7 +45,7 @@ document.body.innerHTML = `
         <nav class="vx-sidebar-nav" aria-label="Workspace navigation">
           <button type="button" class="vx-nav-item vx-new-chat" id="btn-new-chat">
             <span class="vx-sidebar-row-icon"><svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M10 4.5v11"/><path d="M4.5 10h11"/></svg></span>
-            <span>新对话</span>
+            <span>新建会话</span>
           </button>
           <label class="vx-nav-item vx-search-item">
             <span class="vx-sidebar-row-icon"><svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="9" cy="9" r="5"/><path d="m12.8 12.8 3.2 3.2"/></svg></span>
@@ -54,13 +54,28 @@ document.body.innerHTML = `
           </label>
           <button type="button" class="vx-nav-item vx-hidden-action" id="btn-integrations" hidden>插件</button>
         </nav>
-        <div class="vx-sidebar-section">
+        <div class="vx-sidebar-section" id="temporary-session-section" hidden>
+          <div class="vx-sidebar-heading"><span>临时会话</span></div>
+          <div class="vx-session-list" id="temporary-session-list"></div>
+        </div>
+        <div class="vx-sidebar-section" id="coding-session-section">
           <div class="vx-sidebar-heading vx-project-heading">
-            <span class="vx-sidebar-row-icon"><svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3.5 6.5h5l1.4 1.7h6.6v7.3a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z"/><path d="M3.5 6.5V5a2 2 0 0 1 2-2h3.2l1.4 1.7h4.4a2 2 0 0 1 2 2v1.7"/></svg></span>
-            <span class="vx-project-heading-label">项目</span>
-            <button type="button" class="vx-project-add" id="btn-open-workspace" title="打开项目" aria-label="打开项目"><svg class="vx-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></button>
+            <span class="vx-sidebar-row-icon"><svg viewBox="0 0 20 20" aria-hidden="true"></svg></span><span class="vx-project-heading-label">项目</span>
+            <button type="button" class="vx-project-add" id="btn-open-workspace"></button>
           </div>
           <div class="vx-session-list" id="session-list"></div>
+        </div>
+        <div class="vx-sidebar-section" id="loop-session-section" hidden>
+          <div class="vx-sidebar-heading"><span>循环模式</span></div>
+          <div class="vx-session-list" id="loop-session-list"></div>
+        </div>
+        <div class="vx-sidebar-section" id="goal-session-section" hidden>
+          <div class="vx-sidebar-heading"><span>目标模式</span></div>
+          <div class="vx-session-list" id="goal-session-list"></div>
+        </div>
+        <div class="vx-sidebar-section" id="chat-session-section" hidden>
+          <div class="vx-sidebar-heading vx-chat-heading" id="chat-heading"><span>聊天模式 (Chat)</span></div>
+          <div class="vx-session-list" id="chat-session-list"></div>
         </div>
         <div class="vx-sidebar-footer">
           <button type="button" class="vx-nav-item" id="btn-settings">设置</button>

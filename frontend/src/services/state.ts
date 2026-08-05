@@ -23,6 +23,7 @@ export interface UiState {
   refSelectedIndex: number;
   refToken: RefToken | null;
   permissionMode: string;
+  runtimeProfile: "coding" | "chat" | "loop" | "goal";
   aiApprovalCount: number;
   reasoningEffort: string;
   usage: UsageSnapshot | null;
@@ -73,6 +74,7 @@ export const uiState: UiState = {
   refSelectedIndex: 0,
   refToken: null,
   permissionMode: "safe",
+  runtimeProfile: "coding",
   aiApprovalCount: 0,
   reasoningEffort: "xhigh",
   usage: null,
@@ -168,6 +170,8 @@ export function providerModelLabel(): string {
 export function updateStatusBar(): void {
   const workspaceName = workspaceBasename(uiState.workspace);
   const modelLabel = providerModelLabel();
+  const profileLabels = { coding: "Coding", chat: "Chat", loop: "Loop", goal: "Goal" } as const;
+  const profileLabel = profileLabels[uiState.runtimeProfile];
   if (statusModelEl && uiState.model) {
     statusModelEl.textContent = modelLabel;
   }
@@ -179,7 +183,13 @@ export function updateStatusBar(): void {
     statusWorkspaceDetailEl.textContent = workspaceName;
   }
   if (uiState.sessionId) {
-    const sessionLabel = `session ${uiState.sessionId.slice(0, 8)}`;
+    const modeEl = document.querySelector<HTMLElement>("#chat-header-mode");
+    if (modeEl) modeEl.textContent = profileLabel;
+    for (const id of ["mode-status", "mode-stop"]) {
+      const button = document.querySelector<HTMLElement>(`#${id}`);
+      if (button) button.hidden = !["loop", "goal"].includes(uiState.runtimeProfile);
+    }
+    const sessionLabel = `${profileLabel} · session ${uiState.sessionId.slice(0, 8)}`;
     statusSessionEl.textContent = sessionLabel;
     statusSessionDetailEl.textContent = sessionLabel;
   }
@@ -204,8 +214,8 @@ export function updateStatusBar(): void {
 
   const reasoningPillTextEl = document.querySelector("#reasoning-pill-text");
   if (reasoningPillTextEl) {
-    const REASONING_LEVELS = ["none", "low", "medium", "high", "xhigh", "max", "ultra"];
-    const REASONING_PILL_LABELS = ["关闭", "低", "中", "高", "极", "最大", "超"];
+    const REASONING_LEVELS = ["none", "low", "medium", "high", "xhigh", "max"];
+    const REASONING_PILL_LABELS = ["关闭", "低", "中", "高", "极", "最大"];
     const rIdx = REASONING_LEVELS.indexOf(uiState.reasoningEffort || "xhigh");
     reasoningPillTextEl.textContent = rIdx !== -1 ? REASONING_PILL_LABELS[rIdx] : "极";
   }
@@ -268,6 +278,7 @@ export function _resetWorkbenchStateForTest(): void {
   uiState.sessionId = "";
   uiState.isRunning = false;
   uiState.profileConfigured = null;
+  uiState.runtimeProfile = "coding";
   uiState.configuredProfiles = [];
   uiState.isSwitchingModel = false;
   uiState.slashCommands = [];
