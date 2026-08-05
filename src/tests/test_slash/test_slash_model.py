@@ -383,7 +383,7 @@ def test_model_status_sync_updates_prompt_footer_state():
 
 
 @pytest.mark.asyncio
-async def test_model_reasoning_ultra_keeps_enum_and_syncs_status():
+async def test_model_reasoning_rejects_unknown_effort_without_changing_config():
     from voidx.config.enums import ReasoningEffort
 
     status = SimpleNamespace(
@@ -402,13 +402,13 @@ async def test_model_reasoning_ultra_keeps_enum_and_syncs_status():
         ),
         usage_stats=UsageStats(),
         app=SimpleNamespace(status=status),
-        api_key=None,
+        api_key="test-key",
     )
 
-    await SlashHandler(graph)._model_reasoning("ultra")
+    await SlashHandler(graph)._model_reasoning("invalid")
 
-    assert graph.config.model.reasoning_effort is ReasoningEffort.ULTRA
-    assert status.reasoning_effort == "ultra"
+    assert graph.config.model.reasoning_effort is ReasoningEffort.XHIGH
+    assert status.reasoning_effort == "xhigh"
     assert status.provider == "openai"
     assert status.model == "gpt-5.6-sol"
 

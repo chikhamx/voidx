@@ -17,7 +17,7 @@ class SettingsMethods:
         return await self._desktop_settings_snapshot(settings)
 
     async def _method_settings_update(self, params: dict) -> dict:
-        from voidx.config.enums import CodeIde, PermissionMode
+        from voidx.config.enums import CodeIde, PermissionMode, ReasoningEffort
         from voidx.config.models import AiApprovalConfig, Profile
         from voidx.config.settings import Settings
 
@@ -126,7 +126,7 @@ class SettingsMethods:
 
         # reasoning / context
         if "reasoning_effort" in model_patch if model_patch else {}:
-            valid_effort = {"none", "low", "medium", "high", "xhigh", "max", "ultra"}
+            valid_effort = {item.value for item in ReasoningEffort}
             effort = str(model_patch["reasoning_effort"] or "")
             if effort and effort not in valid_effort:
                 raise MethodParamsError(f"invalid reasoning_effort: {effort}")
