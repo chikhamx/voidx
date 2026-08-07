@@ -36,7 +36,7 @@ from voidx.tooling.builtin.file.search import FindInput, SearchInput
 from voidx.tooling.builtin.shell.bash import BashInput
 from voidx.agent.adapters.tools.subagent import AgentInput, AgentTool
 from voidx.agent.adapters.tools.subagent_control import AgentControlTool
-from voidx.agent.gateway import AgentGateway
+from voidx.agent.adapters.subagent import InProcessSubagentGateway
 from voidx.agent.application.runtime.task_tracker import TaskTracker
 from voidx.agent.adapters.tools.todo import TodoInput, TodoWriteTool
 from voidx.tooling.application.registry import ToolRegistry
@@ -174,7 +174,7 @@ class TestInteractiveTools:
         return args
 
     async def _spawn_and_wait_agent(self, tool: AgentTool, args: dict, tmp_path):
-        gateway = AgentGateway()
+        gateway = InProcessSubagentGateway()
         root_id = gateway.ensure_root("session-1")
         ctx = ToolContext(
             workspace=str(tmp_path),

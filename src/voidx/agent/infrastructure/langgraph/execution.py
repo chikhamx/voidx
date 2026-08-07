@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from langchain_core.messages import BaseMessage, HumanMessage
 
 from voidx.agent.application.agents import AgentDef
-from voidx.agent.gateway import AgentGateway
+from voidx.agent.adapters.subagent import InProcessSubagentGateway
 from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import CompactionCoordinator
 from voidx.agent.infrastructure.langgraph.runtime.convergence import generate_fallback_summary
 from voidx.agent.infrastructure.langgraph.runtime.core.helpers import (
@@ -351,7 +351,7 @@ class LangGraphExecution:
         self.api_key = api_key
         self.model = create_chat_model(api_key, config.model) if api_key else None
         self._session = session
-        self.agent_gateway = AgentGateway()
+        self.agent_gateway = InProcessSubagentGateway()
         self._workspace = config.workspace
         self._settings = settings
         self._mcp_reference_resolver = mcp_reference_resolver

@@ -27,13 +27,13 @@ import asyncio
 
 import pytest
 
-from voidx.agent.gateway import AgentGateway
+from voidx.agent.adapters.subagent import InProcessSubagentGateway
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext, AgentToolRuntime
 
 
 @pytest.mark.asyncio
 async def test_agent_control_wait_exposes_timeout_while_child_is_still_running():
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-control-timeout")
     started = asyncio.Event()
 
@@ -70,7 +70,7 @@ async def test_agent_control_wait_exposes_timeout_while_child_is_still_running()
 
 @pytest.mark.asyncio
 async def test_agent_control_wait_stops_polling_after_terminal_result():
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-control-terminal")
 
     async def runner(_run_id: str) -> str:
@@ -107,7 +107,7 @@ async def test_agent_control_wait_stops_polling_after_terminal_result():
 
 @pytest.mark.asyncio
 async def test_agent_control_wait_marks_contract_unsatisfied_as_terminal_incomplete_result():
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-control-contract")
 
     async def runner(_run_id: str) -> dict:

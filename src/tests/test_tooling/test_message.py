@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from voidx.agent.gateway import AgentGateway
+from voidx.agent.adapters.subagent import InProcessSubagentGateway
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext, AgentToolRuntime
 from voidx.agent.adapters.tools.subagent_message import MessageTool
 
@@ -17,7 +17,7 @@ def test_message_tool_schema_has_strict_object_properties():
 
 @pytest.mark.asyncio
 async def test_message_tool_sends_and_receives_between_child_and_parent(tmp_path):
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
 
     started = asyncio.Event()
@@ -89,7 +89,7 @@ async def test_message_tool_sends_and_receives_between_child_and_parent(tmp_path
 
 @pytest.mark.asyncio
 async def test_message_tool_accepts_json_string_payload(tmp_path):
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
     child = await gateway.spawn(
         session_id="session-1",
@@ -127,7 +127,7 @@ async def test_message_tool_reports_gateway_and_route_errors(tmp_path):
     assert result.metadata["error"] is True
     assert result.metadata["reason"] == "gateway_unavailable"
 
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_a = gateway.ensure_root("session-a")
     root_b = gateway.ensure_root("session-b")
     ctx = ToolContext(
@@ -151,7 +151,7 @@ async def test_message_tool_reports_gateway_and_route_errors(tmp_path):
 
 @pytest.mark.asyncio
 async def test_message_result_sets_child_run_result(tmp_path):
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
     started = False
 

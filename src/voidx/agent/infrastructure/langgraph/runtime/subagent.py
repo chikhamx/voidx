@@ -369,7 +369,7 @@ async def run_subagent(
     async def report_result(text: str, *, finish_reason: str | None = None) -> None:
         if agent_gateway is None or not run_identity:
             return
-        current = _gateway_run_by_id(agent_gateway, run_identity)
+        current = agent_gateway.lookup_run(run_identity)
         if current is None:
             return
         if current.status in {"completed", "failed", "cancelled"}:
@@ -672,7 +672,7 @@ async def run_subagent(
                     text = str(getattr(item["result"], "output", "") or "")
                     if agent_gateway is not None:
                         try:
-                            current = _gateway_run_by_id(agent_gateway, run_identity)
+                            current = agent_gateway.lookup_run(run_identity)
                             if current is not None:
                                 text = _result_text(current.result) or text
                         except Exception:
@@ -777,15 +777,6 @@ def _is_message_result_tool_call(tool_call: dict) -> bool:
         and args.get("message_type") == "result"
     )
 
-
-def _gateway_run_by_id(gateway, run_id: str):
-    try:
-        for run in gateway.list_runs():
-            if run.run_id == run_id:
-                return run
-    except Exception:
-        return None
-    return None
 
 
 def _guard_termination_result(messages: list, guard_message: str) -> str:

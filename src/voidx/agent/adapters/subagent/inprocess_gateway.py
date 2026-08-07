@@ -34,7 +34,7 @@ class _RunRecord:
     terminal_sent: bool = False
 
 
-class AgentGateway:
+class InProcessSubagentGateway:
     def __init__(self, *, inbox_capacity: int = 100, max_payload_bytes: int = 65536) -> None:
         self._inbox_capacity = inbox_capacity
         self._max_payload_bytes = max_payload_bytes
@@ -216,12 +216,13 @@ class AgentGateway:
         await self._close_records(records)
         self._root_by_session.clear()
 
-    def get_parent_run_id(self, run_id: str) -> str | None:
+    def lookup_run(self, run_id: str) -> AgentRun | None:
         record = self._runs.get(run_id)
-        if record is None:
-            return None
-        parent_run_id = record.run.parent_run_id
-        return parent_run_id or None
+        return self._copy_run(record.run) if record is not None else None
+
+    def get_parent_run_id(self, run_id: str) -> str | None:
+        run = self.lookup_run(run_id)
+        return (run.parent_run_id or None) if run is not None else None
 
     def list_runs(self, *, session_id: str | None = None) -> list[AgentRun]:
         return [

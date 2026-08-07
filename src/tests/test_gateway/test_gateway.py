@@ -2,13 +2,13 @@ import asyncio
 
 import pytest
 
-from voidx.agent.gateway import AgentGateway
-from voidx.agent.gateway.gateway import AgentGatewayError
+from voidx.agent.adapters.subagent import InProcessSubagentGateway
+from voidx.agent.domain.subagent import AgentGatewayError
 
 
 @pytest.mark.asyncio
 async def test_root_spawn_send_receive_and_wait_result():
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
     started = asyncio.Event()
     release = asyncio.Event()
@@ -57,7 +57,7 @@ async def test_root_spawn_send_receive_and_wait_result():
     ]
 @pytest.mark.asyncio
 async def test_wait_timeout_zero_waits_indefinitely_until_terminal():
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
     release = asyncio.Event()
 
@@ -91,7 +91,7 @@ async def test_wait_timeout_zero_waits_indefinitely_until_terminal():
 
 @pytest.mark.asyncio
 async def test_result_message_completes_run_and_blocks_later_messages():
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
 
     async def runner(run_id: str) -> str:
@@ -138,7 +138,7 @@ async def test_result_message_completes_run_and_blocks_later_messages():
 
 @pytest.mark.asyncio
 async def test_route_rejects_siblings_cross_session_and_unknown_runs():
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_a = gateway.ensure_root("session-a")
     root_b = gateway.ensure_root("session-b")
 
@@ -189,7 +189,7 @@ async def test_route_rejects_siblings_cross_session_and_unknown_runs():
 
 @pytest.mark.asyncio
 async def test_wait_timeout_failure_cancellation_and_close_session_cleanup():
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
     started = asyncio.Event()
 
@@ -258,7 +258,7 @@ async def test_wait_timeout_failure_cancellation_and_close_session_cleanup():
 
 @pytest.mark.asyncio
 async def test_runner_return_after_result_does_not_overwrite_payload():
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
     finished = asyncio.Event()
 
@@ -287,7 +287,7 @@ async def test_runner_return_after_result_does_not_overwrite_payload():
 
 @pytest.mark.asyncio
 async def test_get_parent_run_id_and_close_all():
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_a = gateway.ensure_root("session-a")
     root_b = gateway.ensure_root("session-b")
 
@@ -320,7 +320,7 @@ async def test_get_parent_run_id_and_close_all():
 
 @pytest.mark.asyncio
 async def test_inbox_full_rejects_regular_message_but_keeps_lifecycle():
-    gateway = AgentGateway(inbox_capacity=1)
+    gateway = InProcessSubagentGateway(inbox_capacity=1)
     root_id = gateway.ensure_root("session-1")
     release = asyncio.Event()
 
@@ -367,7 +367,7 @@ async def test_inbox_full_rejects_regular_message_but_keeps_lifecycle():
 
 @pytest.mark.asyncio
 async def test_payload_size_limit_rejects_oversized_message():
-    gateway = AgentGateway(max_payload_bytes=32)
+    gateway = InProcessSubagentGateway(max_payload_bytes=32)
     root_id = gateway.ensure_root("session-1")
     release = asyncio.Event()
 
@@ -397,7 +397,7 @@ async def test_payload_size_limit_rejects_oversized_message():
 
 @pytest.mark.asyncio
 async def test_route_rejects_grandparent_grandchild_send_and_control():
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
     hold = asyncio.Event()
 
@@ -459,7 +459,7 @@ async def test_route_rejects_grandparent_grandchild_send_and_control():
 
 @pytest.mark.asyncio
 async def test_close_session_makes_old_runs_inaccessible():
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
     started = asyncio.Event()
 
@@ -489,7 +489,7 @@ async def test_close_session_makes_old_runs_inaccessible():
 
 @pytest.mark.asyncio
 async def test_send_rejects_lifecycle_message_types():
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
     started = asyncio.Event()
     release = asyncio.Event()
@@ -524,7 +524,7 @@ async def test_send_rejects_lifecycle_message_types():
 
 @pytest.mark.asyncio
 async def test_wait_marks_timeout_while_run_is_still_active():
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-wait-outcome")
     started = asyncio.Event()
 
@@ -555,7 +555,7 @@ async def test_wait_marks_timeout_while_run_is_still_active():
 
 @pytest.mark.asyncio
 async def test_wait_distinguishes_terminal_transition_from_cached_terminal_result():
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-wait-terminal")
 
     async def runner(_run_id: str) -> str:

@@ -49,3 +49,24 @@ def test_subagent_transport_port_is_explicit():
     }
     assert "SubagentTransport" in protocols
     assert "ParentResultPublisher" in protocols
+
+
+def test_subagent_transport_lives_in_adapter_package():
+    assert not (AGENT / "gateway").exists()
+    path = AGENT / "adapters" / "subagent" / "inprocess_gateway.py"
+    assert path.exists()
+    source = path.read_text(encoding="utf-8")
+    assert "class InProcessSubagentGateway" in source
+
+
+def test_agent_tool_runtime_uses_subagent_transport_port():
+    path = AGENT / "adapters" / "tools" / "context.py"
+    source = path.read_text(encoding="utf-8")
+    assert "subagent_transport: object" not in source
+    assert "SubagentTransport" in source
+
+
+def test_langgraph_subagent_does_not_probe_transport_implementation():
+    path = AGENT / "infrastructure" / "langgraph" / "runtime" / "subagent.py"
+    source = path.read_text(encoding="utf-8")
+    assert "_gateway_run_by_id" not in source

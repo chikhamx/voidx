@@ -12,7 +12,7 @@ from voidx.tooling.domain.grants import (
     AccessGrants,
 )
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
-from voidx.agent.gateway import AgentGateway
+from voidx.agent.adapters.subagent import InProcessSubagentGateway
 from voidx.agent.adapters.tools.subagent import AgentTool
 from voidx.agent.adapters.tools.subagent_control import AgentControlTool
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext, AgentToolRuntime
@@ -170,7 +170,7 @@ async def test_agent_tool_passes_subagent_permission_snapshot(tmp_path):
         agent_resolver=lambda name: _AgentDef(),
         available_agents=["voidx"],
     )
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
     ctx = AgentToolExecutionContext(
         workspace=str(tmp_path),

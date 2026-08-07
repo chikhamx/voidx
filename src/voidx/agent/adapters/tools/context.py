@@ -11,6 +11,7 @@ from pydantic import ConfigDict, Field, SkipValidation
 from voidx.tooling.domain.context import ToolExecutionContext
 from voidx.tooling.domain.interaction import UserInteraction, UserResponse
 from voidx.tooling.domain.ui_events import ToolUiEventPublisher
+from voidx.agent.ports.subagent import SubagentTransport
 
 
 class InteractionCallback(Protocol):
@@ -23,7 +24,7 @@ class AgentToolRuntime:
     goal_control: object | None = None
     goal_intake: object | None = None
     loop_intake: object | None = None
-    subagent_transport: object | None = None
+    subagent_transport: SubagentTransport | None = None
     run_id: str = ""
     workflow_repeat_state: dict[str, dict[str, int]] = field(default_factory=dict)
     interaction: InteractionCallback | None = None

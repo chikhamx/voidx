@@ -3,7 +3,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from voidx.agent.application.agents import AgentDef
-from voidx.agent.gateway import AgentGateway
+from voidx.agent.adapters.subagent import InProcessSubagentGateway
 from voidx.agent.infrastructure.langgraph.runtime.subagent import run_subagent
 from voidx.config import Config
 from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
@@ -70,7 +70,7 @@ def _agent_def() -> AgentDef:
 async def test_run_subagent_explicit_result_message_completes_gateway_run(tmp_path, monkeypatch):
     import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
 
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
 
     async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
@@ -129,7 +129,7 @@ async def test_run_subagent_explicit_result_message_completes_gateway_run(tmp_pa
 async def test_run_subagent_result_tool_call_suppresses_same_batch_followups(tmp_path, monkeypatch):
     import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
 
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
 
     async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
@@ -197,7 +197,7 @@ async def test_run_subagent_result_tool_call_suppresses_same_batch_followups(tmp
 async def test_run_subagent_wraps_final_text_as_result_message(tmp_path, monkeypatch):
     import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
 
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
 
     async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
@@ -248,7 +248,7 @@ async def test_run_subagent_registers_message_and_blocks_parent_only_tools(tmp_p
     from voidx.agent.adapters.tools.interaction.clarify import ClarifyTool
     from voidx.tooling.application.registry import ToolRegistry
 
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
     bound_tool_names: list[str] = []
 
@@ -381,7 +381,7 @@ async def test_run_subagent_guard_terminated_returns_findings_fallback(tmp_path,
             tool_calls=[{"name": "bash", "args": {"command": f"python attempt{calls['n']}.py"}, "id": f"call-{calls['n']}"}],
         )
 
-    gateway = AgentGateway()
+    gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
     monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
     monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
