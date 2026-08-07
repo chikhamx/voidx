@@ -2,37 +2,51 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Protocol
 
-from voidx.runtime.ui import GatewaySession
+from voidx.agent.ports.presentation import RuntimePresentationStatus, RuntimeStatusReader
+from voidx.presentation.gateway import GatewaySession
+from voidx.presentation.output.tree import OutputTree
+
+
+class GatewayDock(Protocol):
+    tree: OutputTree
+
+
+SettingsFactory = Callable[[str], Awaitable[object]]
 
 
 def build_gateway_session(
-    execution: Any,
-    active_dock: Any,
+    status_reader: RuntimeStatusReader,
+    active_dock: GatewayDock,
     *,
-    settings_factory: Any = None,
-) -> Any:
-    """Create the web gateway session for the active dock."""
+    settings_factory: SettingsFactory | None = None,
+    settings_update_handler: Callable[[object], Awaitable[None] | None] | None = None,
+    usage_stats_provider: Callable[[], object] | None = None,
+    mcp_catalog_provider: Callable[[], list] | None = None,
+) -> GatewaySession:
+    status = status_reader.runtime_status()
+    session_id = status.session.session_id
     return GatewaySession(
         lambda: active_dock.tree,
-        thread_id=execution.session.id if execution.session else "",
-        session_id=execution.session.id if execution.session else "",
-        workspace=execution.workspace,
+        thread_id=session_id,
+        session_id=session_id,
+        workspace=status.workspace,
         settings_factory=settings_factory,
-        runtime_state_provider=lambda: {
-            "provider": execution.config.model.provider,
-            "model": execution.config.model.model,
-            "workspace": execution.workspace,
-            "profile_configured": execution.model is not None,
-            "permission_mode": getattr(execution.permission, "permission_mode", ""),
-            "ai_approval_count": getattr(execution.permission, "ai_approval_count", 0),
-        },
-        settings_update_handler=execution.apply_settings_update,
-        usage_stats_provider=lambda: execution.usage_stats,
-        mcp_catalog_provider=lambda: (
-            execution.mcp_manager.catalog_snapshot()
-            if execution.mcp_manager is not None
-            else []
-        ),
+        runtime_state_provider=lambda: _runtime_state(status_reader.runtime_status()),
+        settings_update_handler=settings_update_handler,
+        usage_stats_provider=usage_stats_provider,
+        mcp_catalog_provider=mcp_catalog_provider,
     )
+
+
+def _runtime_state(status: RuntimePresentationStatus) -> dict[str, object]:
+    return {
+        "provider": status.provider,
+        "model": status.model,
+        "workspace": status.workspace,
+        "profile_configured": status.profile_configured,
+        "permission_mode": status.permission_mode,
+        "ai_approval_count": status.ai_approval_count,
+    }

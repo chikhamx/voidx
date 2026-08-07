@@ -3,21 +3,29 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Any
+from typing import Any, Protocol
 
 from langchain_core.messages import AIMessage, ToolMessage
 
-from voidx.agent.ports.execution_host import ExecutionHost
 
 from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.domain.turn.state import TurnPhase
-from voidx.agent.infrastructure.langgraph.state_mapper import LangGraphStateMapper
+from voidx.agent.infrastructure.langgraph.state_mapper import LangGraphStateMapper, LangGraphStateTarget
+
+
+class LangGraphTurnHost(LangGraphStateTarget, Protocol):
+    session_id: str
+
+    async def run_turn(
+        self, user_text: str, *, display_text: str | None = None,
+        context: Any | None = None, persist_user_input: bool = True,
+    ) -> None: ...
 
 
 class LangGraphTurnEngine:
     def __init__(
         self,
-        execution: ExecutionHost,
+        execution: LangGraphTurnHost,
         *,
         mapper: LangGraphStateMapper | None = None,
     ) -> None:
@@ -54,7 +62,7 @@ class LangGraphTurnEngine:
         )
 
 
-def _evidence_from_execution(execution: ExecutionHost) -> dict[str, Any]:
+def _evidence_from_execution(execution: LangGraphTurnHost) -> dict[str, Any]:
     messages = tuple(getattr(execution, "_current_messages", None) or ())
     assistant_messages = tuple(message for message in messages if isinstance(message, AIMessage))
     tool_messages = tuple(message for message in messages if isinstance(message, ToolMessage))

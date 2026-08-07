@@ -24,6 +24,7 @@ from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hin
 from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
 from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.infrastructure.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
@@ -38,7 +39,7 @@ from voidx.agent.adapters.persistence.session_repository import (
     load_messages,
     save_message,
 )
-from voidx.presentation.transcript_snapshot import load_transcript
+from voidx.presentation.adapters.persistence.transcript_snapshot import load_transcript
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
 from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
 from voidx.agent.domain.task.intent import TaskIntent
@@ -57,7 +58,7 @@ from voidx.presentation.output.events import DockEventConsumer, TurnStarted, ui_
 
 def _graph(tmp_path):
     cfg = Config(workspace=str(tmp_path))
-    return LangGraphExecution(cfg, api_key=None)
+    return make_langgraph_execution(cfg, api_key=None)
 
 
 def _task_state_json(**kwargs):
@@ -266,8 +267,16 @@ async def test_plan_checkpoint_transaction_executes_following_tools_with_updated
         async def ask_text(self, prompt, **kwargs):
             return ""
 
+        status = SimpleNamespace()
+
+        def invalidate_skill_service_cache(self):
+            return None
+
+        def invalidate(self):
+            return None
+
     graph._authorize_tool_calls = allow_all
-    graph._app = FakeApp()
+    graph._ui.bind_frontend( FakeApp())
     parent = AIMessage(
         content="",
         tool_calls=[

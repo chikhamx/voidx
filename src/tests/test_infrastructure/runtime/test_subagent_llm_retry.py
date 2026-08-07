@@ -85,7 +85,7 @@ async def test_run_subagent_retries_transient_llm_errors_and_cleans_retry_status
     attempts = 0
     sleep_delays: list[int] = []
 
-    async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
         nonlocal attempts
         attempts += 1
         if attempts <= 2:
@@ -132,7 +132,7 @@ async def test_run_subagent_does_not_retry_context_overflow(tmp_path, monkeypatc
     attempts = 0
     sleep_delays: list[int] = []
 
-    async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
         nonlocal attempts
         attempts += 1
         raise ProviderError("context_length_exceeded", status_code=400)
@@ -174,7 +174,7 @@ async def test_run_subagent_does_not_retry_non_retryable_llm_errors(tmp_path, mo
     attempts = 0
     sleep_delays: list[int] = []
 
-    async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
         nonlocal attempts
         attempts += 1
         raise ProviderError("unauthorized", status_code=401)
@@ -216,7 +216,7 @@ async def test_run_subagent_exhausts_retryable_llm_errors(tmp_path, monkeypatch)
     attempts = 0
     sleep_delays: list[int] = []
 
-    async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
         nonlocal attempts
         attempts += 1
         raise ProviderError("server unavailable", status_code=503)
@@ -272,7 +272,7 @@ async def test_run_subagent_retry_uses_text_fallback_without_events(tmp_path, mo
     attempts = 0
     sleep_delays: list[int] = []
 
-    async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
         nonlocal attempts
         attempts += 1
         if attempts == 1:

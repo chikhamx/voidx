@@ -25,6 +25,7 @@ from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hin
 from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
 from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.infrastructure.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
@@ -39,7 +40,7 @@ from voidx.agent.adapters.persistence.session_repository import (
     load_messages,
     save_message,
 )
-from voidx.presentation.transcript_snapshot import load_transcript
+from voidx.presentation.adapters.persistence.transcript_snapshot import load_transcript
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
 from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
 from voidx.agent.domain.task.intent import TaskIntent
@@ -58,7 +59,7 @@ from voidx.presentation.output.events import DockEventConsumer, TurnStarted, ui_
 
 def _graph(tmp_path):
     cfg = Config(workspace=str(tmp_path))
-    return LangGraphExecution(cfg, api_key=None)
+    return make_langgraph_execution(cfg, api_key=None)
 
 
 def _task_state_json(**kwargs):
@@ -213,7 +214,7 @@ def test_graph_session_date_uses_session_creation_date(tmp_path):
         updated_at="2026-06-07T12:00:00",
     )
 
-    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session)
 
     assert graph._session_date.startswith("2026-06-06 ")
 

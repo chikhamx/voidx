@@ -24,6 +24,7 @@ from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hin
 from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
 from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.infrastructure.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
@@ -38,7 +39,7 @@ from voidx.agent.adapters.persistence.session_repository import (
     load_messages,
     save_message,
 )
-from voidx.presentation.transcript_snapshot import load_transcript
+from voidx.presentation.adapters.persistence.transcript_snapshot import load_transcript
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
 from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
 from voidx.agent.domain.task.intent import TaskIntent
@@ -57,7 +58,7 @@ from voidx.presentation.output.events import DockEventConsumer, StatusFinished, 
 
 def _graph(tmp_path):
     cfg = Config(workspace=str(tmp_path))
-    return LangGraphExecution(cfg, api_key=None)
+    return make_langgraph_execution(cfg, api_key=None)
 
 
 def _task_state_json(**kwargs):
@@ -273,7 +274,7 @@ async def test_preflight_compaction_returns_structured_metadata(tmp_path):
     assert result.live_messages[-1].content == "current question"
 @pytest.mark.asyncio
 async def test_compaction_asks_only_when_configured_and_can_skip(tmp_path):
-    graph = LangGraphExecution(Config(workspace=str(tmp_path), ask_compact=True), api_key=None)
+    graph = make_langgraph_execution(Config(workspace=str(tmp_path), ask_compact=True), api_key=None)
     graph._compaction.is_overflow = lambda _tokens: True
     asked: list[str] = []
 
@@ -286,7 +287,7 @@ async def test_compaction_asks_only_when_configured_and_can_skip(tmp_path):
     async def fail_if_compacted(_head_messages, _previous_summary):
         pytest.fail("skip once should not run compaction")
 
-    graph._app = FakeApp()
+    graph._ui.bind_frontend( FakeApp())
     graph._run_compaction_agent = fail_if_compacted
     messages = [
         HumanMessage(content="old question", id="1"),
@@ -303,7 +304,7 @@ async def test_compaction_asks_only_when_configured_and_can_skip(tmp_path):
 
 @pytest.mark.asyncio
 async def test_compaction_auto_compacts_by_default_without_asking(tmp_path):
-    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None)
+    graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None)
     graph._compaction.is_overflow = lambda _tokens: True
     graph._compaction.select_details = lambda messages: CompactionSelection(
         head=messages[:2],
@@ -319,7 +320,7 @@ async def test_compaction_auto_compacts_by_default_without_asking(tmp_path):
     async def summarize(_head_messages, _previous_summary):
         return "auto summary"
 
-    graph._app = FakeApp()
+    graph._ui.bind_frontend( FakeApp())
     graph._run_compaction_agent = summarize
     messages = [
         HumanMessage(content="older question", id="0"),
@@ -338,7 +339,7 @@ async def test_compaction_auto_compacts_by_default_without_asking(tmp_path):
 
 @pytest.mark.asyncio
 async def test_compaction_fallback_returns_removed_messages(tmp_path):
-    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None)
+    graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None)
     graph._compaction.is_overflow = lambda _tokens: True
     graph._compaction.select_details = lambda messages: CompactionSelection(
         head=messages[:2],
@@ -369,7 +370,7 @@ async def test_compaction_fallback_returns_removed_messages(tmp_path):
 
 @pytest.mark.asyncio
 async def test_preflight_compaction_uses_soft_threshold_and_target_tail(tmp_path):
-    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None)
+    graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None)
     graph._compaction.is_overflow = lambda _tokens: False
     graph._compaction.is_soft_overflow = lambda _tokens: True
     graph._compaction.soft_threshold = lambda: 90
@@ -432,7 +433,7 @@ async def test_preflight_compaction_uses_soft_threshold_and_target_tail(tmp_path
 
 @pytest.mark.asyncio
 async def test_maybe_compact_preflight_preserves_current_user_message(tmp_path):
-    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None)
+    graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None)
     graph._compaction.is_overflow = lambda _tokens: False
     graph._compaction.is_soft_overflow = lambda _tokens: True
     graph._compaction.select_preflight_details = lambda messages, *, model="": CompactionSelection(

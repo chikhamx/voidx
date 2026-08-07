@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from voidx.agent.infrastructure.ui_events import PermissionPromptCleared, PermissionPromptShown, PermissionToolDetail
+
 import asyncio
 import json
 import inspect
@@ -29,9 +31,7 @@ from .guards import _split_runtime_guard_blocked_calls, _restore_runtime_guard_b
 
 
 def _invalidate_tui(host: object) -> None:
-    app = getattr(host, "_app", None)
-    if app is not None and callable(getattr(app, "invalidate", None)):
-        app.invalidate()
+    host._ui.invalidate()
 
 
 _OTHER_VALUE_PREFIX = "__voidx_choice_prompt_other__"
@@ -291,10 +291,7 @@ _WORKSPACE_WRITE_LOCK_CAPABILITIES = {"file_write", "bash_write", "git_write", "
 
 
 def _workspace_write_lock_manager(host: object):
-    gateway_session = getattr(host, "_gateway_session", None)
-    if gateway_session is None:
-        return None
-    return getattr(gateway_session, "_run_manager", None)
+    return getattr(host, "_workspace_write_lock", None)
 
 
 def _requires_workspace_write_lock(tool_call: dict) -> bool:
@@ -372,7 +369,7 @@ async def _authorize_tool_calls(
     return await authorize(tool_calls, **filtered)
 
 
-def _make_interact_callback(app):
+def _make_interact_callback(app, ui_port=None):
     if app is None:
         return None
 
@@ -392,6 +389,7 @@ def _make_interact_callback(app):
                 choices,
                 permission_details,
                 timeout=timeout,
+                ui_port=ui_port,
             )
             if result == other_value:
                 result = await app.ask_text(request.prompt, timeout=timeout)
@@ -424,14 +422,13 @@ async def _ask_choice_with_permission_events(
     permission_details: list,
     *,
     timeout: float | None,
+    ui_port=None,
 ):
     shown = False
     details_payload = [detail.model_dump(mode="json") for detail in permission_details]
-    if permission_details:
-        from voidx.runtime.ui import PermissionPromptShown, ui_events
-
-        if ui_events.is_running:
-            await ui_events.emit(PermissionPromptShown(
+    if permission_details and ui_port is not None:
+        if ui_port.events.is_running:
+            await ui_port.events.emit(PermissionPromptShown(
                 prompt=request.prompt,
                 choices=choices,
                 tools=permission_details,
@@ -444,13 +441,10 @@ async def _ask_choice_with_permission_events(
         return await app.ask_choice(request.prompt, choices, **kwargs)
     finally:
         if shown:
-            from voidx.runtime.ui import PermissionPromptCleared, ui_events
-
-            await ui_events.emit(PermissionPromptCleared())
+            await ui_port.events.emit(PermissionPromptCleared())
 
 
 def _permission_details_for_interaction(request: UserInteraction) -> list:
-    from voidx.runtime.ui import PermissionToolDetail
 
     prompt = request.prompt.strip()
     marker = " file outside workspace? "

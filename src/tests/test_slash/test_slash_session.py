@@ -15,6 +15,9 @@ from voidx.agent.adapters.persistence.session_repository import MessageRow, crea
 from voidx.presentation.commands import COMMANDS
 from voidx.presentation.output.diff import make_file_diff
 from voidx.presentation.session import session_tracker
+from tests.presentation_ui import make_presentation_ui
+
+runtime_ui_port = make_presentation_ui()
 
 
 class FakeChoiceApp:
@@ -63,7 +66,7 @@ def isolated_memory_store(tmp_path):
 
 
 def _graph(app=None):
-    return SimpleNamespace(app=app)
+    return SimpleNamespace(app=app, _ui=runtime_ui_port)
 
 
 def _capture_output(monkeypatch):

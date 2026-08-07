@@ -4,6 +4,7 @@ import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.infrastructure.langgraph.runtime.turn_control import TURN_TOOL_DEFINITION
 from voidx.config import Config, ModelConfig
 from tests.test_infrastructure.runtime.stream_llm_helpers import FakeRenderer
@@ -155,7 +156,7 @@ def _make_graph(tmp_path, model, monkeypatch, provider="openai", renderer_cls=Fa
     import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
     monkeypatch.setattr(graph_module, "StreamingRenderer", renderer_cls)
 
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(
             model=ModelConfig(provider=provider, model="test-model"),
             workspace=str(tmp_path),

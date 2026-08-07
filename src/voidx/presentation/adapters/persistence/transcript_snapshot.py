@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 import asyncio
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from pydantic import BaseModel, Field
 from voidx.presentation.output.tree import OutputNode, OutputTree
@@ -16,14 +16,15 @@ from voidx.persistence.jsonl import (
     session_dir,
     write_session_json,
 )
-from voidx.persistence.sqlite import _now
+from voidx.persistence.sqlite import now
+from voidx.presentation.protocol.node_types import NodeType, Status
 
 
 class TranscriptTurnRow(BaseModel):
     session_id: str
     turn_id: int
     user_message_id: int | None = None
-    created_at: str = Field(default_factory=_now)
+    created_at: str = Field(default_factory=now)
     completed_at: str | None = None
 
 
@@ -43,8 +44,8 @@ class TranscriptNodeRow(BaseModel):
     tool_call_id: str | None = None
     agent_run_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
-    created_at: str = Field(default_factory=_now)
-    updated_at: str = Field(default_factory=_now)
+    created_at: str = Field(default_factory=now)
+    updated_at: str = Field(default_factory=now)
 
 
 async def replace_transcript(
@@ -54,13 +55,13 @@ async def replace_transcript(
     turn_count: int | None = None,
 ) -> None:
     """Replace a session transcript snapshot atomically."""
-    now = _now()
+    timestamp = now()
     if turn_count is None:
         turn_ids = sorted({node.turn_id for node in nodes})
     else:
         turn_ids = list(range(turn_count))
 
-    await _write_transcript_jsonl_snapshot(session_id, nodes, turn_ids, now)
+    await _write_transcript_jsonl_snapshot(session_id, nodes, turn_ids, timestamp)
 
 
 async def load_transcript(session_id: str) -> list[TranscriptNodeRow]:
@@ -75,7 +76,7 @@ async def append_transcript_reset(session_id: str, *, reason: str) -> None:
     record = {
         "type": "transcript_reset",
         "reason": reason,
-        "created_at": _now(),
+        "created_at": now(),
     }
     offsets, transcript_size = await append_session_records(session_id, "transcript.jsonl", [record])
     await write_session_json(session_id, "transcript.idx.json", {
@@ -94,7 +95,7 @@ async def append_transcript_summary(session_id: str, *, turn_id: int, content: s
         "type": "summary",
         "turn_id": turn_id,
         "content": content,
-        "created_at": _now(),
+        "created_at": now(),
     }
     offsets, transcript_size = await append_session_records(session_id, "transcript.jsonl", [record])
     index = _load_transcript_index(session_id) or {
@@ -393,7 +394,7 @@ def _apply_summary_record(
     for key in [key for key in rows if key[0] <= turn_id]:
         rows.pop(key, None)
     content = str(record.get("content") or "")
-    created_at = str(record.get("created_at") or _now())
+    created_at = str(record.get("created_at") or now())
     rows[(turn_id, -1)] = TranscriptNodeRow(
         session_id=session_id,
         turn_id=turn_id,
@@ -432,8 +433,8 @@ def _node_row_from_record(session_id: str, record: dict[str, Any]) -> Transcript
         tool_call_id=record.get("tool_call_id") if isinstance(record.get("tool_call_id"), str) else None,
         agent_run_id=record.get("agent_run_id") if isinstance(record.get("agent_run_id"), str) else None,
         metadata=metadata if isinstance(metadata, dict) else {},
-        created_at=str(record.get("created_at", "")) or _now(),
-        updated_at=str(record.get("updated_at", "")) or _now(),
+        created_at=str(record.get("created_at", "")) or now(),
+        updated_at=str(record.get("updated_at", "")) or now(),
     )
 
 
@@ -475,7 +476,7 @@ def _apply_node_update(
     if "agent_run_id" in record:
         updates["agent_run_id"] = record["agent_run_id"] if isinstance(record["agent_run_id"], str) else None
     if "updated_at" in record:
-        updates["updated_at"] = str(record["updated_at"] or _now())
+        updates["updated_at"] = str(record["updated_at"] or now())
     if "metadata" in record and isinstance(record["metadata"], dict):
         metadata = dict(row.metadata)
         for key, value in record["metadata"].items():
@@ -493,25 +494,6 @@ def _apply_node_update(
     rows[(turn_id, node_id)] = row.model_copy(update=updates)
 
 
-NodeType = Literal[
-    "root",
-    "startup",
-    "turn",
-    "tool_call",
-    "tool_result",
-    "todo",
-    "subagent",
-    "message",
-    "assistant",
-    "thought",
-    "status",
-    "permission",
-    "checkpoint",
-    "error",
-    "warn",
-    "diff",
-]
-Status = Literal["running", "done", "error"]
 _NODE_TYPES = set(NodeType.__args__)
 _STATUSES = set(Status.__args__)
 

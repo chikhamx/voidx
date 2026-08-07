@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from voidx.agent.infrastructure.ui_events import PermissionPromptCleared, PermissionPromptShown, PermissionToolDetail, RefreshRequested
+
 import json
 from dataclasses import replace
 from typing import Any
@@ -21,7 +23,6 @@ from voidx.tooling.domain.permission import Action
 from voidx.tooling.domain.risk import ApprovalScope, RiskLevel
 from voidx.agent.domain.task.intent import PersonaName
 from voidx.agent.adapters.tools.permission_projection import project_agent_tool_call
-from voidx.runtime.ui import PermissionPromptCleared, PermissionPromptShown, PermissionToolDetail
 from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_thread_execution_state
 
 
@@ -320,7 +321,6 @@ class PermissionFlow:
                 need_ask = _attach_ai_approval_failures(need_ask, candidates, result, allowed_ids)
             if ai_allowed:
                 if host._ui.via_events():
-                    from voidx.runtime.ui import RefreshRequested
                     await host._ui.events.emit(RefreshRequested())
                 need_ask = [decision for decision in need_ask if decision not in ai_allowed]
 
@@ -377,12 +377,11 @@ class PermissionFlow:
                 tools=host._permission_tool_details(decisions),
             ))
 
-        if not host._app:
-            host._ui.ui.print("")
-            host._ui.ui.print(f"  [yellow]Allow tools: [bold]{tool_list}[/bold]?[/yellow]")
-
-        if host._app:
-            return await host._app.ask_choice("Allow tool use?", choices, details=details)
+        choice = await host._ui.ask_choice("Allow tool use?", choices, details=details)
+        if choice is not None:
+            return choice
+        host._ui.ui.print("")
+        host._ui.ui.print(f"  [yellow]Allow tools: [bold]{tool_list}[/bold]?[/yellow]")
         return "n"
 
 

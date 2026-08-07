@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from voidx.config import CodeIde
-from voidx.runtime.ui import code_ide_status, detect_code_ides, normalize_ide, ui
+from voidx.platform.code_ide import code_ide_status, detect_code_ides, normalize_ide
 from voidx.agent.slash.helpers import _ide_label
 
 
@@ -10,12 +10,12 @@ class IdeCommandsMixin:
     async def _code_ide(self, args: str) -> None:
         settings = self.host.settings
         if settings is None:
-            ui.error("No settings file available.")
+            self.host.ui.error("No settings file available.")
             return
 
         value = args.strip().lower()
         if value == "status":
-            ui.print(code_ide_status(settings))
+            self.host.ui.print(code_ide_status(settings))
             return
 
         valid = {item.value for item in CodeIde}
@@ -37,16 +37,16 @@ class IdeCommandsMixin:
                 if selected:
                     value = selected
             if not value:
-                ui.print(code_ide_status(settings))
-                ui.print("Usage: /code-ide [auto|trae|cursor|code|windsurf|zed|sublime|jetbrains|ghostty|system|status]")
+                self.host.ui.print(code_ide_status(settings))
+                self.host.ui.print("Usage: /code-ide [auto|trae|cursor|code|windsurf|zed|sublime|jetbrains|ghostty|system|status]")
                 return
 
         value = normalize_ide(value)
         if value not in valid:
-            ui.error(f"Invalid code IDE: {value}. Use: {', '.join(sorted(valid))}")
+            self.host.ui.error(f"Invalid code IDE: {value}. Use: {', '.join(sorted(valid))}")
             return
 
         path = settings.set_code_ide(CodeIde(value))
-        ui.print(f"[dim]Code IDE set to [cyan]{value}[/cyan]. Saved to {path}[/dim]")
-        ui.print(code_ide_status(settings))
+        self.host.ui.print(f"[dim]Code IDE set to [cyan]{value}[/cyan]. Saved to {path}[/dim]")
+        self.host.ui.print(code_ide_status(settings))
 

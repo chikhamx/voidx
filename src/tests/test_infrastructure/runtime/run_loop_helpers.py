@@ -8,6 +8,14 @@ import voidx.persistence.sqlite as store
 
 
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.infrastructure.presentation_adapter import (
+    LangGraphPresentationBinding, LangGraphPresentationIntegrations,
+    LangGraphRuntimeStatusReader, LangGraphSessionLifecycle,
+)
+from voidx.agent.infrastructure.input_adapter import LangGraphInputAdapter
+from voidx.agent.infrastructure.input_router import LangGraphAutonomousInputRouter
+from voidx.agent.ports.presentation import NullAgentEventPublisher
+from voidx.agent.ports.workspace_lock import DelegatingWorkspaceWriteLock
 from voidx.agent.application.agent_service import AgentService
 from voidx.agent.application.runtime import AgentRuntime
 from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
@@ -25,7 +33,9 @@ from voidx.presentation.output.dock import BottomInputDock, set_dock
 from voidx.presentation.output.events import DockEventConsumer, ui_events
 from voidx.presentation.protocol import UiSubmitCommand
 from voidx.presentation.terminal.run_loop import TerminalRunLoop
-from voidx.runtime.ui_port import runtime_ui_port
+from tests.presentation_ui import make_presentation_ui
+
+runtime_ui_port = make_presentation_ui(dock=BottomInputDock())
 
 
 class FakeTui:
@@ -45,6 +55,9 @@ class FakeTui:
 
     def consume_quiet_command(self, command: str) -> bool:
         return command == "/model reasoning"
+
+    def hide_command_output(self) -> None:
+        return None
 
 
 class ExitTui:
@@ -96,17 +109,39 @@ def _service(execution) -> AgentService:
             events=NullEventPublisher(),
         )
     )
-    return AgentService(execution, runtime)
+    inputs = LangGraphInputAdapter(execution)
+    guidance = SimpleNamespace(
+        can_submit_guidance=lambda: callable(getattr(execution, "submit_guidance", None)),
+        submit_guidance=lambda text, **kwargs: bool(getattr(execution, "submit_guidance", lambda *_a, **_k: False)(text, **kwargs)),
+    )
+    router = LangGraphAutonomousInputRouter(execution, runtime, NullAgentEventPublisher(), guidance)
+    router.bind_turn_services(chat_service=None, coding_service=None)
+    return AgentService(inputs, inputs, router, guidance)
+
+
+def _terminal_run_loop(execution, service, ui=runtime_ui_port) -> TerminalRunLoop:
+    return TerminalRunLoop(
+        LangGraphRuntimeStatusReader(execution),
+        LangGraphSessionLifecycle(execution),
+        LangGraphPresentationIntegrations(execution),
+        LangGraphPresentationBinding(execution, service._slash_dispatcher),
+        service,
+        service,
+        DelegatingWorkspaceWriteLock(),
+        ui,
+    )
 
 
 def _service_and_run_loop(execution) -> tuple[AgentService, TerminalRunLoop]:
     service = _service(execution)
-    return service, TerminalRunLoop(execution, service)
+    return service, _terminal_run_loop(execution, service)
 
 
 def _graph(session=None, workspace: str = "/tmp/workspace") -> AgentService:
     execution = SimpleNamespace()
     graph = _service(execution)
+    graph.test_host = execution
+    graph.test_router = graph._autonomous_router
     run_loop_holder = {}
     execution.session = session
     execution.workspace = workspace
@@ -160,7 +195,7 @@ def _graph(session=None, workspace: str = "/tmp/workspace") -> AgentService:
     def run_loop():
         loop = run_loop_holder.get("loop")
         if loop is None:
-            loop = TerminalRunLoop(execution, graph)
+            loop = _terminal_run_loop(execution, graph, execution._ui if hasattr(execution, "_ui") else runtime_ui_port)
             run_loop_holder["loop"] = loop
         return loop
 
@@ -176,7 +211,7 @@ def _graph(session=None, workspace: str = "/tmp/workspace") -> AgentService:
 
 def _graph_and_run_loop(session=None, workspace: str = "/tmp/workspace") -> tuple[AgentService, TerminalRunLoop]:
     service = _graph(session=session, workspace=workspace)
-    return service, TerminalRunLoop(service._execution, service)
+    return service, _terminal_run_loop(service.test_host, service)
 
 
 def _disable_external_managers(graph) -> None:

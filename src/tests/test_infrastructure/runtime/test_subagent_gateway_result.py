@@ -73,7 +73,7 @@ async def test_run_subagent_explicit_result_message_completes_gateway_run(tmp_pa
     gateway = AgentGateway()
     root_id = gateway.ensure_root("session-1")
 
-    async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
         return AIMessage(
             content="",
             tool_calls=[
@@ -132,7 +132,7 @@ async def test_run_subagent_result_tool_call_suppresses_same_batch_followups(tmp
     gateway = AgentGateway()
     root_id = gateway.ensure_root("session-1")
 
-    async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
         return AIMessage(
             content="",
             tool_calls=[
@@ -200,7 +200,7 @@ async def test_run_subagent_wraps_final_text_as_result_message(tmp_path, monkeyp
     gateway = AgentGateway()
     root_id = gateway.ensure_root("session-1")
 
-    async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
         return AIMessage(content="fallback final result")
 
     monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
@@ -263,7 +263,7 @@ async def test_run_subagent_registers_message_and_blocks_parent_only_tools(tmp_p
                     bound_tool_names.append(item["name"])
             return self
 
-    async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
         return AIMessage(content="done")
 
     monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: CapturingModel())
@@ -373,7 +373,7 @@ async def test_run_subagent_guard_terminated_returns_findings_fallback(tmp_path,
 
     calls = {"n": 0}
 
-    async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
         calls["n"] += 1
         content = "关键发现：实现符合设计契约。" if calls["n"] == 1 else ""
         return AIMessage(

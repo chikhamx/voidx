@@ -11,29 +11,40 @@ from voidx.agent.infrastructure.null_events import NullEventPublisher
 from voidx.agent.ports.presentation import NullAgentEventPublisher
 from voidx.presentation.terminal.events import UiAgentEventPublisher
 from voidx.presentation.terminal.run_loop import TerminalRunLoop
+from tests.presentation_ui import make_presentation_ui
+
+runtime_ui_port = make_presentation_ui()
 
 
 def test_build_agent_components_wires_presentation_neutral_runtime(monkeypatch):
-    execution = SimpleNamespace()
+    execution = SimpleNamespace(
+        session=None,
+        session_id="",
+        workspace="",
+        slash=SimpleNamespace(dispatch=lambda _command: False),
+        bind_coding_turn_runner=lambda _runner: None,
+        can_submit_guidance=lambda: False,
+        submit_guidance=lambda *_args, **_kwargs: False,
+    )
     monkeypatch.setattr(
         "voidx.agent.composition.LangGraphExecution",
-        lambda config, api_key, *, session, settings, external_manager_factory, mcp_reference_resolver, web_route: execution,
+        lambda config, api_key, *, session, settings, ui, workspace_write_lock, external_manager_factory, mcp_reference_resolver, web_route: execution,
     )
 
-    components = build_agent_components(object(), "key")
+    components = build_agent_components(object(), "key", ui=runtime_ui_port)
 
     assert isinstance(components, AgentComponents)
     assert components.execution is execution
     assert isinstance(components.service, AgentService)
-    assert components.service._execution is execution
-    assert isinstance(components.service._events, NullAgentEventPublisher)
-    runtime = components.service._runtime
+    assert not hasattr(components.service, "_execution")
+    assert isinstance(components.service._autonomous_router._events, NullAgentEventPublisher)
+    runtime = components.service._autonomous_router._runtime
     assert isinstance(runtime, AgentRuntime)
     resources = runtime._resources
     assert isinstance(resources.turn_engine, LangGraphTurnEngine)
     assert isinstance(resources.sessions, MemorySessionAdapter)
     assert isinstance(resources.events, NullEventPublisher)
-    assert isinstance(components.service._coding_service, CodingService)
+    assert isinstance(components.service._autonomous_router._coding_service, CodingService)
 
 
 def test_bootstrap_build_agent_app_owns_terminal_composition(monkeypatch):
@@ -62,8 +73,12 @@ def test_bootstrap_build_agent_app_owns_terminal_composition(monkeypatch):
     assert isinstance(app, AgentFacade)
     assert app._execution is service
     assert isinstance(app._run_loop, TerminalRunLoop)
-    assert app._run_loop._execution is execution
-    assert app._run_loop._service is service
+    assert app._run_loop._status_reader._host is execution
+    assert app._run_loop._sessions._host is execution
+    assert app._run_loop._integrations._host is execution
+    assert app._run_loop._frontend_binding._host is execution
+    assert app._run_loop._ui is captured["ui"]
+    assert app._run_loop._input_port is service
     publisher = captured["event_publisher_factory"](execution)
     assert isinstance(publisher, UiAgentEventPublisher)
 

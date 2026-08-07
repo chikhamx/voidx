@@ -43,7 +43,7 @@ from voidx.agent.adapters.persistence.runtime_state_repository import (
     save_message_runtime_snapshot,
     save_runtime_state,
 )
-from voidx.presentation.transcript_snapshot import (
+from voidx.presentation.adapters.persistence.transcript_snapshot import (
     TranscriptNodeRow,
     replace_transcript,
     load_transcript,

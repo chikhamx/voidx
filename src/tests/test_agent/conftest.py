@@ -42,7 +42,7 @@ def simulated_llm_retry_sleep(monkeypatch: pytest.MonkeyPatch):
 def call_llm_renderer_patch_compat(monkeypatch: pytest.MonkeyPatch):
     class RendererProxy:
         def __new__(cls, *args, **kwargs):
-            from voidx.runtime.ui import StreamingRenderer
+            from voidx.presentation.output.console import StreamingRenderer
 
             return StreamingRenderer(*args, **kwargs)
 

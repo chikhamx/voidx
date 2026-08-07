@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from voidx.agent.infrastructure.ui_events import StatusFinished, StatusUpdated
+
 import asyncio
 import json
 import re
 import time
+from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -55,13 +58,6 @@ from voidx.llm.usage import (
 )
 from voidx.agent.adapters.persistence.context_frame_repository import save_context_frame_from_messages
 from voidx.agent.adapters.persistence.subagent_repository import append_subagent_event
-from voidx.runtime.ui import (
-    CaptureConsole,
-    OutputTree,
-    StatusFinished,
-    StatusUpdated,
-    StreamingRenderer,
-)
 from voidx.tooling.application.execution import AuthorizationRuntime
 from voidx.tooling.domain.file_tracking import FileStateStore
 from voidx.tooling.adapters.lsp_post_edit import LspPostEditFormatter
@@ -71,7 +67,7 @@ from voidx.agent.application.runtime.task_tracker import TaskTracker
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext, AgentToolRuntime
 from voidx.agent.adapters.tools.plugins import bind_agent_tool_runtime
 from voidx.agent.adapters.tools.subagent_message import MessageTool
-from voidx.runtime.ui_port import AgentUiPort, runtime_ui_port
+from voidx.agent.ports.ui import AgentUiPort, NullAgentUiPort
 
 
 _SAFETY_STEP_LIMIT = 100
@@ -103,7 +99,7 @@ async def run_subagent(
     goal_resolution: GoalResolution,
     result_contract,
     run_metadata: dict[str, object] | None = None,
-    capture_tree: OutputTree | None = None,
+    capture_tree: Any | None = None,
     parent_node=None,
     sub_messages: list | None = None,
     authorize_tools=None,
@@ -118,9 +114,11 @@ async def run_subagent(
     permission_snapshot=None,
     agent_run_id: str | None = None,
     agent_gateway=None,
-    ui_port: AgentUiPort = runtime_ui_port,
+    ui_port: AgentUiPort | None = None,
 ) -> str:
     """Run a child agent in its own message context."""
+    ui_port = ui_port or NullAgentUiPort()
+    ui_factories = ui_port if hasattr(ui_port, "streaming_renderer") else NullAgentUiPort()
     agent_def = child_run_agent_def(agent_def)
     run_identity = agent_run_id or f"agent_{agent_id}"
     persona = (runtime_persona or PersonaName.EXPLORE).strip() or PersonaName.EXPLORE
@@ -417,7 +415,7 @@ async def run_subagent(
             step += 1
 
             if capture_tree and parent_node is not None:
-                capture = CaptureConsole(capture_tree, parent_node, agent_id=agent_id)
+                capture = ui_factories.capture_console(capture_tree, parent_node, agent_id=agent_id)
                 capture.step_header(persona)
             else:
                 ui_port.ui.step_header(persona)
@@ -425,7 +423,7 @@ async def run_subagent(
             ctx = ctx.model_copy(update={"turn_count": step})
             llm_messages = [*messages, *drain_guard_guidance()]
             model_with_tools = model.bind_tools(tool_defs) if tool_defs else model
-            renderer = StreamingRenderer(ui_port.console, debug=debug, agent_id=agent_id, headless=True)
+            renderer = ui_factories.streaming_renderer(ui_port.console, debug=debug, agent_id=agent_id, headless=True)
             context_tokens = estimate_context_tokens_with_tools(
                 llm_messages,
                 tool_defs,
@@ -457,6 +455,7 @@ async def run_subagent(
                         llm_messages,
                         renderer,
                         resolve_protocol(config.model),
+                        ui_port=ui_port,
                     )
                     if retry_status_active and ui_port.via_events():
                         await ui_port.events.emit(StatusFinished(status_id="llm:retry"))

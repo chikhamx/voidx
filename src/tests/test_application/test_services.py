@@ -6,6 +6,8 @@ import asyncio
 
 import pytest
 
+from tests.test_application.input_ports import service_ports
+
 from voidx.agent.application.coding_service import CodingService
 from voidx.agent.application.compaction_service import CompactionService
 from voidx.agent.application.session_service import SessionService
@@ -217,7 +219,7 @@ async def test_runtime_cancel_persists_and_propagates_cancellation():
 class FakeCodingService:
     calls: list[dict] = field(default_factory=list)
 
-    async def run_turn(self, **kwargs):
+    async def run_coding_turn(self, **kwargs):
         self.calls.append(kwargs)
 
 
@@ -231,19 +233,31 @@ class FakeExecutionHost:
         self.bound_coding_turn_runner = runner
 
 
+
+
+def _agent_service_with_coding(execution, coding_service):
+    from voidx.agent.application.agent_service import AgentService
+    from voidx.agent.infrastructure.input_router import LangGraphAutonomousInputRouter
+    from voidx.agent.ports.presentation import NullAgentEventPublisher
+    from tests.test_application.input_ports import FakeInputPorts
+
+    ports = FakeInputPorts(session_id=execution.session_id, workspace=execution.workspace)
+    router = LangGraphAutonomousInputRouter(
+        execution,
+        None,
+        NullAgentEventPublisher(),
+        ports,
+    )
+    router.bind_turn_services(chat_service=None, coding_service=coding_service)
+    return AgentService(ports, ports, router, ports)
 @pytest.mark.asyncio
 async def test_agent_service_binds_coding_runner_and_preserves_display_text():
     execution = FakeExecutionHost()
     coding = FakeCodingService()
-    service = __import__(
-        "voidx.agent.application.agent_service",
-        fromlist=["AgentService"],
-    ).AgentService(execution, runtime=None, coding_service=coding)
+    service = _agent_service_with_coding(execution, coding)
     context = TurnExecutionContext(thread_id="thread-1", session_id="session-1")
 
-    assert callable(execution.bound_coding_turn_runner)
-
-    await execution.bound_coding_turn_runner(
+    await service.run_coding_turn(
         "generate agents",
         context=context,
         display_text="/init",
@@ -273,10 +287,7 @@ class FakeRuntime:
 async def test_agent_service_coding_runner_raises_without_coding_service():
     execution = FakeExecutionHost(session_id="session-1")
     runtime = FakeRuntime()
-    service = __import__(
-        "voidx.agent.application.agent_service",
-        fromlist=["AgentService"],
-    ).AgentService(execution, runtime=runtime, coding_service=None)
+    service = _agent_service_with_coding(execution, None)
 
     with pytest.raises(RuntimeError, match="coding service is not configured"):
         await service.run_coding_turn(
@@ -290,10 +301,7 @@ async def test_agent_service_coding_runner_raises_without_coding_service():
 async def test_agent_service_coding_runner_preserves_explicit_context_identity():
     execution = FakeExecutionHost(session_id="active-session")
     runtime = FakeRuntime()
-    service = __import__(
-        "voidx.agent.application.agent_service",
-        fromlist=["AgentService"],
-    ).AgentService(execution, runtime=runtime, coding_service=CodingService(runtime))
+    service = _agent_service_with_coding(execution, CodingService(runtime))
     context = TurnExecutionContext(
         thread_id="target-thread",
         session_id="target-session",
@@ -314,10 +322,7 @@ async def test_agent_service_coding_runner_preserves_explicit_context_identity()
 async def test_agent_service_fallback_runner_preserves_explicit_context_identity():
     execution = FakeExecutionHost(session_id="active-session")
     runtime = FakeRuntime()
-    service = __import__(
-        "voidx.agent.application.agent_service",
-        fromlist=["AgentService"],
-    ).AgentService(execution, runtime=runtime, coding_service=None)
+    service = _agent_service_with_coding(execution, None)
     context = TurnExecutionContext(
         thread_id="target-thread",
         session_id="target-session",

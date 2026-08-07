@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from voidx.presentation.tools import clipboard_image
+from voidx.agent.infrastructure import clipboard_image
 
 
 def _patch_windows(monkeypatch):

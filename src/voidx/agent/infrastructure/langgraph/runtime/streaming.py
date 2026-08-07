@@ -10,7 +10,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
-from voidx.runtime.ui_port import AgentUiPort, runtime_ui_port
+from voidx.agent.ports.ui import AgentUiPort, NullAgentUiPort
 from voidx.agent.application.tool_call_ids import ai_tool_call_ids
 
 _DSML_MARKER_RE = r"\|\|DSML\|\|"
@@ -57,11 +57,13 @@ async def stream_llm(
     messages: list,
     renderer: Any,
     protocol: str = "",
-    ui_port: AgentUiPort = runtime_ui_port,
+    *,
+    ui_port: AgentUiPort | None = None,
 ) -> AIMessage:
     """Stream LLM response, render live, return merged AIMessage."""
     from voidx.llm.service import extract_thinking
 
+    ui_port = ui_port or NullAgentUiPort()
     chunks: list[AIMessageChunk] = []
     renderer.start()
 
@@ -83,7 +85,7 @@ async def stream_llm(
         raise
     finally:
         renderer.done()
-        if ui_port.events.is_running:
+        if getattr(ui_port.events, "is_running", False):
             await ui_port.events.drain()
 
     if not chunks:

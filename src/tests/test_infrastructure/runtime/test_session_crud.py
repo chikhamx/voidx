@@ -26,7 +26,7 @@ from voidx.agent.adapters.persistence.session_repository import (
     MessageRow,
 )
 from voidx.agent.adapters.persistence.session_cleanup import plan_session_delete
-from voidx.presentation.transcript_snapshot import (
+from voidx.presentation.adapters.persistence.transcript_snapshot import (
     TranscriptNodeRow,
     replace_transcript,
     load_transcript,

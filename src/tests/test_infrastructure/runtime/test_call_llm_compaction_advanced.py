@@ -13,6 +13,7 @@ from rich.console import Console
 
 from voidx.agent.infrastructure.langgraph.runtime.streaming import stream_llm as _stream_llm
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
 from voidx.agent.application.runtime_context import RuntimeContextBuilder
 from voidx.agent.domain.task.state import TaskState
@@ -53,7 +54,7 @@ async def test_call_llm_ignores_legacy_max_steps_for_tool_binding(tmp_path, monk
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(
             model=ModelConfig(provider="mimo", model="mimo-v2.5"),
             workspace=str(tmp_path),
@@ -79,7 +80,7 @@ async def test_call_llm_does_not_add_main_agent_step_hint(tmp_path, monkeypatch)
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(
             model=ModelConfig(provider="mimo", model="mimo-v2.5"),
             workspace=str(tmp_path),
@@ -127,7 +128,7 @@ async def test_call_llm_retry_uses_transient_status_event(tmp_path, monkeypatch)
     test_dock.begin_capture()
     ui_events.start(RecordingConsumer())
     try:
-        graph = LangGraphExecution(
+        graph = make_langgraph_execution(
             Config(
                 model=ModelConfig(provider="mimo", model="mimo-v2.5"),
                 workspace=str(tmp_path),
@@ -205,7 +206,7 @@ async def test_call_llm_exhausts_retries_then_renders_assistant_error(tmp_path, 
     test_dock.begin_capture()
     ui_events.start(RecordingConsumer())
     try:
-        graph = LangGraphExecution(
+        graph = make_langgraph_execution(
             Config(
                 model=ModelConfig(provider="mimo", model="mimo-v2.5"),
                 workspace=str(tmp_path),

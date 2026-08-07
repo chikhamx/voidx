@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from voidx.presentation.transcript_snapshot import NodeType, Status
+from voidx.presentation.protocol.node_types import NodeType, Status
 from voidx.presentation.output.tree import OutputNode, OutputTree
 
 

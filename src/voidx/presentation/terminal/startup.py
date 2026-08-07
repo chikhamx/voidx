@@ -3,92 +3,93 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Awaitable, Callable
 
+from voidx.agent.ports.presentation import RuntimeStatusReader
+from voidx.agent.ports.ui import AgentUiPort
 from voidx.logging.tool_log import log_tool_event
-from voidx.runtime.ui import StartupShown
+from voidx.presentation.output.events import StartupShown
 
 
 class StartupPresenter:
-    """Render and publish startup presentation events for an agent execution."""
-
-    def __init__(self, execution: Any) -> None:
-        self._execution = execution
+    def __init__(
+        self,
+        status_reader: RuntimeStatusReader,
+        ui: AgentUiPort,
+        *,
+        restore_snapshot: Callable[..., Awaitable[bool]],
+        update_check_due: Callable[[], bool] | None = None,
+        mark_update_check: Callable[[str | None], None] | None = None,
+    ) -> None:
+        self._status_reader = status_reader
+        self._ui = ui
+        self._restore_snapshot = restore_snapshot
+        self._update_check_due = update_check_due
+        self._mark_update_check = mark_update_check
 
     def title(self) -> str:
-        title = self._execution.session.title if self._execution.session else "New session"
+        title = self._status_reader.runtime_status().session.title
         if len(title) > 60:
             title = title[:57] + "..."
         return title
 
-    async def show(
-        self,
-        *,
-        append_transcript: bool = False,
-        prefer_direct: bool = False,
-    ) -> None:
-        is_new = self._execution.session is None
+    async def show(self, *, append_transcript: bool = False, prefer_direct: bool = False) -> None:
+        status = self._status_reader.runtime_status()
         title = self.title()
-        active_dock = self._execution.ui.get_dock()
+        active_dock = self._ui.get_dock()
         startup_event = StartupShown(
-            model=self._execution.config.model.model,
-            provider=self._execution.config.model.provider,
-            workspace=self._execution.workspace,
+            model=status.model,
+            provider=status.provider,
+            workspace=status.workspace,
             session_title=title,
-            is_new=is_new,
-            profile_configured=self._execution.model is not None,
+            is_new=status.session.is_new,
+            profile_configured=status.profile_configured,
         )
-        startup_via_event = active_dock is not None and self._execution.ui.events.is_running and not prefer_direct
+        startup_via_event = active_dock is not None and self._ui.events.is_running and not prefer_direct
         if startup_via_event:
-            await self._execution.ui.events.request(startup_event)
+            await self._ui.events.request(startup_event)
             if append_transcript:
-                await self._execution.restore_transcript_snapshot(append=True)
+                await self._restore_snapshot(append=True)
             return
 
         if active_dock is not None and active_dock.active:
             active_dock.append_startup(
-                model=self._execution.config.model.model,
-                provider=self._execution.config.model.provider,
-                workspace=self._execution.workspace,
+                model=status.model,
+                provider=status.provider,
+                workspace=status.workspace,
                 session_title=title,
-                is_new=is_new,
-                profile_configured=self._execution.model is not None,
+                is_new=status.session.is_new,
+                profile_configured=status.profile_configured,
             )
             if append_transcript:
-                await self._execution.restore_transcript_snapshot(append=True)
+                await self._restore_snapshot(append=True)
             return
 
-        self._execution.ui.show_startup(
-            console=self._execution.ui.ui,
-            model=self._execution.config.model.model,
-            provider=self._execution.config.model.provider,
-            workspace=self._execution.workspace,
+        self._ui.show_startup(
+            console=self._ui.ui,
+            model=status.model,
+            provider=status.provider,
+            workspace=status.workspace,
             session_title=title,
-            is_new=is_new,
+            is_new=status.session.is_new,
         )
-        if self._execution.model is None:
-            self._execution.ui.ui.print()
-            self._execution.ui.ui.print("[yellow]No profile configured — chat is disabled until you set one up.[/yellow]")
-            self._execution.ui.ui.print(f"[dim]  Use [cyan]/model new[/cyan] to create a profile interactively[/dim]")
-            self._execution.ui.ui.print()
+        if not status.profile_configured:
+            self._ui.ui.print()
+            self._ui.ui.print("[yellow]No profile configured — chat is disabled until you set one up.[/yellow]")
+            self._ui.ui.print("[dim]  Use [cyan]/model new[/cyan] to create a profile interactively[/dim]")
+            self._ui.ui.print()
 
     async def show_update_check_if_needed(self) -> None:
-        settings = self._execution.settings
-        if settings is None:
+        if self._update_check_due is None or not self._update_check_due():
             return
         try:
-            update_check_due = getattr(settings, "update_check_due", None)
-            if not callable(update_check_due) or not update_check_due():
-                return
-
             from voidx.selfupdate import check_for_update, upgrade_hint
 
             result = await check_for_update()
-            mark_update_check = getattr(settings, "mark_update_check", None)
-            if callable(mark_update_check):
-                mark_update_check(result.latest_version)
+            if self._mark_update_check is not None:
+                self._mark_update_check(result.latest_version)
             if result.update_available and result.latest_version:
-                self._execution.ui.dock.append_message(
+                self._ui.dock.append_message(
                     "[yellow]Update available:[/yellow] "
                     f"voidx {result.current_version} -> {result.latest_version}. "
                     f"[dim]{upgrade_hint()}[/dim]",

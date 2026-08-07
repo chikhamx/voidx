@@ -4,9 +4,11 @@ from __future__ import annotations
 import asyncio
 from inspect import isawaitable
 from typing import Any
-from voidx.agent.slash.registry import REGISTRY, SlashCommand
+from voidx.agent.slash.registry import REGISTRY, SLASH_COMMANDS, SlashCommand
 from voidx.agent.slash.runtime import prompt_text
-from voidx.runtime.ui import COMMANDS, ui
+from voidx.agent.ports.ui import NullAgentUiPort
+
+ui = NullAgentUiPort().ui
 from voidx.agent.slash.commands import (
     ModeCommandsMixin,
     SessionCommandsMixin,
@@ -41,6 +43,10 @@ class SlashHandler(
 ):
     def __init__(self, commands: Any) -> None:
         self.host = commands
+        if not hasattr(commands, "ui"):
+            commands.ui = ui
+        if not hasattr(commands, "_ui"):
+            commands._ui = NullAgentUiPort()
 
     async def _prompt(self, text: str, default: str = "", secret: bool = False) -> str | None:
         return await prompt_text(self.host.app, text, default=default, secret=secret)
@@ -67,17 +73,18 @@ class SlashHandler(
     async def _cmd_compact(self) -> None:
         compacted = await self.host.compact_session_history(force=True)
         if compacted:
-            ui.print("[dim]Compacted context.[/dim]")
+            self.host.ui.print("[dim]Compacted context.[/dim]")
         else:
-            ui.print("[dim]Nothing to compact.[/dim]")
+            self.host.ui.print("[dim]Nothing to compact.[/dim]")
 
     def _cmd_permissions(self) -> None:
-        ui.print(self.host.permission.show_rules())
+        self.host.ui.print(self.host.permission.show_rules())
 
     def _show_help(self) -> None:
-        ui.print("[bold]Commands:[/bold]")
-        for name, desc in COMMANDS:
-            ui.print(f"  [cyan]{name}[/cyan] — {desc}")
+        self.host.ui.print("[bold]Commands:[/bold]")
+        for spec in SLASH_COMMANDS:
+            name, desc = spec.name, spec.desc
+            self.host.ui.print(f"  [cyan]{name}[/cyan] — {desc}")
 
     def _handler_for(self, spec: SlashCommand, args: str, inp: str):
         method = getattr(self, spec.method)

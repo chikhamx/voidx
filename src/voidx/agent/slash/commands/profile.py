@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from voidx.agent.slash.runtime import _select_from_list
 from voidx.config import UserProfile
-from voidx.runtime.ui import ui
 from voidx.agent.slash.helpers import _normalize_language, _normalize_tone
 
 
@@ -78,12 +77,12 @@ class ProfileCommandsMixin:
         items = [*option_items, other_label, reset_label]
         idx = await _select_from_list(self.host.app, title, items)
         if idx is None or idx < 0 or idx >= len(items):
-            ui.print("[dim]Cancelled.[/dim]")
+            self.host.ui.print("[dim]Cancelled.[/dim]")
             return None
         if idx == len(values):
             result = await self._prompt(prompt_label)
             if result is None or not result.strip():
-                ui.print("[dim]Cancelled.[/dim]")
+                self.host.ui.print("[dim]Cancelled.[/dim]")
                 return None
             return result.strip()
         if idx == len(values) + 1:
@@ -91,20 +90,20 @@ class ProfileCommandsMixin:
         return values[idx]
 
     async def _lang_headless(self, values: list[str]) -> None:
-        ui.print(f"Language: [cyan]{self._current_language_label()}[/cyan]")
-        ui.print(f"[dim]Available: {', '.join(values)}[/dim]")
+        self.host.ui.print(f"Language: [cyan]{self._current_language_label()}[/cyan]")
+        self.host.ui.print(f"[dim]Available: {', '.join(values)}[/dim]")
         value = await self._prompt("Language code (or 'auto' to reset)", default="")
         if value is None or not value.strip():
-            ui.print("[dim]Cancelled.[/dim]")
+            self.host.ui.print("[dim]Cancelled.[/dim]")
             return
         self._apply_language(value)
 
     async def _tone_headless(self, values: list[str]) -> None:
-        ui.print(f"Tone: [cyan]{self._current_tone_label()}[/cyan]")
-        ui.print(f"[dim]Available: {', '.join(values)}[/dim]")
+        self.host.ui.print(f"Tone: [cyan]{self._current_tone_label()}[/cyan]")
+        self.host.ui.print(f"[dim]Available: {', '.join(values)}[/dim]")
         value = await self._prompt("Tone (or 'default' to reset)", default="")
         if value is None or not value.strip():
-            ui.print("[dim]Cancelled.[/dim]")
+            self.host.ui.print("[dim]Cancelled.[/dim]")
             return
         self._apply_tone(value)
 
@@ -117,7 +116,7 @@ class ProfileCommandsMixin:
             profile = self._current_user_profile()
             profile.language = _normalize_language(value)
         self._set_current_user_profile(profile)
-        ui.print(f"Language: [cyan]{profile.language or 'auto-detect'}[/cyan] [green]✓[/green]")
+        self.host.ui.print(f"Language: [cyan]{profile.language or 'auto-detect'}[/cyan] [green]✓[/green]")
 
     def _apply_tone(self, value: str) -> None:
         settings = self.host.settings
@@ -128,7 +127,7 @@ class ProfileCommandsMixin:
             profile = self._current_user_profile()
             profile.tone = _normalize_tone(value)
         self._set_current_user_profile(profile)
-        ui.print(f"Tone: [cyan]{profile.tone or 'default'}[/cyan] [green]✓[/green]")
+        self.host.ui.print(f"Tone: [cyan]{profile.tone or 'default'}[/cyan] [green]✓[/green]")
 
     def _current_user_profile(self) -> UserProfile:
         profile = getattr(self.host.config, "user_profile", None)

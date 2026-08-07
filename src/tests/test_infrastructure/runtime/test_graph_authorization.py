@@ -24,6 +24,7 @@ from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hin
 from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
 from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.infrastructure.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
@@ -38,7 +39,7 @@ from voidx.agent.adapters.persistence.session_repository import (
     load_messages,
     save_message,
 )
-from voidx.presentation.transcript_snapshot import load_transcript
+from voidx.presentation.adapters.persistence.transcript_snapshot import load_transcript
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
 from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
 from voidx.agent.domain.task.intent import TaskIntent
@@ -51,13 +52,13 @@ from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import ToolResult
 from voidx.agent.adapters.tools.subagent import AgentResultContract, AgentTool
 from voidx.tooling.application.registry import ToolRegistry
-from voidx.presentation.output.dock import BottomInputDock, set_dock
+from voidx.presentation.output.dock import BottomInputDock, reset_dock, set_dock
 from voidx.presentation.output.events import DockEventConsumer, TurnStarted, ui_events
 
 
 def _graph(tmp_path):
     cfg = Config(workspace=str(tmp_path))
-    return LangGraphExecution(cfg, api_key=None)
+    return make_langgraph_execution(cfg, api_key=None)
 
 
 def _task_state_json(**kwargs):
@@ -498,7 +499,7 @@ async def test_graph_authorization_asks_for_persona_blocked_write(tmp_path):
 async def test_permission_result_uses_transient_output(tmp_path):
     graph = _graph(tmp_path)
     test_dock = BottomInputDock()
-    set_dock(test_dock)
+    dock_token = set_dock(test_dock)
     test_dock.begin_capture()
 
     class FakeApp:
@@ -512,7 +513,7 @@ async def test_permission_result_uses_transient_output(tmp_path):
             self.notices.append(text)
 
     app = FakeApp()
-    graph._app = app
+    graph._ui.bind_frontend( app)
     try:
         approved, denied = await graph._authorize_tool_calls(
             [{"name": "write", "args": {"file_path": "app.py", "op": "append", "new_string": "x"}, "id": "call_1"}],
@@ -528,7 +529,7 @@ async def test_permission_result_uses_transient_output(tmp_path):
         assert "tools allowed for this session" not in rendered
     finally:
         test_dock.deactivate()
-        set_dock(None)
+        reset_dock(dock_token)
 
 
 @pytest.mark.asyncio
@@ -712,15 +713,14 @@ async def test_ai_approval_notice_written_to_log_not_ui(tmp_path, monkeypatch):
     monkeypatch.setattr(graph._ui.ui, "print", lambda *a, **k: printed.append(str(a)))
 
     dock_calls: list[str] = []
-    orig_dock = getattr(graph._ui, "dock", None)
-    if orig_dock is not None:
-        orig_append = getattr(orig_dock, "append_message", None)
-        if callable(orig_append):
-            monkeypatch.setattr(
-                orig_dock,
-                "append_message",
-                lambda msg, **_kwargs: dock_calls.append(msg),
-            )
+    monkeypatch.setattr(
+        graph._ui,
+        "_dock",
+        SimpleNamespace(
+            active=False,
+            append_message=lambda msg, **_kwargs: dock_calls.append(msg),
+        ),
+    )
 
     logged: list[dict] = []
 
@@ -822,7 +822,7 @@ async def test_always_approval_for_file_write_is_path_scoped(tmp_path):
 async def test_permission_prompt_uses_dock_details_when_events_are_active(tmp_path):
     graph = _graph(tmp_path)
     test_dock = BottomInputDock()
-    set_dock(test_dock)
+    dock_token = set_dock(test_dock)
     test_dock.begin_capture()
     received_details: list | None = None
 
@@ -832,7 +832,7 @@ async def test_permission_prompt_uses_dock_details_when_events_are_active(tmp_pa
             received_details = details
             return "y"
 
-    graph._app = FakeApp()
+    graph._ui.bind_frontend( FakeApp())
     try:
         graph._ui.events.start(DockEventConsumer(test_dock))
         await graph._ui.events.request(TurnStarted(text="demo"))
@@ -863,7 +863,7 @@ async def test_permission_prompt_uses_dock_details_when_events_are_active(tmp_pa
     finally:
         await graph._ui.events.stop()
         test_dock.deactivate()
-        set_dock(None)
+        reset_dock(dock_token)
 
 
 @pytest.mark.asyncio
@@ -878,7 +878,7 @@ async def test_read_only_permission_prompt_limits_choices_to_once(tmp_path):
             captured_choices = choices
             return "y"
 
-    graph._app = FakeApp()
+    graph._ui.bind_frontend( FakeApp())
 
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "bash", "args": {"command": "cat input.txt > output.txt"}, "id": "call_1"}],
@@ -906,7 +906,7 @@ async def test_permission_prompt_details_include_risk_and_scopes(tmp_path):
             received_details = details
             return "y"
 
-    graph._app = FakeApp()
+    graph._ui.bind_frontend( FakeApp())
 
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "bash", "args": {"command": "npm install lodash"}, "id": "call_1"}],
@@ -1192,7 +1192,7 @@ async def test_ai_approval_failure_reason_is_shown_in_permission_details(tmp_pat
             return "n"
 
     graph._ai_approval.review = review
-    graph._app = FakeApp()
+    graph._ui.bind_frontend( FakeApp())
 
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "bash", "args": {"command": "curl https://example.com"}, "id": "call_network"}],
@@ -1257,7 +1257,7 @@ async def test_blocked_permission_prompt_only_acknowledges_and_denies_execution(
             captured_details = details
             return "n"
 
-    graph._app = FakeApp()
+    graph._ui.bind_frontend( FakeApp())
 
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "bash", "args": {"command": "sudo true"}, "id": "call_blocked"}],
@@ -1282,7 +1282,7 @@ async def test_blocked_permission_prompt_cannot_be_approved_with_yes(tmp_path):
         async def ask_choice(self, _prompt, _choices, details=None):
             return "y"
 
-    graph._app = FakeApp()
+    graph._ui.bind_frontend( FakeApp())
 
     approved, denied = await graph._authorize_tool_calls(
         [{"name": "bash", "args": {"command": "sudo true"}, "id": "call_blocked"}],

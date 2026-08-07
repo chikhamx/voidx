@@ -352,11 +352,11 @@ def test_model_provider_list_matches_catalog():
     assert set(STATIC_MODELS).issubset(PROVIDERS)
 
 
-def test_slash_handler_uses_runtime_ui_singleton():
+def test_slash_handler_fallback_ui_is_agent_owned():
     from voidx.agent.slash.handler import ui as slash_ui
-    from voidx.runtime.ui import ui as runtime_ui
+    from voidx.agent.ports.ui import NullAgentUiPort
 
-    assert slash_ui is runtime_ui
+    assert type(slash_ui) is type(NullAgentUiPort().ui)
 
 
 def test_model_status_sync_updates_prompt_footer_state():

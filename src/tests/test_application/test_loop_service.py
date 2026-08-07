@@ -230,7 +230,11 @@ async def test_loop_full_dispatch_chain_without_fk_violation(tmp_path) -> None:
     # Bypass the LLM: drive a decision directly through the real dispatcher/store chain.
     from voidx.agent.application.automation.loop import scheduler as sched_mod
     original_runner = sched_mod.LoopRuntimeRunner
-    sched_mod.LoopRuntimeRunner = type("R", (), {"__init__": lambda self, rt: None, "run_turn": staticmethod(runner_run_turn)})
+    sched_mod.LoopRuntimeRunner = type(
+        "R",
+        (),
+        {"__init__": lambda self, rt, events: None, "run_turn": staticmethod(runner_run_turn)},
+    )
     try:
         service = LoopService(store=store, scheduler=scheduler, workspace=str(tmp_path))
         status = await service.start("default", LoopSpec(prompt="check build"))

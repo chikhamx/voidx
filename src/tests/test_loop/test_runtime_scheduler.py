@@ -189,36 +189,37 @@ async def test_loop_runtime_scheduler_dispatches_its_own_outbox_when_other_work_
 
 @pytest.mark.asyncio
 async def test_loop_runner_publishes_waiting_record_with_next_wakeup(tmp_path) -> None:
-    from voidx.presentation.output.events import StatusUpdated, ui_events
+    class RecordingEvents:
+        def __init__(self) -> None:
+            self.wakeups: list[float] = []
+            self.cleared = 0
 
-    emitted = []
+        def publish_message(self, message: str) -> None:
+            return None
 
-    class _Consumer:
-        def handle(self, event):
-            emitted.append(event)
+        def start_turn(self, text: str) -> None:
+            return None
 
-    ui_events.start(_Consumer())
-    try:
-        runtime = LoopUpdatingRuntime(requested_delay=180)
-        scheduler = LoopRuntimeScheduler(
-            store=ThreadStore(),
-            runtime=runtime,
-            workspace=str(tmp_path),
-            lease_owner="test-worker",
-        )
-        await scheduler.run_prompt("check build", display_text="[loop] check", session_id="session-1")
-        await ui_events.drain()
-    finally:
-        await ui_events.stop()
+        def show_loop_waiting(self, wakeup_at: float) -> None:
+            self.wakeups.append(wakeup_at)
 
-    waiting = [
-        e for e in emitted
-        if isinstance(e, StatusUpdated) and e.status_id == "loop:waiting"
-    ]
-    assert waiting, "expected a loop:waiting status record"
-    assert waiting[-1].display == "record_only"
+        def clear_loop_waiting(self) -> None:
+            self.cleared += 1
+
+    events = RecordingEvents()
+    runtime = LoopUpdatingRuntime(requested_delay=180)
+    scheduler = LoopRuntimeScheduler(
+        store=ThreadStore(),
+        runtime=runtime,
+        workspace=str(tmp_path),
+        lease_owner="test-worker",
+        events=events,
+    )
+    await scheduler.run_prompt("check build", display_text="[loop] check", session_id="session-1")
+
+    assert events.wakeups, "expected a loop:waiting status record"
     import time as _time
-    assert abs(float(waiting[-1].detail) - (_time.time() + 180)) < 5
+    assert abs(events.wakeups[-1] - (_time.time() + 180)) < 5
 
 
 @pytest.mark.asyncio

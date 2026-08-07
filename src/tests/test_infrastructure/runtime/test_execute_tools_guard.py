@@ -24,6 +24,7 @@ from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hin
 from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
 from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.infrastructure.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
@@ -38,7 +39,7 @@ from voidx.agent.adapters.persistence.session_repository import (
     load_messages,
     save_message,
 )
-from voidx.presentation.transcript_snapshot import load_transcript
+from voidx.presentation.adapters.persistence.transcript_snapshot import load_transcript
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
 from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
 from voidx.agent.domain.task.intent import TaskIntent
@@ -64,7 +65,7 @@ from voidx.presentation.output.events import (
 
 def _graph(tmp_path):
     cfg = Config(workspace=str(tmp_path))
-    return LangGraphExecution(cfg, api_key=None)
+    return make_langgraph_execution(cfg, api_key=None)
 
 
 def _task_state_json(**kwargs):
@@ -356,7 +357,7 @@ async def test_execute_tools_read_todo_no_warning_with_events(tmp_path, monkeypa
 
     assert [message.tool_call_id for message in result["messages"]] == ["call_todo"]
     assert "todo_state" not in result
-    from voidx.runtime.ui import WarningAppended
+    from voidx.presentation.output.events import WarningAppended
     assert not any(isinstance(e, WarningAppended) for e in emitted)
 
 @pytest.mark.asyncio
@@ -492,7 +493,7 @@ async def test_execute_tools_wraps_write_risk_tool_with_workspace_write_lock(tmp
         def release_workspace_write_lock(self, thread_id: str) -> None:
             events.append(("release", thread_id))
 
-    graph._gateway_session = SimpleNamespace(_run_manager=FakeRunManager())
+    graph._workspace_write_lock = FakeRunManager()
 
     class FakeWriteTool:
         id = "write"
@@ -551,7 +552,7 @@ async def test_execute_tools_releases_workspace_write_lock_on_tool_exception(tmp
         def release_workspace_write_lock(self, thread_id: str) -> None:
             events.append(("release", thread_id))
 
-    graph._gateway_session = SimpleNamespace(_run_manager=FakeRunManager())
+    graph._workspace_write_lock = FakeRunManager()
 
     class FailingWriteTool:
         id = "write"
@@ -610,7 +611,7 @@ async def test_execute_tools_does_not_lock_read_only_tool(tmp_path):
         def release_workspace_write_lock(self, thread_id: str) -> None:
             events.append(("release", thread_id))
 
-    graph._gateway_session = SimpleNamespace(_run_manager=FakeRunManager())
+    graph._workspace_write_lock = FakeRunManager()
 
     class FakeReadTool:
         id = "read"
@@ -2122,7 +2123,7 @@ async def test_execute_tools_stops_turn_after_goal_intake_cancel(tmp_path):
             async def ask_text(self, prompt, **kwargs):
                 return None
 
-        graph._app = CancelApp()
+        graph._ui.bind_frontend( CancelApp())
 
         executed = []
 

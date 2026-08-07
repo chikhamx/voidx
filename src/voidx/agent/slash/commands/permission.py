@@ -1,7 +1,6 @@
 """Slash /permission commands."""
 from __future__ import annotations
 
-from voidx.runtime.ui import ui
 
 
 class PermissionCommandsMixin:
@@ -33,11 +32,11 @@ class PermissionCommandsMixin:
 
         if not raw:
             current = getattr(self.host.permission, "permission_mode", PermissionMode.SAFE.value)
-            ui.print(f"Permission mode: [cyan]{labels.get(current, labels[PermissionMode.SAFE.value])}[/cyan]")
-            ui.print("Usage: /permission [read_only|safe|ai_approval [profile]|project_trusted|full_access]")
+            self.host.ui.print(f"Permission mode: [cyan]{labels.get(current, labels[PermissionMode.SAFE.value])}[/cyan]")
+            self.host.ui.print("Usage: /permission [read_only|safe|ai_approval [profile]|project_trusted|full_access]")
             return
         if raw not in valid:
-            ui.error(f"Invalid permission mode: {raw}. Use: {', '.join(sorted(valid))}")
+            self.host.ui.error(f"Invalid permission mode: {raw}. Use: {', '.join(sorted(valid))}")
             return
 
         settings = self.host.settings
@@ -47,7 +46,7 @@ class PermissionCommandsMixin:
             if requested_profile is not None:
                 match = next((profile for profile in profiles if profile.name == requested_profile), None)
                 if match is None:
-                    ui.error(f"Unknown or unconfigured AI approval profile: {requested_profile}")
+                    self.host.ui.error(f"Unknown or unconfigured AI approval profile: {requested_profile}")
                     return
                 selected_profile = match.name
             elif app is not None:
@@ -61,7 +60,7 @@ class PermissionCommandsMixin:
         try:
             self.host.permission.set_permission_mode(preset.value)
         except PermissionError as exc:
-            ui.error(str(exc))
+            self.host.ui.error(str(exc))
             return
         self.host.clear_successful_dangerous_calls()
         if settings is not None:
@@ -73,5 +72,5 @@ class PermissionCommandsMixin:
                     timeout_seconds=current.timeout_seconds,
                 ))
         suffix = f" using {selected_profile or 'current main profile'}" if selected_profile is not None else ""
-        ui.print(f"[dim]Permission mode set to [cyan]{labels[preset.value]}[/cyan]{suffix}[/dim]")
+        self.host.ui.print(f"[dim]Permission mode set to [cyan]{labels[preset.value]}[/cyan]{suffix}[/dim]")
 

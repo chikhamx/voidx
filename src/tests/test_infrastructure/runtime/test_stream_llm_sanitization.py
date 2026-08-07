@@ -25,6 +25,7 @@ from voidx.presentation.output.console import StreamingRenderer
 from voidx.presentation.output.dock import ANSI_LINE_PREFIX, BottomInputDock, set_dock
 from voidx.presentation.output.events import AnsiAppended, DockEventConsumer, StatusFinished, StatusUpdated, ui_events
 from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
+from tests.presentation_ui import make_presentation_ui
 from tests.test_infrastructure.runtime.stream_llm_helpers import (
     _plain,
     FakeStreamingModel,
@@ -78,6 +79,7 @@ async def test_stream_llm_drains_final_stream_events_before_return():
             [],
             StreamingRenderer(Console(), debug=False),
             "anthropic",
+            ui_port=make_presentation_ui(),
         )
 
         assert msg.content == "answer"

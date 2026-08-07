@@ -5,7 +5,7 @@ from rich.cells import cell_len
 from rich.text import Text
 from voidx.presentation.output.dock.app import BottomInputDock
 from voidx.presentation.output.tree import OutputNode, OutputTree
-from voidx.presentation.transcript_snapshot import transcript_rows_to_tree, tree_to_transcript_rows
+from voidx.presentation.adapters.persistence.transcript_snapshot import transcript_rows_to_tree, tree_to_transcript_rows
 
 
 def _plain(line: str) -> str:

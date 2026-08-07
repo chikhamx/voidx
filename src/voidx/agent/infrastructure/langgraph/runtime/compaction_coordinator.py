@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+StreamingRenderer = None
+
+from voidx.agent.infrastructure.ui_events import StatusFinished, StatusUpdated
+from voidx.agent.ports.ui import NullAgentUiPort
+
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
@@ -21,7 +26,6 @@ from voidx.llm.service import resolve_protocol
 from voidx.logging.tool_log import log_tool_event
 from voidx.llm.usage import estimate_context_tokens, estimate_message_tokens, extract_token_usage
 from voidx.agent.adapters.persistence.context_frame_repository import save_context_frame_from_messages
-from voidx.runtime.ui import StatusFinished, StatusUpdated, StreamingRenderer
 from voidx.agent.application.automation.workflow.service import is_workflow_context_content
 
 RunCompactionAgent = Callable[[list, str | None], Awaitable[str | None]]
@@ -326,9 +330,8 @@ class CompactionCoordinator:
             ("Compact", "compact", "Summarize older context and continue"),
             ("Skip once", "skip", "Continue without compacting this turn"),
         ]
-        app = getattr(host, "_app", None)
-        if app:
-            choice = await app.ask_choice("Compact context?", choices)
+        choice = await host._ui.ask_choice("Compact context?", choices)
+        if choice is not None:
             return choice == "compact"
         host._ui.ui.print("")
         host._ui.ui.print(f"  [yellow]Context is large ({total_tokens} tokens); compacting automatically.[/yellow]")
@@ -398,7 +401,9 @@ class CompactionCoordinator:
         if host.model is None:
             return None
 
-        renderer = StreamingRenderer(
+        ui_factories = host._ui if hasattr(host._ui, "streaming_renderer") else NullAgentUiPort()
+        renderer_factory = StreamingRenderer or ui_factories.streaming_renderer
+        renderer = renderer_factory(
             host._ui.console,
             debug=host._debug,
             stream_to_dock=False,
@@ -469,7 +474,7 @@ class CompactionCoordinator:
                     "pruned_chars": pruned_chars,
                 },
             )
-        assistant_msg = await stream_llm(host.model, messages, renderer, resolve_protocol(host.config.model))
+        assistant_msg = await stream_llm(host.model, messages, renderer, resolve_protocol(host.config.model), ui_port=host._ui)
         host._usage_stats.record_call(
             extract_token_usage(assistant_msg),
             fallback_input_tokens=context_tokens,

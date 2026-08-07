@@ -8,6 +8,9 @@ Depth limit = 1: child agents cannot start further child agents.
 
 from __future__ import annotations
 
+from voidx.agent.infrastructure.ui_events import GuidanceSubmitted, PermissionToolDetail, SubagentFinished, SubagentStarted
+from voidx.agent.infrastructure.display_policy import DEFAULT_DISPLAY_RULES, ToolDisplayPolicy
+
 from voidx.agent.infrastructure.langgraph.runtime.core.helpers import _invalidate_tui, _render_inline_compaction_guide
 
 from voidx.agent.infrastructure.langgraph.runtime.turn_runner import TurnRunner
@@ -19,7 +22,6 @@ from typing import Any, TYPE_CHECKING
 from voidx.tooling.domain.authorization import PermissionDecision
 from voidx.tooling.domain.risk import RiskLevel
 from voidx.agent.domain.task.intent import PersonaName
-from voidx.runtime.ui import PermissionToolDetail
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from voidx.agent.application.runtime_context import ContextCompilerCache, InteractionMode, raw_semantic_messages
 from voidx.agent.infrastructure.langgraph.state import AgentState
@@ -78,15 +80,8 @@ from voidx.llm.message_markers import GUIDANCE_MARKER
 from voidx.llm.service import create_chat_model
 from voidx.agent.adapters.persistence.session_repository import SessionInfo
 from voidx.agent.adapters.persistence.subagent_repository import append_subagent_event
-from voidx.runtime.ui import (
-    GuidanceSubmitted,
-    OutputNode,
-    OutputTree,
-    SubagentFinished,
-    SubagentStarted,
-)
-from voidx.runtime.ui import InteractionFrontend
-from voidx.runtime.ui_port import runtime_ui_port
+from voidx.agent.ports.ui import AgentUiPort
+from voidx.agent.ports.workspace_lock import WorkspaceWriteLockPort
 from voidx.skills.service import SkillRegistry, SkillService
 
 GUIDANCE_MAX_CHARS = 2_000
@@ -344,6 +339,8 @@ class LangGraphExecution:
         session: SessionInfo | None = None,
         settings: Settings | None = None,
         *,
+        ui: AgentUiPort,
+        workspace_write_lock: WorkspaceWriteLockPort,
         presentation_snapshots: PresentationSnapshotPort | None = None,
         external_manager_factory: Callable[..., tuple[Any, Any]] | None = None,
         mcp_reference_resolver: Callable[..., Awaitable[Any]] | None = None,
@@ -361,8 +358,8 @@ class LangGraphExecution:
         self._web_route = web_route
         self._permission_service_factory = permission_service_factory
         self._ai_approval = AiApprovalService()
-        self._ui = runtime_ui_port
-        self._gateway_session = None
+        self._ui = ui
+        self._workspace_write_lock = workspace_write_lock
         self._any_messages_sent = False
         self._startup_presenter = None
         self._coding_turn_runner: Callable[..., Awaitable[Any]] | None = None
@@ -386,15 +383,14 @@ class LangGraphExecution:
         self._file_mtimes: dict[str, dict[str, int]] = {}
         self._file_read_coverage: dict[str, dict] = {}
         self._workflow_repeat_tracker: dict[str, dict[str, int]] = {}
-        self._turn_node: OutputNode | None = None
-        self._current_tree: OutputTree | None = None
+        self._turn_node: Any | None = None
+        self._current_tree: Any | None = None
         self._current_messages: list[BaseMessage] | None = None
         self._pending_summary: str | None = None
         self._compaction_summary: str = ""
         self._session_date: str = session_date(session)
         self._session_msg_cache: list | None = None
         self._context_cache = ContextCompilerCache()
-        self._app: InteractionFrontend | None = None
         self._next_agent_id: int = 0
         self._task_state = TaskState()
         self._needs_failure_check: dict[str, dict] = {}
@@ -419,7 +415,6 @@ class LangGraphExecution:
         self._turn_runner = TurnRunner(self)
         self._skill_service: SkillService | None = None
 
-        from voidx.runtime.ui import ToolDisplayPolicy, DEFAULT_DISPLAY_RULES
         display_config = getattr(config, "display_policy", None) or {}
         self._display_policy = ToolDisplayPolicy.from_config(display_config, defaults=DEFAULT_DISPLAY_RULES)
 
@@ -449,7 +444,7 @@ class LangGraphExecution:
 
     @property
     def ui(self):
-        return self._ui
+        return self._ui.ui
 
     @property
     def runtime_guards(self):
@@ -466,13 +461,6 @@ class LangGraphExecution:
     def slash(self):
         return self._slash
 
-    @property
-    def gateway_session(self):
-        return self._gateway_session
-
-    @gateway_session.setter
-    def gateway_session(self, value) -> None:
-        self._gateway_session = value
 
     @property
     def any_messages_sent(self) -> bool:
@@ -496,14 +484,6 @@ class LangGraphExecution:
     def set_session_date(self, value: str) -> None:
         self._session_date = value
 
-    @property
-    def app(self) -> InteractionFrontend | None:
-        """The interactive TUI app, if one is running."""
-        return self._app
-
-    @app.setter
-    def app(self, value: InteractionFrontend | None) -> None:
-        self._app = value
 
     @property
     def permission(self):
@@ -532,10 +512,7 @@ class LangGraphExecution:
 
     def _invalidate_skill_service_cache(self) -> None:
         self._skill_service = None
-        app = getattr(self, "_app", None)
-        invalidate = getattr(app, "invalidate_skill_service_cache", None)
-        if callable(invalidate):
-            invalidate()
+        self._ui.invalidate_skill_service_cache()
 
     @property
     def usage_stats(self):
@@ -576,17 +553,16 @@ class LangGraphExecution:
         self._compaction.soft_ratio = updated_compaction.soft_ratio
         self._compaction.post_target_ratio = updated_compaction.post_target_ratio
 
-        app = getattr(self, "_app", None)
-        status = getattr(app, "status", None)
-        if status is not None:
-            status.provider = self.config.model.provider
-            status.model = self.config.model.model
-            status.context_limit = context_limit
-            status.reasoning_effort = (
+        self._ui.update_status(
+            provider=self.config.model.provider,
+            model=self.config.model.model,
+            context_limit=context_limit,
+            reasoning_effort=(
                 self.config.model.reasoning_effort.value
                 if self.config.model.reasoning_effort is not None
                 else "xhigh"
-            )
+            ),
+        )
 
     @property
     def workspace(self) -> str:
@@ -905,6 +881,7 @@ class LangGraphExecution:
                 runtime_persona=runtime_persona,
                 goal_resolution=goal_resolution,
                 result_contract=result_contract,
+                ui_port=self._ui,
                 **kwargs,
             )
             ok = True

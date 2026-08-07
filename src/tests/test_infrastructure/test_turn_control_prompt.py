@@ -1,5 +1,6 @@
 """Tests for turn control prompt rules in system context."""
 
+from tests.langgraph_execution import make_langgraph_execution
 import pytest
 from langchain_core.messages import HumanMessage
 
@@ -17,7 +18,7 @@ def _make_graph(tmp_path, monkeypatch, provider="openai"):
     import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(
             model=ModelConfig(provider=provider, model="test-model"),
             workspace=str(tmp_path),

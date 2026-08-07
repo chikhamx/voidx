@@ -24,6 +24,7 @@ from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hin
 from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
 from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.infrastructure.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
@@ -38,7 +39,7 @@ from voidx.agent.adapters.persistence.session_repository import (
     load_messages,
     save_message,
 )
-from voidx.presentation.transcript_snapshot import load_transcript
+from voidx.presentation.adapters.persistence.transcript_snapshot import load_transcript
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
 from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
 from voidx.agent.domain.task.intent import TaskIntent
@@ -57,7 +58,7 @@ from voidx.presentation.output.events import DockEventConsumer, TurnStarted, ui_
 
 def _graph(tmp_path):
     cfg = Config(workspace=str(tmp_path))
-    return LangGraphExecution(cfg, api_key=None)
+    return make_langgraph_execution(cfg, api_key=None)
 
 
 def _task_state_json(**kwargs):
@@ -144,7 +145,7 @@ async def test_run_subagent_persists_assistant_messages_to_subagent_jsonl(tmp_pa
         def bind_tools(self, _tool_defs):
             return self
 
-    async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
         return AIMessage(content="child answer")
 
     monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
@@ -201,7 +202,7 @@ async def test_run_subagent_persists_tool_results_to_subagent_jsonl(tmp_path, mo
             assert _ctx.session_id == session.id
             return ToolResult(output="file contents")
 
-    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
         stream_calls.append(list(messages))
         if len(stream_calls) == 1:
             return AIMessage(
@@ -275,7 +276,7 @@ async def test_run_subagent_injects_failure_loop_guidance(tmp_path, monkeypatch)
                 metadata={"error": True, "error_kind": "file_not_found"},
             )
 
-    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
         stream_calls.append(list(messages))
         if len(stream_calls) <= 2:
             return AIMessage(
@@ -342,7 +343,7 @@ async def test_run_subagent_terminates_after_no_progress_cycles(tmp_path, monkey
             executed_tools.append(tid)
             return ToolResult(output=f"{tid} ok")
 
-    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
         stream_calls.append(list(messages))
         if len(stream_calls) == 4:
             assert any("No meaningful progress" in str(message.content) for message in messages)

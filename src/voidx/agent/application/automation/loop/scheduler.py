@@ -18,22 +18,17 @@ from voidx.agent.application.runtime.contracts import TurnRequest
 from voidx.agent.application.runtime.dispatcher import DispatchResult, RuntimeDispatcher
 from voidx.agent.application.runtime.pump import WakeupPumpMixin
 from voidx.agent.adapters.persistence.thread_repository import ThreadStore
-from voidx.runtime.ui import StatusFinished, StatusUpdated, ui_events
+from voidx.agent.ports.presentation import AgentEventPublisher, NullAgentEventPublisher
 
 LOOP_WAITING_STATUS_ID = "loop:waiting"
 
 
-def _publish_loop_waiting(decision: RuntimeDecision) -> None:
+def _publish_loop_waiting(decision: RuntimeDecision, events: AgentEventPublisher) -> None:
     """Surface the next-wakeup time so idle UIs can show a countdown."""
     if decision.outcome == "continue" and decision.next_delay_seconds:
-        ui_events.emit_nowait(StatusUpdated(
-            status_id=LOOP_WAITING_STATUS_ID,
-            label="Looping",
-            detail=str(time.time() + float(decision.next_delay_seconds)),
-            display="record_only",
-        ))
+        events.show_loop_waiting(time.time() + float(decision.next_delay_seconds))
     else:
-        ui_events.emit_nowait(StatusFinished(status_id=LOOP_WAITING_STATUS_ID))
+        events.clear_loop_waiting()
 
 
 _DEFAULT_DYNAMIC_DELAY_SECONDS = 600.0
@@ -42,6 +37,7 @@ _DEFAULT_DYNAMIC_DELAY_SECONDS = 600.0
 @dataclass(frozen=True)
 class LoopRuntimeRunner:
     runtime: object
+    events: AgentEventPublisher
 
     async def run_turn(self, *, thread, profile, input_frame: dict) -> RuntimeDecision:
         prompt = str(input_frame.get("prompt", ""))
@@ -53,7 +49,7 @@ class LoopRuntimeRunner:
             )
         spec = LoopSpec.model_validate(input_frame.get("spec") or {"prompt": prompt})
         controller = LoopAttemptController(spec=spec)
-        ui_events.emit_nowait(StatusFinished(status_id=LOOP_WAITING_STATUS_ID))
+        self.events.clear_loop_waiting()
         runtime_profile = loop_profile_for_spec(spec)
         context = TurnExecutionContext(
             thread_id=thread.thread_id,
@@ -75,7 +71,7 @@ class LoopRuntimeRunner:
         )
         submitted = controller.final_decision()
         if submitted is not None:
-            _publish_loop_waiting(submitted)
+            _publish_loop_waiting(submitted, self.events)
             return submitted
         fallback = await controller.submit_decision(
             RuntimeDecision(
@@ -85,7 +81,7 @@ class LoopRuntimeRunner:
                 reason="no_loop_decision_submitted",
             )
         )
-        _publish_loop_waiting(fallback)
+        _publish_loop_waiting(fallback, self.events)
         return fallback
 
 
@@ -100,11 +96,13 @@ class LoopRuntimeScheduler(WakeupPumpMixin):
         lease_seconds: float = 60,
         pump_poll_seconds: float = 1.0,
         session_id: str = "",
+        events: AgentEventPublisher | None = None,
     ) -> None:
         self._store = store
         self._runtime = runtime
         self._workspace = workspace
         self._session_id = session_id
+        self._events = events or NullAgentEventPublisher()
         self._init_pump(
             lease_owner=lease_owner,
             lease_seconds=lease_seconds,
@@ -137,7 +135,7 @@ class LoopRuntimeScheduler(WakeupPumpMixin):
         self._managed_thread_ids.add(outbox.thread_id)
 
     def _runner(self):
-        return LoopRuntimeRunner(self._runtime)
+        return LoopRuntimeRunner(self._runtime, self._events)
 
     async def run_prompt(
         self,

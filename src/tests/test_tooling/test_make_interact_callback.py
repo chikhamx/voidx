@@ -94,6 +94,9 @@ class TestMakeInteractCallback:
     async def test_tuple_options_emit_permission_prompt_events_when_event_bus_running(self):
         from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _make_interact_callback
         from voidx.presentation.output.events import PermissionPromptCleared, PermissionPromptShown, ui_events
+        from tests.presentation_ui import make_presentation_ui
+
+        runtime_ui_port = make_presentation_ui()
 
         seen_events = []
 
@@ -110,7 +113,7 @@ class TestMakeInteractCallback:
 
         ui_events.start(FakeConsumer())
         try:
-            callback = _make_interact_callback(FakeApp())
+            callback = _make_interact_callback(FakeApp(), runtime_ui_port)
             response = await callback(UserInteraction(
                 prompt="Read file outside workspace? /tmp/example.rs",
                 options=[("Yes", "allow", "Allow this read once"), ("No", "deny", "Do not read this file")],

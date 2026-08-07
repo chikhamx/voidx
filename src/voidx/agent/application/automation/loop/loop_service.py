@@ -21,7 +21,7 @@ from voidx.agent.domain.thread import (
 )
 from voidx.agent.adapters.persistence.session_repository import ensure_session
 from voidx.agent.adapters.persistence.thread_repository import ThreadStore
-from voidx.runtime.ui import StatusFinished, ui_events
+from voidx.agent.ports.presentation import AgentEventPublisher, NullAgentEventPublisher
 
 
 @dataclass(frozen=True)
@@ -40,8 +40,16 @@ class LoopStatus:
 
 
 class LoopService(AutonomousServiceBase[LoopSpec, LoopScheduler]):
-    def __init__(self, *, store: ThreadStore, scheduler: LoopScheduler, workspace: str) -> None:
+    def __init__(
+        self,
+        *,
+        store: ThreadStore,
+        scheduler: LoopScheduler,
+        workspace: str,
+        events: AgentEventPublisher | None = None,
+    ) -> None:
         super().__init__(store=store, scheduler=scheduler, workspace=workspace)
+        self._events = events or NullAgentEventPublisher()
 
     def _spec_thread_id(self, spec: LoopSpec, parent: str) -> str:
         return spec.loop_thread_id(parent)
@@ -53,7 +61,7 @@ class LoopService(AutonomousServiceBase[LoopSpec, LoopScheduler]):
         self._scheduler.unregister_loop_thread(thread_id)
 
     def _on_deactivated(self) -> None:
-        ui_events.emit_nowait(StatusFinished(status_id="loop:waiting"))
+        self._events.clear_loop_waiting()
 
     async def start(self, parent_thread_id: str | None, spec: LoopSpec) -> LoopStatus:
         parent = parent_id(parent_thread_id)

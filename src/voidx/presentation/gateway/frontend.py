@@ -191,6 +191,12 @@ class GatewayHeadlessFrontend:
     def invalidate(self) -> None:
         return None
 
+    def invalidate_skill_service_cache(self) -> None:
+        return None
+
+    def hide_command_output(self) -> None:
+        return None
+
     def consume_quiet_command(self, command: str) -> bool:
         command = command.strip()
         try:

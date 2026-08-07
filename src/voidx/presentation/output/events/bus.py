@@ -10,7 +10,7 @@ from typing import Any
 from voidx.runtime.execution_context import current_execution_identity
 
 from voidx.logging.tool_log import log_tool_event
-from voidx.runtime.ui import UiEventTimeout
+from voidx.agent.ports.ui import UiEventTimeout
 from voidx.presentation.output.events.schema import UiEvent
 
 

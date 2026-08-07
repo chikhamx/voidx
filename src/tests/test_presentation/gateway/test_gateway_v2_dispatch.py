@@ -18,7 +18,7 @@ import pytest
 
 from voidx.presentation.gateway.adapter import UiEventItemAdapter
 from voidx.presentation.gateway.session import GatewayEventConsumer, GatewaySession
-from voidx.presentation.transcript_snapshot import TranscriptNodeRow, replace_transcript
+from voidx.presentation.adapters.persistence.transcript_snapshot import TranscriptNodeRow, replace_transcript
 from voidx.presentation.output.dock import BottomInputDock
 from voidx.presentation.output.events.schema import (
     AssistantStreamUpdated,

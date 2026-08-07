@@ -14,6 +14,7 @@ import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from tests.langgraph_execution import make_langgraph_execution
 from voidx.config import Config, ModelConfig
 from voidx.presentation.output.events import AssistantStreamCommitted, AssistantStreamUpdated
 from tests.test_infrastructure.runtime.stream_llm_helpers import FakeRenderer
@@ -78,7 +79,7 @@ def _make_graph(tmp_path, model, monkeypatch, provider="openai"):
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     monkeypatch.setattr(asyncio, "sleep", fail_on_retry)
 
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(
             model=ModelConfig(provider=provider, model="test-model"),
             workspace=str(tmp_path),
@@ -185,7 +186,7 @@ async def test_headless_repair_commit_emits_user_visible_stream(tmp_path, monkey
     else:
         scripts.append([_text_and_turn_stop_chunk("Review completed: PASS")])
     model = ScriptedStreamingModel(scripts)
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(
             model=ModelConfig(provider="gemini", model="gemini-test"),
             workspace=str(tmp_path),

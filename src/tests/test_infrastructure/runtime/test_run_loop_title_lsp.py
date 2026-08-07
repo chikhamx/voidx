@@ -13,6 +13,7 @@ import voidx.persistence.sqlite as store
 
 from voidx.agent.slash import SlashHandler
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.application.agent_service import AgentService
 from voidx.agent.infrastructure.langgraph.execution import _sanitize_generated_title
 from voidx.agent.application.runtime_context import InteractionMode, TaskIntent
@@ -33,7 +34,9 @@ from voidx.agent.application.runtime.task_tracker import TaskTracker
 from voidx.presentation.output.dock import BottomInputDock, set_dock
 from voidx.presentation.output.events import DockEventConsumer, ui_events
 from voidx.presentation.protocol import UiSubmitCommand
-from voidx.runtime.ui_port import runtime_ui_port
+from tests.presentation_ui import make_presentation_ui
+
+runtime_ui_port = make_presentation_ui()
 from tests.test_infrastructure.runtime.run_loop_helpers import (
     FakeTui,
     ExitTui,
@@ -51,7 +54,7 @@ async def test_smart_title_requires_database_title_to_remain_temporary(tmp_path)
     session = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
     await update_title(session.id, "temporary")
     session = session.model_copy(update={"title": "temporary"})
-    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session)
     graph._schedule_session_title_generation(session.id, "first request", "temporary")
     assert graph._title_task is None
 
@@ -68,7 +71,7 @@ async def test_title_auto_uses_first_user_message(tmp_path):
     await save_message(MessageRow(session_id=session.id, role="user", content="first user request"))
     await save_message(MessageRow(session_id=session.id, role="assistant", content="response"))
     await save_message(MessageRow(session_id=session.id, role="user", content="second user request"))
-    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session)
     prompts: list[str] = []
 
     class FakeTitleModel:
@@ -98,7 +101,7 @@ def test_sanitize_generated_title_rejects_markdown():
 @pytest.mark.asyncio
 async def test_delete_empty_current_session_only_deletes_sessions_without_messages(tmp_path):
     empty = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
-    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=empty)
+    graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=empty)
 
     await graph.delete_empty_current_session()
 
@@ -107,7 +110,7 @@ async def test_delete_empty_current_session_only_deletes_sessions_without_messag
 
     non_empty = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
     await save_message(MessageRow(session_id=non_empty.id, role="user", content="hello"))
-    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=non_empty)
+    graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=non_empty)
 
     await graph.delete_empty_current_session()
 
@@ -119,7 +122,7 @@ async def test_delete_empty_current_session_only_deletes_sessions_without_messag
 async def test_exit_cleanup_deletes_empty_current_session(tmp_path, monkeypatch):
     monkeypatch.setattr("voidx.presentation.terminal.run_loop.create_frontend", ExitTui)
     session = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
-    execution = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    execution = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session)
     graph, run_loop = _service_and_run_loop(execution)
     _disable_external_managers(graph)
     test_dock = BottomInputDock()
@@ -140,7 +143,7 @@ async def test_exit_cleanup_keeps_session_with_messages_even_new_session_title(t
     session = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
     await save_message(MessageRow(session_id=session.id, role="user", content="hello"))
     await update_title(session.id, "New session")
-    execution = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    execution = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session)
     graph, run_loop = _service_and_run_loop(execution)
     _disable_external_managers(graph)
     test_dock = BottomInputDock()

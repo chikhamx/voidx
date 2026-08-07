@@ -24,6 +24,7 @@ from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hin
 from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
 from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.infrastructure.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
@@ -38,7 +39,7 @@ from voidx.agent.adapters.persistence.session_repository import (
     load_messages,
     save_message,
 )
-from voidx.presentation.transcript_snapshot import load_transcript
+from voidx.presentation.adapters.persistence.transcript_snapshot import load_transcript
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
 from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
 from voidx.agent.domain.task.intent import TaskIntent
@@ -57,7 +58,7 @@ from voidx.presentation.output.events import DockEventConsumer, TurnStarted, ui_
 
 def _graph(tmp_path):
     cfg = Config(workspace=str(tmp_path))
-    return LangGraphExecution(cfg, api_key=None)
+    return make_langgraph_execution(cfg, api_key=None)
 
 
 def _task_state_json(**kwargs):
@@ -144,7 +145,7 @@ async def test_subagent_starts_from_isolated_task_context(tmp_path, monkeypatch)
         def bind_tools(self, _tool_defs):
             return self
 
-    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
         captured["messages"] = messages
         return AIMessage(content="done")
 
@@ -210,7 +211,7 @@ async def test_subagent_injects_result_contract_into_task_payload(tmp_path, monk
         def bind_tools(self, _tool_defs):
             return self
 
-    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
         captured["messages"] = messages
         return AIMessage(content="done")
 
@@ -256,7 +257,7 @@ async def test_subagent_adds_last_tool_step_hint_to_payload_only(tmp_path, monke
         def bind_tools(self, _tool_defs):
             return self
 
-    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
         captured["messages"] = messages
         return AIMessage(content="done")
 
@@ -315,7 +316,7 @@ async def test_subagent_final_step_fallback_does_not_leak_hint_to_sub_messages(t
         async def execute_tool(self, _tool_id, _args, _ctx):
             return ToolResult(output="read src/voidx/agent/graph/subagent.py")
 
-    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
         captured_calls.append(messages)
         if len(captured_calls) == 1:
             return AIMessage(
@@ -385,7 +386,7 @@ async def test_subagent_requires_structured_contract_after_tool_work(tmp_path, m
         async def execute_tool(self, _tool_id, _args, _ctx):
             return ToolResult(output="src/voidx/tools/websearch.py: def _parse_duckduckgo_html(html): ...")
 
-    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
         captured_calls.append(messages)
         if len(captured_calls) == 1:
             return AIMessage(
@@ -466,7 +467,7 @@ async def test_subagent_contract_retry_exhausted_returns_contract_unsatisfied(tm
         async def execute_tool(self, _tool_id, _args, _ctx):
             return ToolResult(output="src/voidx/tools/websearch.py: def _parse_duckduckgo_html(html): ...")
 
-    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
         captured_calls.append(messages)
         if len(captured_calls) == 1:
             return AIMessage(

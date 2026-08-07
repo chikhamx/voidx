@@ -25,6 +25,7 @@ from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hin
 from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
 from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.infrastructure.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
@@ -39,7 +40,7 @@ from voidx.agent.adapters.persistence.session_repository import (
     load_messages,
     save_message,
 )
-from voidx.presentation.transcript_snapshot import load_transcript
+from voidx.presentation.adapters.persistence.transcript_snapshot import load_transcript
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
 from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
 from voidx.agent.domain.task.intent import TaskIntent
@@ -58,7 +59,7 @@ from voidx.presentation.output.events import DockEventConsumer, TurnStarted, ui_
 
 def _graph(tmp_path):
     cfg = Config(workspace=str(tmp_path))
-    return LangGraphExecution(cfg, api_key=None)
+    return make_langgraph_execution(cfg, api_key=None)
 
 
 def _task_state_json(**kwargs):
@@ -153,7 +154,6 @@ def test_run_subagent_uses_workflow_contract_instead_of_model_budget():
 @pytest.mark.asyncio
 async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, monkeypatch):
     import voidx.agent.infrastructure.langgraph.execution as core_module
-    from voidx.runtime.ui_port import RuntimeUiPort
 
     graph = _graph(tmp_path)
     goal_resolution = _child_goal_resolution()
@@ -190,8 +190,8 @@ async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, mo
 
     graph._instruction.workflow_context_for = fake_workflow_context_for
     graph._ui.__dict__.pop("via_events", None)
-    monkeypatch.setattr(RuntimeUiPort, "events", property(lambda _self: RecordingEvents()))
-    monkeypatch.setattr(RuntimeUiPort, "via_events", lambda _self: True)
+    graph._ui._events = RecordingEvents()
+    graph._ui.via_events = lambda: True
     monkeypatch.setattr(core_module, "_run_subagent", fake_run_subagent)
 
     result = await graph._subagent_runner(
@@ -222,7 +222,6 @@ async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, mo
 @pytest.mark.asyncio
 async def test_subagent_runner_reports_initialization_error(tmp_path, monkeypatch):
     import voidx.agent.infrastructure.langgraph.execution as core_module
-    from voidx.runtime.ui_port import RuntimeUiPort
 
     graph = _graph(tmp_path)
     emitted: list[object] = []
@@ -236,8 +235,8 @@ async def test_subagent_runner_reports_initialization_error(tmp_path, monkeypatc
 
     graph._instruction.workflow_context_for = fail_workflow_context_for
     graph._ui.__dict__.pop("via_events", None)
-    monkeypatch.setattr(RuntimeUiPort, "events", property(lambda _self: RecordingEvents()))
-    monkeypatch.setattr(RuntimeUiPort, "via_events", lambda _self: True)
+    graph._ui._events = RecordingEvents()
+    graph._ui.via_events = lambda: True
 
     with pytest.raises(RuntimeError, match="provider schema rejected tool definitions"):
         await graph._subagent_runner(
@@ -488,7 +487,7 @@ async def test_subagent_tool_result_injects_next_step_hint_into_followup_message
                 next_step_hint="Run the focused verification now.",
             )
 
-    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
         nonlocal calls
         calls += 1
         observed.append(list(messages))
@@ -571,7 +570,7 @@ async def test_subagent_state_patch_is_applied_to_next_turn_context(tmp_path, mo
                 },
             )
 
-    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
         nonlocal calls
         calls += 1
         observed.append(list(messages))
@@ -650,7 +649,7 @@ async def test_subagent_refreshes_workflow_runtime_after_route_patch(tmp_path, m
                 },
             )
 
-    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
         nonlocal calls
         calls += 1
         observed.append(list(messages))
@@ -731,7 +730,7 @@ async def test_subagent_removes_completed_workflow_from_active_summaries(tmp_pat
                 },
             )
 
-    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
         nonlocal calls
         calls += 1
         observed.append(list(messages))
@@ -831,7 +830,7 @@ async def test_subagent_route_patch_counts_as_progress_for_runtime_guard(tmp_pat
         summaries.append(summary)
         return summary
 
-    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
         nonlocal calls
         calls += 1
         observed.append(list(messages))
@@ -923,7 +922,7 @@ async def test_subagent_applies_state_patch_before_terminal_message_result(tmp_p
 
     monkeypatch.setattr(subagent_module, "MessageTool", ResultMessageTool)
 
-    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
         nonlocal calls
         calls += 1
         observed.append(list(messages))

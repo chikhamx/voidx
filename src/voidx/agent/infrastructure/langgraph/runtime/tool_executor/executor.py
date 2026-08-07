@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from voidx.agent.infrastructure.ui_events import AssistantStreamCommitted, AssistantStreamUpdated, StatusFinished, StatusUpdated, WarningAppended
+from voidx.agent.infrastructure.display_policy import DEFAULT_DISPLAY_RULES, ToolDisplayPolicy
+
 import asyncio
 import time
 from typing import TYPE_CHECKING
@@ -15,16 +18,7 @@ from voidx.agent.domain.task.state import goal_label, goal_type_from_join
 from voidx.agent.application.tool_messages import sanitize_tool_message_content
 from voidx.agent.infrastructure.tool_result_storage import maybe_persist_tool_result
 from voidx.agent.infrastructure.langgraph.runtime.todo_events import todo_updated_event
-from voidx.runtime.ui import (
-    AssistantStreamCommitted,
-    AssistantStreamUpdated,
-    DEFAULT_DISPLAY_RULES,
-    StatusFinished,
-    StatusUpdated,
-    ToolDisplayPolicy,
-    WarningAppended,
-    UiEventTimeout,
-)
+from voidx.agent.ports.ui import UiEventTimeout
 from voidx.agent.adapters.tools.automation.loop import LoopTool
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext, AgentToolRuntime
 from voidx.agent.adapters.tools.plugins import bind_agent_tool_runtime
@@ -227,7 +221,7 @@ class ToolExecutorAdapter:
                 if getattr(host, "agent_gateway", None) is not None
                 else ""
             ),
-            interaction=_make_interact_callback(getattr(host, "_app", None)),
+            interaction=_make_interact_callback(host._ui, host._ui),
             events=getattr(host, "tool_ui_events", None),
             access_grants=permission.get_access_grants,
             revocation_epoch=lambda: permission.revocation_epoch,
@@ -245,7 +239,7 @@ class ToolExecutorAdapter:
             target_locker=permission.acquire_grant_targets,
             execution_lease_factory=permission.execution_lease_for_tool,
             interaction=CallbackInteractionPort(
-                _make_interact_callback(getattr(host, "_app", None))
+                _make_interact_callback(host._ui, host._ui)
             ),
         )
         bind_scoped_plugins(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from voidx.presentation.transcript_snapshot import (
+from voidx.presentation.adapters.persistence.transcript_snapshot import (
     append_transcript_reset,
     load_transcript,
     replace_transcript,

@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+StreamingRenderer = None
+
+from voidx.agent.infrastructure.ui_events import AssistantStreamCommitted, AssistantStreamUpdated, GuidanceCommitted, StatusFinished
+
 from voidx.agent.infrastructure.langgraph.runtime.core.context import (
     rebuild_llm_messages as build_llm_context_messages,
     replacement_messages as compacted_replacement_messages,
@@ -40,13 +44,6 @@ from voidx.agent.application.workflow_utils import active_workflow_names
 from voidx.logging.request_log import log_llm_exchange
 from voidx.llm.service import resolve_protocol
 from voidx.llm.usage import estimate_context_tokens_with_tools, estimate_message_tokens, extract_token_usage
-from voidx.runtime.ui import (
-    AssistantStreamCommitted,
-    AssistantStreamUpdated,
-    GuidanceCommitted,
-    StatusFinished,
-    StreamingRenderer,
-)
 from voidx.agent.infrastructure.langgraph.runtime.control_protocol import (
     ControlContext,
     resolve_control_protocol,
@@ -262,7 +259,8 @@ class LlmTurn:
         max_retries = _LLM_MAX_RETRIES
         while True:
             try:
-                renderer = StreamingRenderer(
+                renderer_factory = StreamingRenderer or host._ui.streaming_renderer
+                renderer = renderer_factory(
                     host._ui.console,
                     debug=host._debug,
                     headless=loop.turn_prompt_active,
@@ -273,6 +271,7 @@ class LlmTurn:
                     llm_messages,
                     renderer,
                     resolve_protocol(host.config.model),
+                    ui_port=host._ui,
                 )
                 log_llm_exchange(
                     llm_messages,

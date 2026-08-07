@@ -25,6 +25,7 @@ from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hin
 from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
 from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.infrastructure.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
@@ -39,7 +40,7 @@ from voidx.agent.adapters.persistence.session_repository import (
     load_messages,
     save_message,
 )
-from voidx.presentation.transcript_snapshot import load_transcript
+from voidx.presentation.adapters.persistence.transcript_snapshot import load_transcript
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
 from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
 from voidx.agent.domain.task.intent import TaskIntent
@@ -58,7 +59,7 @@ from voidx.presentation.output.events import DockEventConsumer, TurnStarted, ui_
 
 def _graph(tmp_path):
     cfg = Config(workspace=str(tmp_path))
-    return LangGraphExecution(cfg, api_key=None)
+    return make_langgraph_execution(cfg, api_key=None)
 
 
 def _task_state_json(**kwargs):
@@ -146,7 +147,7 @@ async def test_subagent_skill_context_matches_orchestrator(tmp_path, monkeypatch
         def bind_tools(self, _tool_defs):
             return self
 
-    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
         captured["messages"] = messages
         return AIMessage(content="done")
 
@@ -212,7 +213,7 @@ async def test_subagent_inherits_parent_mcp_gateway(tmp_path, monkeypatch):
             captured["tool_defs"] = tool_defs
             return self
 
-    async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
         return AIMessage(content="done")
 
     parent_tools = build_registry()
@@ -265,7 +266,7 @@ async def test_subagent_with_mcp_gateway_copies_parent_gateway(tmp_path, monkeyp
 
     stream_count = 0
 
-    async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
         nonlocal stream_count
         stream_count += 1
         if stream_count == 1:
@@ -334,7 +335,7 @@ async def test_subagent_tool_filter_always_blocks_nested_agent_tool(tmp_path, mo
             captured.append([tool["function"]["name"] for tool in tool_defs])
             return self
 
-    async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
         return AIMessage(content="done")
 
     parent_tools = build_registry()

@@ -2,6 +2,10 @@ from pathlib import Path
 
 import pytest
 
+from tests.test_application.input_ports import service_ports
+from voidx.agent.infrastructure.input_router import LangGraphAutonomousInputRouter
+from voidx.agent.ports.presentation import NullAgentEventPublisher
+
 from voidx.agent.application.chat_service import ChatService
 from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.domain.thread import AgentThread, LifecycleState
@@ -77,11 +81,12 @@ async def test_route_chat_turn_routes_resumed_chat_session_when_thread_id_empty(
         def __init__(self):
             self.calls = []
 
-        async def run_turn(self, **kwargs):
+        async def run_chat_turn(self, **kwargs):
             self.calls.append(kwargs)
 
     chat = FakeChatService()
-    service = AgentService(SimpleNamespace(session_id="chat-session"), runtime=None, chat_service=chat)
+    router = LangGraphAutonomousInputRouter(SimpleNamespace(session_id="chat-session"), None, NullAgentEventPublisher(), SimpleNamespace())
+    router.bind_turn_services(chat_service=chat, coding_service=None)
 
     async def fake_get_session(session_id):
         assert session_id == "chat-session"
@@ -89,7 +94,7 @@ async def test_route_chat_turn_routes_resumed_chat_session_when_thread_id_empty(
 
     monkeypatch.setattr("voidx.agent.adapters.persistence.session_repository.get_session", fake_get_session)
 
-    routed = await service._route_chat_turn("hello", thread_id="")
+    routed = await router.route_chat_turn("hello", thread_id="")
 
     assert routed is True
     assert len(chat.calls) == 1
@@ -104,18 +109,17 @@ async def test_route_chat_turn_does_not_route_coding_session(monkeypatch):
     from voidx.agent.adapters.persistence.session_repository import SessionInfo
 
     class FakeChatService:
-        async def run_turn(self, **kwargs):
+        async def run_chat_turn(self, **kwargs):
             raise AssertionError("coding session must not route to chat")
 
-    service = AgentService(
-        SimpleNamespace(session_id="coding-session"), runtime=None, chat_service=FakeChatService()
-    )
+    router = LangGraphAutonomousInputRouter(SimpleNamespace(session_id="coding-session"), None, NullAgentEventPublisher(), SimpleNamespace())
+    router.bind_turn_services(chat_service=FakeChatService(), coding_service=None)
 
     async def fake_get_session(session_id):
         return SessionInfo(id=session_id, runtime_profile="coding")
 
     monkeypatch.setattr("voidx.agent.adapters.persistence.session_repository.get_session", fake_get_session)
 
-    routed = await service._route_chat_turn("hello", thread_id="")
+    routed = await router.route_chat_turn("hello", thread_id="")
 
     assert routed is False

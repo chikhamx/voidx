@@ -112,3 +112,11 @@ def _fmt_args_short(tool_name: str, args: dict[str, object]) -> str:
 
 
 fmt_args = _fmt_args
+
+
+def format_tool_args(args: dict[str, object]) -> str:
+    return _fmt_args(args)
+
+
+def format_tool_title(value: str) -> str:
+    return _title(value)

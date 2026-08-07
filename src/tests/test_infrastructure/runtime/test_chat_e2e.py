@@ -15,6 +15,7 @@ from voidx.agent.domain.prompt_policy import LoopPromptPolicy
 from voidx.agent.application.prompts import BaseSystemProfile
 from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.infrastructure.memory_session import MemorySessionAdapter
 from voidx.agent.infrastructure.null_events import NullEventPublisher
 from voidx.agent.application.runtime import AgentRuntime
@@ -50,7 +51,7 @@ def _runtime(execution) -> AgentRuntime:
 async def test_chat_turn_runs_in_isolated_session_with_tool_view(tmp_path):
     coding = await create_session(workspace=str(tmp_path), profile="coding")
     try:
-        execution = LangGraphExecution(
+        execution = make_langgraph_execution(
             Config(workspace=str(tmp_path)),
             api_key=None,
             session=coding,
@@ -108,7 +109,7 @@ async def test_chat_turn_runs_in_isolated_session_with_tool_view(tmp_path):
 async def test_chat_resumed_thread_keeps_own_session(tmp_path):
     coding = await create_session(workspace=str(tmp_path), profile="coding")
     try:
-        execution = LangGraphExecution(
+        execution = make_langgraph_execution(
             Config(workspace=str(tmp_path)),
             api_key=None,
             session=coding,
@@ -158,7 +159,7 @@ def _system_text(messages):
 async def test_chat_system_prompt_excludes_coding_persona_and_workflow(tmp_path):
     coding = await create_session(workspace=str(tmp_path), profile="coding")
     try:
-        execution = LangGraphExecution(
+        execution = make_langgraph_execution(
             Config(workspace=str(tmp_path)),
             api_key=None,
             session=coding,
@@ -208,7 +209,7 @@ async def test_chat_system_prompt_excludes_coding_persona_and_workflow(tmp_path)
 async def test_custom_profile_policy_selects_base_system_without_profile_branch(tmp_path):
     coding = await create_session(workspace=str(tmp_path), profile="coding")
     try:
-        execution = LangGraphExecution(
+        execution = make_langgraph_execution(
             Config(workspace=str(tmp_path)),
             api_key="test-key",
             session=coding,
@@ -279,7 +280,7 @@ async def test_custom_profile_policy_selects_base_system_without_profile_branch(
 async def test_coding_system_prompt_still_includes_persona_and_workflow(tmp_path):
     coding = await create_session(workspace=str(tmp_path), profile="coding")
     try:
-        execution = LangGraphExecution(
+        execution = make_langgraph_execution(
             Config(workspace=str(tmp_path)),
             api_key=None,
             session=coding,
@@ -317,7 +318,7 @@ async def test_coding_system_prompt_still_includes_persona_and_workflow(tmp_path
 async def test_profile_system_prompt_is_injected_into_stable_system_context(tmp_path):
     coding = await create_session(workspace=str(tmp_path), profile="coding")
     try:
-        execution = LangGraphExecution(
+        execution = make_langgraph_execution(
             Config(workspace=str(tmp_path)),
             api_key="test-key",
             session=coding,
@@ -367,7 +368,7 @@ async def test_profile_system_prompt_is_injected_into_stable_system_context(tmp_
 async def test_loop_iteration_user_text_is_current_turn_only(tmp_path):
     coding = await create_session(workspace=str(tmp_path), profile="coding")
     try:
-        execution = LangGraphExecution(
+        execution = make_langgraph_execution(
             Config(workspace=str(tmp_path)),
             None,
             session=coding,

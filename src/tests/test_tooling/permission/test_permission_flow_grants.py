@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from tests.langgraph_execution import make_langgraph_execution
 import pytest
 
 
@@ -9,7 +10,7 @@ def _graph(workspace):
     from voidx.config import Config
     from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
     cfg = Config(workspace=str(workspace))
-    return LangGraphExecution(cfg, api_key="test")
+    return make_langgraph_execution(cfg, api_key="test")
 
 
 def _external_write_decision(graph, workspace, target):

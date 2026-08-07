@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from typing import Any
 
 _current_dock: ContextVar[Any | None] = ContextVar("current_dock", default=None)
@@ -12,8 +12,12 @@ def get_dock() -> Any | None:
     return _current_dock.get()
 
 
-def set_dock(dock: Any | None) -> None:
-    _current_dock.set(dock)
+def set_dock(dock: Any | None) -> Token[Any | None]:
+    return _current_dock.set(dock)
+
+
+def reset_dock(token: Token[Any | None]) -> None:
+    _current_dock.reset(token)
 
 
 class _DockProxy:

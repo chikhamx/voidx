@@ -13,6 +13,7 @@ from rich.console import Console
 
 from voidx.agent.infrastructure.langgraph.runtime.streaming import stream_llm as _stream_llm
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
 from voidx.agent.application.runtime_context import RuntimeContextBuilder
 from voidx.agent.domain.task.state import TaskState
@@ -49,7 +50,7 @@ async def test_call_llm_resolves_protocol_for_mimo_provider(tmp_path, monkeypatc
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(
             model=ModelConfig(provider="mimo", model="mimo-v2.5"),
             workspace=str(tmp_path),
@@ -74,7 +75,7 @@ async def test_call_llm_injects_current_todo_runtime_context(tmp_path, monkeypat
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(
             model=ModelConfig(provider="mimo", model="mimo-v2.5"),
             workspace=str(tmp_path),
@@ -170,7 +171,7 @@ async def test_call_llm_updates_usage_stats_across_turn_control_calls(tmp_path, 
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(
             model=ModelConfig(provider="openai", model="gpt-4o"),
             workspace=str(tmp_path),
@@ -203,7 +204,7 @@ async def test_call_llm_fallback_context_estimate_includes_tool_schema(tmp_path,
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(
             model=ModelConfig(provider="openai", model="gpt-4o"),
             workspace=str(tmp_path),
@@ -235,7 +236,7 @@ async def test_call_llm_persists_context_frame_for_session(tmp_path, monkeypatch
             role="user",
             content="hi",
         ))
-        graph = LangGraphExecution(
+        graph = make_langgraph_execution(
             Config(
                 model=ModelConfig(provider="mimo", model="mimo-v2.5"),
                 workspace=str(tmp_path),
@@ -270,7 +271,7 @@ async def test_call_llm_persists_context_frame_for_session(tmp_path, monkeypatch
 
 
 def test_inline_compaction_guide_disabled_by_default(tmp_path):
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(
             model=ModelConfig(provider="mimo", model="mimo-v2.5"),
             workspace=str(tmp_path),
@@ -298,7 +299,7 @@ def test_inline_compaction_guide_disabled_by_default(tmp_path):
 
 
 def test_inline_compaction_guide_uses_shared_summary_template(tmp_path):
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(
             model=ModelConfig(provider="mimo", model="mimo-v2.5"),
             workspace=str(tmp_path),
@@ -330,7 +331,7 @@ async def test_call_llm_overflow_compaction_does_not_send_temporary_summary_mess
     import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(
             model=ModelConfig(provider="mimo", model="mimo-v2.5"),
             workspace=str(tmp_path),
@@ -386,7 +387,7 @@ async def test_call_llm_coerces_todo_state_dict_before_compaction_dump(tmp_path,
     import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(
             model=ModelConfig(provider="mimo", model="mimo-v2.5"),
             workspace=str(tmp_path),
@@ -446,7 +447,7 @@ async def test_call_llm_repairs_malformed_tool_call_once(tmp_path, monkeypatch):
     import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(
             model=ModelConfig(provider="mimo", model="mimo-v2.5"),
             workspace=str(tmp_path),
@@ -480,7 +481,7 @@ async def test_call_llm_returns_explicit_error_when_malformed_tool_call_repair_f
     import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(
             model=ModelConfig(provider="mimo", model="mimo-v2.5"),
             workspace=str(tmp_path),
@@ -532,7 +533,7 @@ async def test_call_llm_runs_preflight_compaction_before_second_malformed_retry(
     import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(
             model=ModelConfig(provider="mimo", model="mimo-v2.5"),
             workspace=str(tmp_path),
@@ -607,7 +608,7 @@ async def test_call_llm_returns_explicit_error_after_malformed_compaction_retry_
     import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(
             model=ModelConfig(provider="mimo", model="mimo-v2.5"),
             workspace=str(tmp_path),
@@ -772,7 +773,7 @@ async def test_call_llm_non_retryable_404_fail_fast(tmp_path, monkeypatch):
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(
             model=ModelConfig(provider="openai", model="gpt-4o"),
             workspace=str(tmp_path),

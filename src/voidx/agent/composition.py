@@ -18,9 +18,13 @@ from voidx.agent.application.coding_service import CodingService
 from voidx.agent.application.runtime import AgentRuntime
 from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.infrastructure.input_adapter import LangGraphInputAdapter
+from voidx.agent.infrastructure.input_router import LangGraphAutonomousInputRouter
 from voidx.agent.infrastructure.memory_session import MemorySessionAdapter
 from voidx.agent.infrastructure.null_events import NullEventPublisher
-from voidx.agent.ports.presentation import AgentEventPublisher
+from voidx.agent.ports.presentation import AgentEventPublisher, NullAgentEventPublisher
+from voidx.agent.ports.ui import AgentUiPort
+from voidx.agent.ports.workspace_lock import DelegatingWorkspaceWriteLock
 
 if TYPE_CHECKING:
     from voidx.agent.adapters.persistence.session_repository import SessionInfo
@@ -36,6 +40,8 @@ class AgentComponents:
 
     execution: Any
     service: AgentService
+    workspace_write_lock: DelegatingWorkspaceWriteLock | None = None
+    input_frontend_binder: LangGraphInputAdapter | None = None
 
 
 def _make_goal_result_notifier():
@@ -71,6 +77,7 @@ def build_agent_components(
     *,
     session: SessionInfo | None = None,
     settings: Settings | None = None,
+    ui: AgentUiPort,
     event_publisher_factory: AgentEventPublisherFactory | None = None,
     external_manager_factory: Callable[..., tuple[Any, Any]] | None = None,
     mcp_reference_resolver: Callable[..., Any] | None = None,
@@ -79,10 +86,13 @@ def build_agent_components(
 ) -> AgentComponents:
     """Build agent services and infrastructure without choosing a presentation."""
 
+    workspace_write_lock = DelegatingWorkspaceWriteLock()
     execution = LangGraphExecution(
         config,
         api_key,
         session=session,
+        ui=ui,
+        workspace_write_lock=workspace_write_lock,
         settings=settings,
         external_manager_factory=external_manager_factory,
         mcp_reference_resolver=mcp_reference_resolver,
@@ -96,16 +106,23 @@ def build_agent_components(
         SimpleNamespace(turn_engine=engine, sessions=sessions, events=events)
     )
     loop_store = ThreadStore()
+    event_publisher = (
+        event_publisher_factory(execution)
+        if event_publisher_factory is not None
+        else None
+    )
     loop_scheduler = LoopRuntimeScheduler(
         store=loop_store,
         runtime=runtime,
         workspace=getattr(config, "workspace", ""),
         session_id=(session.id if session is not None else ""),
+        events=event_publisher,
     )
     loop_service = LoopService(
         store=loop_store,
         scheduler=loop_scheduler,
         workspace=getattr(config, "workspace", ""),
+        events=event_publisher,
     )
     goal_service = None
     model = getattr(execution, "model", None)
@@ -127,19 +144,26 @@ def build_agent_components(
         execution.goal_service = goal_service
     chat_service = ChatService(runtime)
     coding_service = CodingService(runtime)
-    event_publisher = (
-        event_publisher_factory(execution)
-        if event_publisher_factory is not None
-        else None
-    )
-    service = AgentService(
+    input_adapter = LangGraphInputAdapter(execution)
+    guidance = execution
+    autonomous_router = LangGraphAutonomousInputRouter(
         execution,
         runtime,
+        event_publisher or NullAgentEventPublisher(),
+        guidance,
+    )
+    autonomous_router.bind_turn_services(
         chat_service=chat_service,
         coding_service=coding_service,
-        events=event_publisher,
     )
-    return AgentComponents(execution=execution, service=service)
+    service = AgentService(input_adapter, input_adapter, autonomous_router, guidance)
+    execution.bind_coding_turn_runner(service.run_coding_turn)
+    return AgentComponents(
+        execution=execution,
+        service=service,
+        workspace_write_lock=workspace_write_lock,
+        input_frontend_binder=input_adapter,
+    )
 
 
 __all__ = ["AgentComponents", "AgentEventPublisherFactory", "build_agent_components"]

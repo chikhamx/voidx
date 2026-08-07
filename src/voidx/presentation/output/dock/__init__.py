@@ -14,7 +14,7 @@ from voidx.presentation.output.dock.app import (
     active_turn_analyzing_text,
 )
 from voidx.presentation.output.dock.formatting import ANSI_LINE_PREFIX
-from voidx.presentation.output.dock.state import dock, get_dock, set_dock
+from voidx.presentation.output.dock.state import dock, get_dock, reset_dock, set_dock
 from voidx.presentation.output.dock.todo import DockTodoItem, DockTodoState
 
 __all__ = [
@@ -37,4 +37,5 @@ __all__ = [
     "dock",
     "get_dock",
     "set_dock",
+    "reset_dock",
 ]

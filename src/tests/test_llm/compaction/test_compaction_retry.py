@@ -98,7 +98,7 @@ class TestCompactionRetry:
 
         captured = {}
 
-        async def fake_stream_llm(model, messages, renderer, protocol):
+        async def fake_stream_llm(model, messages, renderer, protocol, **kwargs):
             captured["model"] = model
             captured["messages"] = messages
             captured["renderer"] = renderer
@@ -182,7 +182,7 @@ class TestCompactionRetry:
         captured = {}
         estimate_results = iter([200_000, 200_000, 1_000])
 
-        async def fake_stream_llm(_model, messages, _renderer, _protocol):
+        async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
             captured["messages"] = messages
             return AIMessage(content="## Goal\n- summarized")
 
@@ -456,7 +456,7 @@ class TestCompactionRetry:
         import voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator as compaction_module
         from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import CompactionCoordinator
 
-        async def fake_stream_llm(_model, _messages, _renderer, _protocol):
+        async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
             return AIMessage(content="")
 
         events = []

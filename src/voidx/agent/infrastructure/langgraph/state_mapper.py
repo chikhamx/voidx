@@ -2,14 +2,28 @@
 
 from __future__ import annotations
 
-from voidx.agent.ports.execution_host import ExecutionHost
+from typing import Protocol
 
 from voidx.agent.domain.state import SessionRuntimeState
+from voidx.agent.domain.task.intent import InteractionMode
+from voidx.agent.domain.task.state import TaskState
 from voidx.agent.domain.turn.state import TurnPhase
 
 
+class LangGraphStateTarget(Protocol):
+    interaction_mode: InteractionMode
+    task_state: TaskState
+    compaction_summary: str
+    session_date: str
+
+    def set_interaction_mode(self, mode: str | InteractionMode) -> InteractionMode: ...
+    def set_task_state(self, task_state: TaskState) -> None: ...
+    def set_compaction_summary(self, value: str) -> None: ...
+    def set_session_date(self, value: str) -> None: ...
+
+
 class LangGraphStateMapper:
-    def apply_runtime(self, target: ExecutionHost, runtime: SessionRuntimeState) -> None:
+    def apply_runtime(self, target: LangGraphStateTarget, runtime: SessionRuntimeState) -> None:
         target.set_interaction_mode(runtime.interaction_mode)
         target.set_task_state(runtime.task_state.model_copy(deep=True))
         target.set_compaction_summary(runtime.compaction_summary)
@@ -17,7 +31,7 @@ class LangGraphStateMapper:
 
     def runtime_from_execution(
         self,
-        source: ExecutionHost,
+        source: LangGraphStateTarget,
         *,
         turn_phase: TurnPhase,
     ) -> SessionRuntimeState:

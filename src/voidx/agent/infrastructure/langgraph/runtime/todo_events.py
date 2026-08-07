@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from voidx.agent.infrastructure.ui_events import TodoItemPayload, TodoUpdated
+
 from voidx.agent.application.todo_state import todo_run_state_from_result
-from voidx.runtime.ui import TodoItemPayload, TodoUpdated
 
 
 def todo_updated_event(result, *, agent_id: int = -1):

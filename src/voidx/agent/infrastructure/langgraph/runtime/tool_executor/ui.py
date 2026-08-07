@@ -1,18 +1,10 @@
 from __future__ import annotations
 
+from voidx.agent.infrastructure.ui_events import FileChangeAppended, StatusFinished, ToolFinished, ToolResultAppended, ToolStarted
+from voidx.agent.infrastructure.display_policy import ToolDisplayMode, ToolDisplayPolicy
+
 from voidx.tooling.domain.diff import diff_stat
 from voidx.logging.tool_log import log_tool_event
-from voidx.runtime.ui import (
-    FileChangeAppended,
-    StatusFinished,
-    ToolDisplayMode,
-    ToolDisplayPolicy,
-    ToolFinished,
-    ToolResultAppended,
-    ToolStarted,
-    _fmt_args,
-    _title,
-)
 
 
 async def notify_tool_started(host, tc, display_policy) -> object | None:
@@ -27,12 +19,12 @@ async def notify_tool_started(host, tc, display_policy) -> object | None:
     tool_node = None
 
     if host._ui.via_events():
-        gerund = _title(host._ui.ui._TOOL_GERUND.get(tid, tid + "ing"))
+        gerund = host._ui.title(host._ui.ui._TOOL_GERUND.get(tid, tid + "ing"))
         tool_node = await host._ui.events.request(ToolStarted(
             tool_call_id=tool_event_id,
             tool_name=tid,
             label=gerund,
-            args=_fmt_args(targs),
+            args=host._ui.format_args(targs),
             raw_args=targs,
             display_mode=initial_display_mode,
             summary_max_lines=initial_summary_max_lines,
@@ -41,10 +33,10 @@ async def notify_tool_started(host, tc, display_policy) -> object | None:
             host._turn_node = host._ui.dock.current_agent
     elif host._ui.dock.active:
         if initial_display_mode != ToolDisplayMode.HIDDEN:
-            gerund = _title(host._ui.ui._TOOL_GERUND.get(tid, tid + "ing"))
+            gerund = host._ui.title(host._ui.ui._TOOL_GERUND.get(tid, tid + "ing"))
             tool_node = host._ui.dock.start_tool(
                 gerund,
-                _fmt_args(targs),
+                host._ui.format_args(targs),
                 tool_call_id=tool_event_id,
                 tool_name=tid,
                 raw_args=targs,
@@ -70,14 +62,14 @@ async def notify_tool_result(host, tc, result, ok, elapsed, display_policy, tool
         if initial_display_mode != ToolDisplayMode.HIDDEN:
             await host._ui.events.emit(ToolFinished(
                 tool_call_id=tool_event_id,
-                label=_title(tid),
+                label=host._ui.title(tid),
                 elapsed=elapsed,
                 ok=ok,
                 detail=result.summary if result.summary else "",
             ))
     elif tool_node:
         if initial_display_mode != ToolDisplayMode.HIDDEN:
-            host._ui.dock.finish_tool_node(tool_node, _title(tid), elapsed, ok)
+            host._ui.dock.finish_tool_node(tool_node, host._ui.title(tid), elapsed, ok)
     else:
         if initial_display_mode != ToolDisplayMode.HIDDEN:
             host._ui.ui.tool_done(tid, elapsed, ok)

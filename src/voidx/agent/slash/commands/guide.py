@@ -4,34 +4,33 @@ from __future__ import annotations
 from pathlib import Path
 from voidx.agent.slash.init_prompt import INIT_PROMPT
 from voidx.agent.domain.task.intent import InteractionMode
-from voidx.runtime.ui import ui
 
 
 class GuideCommandsMixin:
     async def _guide(self, text: str) -> None:
         guidance = text.strip()
         if not guidance:
-            ui.print("[dim]Usage: /guide <guidance for the next agent step>[/dim]")
+            self.host.ui.print("[dim]Usage: /guide <guidance for the next agent step>[/dim]")
             return
         if not self.host.can_submit_guidance():
-            ui.print("[dim]Guidance is not available in this session.[/dim]")
+            self.host.ui.print("[dim]Guidance is not available in this session.[/dim]")
             return
         if not self.host.submit_guidance(guidance):
-            ui.print("[dim]No guidance submitted.[/dim]")
+            self.host.ui.print("[dim]No guidance submitted.[/dim]")
 
     async def _init(self, args: str) -> None:
         arg = args.strip().lower()
         if arg not in {"", "force"}:
-            ui.error("Usage: /init [force]")
+            self.host.ui.error("Usage: /init [force]")
             return
 
         if self.host.interaction_mode_value() == InteractionMode.PLAN.value:
-            ui.error("/init writes AGENTS.md. Run /unplan first.")
+            self.host.ui.error("/init writes AGENTS.md. Run /unplan first.")
             return
 
         existing = Path(self.host.workspace) / "AGENTS.md"
         if existing.exists() and arg != "force":
-            ui.print("[dim]AGENTS.md already exists. Use /init force to regenerate.[/dim]")
+            self.host.ui.print("[dim]AGENTS.md already exists. Use /init force to regenerate.[/dim]")
             return
 
         await self.host.run_coding_turn(INIT_PROMPT, display_text="/init")

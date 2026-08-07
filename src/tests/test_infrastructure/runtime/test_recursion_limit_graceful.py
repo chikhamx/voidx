@@ -11,6 +11,7 @@ from voidx.agent.application.runtime_context import InteractionMode
 from voidx.agent.domain.task.state import TaskState
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import PreflightCompactionResult
 from voidx.config import Config, ModelConfig
 
@@ -22,7 +23,7 @@ async def test_recursion_limit_triggers_graceful_exit(tmp_path):
         provider="mimo",
         model="mimo-v2.5",
     )
-    execution = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    execution = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session)
     execution.config = SimpleNamespace(
         workspace=str(tmp_path),
         model=ModelConfig(provider="mimo", model="mimo-v2.5", reasoning_effort="high"),

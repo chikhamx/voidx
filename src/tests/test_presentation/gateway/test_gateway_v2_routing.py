@@ -18,7 +18,7 @@ import pytest
 
 from voidx.presentation.gateway.adapter import UiEventItemAdapter
 from voidx.presentation.gateway.session import GatewayEventConsumer, GatewaySession
-from voidx.presentation.transcript_snapshot import TranscriptNodeRow, replace_transcript
+from voidx.presentation.adapters.persistence.transcript_snapshot import TranscriptNodeRow, replace_transcript
 from voidx.presentation.output.dock import BottomInputDock
 from voidx.presentation.output.events.schema import (
     AssistantStreamUpdated,
@@ -53,6 +53,19 @@ async def test_v2_multi_session_registers_thread():
     thread_ids = [t.thread_id for t in threads]
     assert "t1" in thread_ids
     assert "t2" in thread_ids
+
+
+@pytest.mark.asyncio
+async def test_register_thread_updates_existing_metadata():
+    dock = BottomInputDock()
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
+
+    await session.register_thread("t1", title="Updated", workspace="/workspace")
+
+    assert session.has_thread("t1") is True
+    thread = next(item for item in session.list_threads() if item.thread_id == "t1")
+    assert thread.title == "Updated"
+    assert thread.workspace == "/workspace"
 
 
 @pytest.mark.asyncio

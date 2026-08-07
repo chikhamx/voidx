@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from voidx.agent.infrastructure.ui_events import GuidanceCommitted, InputSet, StatusFinished, StatusUpdated, TodoCleared, TodoCommitted, TurnCancelled, TurnCompleted, TurnFailed, TurnStarted
+
 import asyncio
 import json
 import time
@@ -38,18 +40,6 @@ from voidx.agent.adapters.persistence.session_repository import MessageRow, coun
 from voidx.agent.adapters.persistence.runtime_state_repository import MessageRuntimeSnapshot, save_message_runtime_snapshot
 from voidx.persistence.sqlite import now as memory_now
 from voidx.skills.references import skill_reference_message
-from voidx.runtime.ui import (
-    InputSet,
-    StatusFinished,
-    StatusUpdated,
-    TodoCleared,
-    TodoCommitted,
-    TurnCancelled,
-    TurnCompleted,
-    TurnFailed,
-    TurnStarted,
-    GuidanceCommitted,
-)
 from voidx.agent.application.automation.workflow.service import reconcile_workflow_runs_for_turn
 from voidx.agent.domain.automation.workflow import WorkflowRunStatus
 
@@ -552,9 +542,7 @@ async def _persist_streamed_messages(host: Any, streamed_messages: list, payload
 
 
 def _invalidate_tui(host: object) -> None:
-    app = getattr(host, "_app", None)
-    if app is not None and callable(getattr(app, "invalidate", None)):
-        app.invalidate()
+    host._ui.invalidate()
 
 
 def _load_task_state(value: TaskState | dict | None, *, fallback: TaskState | None = None) -> TaskState:

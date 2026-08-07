@@ -24,6 +24,7 @@ from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hin
 from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
 from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.infrastructure.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
@@ -38,7 +39,7 @@ from voidx.agent.adapters.persistence.session_repository import (
     load_messages,
     save_message,
 )
-from voidx.presentation.transcript_snapshot import load_transcript
+from voidx.presentation.adapters.persistence.transcript_snapshot import load_transcript
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
 from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
 from voidx.agent.domain.task.intent import TaskIntent
@@ -57,7 +58,7 @@ from voidx.presentation.output.events import DockEventConsumer, TurnStarted, ui_
 
 def _graph(tmp_path):
     cfg = Config(workspace=str(tmp_path))
-    return LangGraphExecution(cfg, api_key=None)
+    return make_langgraph_execution(cfg, api_key=None)
 
 
 def _task_state_json(**kwargs):
@@ -142,7 +143,7 @@ async def test_prepare_does_not_auto_inject_project_skill_body(tmp_path):
         "---\nname: docs\ndescription: Documentation helper\n---\nWrite concise docs.",
         encoding="utf-8",
     )
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(workspace=str(tmp_path)),
         api_key=None,
         settings=Settings(str(tmp_path)),
@@ -176,7 +177,7 @@ async def test_prepare_does_not_auto_inject_project_skill_body(tmp_path):
 
 @pytest.mark.asyncio
 async def test_prepare_injects_workflow_nodes_from_task_state(tmp_path):
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(workspace=str(tmp_path)),
         api_key=None,
         settings=Settings(str(tmp_path)),
@@ -224,7 +225,7 @@ async def test_prepare_injects_workflow_nodes_from_task_state(tmp_path):
 
 @pytest.mark.asyncio
 async def test_prepare_syncs_triggered_workflow_to_status_state(tmp_path):
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(workspace=str(tmp_path)),
         api_key=None,
         settings=Settings(str(tmp_path)),
@@ -236,7 +237,7 @@ async def test_prepare_syncs_triggered_workflow_to_status_state(tmp_path):
             nonlocal invalidations
             invalidations += 1
 
-    graph._app = FakeApp()
+    graph._ui.bind_frontend( FakeApp())
     result = await graph._prepare_with_stream({
         "messages": [HumanMessage(content="debug this flaky test")],
         "workspace": str(tmp_path),
@@ -271,7 +272,7 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
             captured["tool_ids"] = [tool.get("function", {}).get("name") for tool in tool_defs]
             return self
 
-    async def fake_stream_llm(_model, messages, _renderer, _protocol):
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
         captured["messages"] = messages
         return AIMessage(content="done")
 
@@ -365,7 +366,7 @@ async def test_prepare_does_not_reactivate_satisfied_workflow_via_stale_route(tm
     points at the old node (feedback) because workflow enter/advance does
     not update the route. The LLM prepare step must not use the stale
     route to reactivate feedback and overwrite its SATISFIED status."""
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(workspace=str(tmp_path)),
         api_key=None,
         settings=Settings(str(tmp_path)),

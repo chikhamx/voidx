@@ -28,6 +28,9 @@ class ChatService:
     def __init__(self, runtime) -> None:
         self._runtime = runtime
 
+    async def run_chat_turn(self, **kwargs):
+        return await self.run_turn(**kwargs)
+
     async def run_turn(
         self,
         *,

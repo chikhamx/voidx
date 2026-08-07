@@ -315,6 +315,9 @@ class PureTui(
         del self._quiet_commands[index]
         return True
 
+    def hide_command_output(self) -> None:
+        return None
+
     def invalidate(self) -> None:
         self._mark_status_summary_dirty()
         if self._running:

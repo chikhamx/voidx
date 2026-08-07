@@ -1,3 +1,4 @@
+from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.domain.turn_context import TurnExecutionContext
 import json
 import sys
@@ -78,7 +79,7 @@ async def test_goal_resolver_validation_error_falls_back_to_general(tmp_path, mo
 async def test_run_turn_auto_mode_skips_goal_resolver_and_initializes_turn_state(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:
-        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key="test-key", session=session)
+        graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key="test-key", session=session)
 
         class ResolverShouldNotRunModel:
             called = False

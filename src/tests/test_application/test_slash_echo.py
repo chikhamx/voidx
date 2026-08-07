@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from voidx.agent.application.agent_service import AgentService
+from tests.test_application.input_ports import FakeInputPorts
 
 
 @dataclass
@@ -46,13 +47,17 @@ class FakeEvents:
 
 
 def _service(dock: FakeDock) -> AgentService:
-    execution = SimpleNamespace(
-        slash=FakeSlash(),
-        session=None,
-        session_id="",
-        workspace="",
-    )
-    return AgentService(execution, runtime=SimpleNamespace(), events=FakeEvents(dock))
+    ports = FakeInputPorts()
+    slash = FakeSlash()
+
+    async def dispatch(command: str) -> bool:
+        return await slash.dispatch(command)
+
+    ports.dispatch_slash = dispatch
+    events = FakeEvents(dock)
+    ports.start_turn = events.start_turn
+    ports.publish_message = events.publish_message
+    return AgentService(ports, ports, ports, ports)
 
 
 @pytest.mark.asyncio
@@ -61,7 +66,8 @@ async def test_self_displaying_commands_skip_generic_echo(command: str) -> None:
     dock = FakeDock()
     service = _service(dock)
 
-    keep_running, _ = await service._handle_user_input(FakeApp(), command)
+    service._slash_dispatcher.bind_frontend(FakeApp())
+    keep_running, _ = await service.dispatch_input(command)
 
     assert keep_running is True
     assert dock.echoed == []
@@ -73,6 +79,7 @@ async def test_other_commands_keep_generic_echo(command: str) -> None:
     dock = FakeDock()
     service = _service(dock)
 
-    await service._handle_user_input(FakeApp(), command)
+    service._slash_dispatcher.bind_frontend(FakeApp())
+    await service.dispatch_input(command)
 
     assert dock.echoed == [command]

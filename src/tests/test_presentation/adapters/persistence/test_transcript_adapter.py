@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from voidx.persistence.jsonl import session_dir
-from voidx.presentation.transcript_adapter import TranscriptSnapshotAdapter
+from voidx.presentation.adapters.persistence.transcript_adapter import TranscriptSnapshotAdapter
 
 
 @pytest.mark.asyncio

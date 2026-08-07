@@ -177,4 +177,9 @@ class CaptureConsole:
     def sep(self) -> None:
         if via_events():
             return
-        dock.append_message("─" * self._dummy.width, style="dim", parent=self._parent)
+        self._tree.new_node(
+            parent=self._parent,
+            node_type="message",
+            header=f"[dim]{'─' * self._dummy.width}[/]",
+            collapsed=False,
+        )

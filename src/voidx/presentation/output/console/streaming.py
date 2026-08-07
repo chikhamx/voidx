@@ -11,7 +11,7 @@ from rich.markdown import Markdown
 from rich.text import Text
 
 from voidx.presentation.output.console.formatting import _next_spin
-from voidx.presentation.output.dock import dock
+from voidx.presentation.output.dock import state as dock_state
 from voidx.presentation.output.events import (
     AssistantStreamStarted,
     AssistantStreamCommitted,
@@ -66,7 +66,7 @@ class StreamingRenderer:
         self._stream_started = True
         if self._headless:
             return
-        if dock.active and self._stream_to_dock:
+        if dock_state.dock.active and self._stream_to_dock:
             ui_events.emit_nowait(AssistantStreamStarted(agent_id=self._agent_id))
 
     def feed_thinking(self, text: str) -> None:
@@ -76,13 +76,13 @@ class StreamingRenderer:
         self._thinking_full.append(text)
         if self._headless:
             return
-        if dock.active and self._stream_to_dock and self._phase == "thinking":
+        if dock_state.dock.active and self._stream_to_dock and self._phase == "thinking":
             if not ui_events.emit_nowait(AssistantStreamUpdated(
                 agent_id=self._agent_id,
                 text=self.get_thinking_text(),
                 phase="thinking",
             )):
-                dock.set_stream(self.get_thinking_text(), phase="thinking")
+                dock_state.dock.set_stream(self.get_thinking_text(), phase="thinking")
 
     def feed_text(self, text: str) -> None:
         if not self._stream_started:
@@ -100,7 +100,7 @@ class StreamingRenderer:
         if self._headless:
             return
 
-        if dock.active and self._stream_to_dock:
+        if dock_state.dock.active and self._stream_to_dock:
             now = time.monotonic()
             if now - self._last_flush >= self.FLUSH_INTERVAL:
                 if not ui_events.emit_nowait(AssistantStreamUpdated(
@@ -108,7 +108,7 @@ class StreamingRenderer:
                     text=self._accumulated,
                     phase="text",
                 )):
-                    dock.set_stream(self._accumulated, phase="text")
+                    dock_state.dock.set_stream(self._accumulated, phase="text")
                 self._last_flush = now
             return
 
@@ -122,14 +122,14 @@ class StreamingRenderer:
         now = time.monotonic()
         if now - self._last_flush >= self.FLUSH_INTERVAL:
             self._live.update(Markdown(self._accumulated))
-            dock.after_output()
+            dock_state.dock.after_output()
             self._last_flush = now
 
     def elapsed(self) -> float:
         return time.monotonic() - self._start_time
 
     def discard(self) -> None:
-        """Mark this renderer's output as discarded — don't commit to dock."""
+        """Mark this renderer's output as discarded — don't commit to dock_state.dock."""
         self._discard = True
 
     def done(self) -> str:
@@ -141,10 +141,10 @@ class StreamingRenderer:
                 self._live.update(Markdown(self._accumulated))
             self._live.stop()
             self._live = None
-        elif dock.active and self._stream_to_dock and not self._headless:
+        elif dock_state.dock.active and self._stream_to_dock and not self._headless:
             if self._discard:
                 if not ui_events.emit_nowait(AssistantStreamDiscarded(agent_id=self._agent_id)):
-                    dock.discard_stream()
+                    dock_state.dock.discard_stream()
             else:
                 if self._accumulated:
                     if not ui_events.emit_nowait(AssistantStreamUpdated(
@@ -152,13 +152,13 @@ class StreamingRenderer:
                         text=self._accumulated,
                         phase="text",
                     )):
-                        dock.set_stream(
+                        dock_state.dock.set_stream(
                             self._accumulated,
                             phase="text",
                             refresh=False,
                         )
                     if not ui_events.emit_nowait(AssistantStreamCommitted(agent_id=self._agent_id)):
-                        dock.commit_stream()
+                        dock_state.dock.commit_stream()
                 elif self._thinking_full:
                     thinking_text = self.get_thinking_text()
                     if not ui_events.emit_nowait(AssistantStreamUpdated(
@@ -166,12 +166,12 @@ class StreamingRenderer:
                         text=thinking_text,
                         phase="thinking",
                     )):
-                        dock.set_stream(thinking_text, phase="thinking", refresh=False)
+                        dock_state.dock.set_stream(thinking_text, phase="thinking", refresh=False)
                     if not ui_events.emit_nowait(AssistantStreamCommitted(agent_id=self._agent_id)):
-                        dock.commit_stream()
+                        dock_state.dock.commit_stream()
                 elif self._stream_started:
                     if not ui_events.emit_nowait(AssistantStreamDiscarded(agent_id=self._agent_id)):
-                        dock.discard_stream()
+                        dock_state.dock.discard_stream()
 
         full = self._accumulated
         if full.startswith("● "):
@@ -198,7 +198,7 @@ class StreamingRenderer:
             self._thinking = []
             return
         if thinking_text.strip():
-            if dock.active and self._stream_to_dock:
+            if dock_state.dock.active and self._stream_to_dock:
                 self._thinking = []
                 return
             lines = thinking_text.split("\n")
@@ -214,6 +214,6 @@ class StreamingRenderer:
                     console.print(f"  {_next_spin()} [dim]Thinking... [/dim]", end="")
                 console.print(Text(visible, style="dim italic"))
 
-            if not dock.capture(render):
+            if not dock_state.dock.capture(render):
                 render(self._console)
         self._thinking = []

@@ -11,6 +11,7 @@ from voidx.presentation.gateway.adapter import UiEventItemAdapter
 from voidx.presentation.gateway.diff_review import DiffReviewSession
 from voidx.presentation.gateway.run_manager import ThreadRunManager
 from voidx.presentation.gateway.terminal import TerminalManager
+from voidx.presentation.gateway.workspace_lock import GatewayWorkspaceWriteLock
 from voidx.presentation.output.events.schema import UiEvent
 from voidx.presentation.output.tree import OutputTree
 from voidx.presentation.protocol import (
@@ -79,6 +80,7 @@ class GatewaySession(
             command_handler=self._dispatch_command,
             max_concurrent_sessions=2,
         )
+        self._workspace_write_lock = GatewayWorkspaceWriteLock(self._run_manager)
         self._workspace = workspace
         self._runtime_state_provider = runtime_state_provider
         self._settings_update_handler = settings_update_handler
@@ -111,6 +113,10 @@ class GatewaySession(
         self._register_default_methods()
 
     # ── properties ────────────────────────────────────────────────────────
+
+    @property
+    def workspace_write_lock(self):
+        return self._workspace_write_lock
 
     @property
     def clients(self) -> frozenset[ProtocolClient]:
@@ -290,6 +296,9 @@ class GatewaySession(
         if self._active_thread_id == thread_id:
             self._active_thread_id = ""
 
+    def has_thread(self, thread_id: str) -> bool:
+        return thread_id in self._threads
+
     def list_threads(self) -> list[ThreadInfo]:
         return list(self._threads.values())
 
@@ -417,11 +426,11 @@ class GatewaySession(
 
     async def _active_thread_snapshot(self) -> TranscriptSnapshot:
         if self._active_thread_id and self._active_thread_id != self._session_id:
-            from voidx.presentation.transcript_snapshot import load_transcript
+            from voidx.presentation.adapters.persistence.transcript_snapshot import load_transcript
 
             rows = await load_transcript(self._active_thread_id)
             if rows:
-                from voidx.presentation.transcript_snapshot import transcript_rows_to_tree
+                from voidx.presentation.adapters.persistence.transcript_snapshot import transcript_rows_to_tree
 
                 return tree_to_snapshot(
                     transcript_rows_to_tree(rows),

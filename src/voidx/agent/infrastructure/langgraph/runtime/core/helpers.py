@@ -183,10 +183,7 @@ def _interaction_mode_for_persona(persona: str) -> str:
 
 
 def _invalidate_tui(host: object) -> None:
-    app = getattr(host, "_app", None)
-    invalidate = getattr(app, "invalidate", None)
-    if callable(invalidate):
-        invalidate()
+    host._ui.invalidate()
 
 
 

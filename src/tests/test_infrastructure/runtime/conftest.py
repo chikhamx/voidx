@@ -8,6 +8,23 @@ from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
     _CURRENT_THREAD_EXECUTION_STATE,
 )
 
+import pytest_asyncio
+
+from voidx.presentation.output.dock import set_dock
+from voidx.presentation.output.events import ui_events
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def reset_presentation_event_owner():
+    yield
+    if ui_events.is_running:
+        await ui_events.stop()
+    set_dock(None)
+
+
+
+
+
 
 @pytest.fixture(autouse=True)
 def bound_turn_execution_context(request, tmp_path):

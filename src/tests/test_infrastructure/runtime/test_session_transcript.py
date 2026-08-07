@@ -20,7 +20,7 @@ from voidx.agent.adapters.persistence.session_repository import (
     load_messages,
     MessageRow,
 )
-from voidx.presentation.transcript_snapshot import (
+from voidx.presentation.adapters.persistence.transcript_snapshot import (
     TranscriptNodeRow,
     append_transcript_summary,
     load_transcript,

@@ -25,6 +25,7 @@ from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hin
 from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
 from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.infrastructure.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
@@ -40,7 +41,7 @@ from voidx.agent.adapters.persistence.session_repository import (
     load_messages,
     save_message,
 )
-from voidx.presentation.transcript_snapshot import load_transcript
+from voidx.presentation.adapters.persistence.transcript_snapshot import load_transcript
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
 from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
 from voidx.agent.domain.task.intent import TaskIntent
@@ -59,7 +60,7 @@ from voidx.presentation.output.events import DockEventConsumer, TurnStarted, ui_
 
 def _graph(tmp_path):
     cfg = Config(workspace=str(tmp_path))
-    return LangGraphExecution(cfg, api_key=None)
+    return make_langgraph_execution(cfg, api_key=None)
 
 
 def _task_state_json(**kwargs):
@@ -151,7 +152,7 @@ async def test_session_persistence_saves_only_new_ai_and_tool_messages(tmp_path)
         await save_message(MessageRow(session_id=session.id, role="user", content="old question"))
         await save_message(MessageRow(session_id=session.id, role="assistant", content="old answer"))
 
-        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session)
 
         class FakeGraph:
             async def astream(self, initial, _config, *, stream_mode="values"):
@@ -184,7 +185,7 @@ async def test_persists_partial_messages_when_graph_raises_mid_turn(tmp_path):
     """Graph 执行中途抛异常时，已生成的 AIMessage 应已落盘。"""
     session = await create_session(workspace=str(tmp_path))
     try:
-        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session)
 
         class FakeGraphRaising:
             async def astream(self, initial, _config, *, stream_mode="values"):
@@ -221,7 +222,7 @@ async def test_persists_partial_messages_on_keyboard_interrupt(tmp_path):
     """Ctrl+C 中断时，用户消息和已生成的 assistant 消息都应保留。"""
     session = await create_session(workspace=str(tmp_path))
     try:
-        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session)
 
         class FakeGraphInterrupting:
             async def astream(self, initial, _config, *, stream_mode="values"):
@@ -261,7 +262,7 @@ async def test_run_turn_uses_execution_context_session_id_for_persistence(tmp_pa
     active = await create_session(workspace=str(tmp_path), title="Active")
     target = await create_session(workspace=str(tmp_path), title="Target")
     try:
-        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=active)
+        graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=active)
 
         class FakeGraph:
             async def astream(self, initial, _config, *, stream_mode="values"):
@@ -306,7 +307,7 @@ async def test_run_turn_loads_execution_context_runtime_state(tmp_path):
         await save_runtime_state(active.id, RuntimeStateSnapshot(interaction_mode=InteractionMode.GOAL, task_state=active_state))
         await save_runtime_state(target.id, RuntimeStateSnapshot(interaction_mode=InteractionMode.PLAN, task_state=target_state))
 
-        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=active)
+        graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=active)
         await graph.restore_runtime_state()
         captured: dict[str, str] = {}
 
@@ -346,7 +347,7 @@ async def test_run_turn_loads_execution_context_runtime_state(tmp_path):
 async def test_run_turn_model_enabled_first_turn_syncs_default_task_state(tmp_path):
     from voidx.agent.application.runtime_context import InteractionMode
 
-    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key="test", session=None)
+    graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key="test", session=None)
     graph._interaction_mode = InteractionMode.GOAL
     ready = asyncio.Event()
     proceed = asyncio.Event()
@@ -401,7 +402,7 @@ async def test_run_turn_model_enabled_borrowed_context_does_not_leak_task_state(
         await save_runtime_state(active.id, RuntimeStateSnapshot(interaction_mode=InteractionMode.GOAL, task_state=active_state))
         await save_runtime_state(target.id, RuntimeStateSnapshot(interaction_mode=InteractionMode.PLAN, task_state=target_state))
 
-        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key="test", session=active)
+        graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key="test", session=active)
         await graph.restore_runtime_state()
         captured: dict[str, str] = {}
 
@@ -470,7 +471,7 @@ async def test_run_turn_isolates_concurrent_execution_context_state(tmp_path):
             ),
         )
 
-        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session_a)
+        graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session_a)
         entered: dict[str, asyncio.Event] = {
             session_a.id: asyncio.Event(),
             session_b.id: asyncio.Event(),
@@ -544,7 +545,7 @@ async def test_run_turn_isolates_concurrent_execution_context_state(tmp_path):
 async def test_runtime_context_overlay_not_persisted_to_user_history(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:
-        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session)
 
         class FakeGraph:
             async def astream(self, initial, _config, *, stream_mode="values"):
@@ -578,7 +579,7 @@ async def test_runtime_context_overlay_not_persisted_to_user_history(tmp_path):
 
 @pytest.mark.asyncio
 async def test_run_turn_uses_display_text_without_losing_prompt(tmp_path):
-    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None)
+    graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None)
     captured: dict[str, list] = {}
 
     class FakeGraph:
@@ -627,7 +628,7 @@ async def test_run_turn_wraps_explicit_skill_refs_in_user_message(tmp_path):
     )
     session = await create_session(workspace=str(tmp_path))
     try:
-        graph = LangGraphExecution(
+        graph = make_langgraph_execution(
             Config(workspace=str(tmp_path)),
             api_key=None,
             session=session,
@@ -678,7 +679,7 @@ async def test_run_turn_persists_clipboard_image_attachment_as_structured_user_m
     image.write_bytes(b"\x89PNG\r\n\x1a\n")
     session = await create_session(workspace=str(tmp_path))
     try:
-        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key="test-key", session=session)
+        graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key="test-key", session=session)
 
         class FakeGraph:
             async def astream(self, initial, _config, *, stream_mode="values"):
@@ -711,7 +712,7 @@ async def test_run_turn_persists_clipboard_image_attachment_as_structured_user_m
 async def test_run_turn_does_not_persist_compiled_overlay_to_user_history(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     try:
-        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session)
 
         test_dock = BottomInputDock()
         set_dock(test_dock)

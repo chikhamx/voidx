@@ -14,6 +14,7 @@ import voidx.persistence.sqlite as store
 
 from voidx.agent.slash import SlashHandler
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.application.agent_service import AgentService
 from voidx.agent.infrastructure.langgraph.execution import _sanitize_generated_title
 from voidx.agent.application.runtime_context import InteractionMode, TaskIntent
@@ -30,7 +31,9 @@ from voidx.agent.application.runtime.task_tracker import TaskTracker
 from voidx.presentation.output.dock import BottomInputDock, set_dock
 from voidx.presentation.output.events import DockEventConsumer, ui_events
 from voidx.presentation.protocol import UiSubmitCommand
-from voidx.runtime.ui_port import runtime_ui_port
+from tests.presentation_ui import make_presentation_ui
+
+runtime_ui_port = make_presentation_ui()
 from tests.test_infrastructure.runtime.run_loop_helpers import (
     FakeTui,
     ExitTui,
@@ -43,7 +46,7 @@ from tests.test_infrastructure.runtime.run_loop_helpers import (
 
 @pytest.mark.asyncio
 async def test_run_turn_clears_stale_completed_workflow_when_resolver_has_no_join(tmp_path):
-    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None)
+    graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None)
     graph._task_state = TaskState(
         current_goal=GoalSpec(desc="检查检查，准备push吧"),
         workflow_runs={
@@ -96,7 +99,7 @@ async def test_run_turn_clears_stale_completed_workflow_when_resolver_has_no_joi
 
 @pytest.mark.asyncio
 async def test_run_turn_preadvances_workflow_from_resolver_workflow_start(tmp_path, monkeypatch):
-    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None)
+    graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None)
     graph._task_state = TaskState(
         current_goal=GoalSpec(desc="agent_name 语义清理"),
         workflow_runs={

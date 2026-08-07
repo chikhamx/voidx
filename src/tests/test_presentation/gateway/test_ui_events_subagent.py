@@ -107,7 +107,8 @@ async def test_capture_console_uses_ui_event_bus_for_subagent_tools(isolated_doc
         await ui_events.stop()
 
 
-def test_capture_console_non_event_methods_append_under_parent(isolated_dock):
+def test_capture_console_non_event_methods_append_under_parent(isolated_dock, monkeypatch):
+    monkeypatch.setattr("voidx.presentation.output.capture.via_events", lambda: False)
     isolated_dock.begin_capture()
     parent = isolated_dock.tree.new_node(
         isolated_dock.tree.root,

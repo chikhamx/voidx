@@ -5,7 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from voidx.agent.application.agent_service import AgentService
+from voidx.agent.infrastructure.input_router import LangGraphAutonomousInputRouter
+from voidx.agent.ports.presentation import NullAgentEventPublisher
 
 
 class FakeLoopService:
@@ -72,8 +73,10 @@ def _service(profile: str, **overrides):
         loop_service=FakeLoopService(),
         goal_service=FakeGoalService(),
     )
-    overrides.setdefault("events", FakeEvents())
-    return AgentService(execution, runtime=FakeIntakeRuntime(), **overrides)
+    events = overrides.get("events", FakeEvents())
+    runtime = overrides.get("runtime", FakeIntakeRuntime())
+    guidance = SimpleNamespace(submit_guidance=lambda *_args, **_kwargs: False)
+    return LangGraphAutonomousInputRouter(execution, runtime, events, guidance)
 
 
 @pytest.mark.asyncio
@@ -83,7 +86,7 @@ async def test_loop_profile_first_message_starts_dynamic_loop() -> None:
     service = _service("loop")
     service._runtime.loop_spec = {"prompt": "fix the flaky test"}
 
-    handled = await service._handle_loop_first_message("fix the flaky test", thread_id="")
+    handled = await service.route_first_message("fix the flaky test", thread_id="")
 
     assert handled is True
     assert len(service._execution.loop_service.started) == 1
@@ -99,7 +102,7 @@ async def test_loop_first_message_without_service_falls_through() -> None:
     service = _service("loop")
     service._execution.loop_service = None
 
-    handled = await service._handle_loop_first_message("hello", thread_id="")
+    handled = await service.route_first_message("hello", thread_id="")
 
     assert handled is False
 
@@ -115,7 +118,7 @@ async def test_goal_profile_first_message_starts_goal_from_message() -> None:
         "achievement_method": "",
     }
 
-    handled = await service._handle_goal_first_message(
+    handled = await service.route_first_message(
         "refactor the auth module to use typed contracts",
         thread_id="",
     )
@@ -133,7 +136,7 @@ async def test_goal_first_message_intake_failure_reports_and_consumes() -> None:
     service = _service("goal")
     service._runtime.summary = "I need more information."
 
-    handled = await service._handle_goal_first_message("something vague", thread_id="")
+    handled = await service.route_first_message("something vague", thread_id="")
 
     assert handled is True
     assert service._execution.goal_service.started == []
@@ -148,9 +151,9 @@ async def test_autonomous_first_message_only_fires_once() -> None:
         "achievement_method": "",
     }
 
-    first = await service._route_autonomous_first_message("do it", thread_id="")
+    first = await service.route_first_message("do it", thread_id="")
     service._execution.session.message_count = 1
-    second = await service._route_autonomous_first_message("more", thread_id="")
+    second = await service.route_first_message("more", thread_id="")
 
     assert first is True
     assert second is False
@@ -161,7 +164,7 @@ async def test_autonomous_first_message_only_fires_once() -> None:
 async def test_autonomous_first_message_coding_profile_falls_through() -> None:
     service = _service("coding")
 
-    handled = await service._route_autonomous_first_message("hello", thread_id="")
+    handled = await service.route_first_message("hello", thread_id="")
 
     assert handled is False
 
@@ -184,7 +187,7 @@ async def test_first_message_is_persisted_so_intake_fires_once(monkeypatch) -> N
         "achievement_method": "",
     }
 
-    handled = await service._handle_goal_first_message("do it", thread_id="")
+    handled = await service.route_first_message("do it", thread_id="")
 
     assert handled is True
     assert service._execution.session.message_count == 1
@@ -205,7 +208,7 @@ async def test_goal_intake_failure_persists_first_message(monkeypatch) -> None:
     service = _service("goal")
     service._runtime.summary = "I need a clearer acceptance condition."
 
-    handled = await service._handle_goal_first_message("something vague", thread_id="")
+    handled = await service.route_first_message("something vague", thread_id="")
 
     assert handled is True
     assert service._execution.session.message_count == 1
@@ -231,20 +234,9 @@ async def test_goal_profile_followup_does_not_fall_through_to_coding(monkeypatch
         )
 
     service._execution.goal_service.status = fake_status  # type: ignore[method-assign]
-    coding_calls: list[str] = []
-
-    async def fake_coding_turn(user_text: str, **kwargs):
-        coding_calls.append(user_text)
-
-    service.run_coding_turn = fake_coding_turn  # type: ignore[method-assign]
     printed = service._events.messages
 
-    keep_running, exit_message = await service._handle_user_input(
-        SimpleNamespace(consume_quiet_command=lambda _cmd: False),
-        "please also cover edge cases",
-    )
+    handled = await service.route_followup("please also cover edge cases", thread_id="")
 
-    assert keep_running is True
-    assert exit_message is None
-    assert coding_calls == []
+    assert handled is True
     assert any("goal" in line.lower() for line in printed)

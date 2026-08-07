@@ -25,6 +25,7 @@ from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hin
 from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
 from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.infrastructure.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
@@ -39,7 +40,7 @@ from voidx.agent.adapters.persistence.session_repository import (
     load_messages,
     save_message,
 )
-from voidx.presentation.transcript_snapshot import load_transcript
+from voidx.presentation.adapters.persistence.transcript_snapshot import load_transcript
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
 from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
 from voidx.agent.domain.task.intent import TaskIntent
@@ -58,7 +59,7 @@ from voidx.presentation.output.events import DockEventConsumer, StatusFinished, 
 
 def _graph(tmp_path):
     cfg = Config(workspace=str(tmp_path))
-    return LangGraphExecution(cfg, api_key=None)
+    return make_langgraph_execution(cfg, api_key=None)
 
 
 def _task_state_json(**kwargs):
@@ -143,7 +144,7 @@ async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_pa
         await save_message(MessageRow(session_id=session.id, role="assistant", content="old answer"))
         await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
 
-        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session)
         graph._compaction_summary = "previous summary"
         graph._compaction.is_overflow = lambda _tokens: True
         graph._compaction.select_details = lambda messages: CompactionSelection(
@@ -193,7 +194,7 @@ async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_pa
         assert "current question" in initial_contents
         assert graph._compaction_summary == "updated summary"
 
-        resumed = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        resumed = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session)
         await resumed.restore_runtime_state()
 
         assert resumed._compaction_summary == "updated summary"
@@ -209,7 +210,7 @@ async def test_run_turn_passes_compacted_messages_to_graph(tmp_path):
         await save_message(MessageRow(session_id=session.id, role="assistant", content="old answer"))
         await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
 
-        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session)
         graph._compaction.is_overflow = lambda _tokens: False
         graph._compaction.is_soft_overflow = lambda _tokens: True
         graph._compaction.select_preflight_details = lambda messages, *, model="": CompactionSelection(
@@ -261,7 +262,7 @@ async def test_run_turn_finishes_analyzing_before_preflight_compaction_status(tm
         await save_message(MessageRow(session_id=session.id, role="assistant", content="old answer"))
         await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
 
-        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session)
         graph._compaction.is_overflow = lambda _tokens: False
         graph._compaction.is_soft_overflow = lambda _tokens: True
         graph._compaction.select_preflight_details = lambda messages, *, model="": CompactionSelection(
@@ -324,7 +325,7 @@ async def test_compaction_drops_removed_row_cache_entries(tmp_path):
         await save_message(MessageRow(session_id=session.id, role="assistant", content="old answer"))
         await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
 
-        graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session)
         graph._context_cache.row_messages = {
             1: RowMessageCacheEntry("old-user", HumanMessage(content="old question", id="1")),
             2: RowMessageCacheEntry("old-assistant", AIMessage(content="old answer", id="2")),
@@ -351,7 +352,7 @@ async def test_slash_compact_runs_manual_session_compaction(tmp_path):
         await save_message(MessageRow(session_id=session.id, role="assistant", content="old answer"))
         await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
 
-        graph = LangGraphExecution(Config(workspace=str(tmp_path), ask_compact=True), api_key=None, session=session)
+        graph = make_langgraph_execution(Config(workspace=str(tmp_path), ask_compact=True), api_key=None, session=session)
         graph._compaction.select_details = lambda messages: CompactionSelection(
             head=messages[:2],
             tail_id=getattr(messages[2], "id", None),

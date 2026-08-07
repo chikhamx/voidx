@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from voidx.agent.slash.runtime import _select_from_list
-from voidx.runtime.ui import get_dock, session_tracker, ui
 from voidx.agent.slash.helpers import _format_bytes
 
 
@@ -50,8 +49,8 @@ class SessionCommandsMixin:
 
             if hasattr(self.host, "resume_session"):
                 await self.host.resume_session(session)
-            session_tracker.clear()
-            active_dock = get_dock()
+            self.host._ui.session_tracker.clear()
+            active_dock = self.host._ui.get_dock()
             if active_dock is not None:
                 active_dock.reset()
             await self._show_startup(prefer_direct=True)
@@ -63,7 +62,7 @@ class SessionCommandsMixin:
         if subcommand in {"del", "delete"}:
             await self._session_del(rest)
             return
-        ui.print("[dim]Usage: /session list|new|resume|del[/dim]")
+        self.host.ui.print("[dim]Usage: /session list|new|resume|del[/dim]")
 
     async def _switch_profile(self, profile: str) -> None:
         """Switch the session's runtime profile.
@@ -79,7 +78,7 @@ class SessionCommandsMixin:
 
             await update_session_profile(session.id, profile)
             session.runtime_profile = profile
-            ui.print(f"[dim]Mode set to [cyan]{profile}[/cyan] — next message starts the {profile} session.[/dim]")
+            self.host.ui.print(f"[dim]Mode set to [cyan]{profile}[/cyan] — next message starts the {profile} session.[/dim]")
             return
         await self._session(f"new {profile}".strip())
 
@@ -102,7 +101,7 @@ class SessionCommandsMixin:
         if not scope_parts:
             selected_scope = await self._select_session_delete_scope()
             if selected_scope is None:
-                ui.print("[dim]Deletion cancelled.[/dim]")
+                self.host.ui.print("[dim]Deletion cancelled.[/dim]")
                 return
             scope = selected_scope
         else:
@@ -113,7 +112,7 @@ class SessionCommandsMixin:
         try:
             plan = await plan_session_delete(scope)
         except ValueError as exc:
-            ui.error(str(exc))
+            self.host.ui.error(str(exc))
             return
 
         self._print_session_delete_plan(plan, dry_run=dry_run)
@@ -122,15 +121,15 @@ class SessionCommandsMixin:
 
         confirmed = await self._confirm_session_delete()
         if not confirmed:
-            ui.print("[dim]Deletion cancelled.[/dim]")
+            self.host.ui.print("[dim]Deletion cancelled.[/dim]")
             return
 
         deleted = await apply_session_delete_plan(plan)
-        ui.print(f"[green]Deleted {deleted} session(s).[/green]")
+        self.host.ui.print(f"[green]Deleted {deleted} session(s).[/green]")
 
     def _print_session_delete_plan(self, plan, *, dry_run: bool) -> None:
         label = "Dry run" if dry_run else "Delete preview"
-        ui.print(
+        self.host.ui.print(
             f"[bold]{label}:[/bold] "
             f"{plan.total_sessions} session(s), "
             f"{plan.empty_sessions} empty, "
@@ -138,13 +137,13 @@ class SessionCommandsMixin:
             f"{_format_bytes(plan.bytes_to_reclaim)} reclaimable"
         )
         if not plan.candidates:
-            ui.print("[dim]No sessions match deletion scope.[/dim]")
+            self.host.ui.print("[dim]No sessions match deletion scope.[/dim]")
             return
         for candidate in plan.candidates:
             title = candidate.title[:50] + ("..." if len(candidate.title) > 50 else "")
             workspace = candidate.workspace[:40] + ("..." if len(candidate.workspace) > 40 else "")
             updated = candidate.updated_at[:10]
-            ui.print(
+            self.host.ui.print(
                 f"  {candidate.session_id[:8]} | {updated} | {candidate.message_count} msgs | "
                 f"{_format_bytes(candidate.bytes_to_reclaim)} | {workspace} | {title}"
             )
@@ -182,34 +181,34 @@ class SessionCommandsMixin:
         return str(choice)
 
     async def _rollback(self) -> None:
-        if not session_tracker.has_rollbackable_changes:
-            ui.print("[dim]No file changes to roll back.[/dim]")
+        if not self.host._ui.session_tracker.has_rollbackable_changes:
+            self.host.ui.print("[dim]No file changes to roll back.[/dim]")
             return
 
-        lines = session_tracker.rollback_summary_lines()
+        lines = self.host._ui.session_tracker.rollback_summary_lines()
         if lines:
-            ui.print("[bold]Files changed this turn:[/bold]")
+            self.host.ui.print("[bold]Files changed this turn:[/bold]")
             for line in lines:
-                ui.print(line)
-            ui.print("")
-        ui.print("[yellow]Rollback will overwrite current file contents with the pre-edit snapshot.[/yellow]")
+                self.host.ui.print(line)
+            self.host.ui.print("")
+        self.host.ui.print("[yellow]Rollback will overwrite current file contents with the pre-edit snapshot.[/yellow]")
 
         confirmed = await self._confirm_rollback()
         if not confirmed:
-            ui.print("[dim]Rollback cancelled.[/dim]")
+            self.host.ui.print("[dim]Rollback cancelled.[/dim]")
             return
 
-        result = session_tracker.rollback_current()
+        result = self.host._ui.session_tracker.rollback_current()
         if result.restored:
-            ui.print(f"[green]Restored:[/green] {', '.join(result.restored)}")
+            self.host.ui.print(f"[green]Restored:[/green] {', '.join(result.restored)}")
         if result.removed:
-            ui.print(f"[green]Removed:[/green] {', '.join(result.removed)}")
+            self.host.ui.print(f"[green]Removed:[/green] {', '.join(result.removed)}")
         if result.ok:
             if not result.restored and not result.removed:
-                ui.print("[dim]No files needed rollback.[/dim]")
+                self.host.ui.print("[dim]No files needed rollback.[/dim]")
             return
         for err in result.errors:
-            ui.error(err)
+            self.host.ui.error(err)
 
     async def _confirm_rollback(self) -> bool:
         app = self.host.app
@@ -232,10 +231,10 @@ class SessionCommandsMixin:
             await list_sessions(), getattr(self.host, "workspace", "")
         )
         if not sessions:
-            ui.print("No saved sessions.")
+            self.host.ui.print("No saved sessions.")
             return
 
-        ui.print("[bold]Sessions:[/bold]")
+        self.host.ui.print("[bold]Sessions:[/bold]")
         items = []
         for session in sessions:
             title = session.title[:50] + ("..." if len(session.title) > 50 else "")
@@ -247,7 +246,7 @@ class SessionCommandsMixin:
             idx = await _select_from_list(app, "Resume session?", items)
         else:
             for item in items:
-                ui.print(f"  {item}")
+                self.host.ui.print(f"  {item}")
 
         if idx is not None:
             await self._resume(f"/resume {sessions[idx].id}")
@@ -261,7 +260,7 @@ class SessionCommandsMixin:
                 await list_sessions(), getattr(self.host, "workspace", "")
             )
             if not sessions:
-                ui.print("[dim]No saved sessions.[/dim]")
+                self.host.ui.print("[dim]No saved sessions.[/dim]")
                 return
             items = []
             for session in sessions:
@@ -272,21 +271,21 @@ class SessionCommandsMixin:
             if app is not None:
                 idx = await _select_from_list(app, "Resume session?", items)
             if idx is None:
-                ui.print("[dim]Cancelled.[/dim]")
+                self.host.ui.print("[dim]Cancelled.[/dim]")
                 return
             sid = sessions[idx].id
 
         session = await get_session(sid)
         if not session:
-            ui.error(f"Session not found: {sid}")
+            self.host.ui.error(f"Session not found: {sid}")
             return
 
         await self.host.resume_session(session)
-        active_dock = get_dock()
+        active_dock = self.host._ui.get_dock()
         if active_dock is not None:
             active_dock.reset()
         await self._restore_transcript_snapshot(append=True)
-        ui.print(f"[dim]Resumed: {session.id} — {session.title} ({session.message_count} msgs)[/dim]")
+        self.host.ui.print(f"[dim]Resumed: {session.id} — {session.title} ({session.message_count} msgs)[/dim]")
 
     async def _set_title(self, cmd: str) -> None:
         session = self.host.session
@@ -295,13 +294,13 @@ class SessionCommandsMixin:
         title = cmd.removeprefix("/title").strip()
         if title.lower() == "auto":
             if await self.host.regenerate_session_title():
-                ui.print("[dim]Regenerating title...[/dim]")
+                self.host.ui.print("[dim]Regenerating title...[/dim]")
             else:
-                ui.print("[dim]No user message available for title generation.[/dim]")
+                self.host.ui.print("[dim]No user message available for title generation.[/dim]")
             return
         if title:
             if await self.host.set_session_title(title):
-                ui.print(f"[dim]Title set: {title}[/dim]")
+                self.host.ui.print(f"[dim]Title set: {title}[/dim]")
 
     async def _restore_transcript_snapshot(self, *, append: bool = False) -> bool:
         return await self.host.restore_transcript_snapshot(append=append)

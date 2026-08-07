@@ -13,6 +13,8 @@ import voidx.persistence.sqlite as store
 
 from voidx.agent.slash import SlashHandler
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from tests.langgraph_execution import make_langgraph_execution
+from voidx.agent.infrastructure.presentation_adapter import LangGraphRuntimeStatusReader
 from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import PreflightCompactionResult
 from voidx.agent.application.coding_service import CODING_PROFILE, CodingService
 from voidx.agent.application.agent_service import AgentService
@@ -38,7 +40,9 @@ from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.presentation.gateway.command_handler import GatewayCommandHandler
 from voidx.presentation.protocol import UiCancelCommand, UiSubmitCommand
 from voidx.presentation.terminal.startup import StartupPresenter
-from voidx.runtime.ui_port import runtime_ui_port
+from tests.presentation_ui import make_presentation_ui
+
+runtime_ui_port = make_presentation_ui()
 from tests.test_infrastructure.runtime.run_loop_helpers import (
     FakeTui,
     ExitTui,
@@ -57,9 +61,9 @@ async def test_startup_update_check_appends_update_notice(tmp_path, monkeypatch)
 
     graph = _graph(workspace=str(tmp_path))
     settings = Settings(str(tmp_path))
-    graph._execution.settings = settings
+    graph.test_host.settings = settings
     messages: list[tuple[str, bool]] = []
-    graph._execution.ui = SimpleNamespace(
+    graph.test_host.ui = SimpleNamespace(
         dock=SimpleNamespace(
             append_message=lambda text, *, markup=False: messages.append((text, markup)),
         ),
@@ -76,7 +80,13 @@ async def test_startup_update_check_appends_update_notice(tmp_path, monkeypatch)
     monkeypatch.setattr("voidx.selfupdate.check_for_update", fake_check_for_update)
     monkeypatch.setattr("voidx.selfupdate.upgrade_hint", lambda: "Run /upgrade now")
 
-    await StartupPresenter(graph._execution).show_update_check_if_needed()
+    await StartupPresenter(
+        LangGraphRuntimeStatusReader(graph.test_host),
+        graph.test_host.ui,
+        restore_snapshot=graph.test_host.restore_transcript_snapshot,
+        update_check_due=settings.update_check_due,
+        mark_update_check=settings.mark_update_check,
+    ).show_update_check_if_needed()
 
     assert messages == [
         ("[yellow]Update available:[/yellow] voidx 1.0.0 -> 9.0.0. [dim]Run /upgrade now[/dim]", True)
@@ -92,9 +102,9 @@ async def test_startup_update_check_skips_when_ttl_not_due(tmp_path, monkeypatch
     graph = _graph(workspace=str(tmp_path))
     settings = Settings(str(tmp_path))
     settings.mark_update_check("9.0.0")
-    graph._execution.settings = settings
+    graph.test_host.settings = settings
     messages: list[str] = []
-    graph._execution.ui = SimpleNamespace(
+    graph.test_host.ui = SimpleNamespace(
         dock=SimpleNamespace(
             append_message=lambda text, *, markup=False: messages.append(text),
         ),
@@ -105,7 +115,13 @@ async def test_startup_update_check_skips_when_ttl_not_due(tmp_path, monkeypatch
 
     monkeypatch.setattr("voidx.selfupdate.check_for_update", fail_check_for_update)
 
-    await StartupPresenter(graph._execution).show_update_check_if_needed()
+    await StartupPresenter(
+        LangGraphRuntimeStatusReader(graph.test_host),
+        graph.test_host.ui,
+        restore_snapshot=graph.test_host.restore_transcript_snapshot,
+        update_check_due=settings.update_check_due,
+        mark_update_check=settings.mark_update_check,
+    ).show_update_check_if_needed()
 
     assert messages == []
 
@@ -124,7 +140,7 @@ async def test_quiet_slash_command_dispatches_without_turn(monkeypatch):
         dispatched.append(command)
         return True
 
-    graph._execution.slash = SimpleNamespace(dispatch=MethodType(fake_dispatch, graph._execution))
+    graph.test_host.slash = SimpleNamespace(dispatch=MethodType(fake_dispatch, graph.test_host))
 
     await graph.run()
 
@@ -162,7 +178,7 @@ async def test_run_loop_default_context_includes_workspace(monkeypatch, tmp_path
             self.requests.append(request)
 
     runtime = FakeRuntime()
-    graph._coding_service = CodingService(runtime)
+    graph.test_router._coding_service = CodingService(runtime)
 
     await graph.run()
 
@@ -194,7 +210,7 @@ async def test_run_loop_status_goal_label_reflects_task_state_current_goal(monke
 
     graph = _graph(workspace=str(tmp_path))
     _disable_external_managers(graph)
-    graph._execution.task_state.set_goal("实现自动重试机制")
+    graph.test_host.task_state.set_goal("实现自动重试机制")
 
     await graph.run()
 
@@ -383,13 +399,13 @@ async def test_apply_settings_update_refreshes_live_model(monkeypatch, tmp_path)
             protocol="openai",
         )
     )
-    graph = LangGraphExecution(
+    graph = make_langgraph_execution(
         Config(workspace=str(tmp_path), model=ModelConfig(provider="openai", model="gpt-4.1")),
         api_key="sk-openai",
         settings=settings,
     )
 
-    graph._app = SimpleNamespace(
+    frontend = SimpleNamespace(
         status=SimpleNamespace(
             provider="openai",
             model="gpt-4.1",
@@ -397,6 +413,7 @@ async def test_apply_settings_update_refreshes_live_model(monkeypatch, tmp_path)
             reasoning_effort="xhigh",
         )
     )
+    graph._ui.bind_frontend(frontend)
 
     await graph._apply_settings_update(settings)
 
@@ -413,8 +430,8 @@ async def test_apply_settings_update_refreshes_live_model(monkeypatch, tmp_path)
         "deepseek-v4-pro",
         "https://api.deepseek.com",
     )
-    assert graph._app.status.provider == "deepseek"
-    assert graph._app.status.model == "deepseek-v4-pro"
+    assert frontend.status.provider == "deepseek"
+    assert frontend.status.model == "deepseek-v4-pro"
 
 
 
@@ -444,7 +461,7 @@ async def test_web_guide_submit_records_guidance_without_starting_turn():
     guidance: list[tuple[str, dict[str, str]]] = []
     queued_inputs: list[str] = []
 
-    graph._execution.submit_guidance = lambda text, **kwargs: guidance.append((text, kwargs)) or True
+    graph.test_host.submit_guidance = lambda text, **kwargs: guidance.append((text, kwargs)) or True
     app = SimpleNamespace(
         submit_external_input=queued_inputs.append,
         cancel_external_input=lambda: None,
@@ -462,7 +479,7 @@ async def test_web_direct_guide_command_records_guidance():
     guidance: list[tuple[str, dict[str, str]]] = []
     queued_inputs: list[str] = []
 
-    graph._execution.submit_guidance = lambda text, **kwargs: guidance.append((text, kwargs)) or True
+    graph.test_host.submit_guidance = lambda text, **kwargs: guidance.append((text, kwargs)) or True
     app = SimpleNamespace(
         submit_external_input=queued_inputs.append,
         cancel_external_input=lambda: None,
@@ -481,7 +498,7 @@ async def test_clear_reprints_startup(tmp_path):
         provider="mimo",
         model="mimo-v2.5",
     )
-    execution = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    execution = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session, ui=runtime_ui_port)
     _service_and_run_loop(execution)
     execution._interaction_mode = InteractionMode.GOAL
     execution._task_state = TaskState(current_goal=GoalSpec(desc="修复 UI"))
@@ -525,7 +542,7 @@ async def test_clear_detaches_old_session_and_cleans_storage_in_background(tmp_p
         model="mimo-v2.5",
     )
     await save_message(MessageRow(session_id=session.id, role="user", content="old question"))
-    graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session, ui=runtime_ui_port)
     _service_and_run_loop(graph)
     graph._interaction_mode = InteractionMode.GOAL
     graph._task_state = TaskState(current_goal=GoalSpec(desc="old goal"))
@@ -590,7 +607,8 @@ async def test_resume_does_not_reprint_startup(tmp_path):
         provider="mimo",
         model="mimo-v2.5",
     )
-    execution = LangGraphExecution(Config(workspace="/tmp/old-workspace"), api_key=None)
+    execution = make_langgraph_execution(Config(workspace="/tmp/old-workspace"), api_key=None)
+    execution._ui = runtime_ui_port
     _service(execution)
     test_dock = BottomInputDock()
     set_dock(test_dock)
@@ -640,7 +658,7 @@ async def test_resume_restores_structured_runtime_state(tmp_path):
             ),
         ),
     )
-    execution = LangGraphExecution(Config(workspace="/tmp/old-workspace"), api_key=None)
+    execution = make_langgraph_execution(Config(workspace="/tmp/old-workspace"), api_key=None)
     _service(execution)
     test_dock = BottomInputDock()
     set_dock(test_dock)
@@ -665,7 +683,7 @@ async def test_run_turn_cancel_preserves_pending_user_message(tmp_path):
         provider="mimo",
         model="mimo-v2.5",
     )
-    execution = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+    execution = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session, ui=runtime_ui_port)
     execution.config = SimpleNamespace(
         workspace=str(tmp_path),
         model=ModelConfig(provider="mimo", model="mimo-v2.5", reasoning_effort="high"),
@@ -765,7 +783,7 @@ async def test_web_cancel_preserves_thread_id_for_execution_context():
 
 
 @pytest.mark.asyncio
-async def test_handle_user_input_passes_execution_context_to_coding_turn_runner():
+async def test_dispatch_input_passes_execution_context_to_coding_turn_runner():
     graph = _graph()
     captured: list[tuple[str, str, str]] = []
 
@@ -787,8 +805,7 @@ async def test_handle_user_input_passes_execution_context_to_coding_turn_runner(
 
     graph.run_coding_turn = MethodType(fake_run_coding_turn, graph)
 
-    keep_running, exit_message = await graph._handle_user_input(
-        SimpleNamespace(),
+    keep_running, exit_message = await graph.dispatch_input(
         "hello from t2",
         context=TurnExecutionContext(thread_id="t2", session_id="t2", runtime_profile=CODING_PROFILE),
         thread_id="t2",
@@ -800,13 +817,13 @@ async def test_handle_user_input_passes_execution_context_to_coding_turn_runner(
 
 
 @pytest.mark.asyncio
-async def test_handle_user_input_delegates_coding_turn_to_coding_service():
+async def test_dispatch_input_delegates_coding_turn_to_coding_service():
     graph = _graph()
     captured: list[tuple[str, str, str, str, str | None, str]] = []
-    graph._execution.session_id = "session-1"
+    graph.test_host.session_id = "session-1"
 
     class FakeCodingService:
-        async def run_turn(
+        async def run_coding_turn(
             self,
             *,
             user_text,
@@ -827,10 +844,9 @@ async def test_handle_user_input_delegates_coding_turn_to_coding_service():
                 )
             )
 
-    graph._coding_service = FakeCodingService()
+    graph.test_router._coding_service = FakeCodingService()
 
-    keep_running, exit_message = await graph._handle_user_input(
-        SimpleNamespace(),
+    keep_running, exit_message = await graph.dispatch_input(
         "hello from t2",
         context=TurnExecutionContext(thread_id="t2", session_id="t2", runtime_profile=CODING_PROFILE),
         thread_id="t2",
@@ -842,12 +858,12 @@ async def test_handle_user_input_delegates_coding_turn_to_coding_service():
 
 
 @pytest.mark.asyncio
-async def test_handle_user_input_preserves_missing_context_for_coding_service():
+async def test_dispatch_input_preserves_missing_context_for_coding_service():
     graph = _graph()
     captured: list[tuple[object, str]] = []
 
     class FakeCodingService:
-        async def run_turn(
+        async def run_coding_turn(
             self,
             *,
             user_text,
@@ -859,10 +875,9 @@ async def test_handle_user_input_preserves_missing_context_for_coding_service():
         ):
             captured.append((context, workspace))
 
-    graph._coding_service = FakeCodingService()
+    graph.test_router._coding_service = FakeCodingService()
 
-    keep_running, exit_message = await graph._handle_user_input(
-        SimpleNamespace(),
+    keep_running, exit_message = await graph.dispatch_input(
         "hello without context",
     )
 
