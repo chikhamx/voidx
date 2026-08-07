@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from voidx.agent.domain.goal import GoalSpec
+from voidx.agent.domain.automation.goal import GoalSpec
 from voidx.agent.domain.thread import AgentThread
 
 
@@ -40,7 +40,7 @@ class FakeGoalService:
 
 
 def _make_service(runtime, goal_service):
-    from voidx.agent.application.goal_idle import GoalIdleTurnService
+    from voidx.agent.application.automation.goal.goal_idle import GoalIdleTurnService
 
     return GoalIdleTurnService(runtime, goal_service)
 

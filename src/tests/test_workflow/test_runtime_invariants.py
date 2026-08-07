@@ -1,6 +1,6 @@
-from voidx.workflow.runtime import advance_workflow_states
-from voidx.workflow.service import workflow_terminal_condition, workflow_transitions
-from voidx.workflow.types import (
+from voidx.agent.application.automation.workflow.runtime import advance_workflow_states
+from voidx.agent.application.automation.workflow.service import workflow_terminal_condition, workflow_transitions
+from voidx.agent.domain.automation.workflow import (
     WorkflowActivationSource,
     WorkflowRunState,
     WorkflowRunStatus,

@@ -10,9 +10,9 @@ from tests.test_agent.conftest import _read_jsonl, _session_dir
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-import voidx.memory.store as store
+import voidx.persistence.sqlite as store
 
-from voidx.memory.session import (
+from voidx.agent.adapters.persistence.session_repository import (
     create_session,
     get_session,
     delete_session,
@@ -22,12 +22,12 @@ from voidx.memory.session import (
     delete_messages_through,
     MessageRow,
 )
-from voidx.memory.context_frames import (
+from voidx.agent.adapters.persistence.context_frame_repository import (
     build_context_frame,
     load_context_frames,
     save_context_frame,
 )
-from voidx.memory.jsonl_store import append_session_record
+from voidx.persistence.jsonl import append_session_record
 
 def test_context_frame_hashes_stable_prefix_before_long_summary():
     first = build_context_frame(

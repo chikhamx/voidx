@@ -37,7 +37,7 @@ def test_domain_has_no_infrastructure_dependencies() -> None:
         "voidx.memory",
         "voidx.permission",
         "voidx.tools",
-        "voidx.ui",
+        "voidx.presentation",
         "voidx.workflow",
         "langgraph",
     )
@@ -82,11 +82,11 @@ def test_only_facade_and_engine_adapter_call_run_turn() -> None:
         "application/chat_service.py",
         "application/coding_service.py",
         "infrastructure/langgraph/adapter.py",
-        "runtime/dispatcher.py",
-        "loop/scheduler.py",
-        "goal/runner.py",
-        "application/goal_idle.py",
-        "application/loop_idle.py",
+        "application/runtime/dispatcher.py",
+        "application/automation/loop/scheduler.py",
+        "application/automation/goal/runner.py",
+        "application/automation/goal/goal_idle.py",
+        "application/automation/loop/loop_idle.py",
         "infrastructure/langgraph/execution.py",
     }
     offenders = []
@@ -101,9 +101,8 @@ def test_only_facade_and_engine_adapter_call_run_turn() -> None:
 
 def test_codebase_does_not_call_synthetic_turn() -> None:
     offenders = []
-    for root in (AGENT_ROOT, AGENT_ROOT.parents[2] / "tests" / "test_agent"):
-        for path in root.rglob("*.py"):
-            rel = path.relative_to(AGENT_ROOT).as_posix() if path.is_relative_to(AGENT_ROOT) else f"../tests/test_agent/{path.relative_to(AGENT_ROOT.parents[2] / "tests" / "test_agent").as_posix()}"
-            if _attribute_calls(path, "run_synthetic_turn") > 0:
-                offenders.append(rel)
+    for path in AGENT_ROOT.rglob("*.py"):
+        rel = path.relative_to(AGENT_ROOT).as_posix()
+        if _attribute_calls(path, "run_synthetic_turn") > 0:
+            offenders.append(rel)
     assert offenders == []

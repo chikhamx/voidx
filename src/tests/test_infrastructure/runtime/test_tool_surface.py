@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from tests.tool_registry import build_registry
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.infrastructure.langgraph.runtime.tool_surface import (
     ToolSurfaceContext,
     resolve_tool_surface,
 )
-from voidx.tools.registry import ToolRegistry
+from voidx.tooling.application.registry import ToolRegistry
 
 
 class _AllowAll:

@@ -11,9 +11,9 @@ import asyncio
 
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.infrastructure.langgraph.runtime.thread_context import bind_thread_execution_context
-from voidx.runtime.intent import TaskIntent
-from voidx.runtime.task_state import GoalSpec, TaskState
-from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
+from voidx.agent.domain.task.intent import TaskIntent
+from voidx.agent.domain.task.state import GoalSpec, TaskState
+from voidx.agent.domain.automation.workflow import WorkflowRunState, WorkflowRunStatus
 
 
 class _FakeHost:

@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 from voidx.config import ModelConfig
-from voidx.llm.providers import base
+import voidx.llm.providers.base as base
 from voidx.llm.providers.base import ProviderSpec
 from voidx.config.enums import ReasoningEffort
 from voidx.llm.providers.common import GEMINI_THINKING_BUDGETS, map_effort, resolve_effort

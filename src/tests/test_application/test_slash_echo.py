@@ -34,16 +34,25 @@ class FakeApp:
         return None
 
 
+class FakeEvents:
+    def __init__(self, dock: FakeDock) -> None:
+        self._dock = dock
+
+    def publish_message(self, _message: str) -> None:
+        return None
+
+    def start_turn(self, text: str) -> None:
+        self._dock.start_turn(text)
+
+
 def _service(dock: FakeDock) -> AgentService:
-    ui = SimpleNamespace(dock=dock, ui=SimpleNamespace(print=lambda *a, **k: None))
     execution = SimpleNamespace(
-        ui=ui,
         slash=FakeSlash(),
         session=None,
         session_id="",
         workspace="",
     )
-    return AgentService(execution, runtime=SimpleNamespace())
+    return AgentService(execution, runtime=SimpleNamespace(), events=FakeEvents(dock))
 
 
 @pytest.mark.asyncio

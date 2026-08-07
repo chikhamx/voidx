@@ -14,8 +14,9 @@ from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState
 from voidx.agent.infrastructure.langgraph.runtime.topology import session_date
 from voidx.agent.application.runtime_context import ContextCompilerCache, InteractionMode
-from voidx.runtime.task_state import TaskState
-from voidx.memory.service import SessionInfo, get_session, load_runtime_state
+from voidx.agent.domain.task.state import TaskState
+from voidx.agent.adapters.persistence.session_repository import SessionInfo, get_session
+from voidx.agent.adapters.persistence.runtime_state_repository import load_runtime_state
 from voidx.runtime.execution_context import ExecutionIdentity, bind_execution_identity
 
 if TYPE_CHECKING:
@@ -120,7 +121,16 @@ def thread_execution_states(host: Any) -> dict[str, ThreadExecutionState]:
     return states
 
 
-async def _state_for_context(host: Any, session_id: str) -> ThreadExecutionState:
+async def _state_for_context(host: Any, session_id: str, *, detached: bool = False) -> ThreadExecutionState:
+    if detached:
+        # Detached turns (e.g. goal evaluator) must never bind the host session:
+        # no history loading, no message persistence, no host-state mutation.
+        return ThreadExecutionState(
+            session=None,
+            session_msg_cache=None,
+            context_cache=ContextCompilerCache(),
+            host_id=id(host),
+        )
     states = thread_execution_states(host)
     current_session = getattr(host, "_session", None)
     key = _state_key(session_id, current_session)
@@ -130,21 +140,20 @@ async def _state_for_context(host: Any, session_id: str) -> ThreadExecutionState
         state = _state_from_host(host)
         states[key] = state
         return state
-
-    if session_id:
-        target_session = await get_session(session_id)
-        state = ThreadExecutionState(
-            session=target_session,
-            session_msg_cache=None,
-            context_cache=ContextCompilerCache(),
-            session_date=session_date(target_session),
-            host_id=id(host),
-        )
+    if not session_id:
+        state = _state_from_host(host)
         if key:
             states[key] = state
         return state
 
-    state = _state_from_host(host)
+    target_session = await get_session(session_id)
+    state = ThreadExecutionState(
+        session=target_session,
+        session_msg_cache=None,
+        context_cache=ContextCompilerCache(),
+        session_date=session_date(target_session),
+        host_id=id(host),
+    )
     if key:
         states[key] = state
     return state
@@ -182,7 +191,8 @@ async def bind_thread_execution_context(
 ) -> AsyncIterator[ThreadExecutionState]:
     """Bind host mutable state to one session for the duration of a turn."""
 
-    state = await _state_for_context(host, session_id)
+    detached = turn_context is not None and getattr(turn_context, "detached", False)
+    state = await _state_for_context(host, session_id, detached=detached)
     if session_id and not (
         getattr(host, "_session", None) is not None
         and getattr(host._session, "id", "") == session_id

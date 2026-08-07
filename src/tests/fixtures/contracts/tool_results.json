@@ -1,0 +1,92 @@
+{
+  "denied": {
+    "diff": null,
+    "display": "",
+    "metadata": {
+      "denied": true,
+      "error": true
+    },
+    "next_step_hint": "",
+    "output": "Permission denied: write",
+    "summary": "",
+    "title": ""
+  },
+  "file_read_invalid": {
+    "diff": null,
+    "display": "",
+    "metadata": {
+      "error": true
+    },
+    "next_step_hint": "",
+    "output": "Invalid arguments: 1 validation error for FileReadInput\nfile_path\n  Input should be a valid string [type=string_type, input_value=123, input_type=int]\n    For further information visit https://errors.pydantic.dev/2.13/v/string_type",
+    "summary": "",
+    "title": ""
+  },
+  "file_read_success": {
+    "diff": null,
+    "display": "",
+    "metadata": {
+      "end_line": 2,
+      "file": "${WORKSPACE}/sample.txt",
+      "lines": 2,
+      "next_offset": null,
+      "start_line": 1,
+      "total_lines": 2,
+      "truncated_by_chars": false,
+      "truncated_single_line": false
+    },
+    "next_step_hint": "",
+    "output": "1\talpha\n2\tbeta",
+    "summary": "2/2 lines",
+    "title": "Read 2 lines"
+  },
+  "shell_invalid_workspace": {
+    "diff": null,
+    "display": "Shell workspace is not set; cannot choose a working directory.",
+    "metadata": {
+      "command": "echo hello",
+      "error": true,
+      "error_kind": "invalid_workspace"
+    },
+    "next_step_hint": "",
+    "output": "Shell workspace is not set; cannot choose a working directory.",
+    "summary": "",
+    "title": ""
+  },
+  "timeout": {
+    "diff": null,
+    "display": "",
+    "metadata": {
+      "error": true,
+      "error_kind": "tool_timeout",
+      "exit_code": -1,
+      "timeout": true,
+      "timeout_source": "shell"
+    },
+    "next_step_hint": "",
+    "output": "Command timed out after 1 seconds.",
+    "summary": "",
+    "title": ""
+  },
+  "unavailable": {
+    "diff": null,
+    "display": "",
+    "metadata": {
+      "error": true,
+      "unavailable": true
+    },
+    "next_step_hint": "",
+    "output": "LSP server unavailable",
+    "summary": "",
+    "title": ""
+  },
+  "unknown_tool": {
+    "diff": null,
+    "display": "",
+    "metadata": {},
+    "next_step_hint": "",
+    "output": "Unknown tool: missing. Available: ['read', 'manage', 'write', 'replace', 'git', 'find', 'search', 'lsp', 'lsp_format', 'clarify', 'checkpoint', 'workflow', 'compact', 'document', 'goal', 'loop', 'bash', 'todo', 'skill', 'webfetch', 'websearch', 'mcp']",
+    "summary": "",
+    "title": ""
+  }
+}

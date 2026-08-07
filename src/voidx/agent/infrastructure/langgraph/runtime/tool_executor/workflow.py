@@ -3,19 +3,17 @@ from __future__ import annotations
 from langchain_core.messages import RemoveMessage, ToolMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
-from voidx.runtime.intent import PersonaName
-from voidx.runtime.task_state import (
-    ToolStatePatch,
-    WorkflowRoute,
-)
-from voidx.workflow.service import advance_workflow_states, auto_advance_events
-from voidx.workflow.route import (
+from voidx.agent.domain.task.intent import PersonaName
+from voidx.agent.domain.task.state import ToolStatePatch
+from voidx.agent.domain.automation.workflow import WorkflowRoute
+from voidx.agent.application.automation.workflow.service import advance_workflow_states, auto_advance_events
+from voidx.agent.application.automation.workflow.route import (
     workflow_path_reaches,
     workflow_route_end,
     workflow_route_start,
     workflow_transition_target,
 )
-from voidx.workflow.types import (
+from voidx.agent.domain.automation.workflow import (
     WorkflowEvidence,
     WorkflowRunState,
     WorkflowRunStatus,

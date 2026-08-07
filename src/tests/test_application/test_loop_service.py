@@ -4,10 +4,10 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from voidx.agent.application.loop_service import LoopService
-from voidx.agent.domain.loop import LoopSpec
+from voidx.agent.application.automation.loop.loop_service import LoopService
+from voidx.agent.domain.automation.loop import LoopSpec
 from voidx.agent.domain.thread import LifecycleState, RuntimeDecision
-from voidx.memory.thread_store import ThreadStore
+from voidx.agent.adapters.persistence.thread_repository import ThreadStore
 
 
 @pytest.fixture(autouse=True)
@@ -174,7 +174,7 @@ async def test_loop_service_start_materializes_markdown_reference(tmp_path) -> N
 
 @pytest.mark.asyncio
 async def test_loop_service_start_rejects_missing_reference(tmp_path) -> None:
-    from voidx.agent.loop.prompt_materialize import PromptMaterializeError
+    from voidx.agent.application.automation.loop.prompt_materialize import PromptMaterializeError
 
     service = LoopService(store=ThreadStore(), scheduler=FakeScheduler(), workspace=str(tmp_path))
 
@@ -184,7 +184,7 @@ async def test_loop_service_start_rejects_missing_reference(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_loop_service_start_creates_missing_parent_session(tmp_path) -> None:
-    from voidx.memory.service import get_session
+    from voidx.agent.adapters.persistence.session_repository import get_session
 
     service = LoopService(store=ThreadStore(), scheduler=FakeScheduler(), workspace=str(tmp_path))
 
@@ -198,7 +198,7 @@ async def test_loop_service_start_creates_missing_parent_session(tmp_path) -> No
 
 @pytest.mark.asyncio
 async def test_loop_service_start_keeps_existing_parent_session(tmp_path) -> None:
-    from voidx.memory.service import create_session, get_session
+    from voidx.agent.adapters.persistence.session_repository import create_session, get_session
 
     existing = await create_session(workspace=str(tmp_path), title="My session", profile="coding")
     service = LoopService(store=ThreadStore(), scheduler=FakeScheduler(), workspace=str(tmp_path))
@@ -215,7 +215,7 @@ async def test_loop_service_start_keeps_existing_parent_session(tmp_path) -> Non
 @pytest.mark.asyncio
 async def test_loop_full_dispatch_chain_without_fk_violation(tmp_path) -> None:
     """Regression: loop turn must not hit FOREIGN KEY constraint failed."""
-    from voidx.agent.loop.scheduler import LoopRuntimeScheduler
+    from voidx.agent.application.automation.loop.scheduler import LoopRuntimeScheduler
     from voidx.agent.domain.thread import RuntimeDecision as RD
 
     class FakeRuntime:
@@ -228,7 +228,7 @@ async def test_loop_full_dispatch_chain_without_fk_violation(tmp_path) -> None:
     store = ThreadStore()
     scheduler = LoopRuntimeScheduler(store=store, runtime=FakeRuntime(), workspace=str(tmp_path))
     # Bypass the LLM: drive a decision directly through the real dispatcher/store chain.
-    from voidx.agent.loop import scheduler as sched_mod
+    from voidx.agent.application.automation.loop import scheduler as sched_mod
     original_runner = sched_mod.LoopRuntimeRunner
     sched_mod.LoopRuntimeRunner = type("R", (), {"__init__": lambda self, rt: None, "run_turn": staticmethod(runner_run_turn)})
     try:
@@ -246,7 +246,7 @@ async def test_loop_full_dispatch_chain_without_fk_violation(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_loop_thread_uses_isolated_session_not_parent(tmp_path) -> None:
-    from voidx.memory.service import get_session
+    from voidx.agent.adapters.persistence.session_repository import get_session
 
     store = ThreadStore()
     service = LoopService(store=store, scheduler=FakeScheduler(), workspace=str(tmp_path))
@@ -263,13 +263,7 @@ async def test_loop_thread_uses_isolated_session_not_parent(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_loop_context_isolated_from_parent_session_messages(tmp_path) -> None:
     """Regression: loop turn must not load or write parent session messages."""
-    from voidx.memory.service import (
-        MessageRow,
-        count_messages,
-        ensure_session,
-        load_messages,
-        save_message,
-    )
+    from voidx.agent.adapters.persistence.session_repository import MessageRow, count_messages, ensure_session, load_messages, save_message
 
     await ensure_session("parent-1", str(tmp_path))
 
@@ -284,7 +278,7 @@ async def test_loop_context_isolated_from_parent_session_messages(tmp_path) -> N
             captured["thread"] = request.thread
             captured["context"] = request.context
 
-    from voidx.agent.loop.scheduler import LoopRuntimeRunner, LoopRuntimeScheduler
+    from voidx.agent.application.automation.loop.scheduler import LoopRuntimeRunner, LoopRuntimeScheduler
 
     store = ThreadStore()
     runtime = InspectingRuntime()
@@ -317,8 +311,8 @@ async def test_loop_context_isolated_from_parent_session_messages(tmp_path) -> N
 async def test_loop_restart_migrates_legacy_thread_to_isolated_session(tmp_path) -> None:
     """Legacy loop threads bound to the parent session must be re-pointed on restart."""
     from voidx.agent.domain.thread import AgentThread, AgentThreadState
-    from voidx.agent.domain.loop import LOOP_PROFILE
-    from voidx.memory.service import ensure_session
+    from voidx.agent.domain.automation.loop import LOOP_PROFILE
+    from voidx.agent.adapters.persistence.session_repository import ensure_session
 
     store = ThreadStore()
     # Simulate a pre-fix loop thread whose session_id is the parent session.
@@ -367,7 +361,7 @@ class ContinueRuntime:
 
 @pytest.mark.asyncio
 async def test_loop_service_status_counts_completed_iterations(tmp_path) -> None:
-    from voidx.agent.loop.scheduler import LoopRuntimeScheduler
+    from voidx.agent.application.automation.loop.scheduler import LoopRuntimeScheduler
 
     store = ThreadStore()
     scheduler = LoopRuntimeScheduler(store=store, runtime=ContinueRuntime(), workspace=str(tmp_path))
@@ -384,7 +378,7 @@ async def _pending_outbox(store: ThreadStore, thread_id: str = "loop:parent-1:ac
 
 @pytest.mark.asyncio
 async def test_loop_service_stop_discards_pending_wakeup(tmp_path) -> None:
-    from voidx.agent.loop.scheduler import LoopRuntimeScheduler
+    from voidx.agent.application.automation.loop.scheduler import LoopRuntimeScheduler
 
     store = ThreadStore()
     scheduler = LoopRuntimeScheduler(store=store, runtime=ContinueRuntime(), workspace=str(tmp_path))
@@ -401,7 +395,7 @@ async def test_loop_service_stop_discards_pending_wakeup(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_loop_service_restart_discards_stale_wakeup_rows(tmp_path) -> None:
-    from voidx.agent.loop.scheduler import LoopRuntimeScheduler
+    from voidx.agent.application.automation.loop.scheduler import LoopRuntimeScheduler
 
     store = ThreadStore()
     scheduler = LoopRuntimeScheduler(store=store, runtime=ContinueRuntime(), workspace=str(tmp_path))
@@ -483,7 +477,7 @@ async def test_resume_does_not_reactivate_stopped_loop(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_resume_preserves_pending_wakeup_without_immediate_rerun(tmp_path) -> None:
-    from voidx.agent.domain.loop import LOOP_PROFILE
+    from voidx.agent.domain.automation.loop import LOOP_PROFILE
     from voidx.agent.domain.thread import AgentThread, AgentThreadState
 
     store = ThreadStore()

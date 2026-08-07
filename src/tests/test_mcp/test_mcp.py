@@ -1,3 +1,4 @@
+from tests.tool_registry import build_registry
 import json
 import sys
 from pathlib import Path
@@ -9,13 +10,14 @@ import pytest
 
 from voidx.config import Settings
 from voidx.config import McpServerConfig
-from voidx.mcp.client import McpClient
-from voidx.mcp.gateway import McpGatewayTool
-from voidx.mcp.manager import McpManager
+from voidx.mcp.adapters.client import McpClient
+from voidx.tooling.adapters.mcp import McpGatewayTool
+from voidx.mcp.application.manager import McpManager
+from voidx.mcp.adapters.client import create_mcp_client
 from voidx.mcp.schema import McpCallResult, McpInitializeParams, McpToolDef
-from voidx.permission.service import PermissionService
-from voidx.tools.base import ToolContext
-from voidx.tools.registry import ToolRegistry
+from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
+from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
+from voidx.tooling.application.registry import ToolRegistry
 
 
 def test_initialize_params_serialize_to_mcp_wire_keys():
@@ -78,8 +80,8 @@ for raw in sys.stdin:
     )
 
     settings = Settings(str(tmp_path))
-    registry = ToolRegistry(settings=settings)
-    manager = McpManager(settings, registry, PermissionService())
+    registry = build_registry(settings=settings)
+    manager = McpManager(settings.list_mcp_servers(), create_mcp_client)
 
     await manager.start_all()
     await manager.wait_ready()
@@ -191,11 +193,10 @@ async def test_mcp_manager_generates_missing_server_descriptions_after_catalogin
         get_retry_config=lambda: None,
         list_mcp_servers=lambda: [config],
     )
-    registry = ToolRegistry(settings=settings)
+    registry = build_registry(settings=settings)
     manager = McpManager(
-        settings,
-        registry,
-        PermissionService(),
+        settings.list_mcp_servers(),
+        create_mcp_client,
         description_generator=generator,
     )
     manager._start_servers = AsyncMock(return_value=[("tavily", client)])
@@ -222,9 +223,8 @@ async def test_mcp_manager_does_not_generate_for_explicit_server_description():
         list_mcp_servers=lambda: [config],
     )
     manager = McpManager(
-        settings,
-        ToolRegistry(settings=settings),
-        PermissionService(),
+        settings.list_mcp_servers(),
+        create_mcp_client,
         description_generator=generator,
     )
     manager._start_servers = AsyncMock(return_value=[("tavily", client)])
@@ -250,14 +250,13 @@ async def test_mcp_manager_logs_description_generation_failure():
         list_mcp_servers=lambda: [config],
     )
     manager = McpManager(
-        settings,
-        ToolRegistry(settings=settings),
-        PermissionService(),
+        settings.list_mcp_servers(),
+        create_mcp_client,
         description_generator=generator,
     )
     manager._start_servers = AsyncMock(return_value=[("tavily", client)])
 
-    with patch("voidx.mcp.manager.log_tool_event") as log_event:
+    with patch("voidx.mcp.application.manager.log_tool_event") as log_event:
         await manager._init_servers([config])
         await manager.wait_descriptions()
 
@@ -283,9 +282,8 @@ async def test_mcp_manager_reuses_workspace_description_cache(tmp_path):
             instructions="",
         )
         manager = McpManager(
-            settings,
-            ToolRegistry(settings=settings),
-            PermissionService(),
+        settings.list_mcp_servers(),
+        create_mcp_client,
             description_generator=generator,
             workspace=str(tmp_path),
         )
@@ -361,10 +359,10 @@ for raw in sys.stdin:
     )
 
     settings = Settings(str(tmp_path))
-    registry = ToolRegistry(settings=settings)
-    manager = McpManager(settings, registry, PermissionService())
+    registry = build_registry(settings=settings)
+    manager = McpManager(settings.list_mcp_servers(), create_mcp_client)
     gateway = McpGatewayTool(manager)
-    registry.register(gateway.id, gateway, gateway.description, gateway.parameters_schema())
+    registry.replace(gateway.id, gateway, gateway.description, gateway.parameters_schema())
 
     await manager.start_all()
     await manager.wait_ready()
@@ -416,8 +414,8 @@ for raw in sys.stdin:
         command=sys.executable,
         args=[str(server)],
     ))
-    registry = ToolRegistry(settings=settings)
-    manager = McpManager(settings, registry, PermissionService())
+    registry = build_registry(settings=settings)
+    manager = McpManager(settings.list_mcp_servers(), create_mcp_client)
 
     await manager.start_all()
     await manager.wait_ready()
@@ -425,7 +423,9 @@ for raw in sys.stdin:
     assert [entry.name for entry in manager.catalog_snapshot()] == ["web-reader"]
 
     settings.delete_mcp_server("web-reader")
-    await manager.restart_all()
+    await manager.stop_all()
+    manager = McpManager(settings.list_mcp_servers(), create_mcp_client)
+    await manager.start_all()
     await manager.wait_ready()
 
     assert not any(tool_id.startswith("mcp__") for tool_id in registry.ids())
@@ -457,8 +457,8 @@ for raw in sys.stdin:
         encoding="utf-8",
     )
     settings = Settings(str(tmp_path))
-    registry = ToolRegistry(settings=settings)
-    manager = McpManager(settings, registry, PermissionService())
+    registry = build_registry(settings=settings)
+    manager = McpManager(settings.list_mcp_servers(), create_mcp_client)
 
     await manager.start_all()
     await manager.wait_ready()
@@ -472,7 +472,9 @@ for raw in sys.stdin:
         command=sys.executable,
         args=[str(server)],
     ))
-    await manager.restart_all()
+    await manager.stop_all()
+    manager = McpManager(settings.list_mcp_servers(), create_mcp_client)
+    await manager.start_all()
     await manager.wait_ready()
 
     assert not any(tool_id.startswith("mcp__") for tool_id in registry.ids())
@@ -495,7 +497,7 @@ async def test_mcp_manager_reports_startup_errors(tmp_path):
     )
 
     settings = Settings(str(tmp_path))
-    manager = McpManager(settings, ToolRegistry(settings=settings), PermissionService())
+    manager = McpManager(settings.list_mcp_servers(), create_mcp_client)
 
     await manager.start_all()
     await manager.wait_ready()
@@ -514,7 +516,7 @@ async def test_builtin_web_mcp_server_lists_tools():
     client = McpClient(McpServerConfig(
         name="voidx-web",
         command=sys.executable,
-        args=["-m", "voidx.mcp.server.web"],
+        args=["-m", "voidx.tooling.adapters.mcp_web_server"],
         cwd=src_path,
         env={"PYTHONPATH": src_path},
     ))
@@ -554,7 +556,7 @@ class TestMcpRequestRetry:
             return {"result": "ok"}
 
         monkeypatch.setattr(client, "_send_payload", fake_send_payload)
-        monkeypatch.setattr("voidx.mcp.client.base.asyncio.wait_for", fake_wait_for)
+        monkeypatch.setattr("voidx.mcp.adapters.client.base.asyncio.wait_for", fake_wait_for)
 
         result = await client._request("tools/call", {"name": "test"})
         assert call_count == 3
@@ -576,14 +578,14 @@ class TestMcpRequestRetry:
             return {"result": "ok"}
 
         monkeypatch.setattr(client, "_send_payload", fake_send_payload)
-        monkeypatch.setattr("voidx.mcp.client.base.asyncio.wait_for", fake_wait_for)
+        monkeypatch.setattr("voidx.mcp.adapters.client.base.asyncio.wait_for", fake_wait_for)
 
         result = await client._request("tools/call", {"name": "test"})
         assert call_count == 3
 
     @pytest.mark.asyncio
     async def test_reconnect_failure_not_retried(self, monkeypatch):
-        from voidx.mcp.client.errors import McpConnectionError
+        from voidx.mcp.domain.errors import McpConnectionError
         client = self._make_client(monkeypatch)
         client._healthy = False
         client._reconnect_attempt = 99
@@ -602,7 +604,7 @@ class TestMcpRequestRetry:
 
     @pytest.mark.asyncio
     async def test_protocol_error_not_retried(self, monkeypatch):
-        from voidx.mcp.client.errors import McpProtocolError
+        from voidx.mcp.domain.errors import McpProtocolError
         client = self._make_client(monkeypatch)
         call_count = 0
 
@@ -615,7 +617,7 @@ class TestMcpRequestRetry:
             return await future
 
         monkeypatch.setattr(client, "_send_payload", fake_send_payload)
-        monkeypatch.setattr("voidx.mcp.client.base.asyncio.wait_for", fake_wait_for)
+        monkeypatch.setattr("voidx.mcp.adapters.client.base.asyncio.wait_for", fake_wait_for)
 
         with pytest.raises(McpProtocolError):
             await client._request("tools/call", {"name": "test"})
@@ -628,7 +630,7 @@ class TestMcpRequestRetry:
 @pytest.mark.asyncio
 async def test_mcp_start_cancellation_rolls_back_process_tasks_and_pipes(monkeypatch):
     import asyncio
-    import voidx.mcp.client.base as base_module
+    import voidx.mcp.adapters.client.base as base_module
 
     class FakeProcess:
         def __init__(self):
@@ -691,7 +693,7 @@ async def test_mcp_start_cancellation_rolls_back_process_tasks_and_pipes(monkeyp
 @pytest.mark.asyncio
 async def test_mcp_manager_stop_all_awaits_background_start_cleanup(tmp_path, monkeypatch):
     import asyncio
-    import voidx.mcp.manager as manager_module
+    import voidx.mcp.application.manager as manager_module
 
     start_entered = asyncio.Event()
     stop_finished = asyncio.Event()
@@ -711,11 +713,9 @@ async def test_mcp_manager_stop_all_awaits_background_start_cleanup(tmp_path, mo
     settings = Settings(str(tmp_path))
     settings.save_mcp_server(McpServerConfig(name="slow", command="fake-server"))
     manager = McpManager(
-        settings,
-        ToolRegistry(settings=settings),
-        PermissionService(),
+        settings.list_mcp_servers(),
+        lambda config: FakeClient(config),
     )
-    monkeypatch.setattr(manager_module, "McpClient", FakeClient)
 
     await manager.start_all()
     await start_entered.wait()

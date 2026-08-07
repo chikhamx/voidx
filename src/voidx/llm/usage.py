@@ -23,7 +23,7 @@ class TokenUsage:
 @dataclass
 class UsageStats:
     context_tokens: int = 0
-    context_limit: int = 128_000
+    context_limit: int = 200_000
     last_input_tokens: int = 0
     last_output_tokens: int = 0
     last_cache_read_tokens: int = 0

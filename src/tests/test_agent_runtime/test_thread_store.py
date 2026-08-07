@@ -7,7 +7,7 @@ import pytest
 
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.thread import AgentThread, AgentThreadState, LifecycleState, RuntimeDecision
-from voidx.memory.thread_store import ThreadStore, ThreadStateConflict
+from voidx.agent.adapters.persistence.thread_repository import ThreadStore, ThreadStateConflict
 
 
 @pytest.fixture(autouse=True)
@@ -288,7 +288,7 @@ async def test_thread_store_with_db_path_uses_isolated_database(tmp_path) -> Non
 
 @pytest.mark.asyncio
 async def test_commit_decision_atomically_applies_goal_state_patch() -> None:
-    from voidx.agent.domain.goal import GOAL_PROFILE, GoalSpec, GoalState
+    from voidx.agent.domain.automation.goal import GOAL_PROFILE, GoalSpec, GoalState
     from voidx.agent.domain.thread import DecisionMetadata
 
     store = ThreadStore()

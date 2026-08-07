@@ -9,15 +9,15 @@ import pytest
 
 from voidx.agent.slash import SlashHandler
 from voidx.agent.application.tool_filters import filter_unavailable_lsp_tools
-from voidx.lsp.client import LSP_REQUEST_TIMEOUT_SECONDS, LspClient, encode_lsp_message
-from voidx.lsp.errors import LspConnectionError, LspError, LspFormattingUnsupported, LspServerUnavailable, LspTimeoutError
-from voidx.lsp.manager import LspManager, apply_text_edits
-from voidx.lsp.schema import LspPosition, LspRange, LspServerConfig
-from voidx.tools.base import ToolContext
-from voidx.tools.lsp import LspFormatTool, LspTool
-from voidx.tools.registry import ToolRegistry
-import voidx.memory.store as store
-import voidx.tools.lsp as lsp_module
+from voidx.lsp.adapters.client import LSP_REQUEST_TIMEOUT_SECONDS, LspClient, encode_lsp_message, create_lsp_client
+from voidx.lsp.domain.errors import LspConnectionError, LspError, LspFormattingUnsupported, LspServerUnavailable, LspTimeoutError
+from voidx.lsp.application.manager import LspManager, apply_text_edits
+from voidx.lsp.domain.schema import LspPosition, LspRange, LspServerConfig
+from voidx.tooling.application.execution import FileToolContext as ToolContext
+from voidx.tooling.adapters.lsp import LspFormatTool, LspTool
+from voidx.tooling.application.registry import ToolRegistry
+import voidx.persistence.sqlite as store
+import voidx.tooling.adapters.lsp as lsp_module
 
 
 FAKE_LSP_SERVER = r'''
@@ -174,7 +174,7 @@ def test_apply_text_edits_uses_utf16_character_offsets():
 async def test_lsp_manager_talks_to_stdio_server(tmp_path):
     _write_fake_lsp(tmp_path)
     (tmp_path / "sample.py").write_text("class Foo:\n def bar(self):\n  return 1\n", encoding="utf-8")
-    manager = LspManager(str(tmp_path))
+    manager = LspManager(str(tmp_path), create_lsp_client)
 
     try:
         assert manager.initialized is False
@@ -201,9 +201,9 @@ def test_lsp_manager_constructor_does_not_load_servers(monkeypatch, tmp_path):
     def fail_load(_workspace):
         raise AssertionError("load_lsp_servers should not run in constructor")
 
-    monkeypatch.setattr("voidx.lsp.manager.load_lsp_servers", fail_load)
+    monkeypatch.setattr("voidx.lsp.application.manager.load_lsp_servers", fail_load)
 
-    manager = LspManager(str(tmp_path))
+    manager = LspManager(str(tmp_path), create_lsp_client)
 
     assert manager.initialized is False
     assert manager.servers == {}
@@ -225,9 +225,9 @@ async def test_lsp_initialize_runs_load_in_thread(monkeypatch, tmp_path):
             )
         }
 
-    monkeypatch.setattr("voidx.lsp.manager.asyncio.to_thread", fake_to_thread)
+    monkeypatch.setattr("voidx.lsp.application.manager.asyncio.to_thread", fake_to_thread)
 
-    manager = LspManager(str(tmp_path))
+    manager = LspManager(str(tmp_path), create_lsp_client)
     await manager.initialize()
 
     assert captured.fn.__name__ == "load_lsp_servers"
@@ -240,7 +240,7 @@ async def test_lsp_initialize_runs_load_in_thread(monkeypatch, tmp_path):
 async def test_lsp_tool_waits_for_initialization(tmp_path):
     _write_fake_lsp(tmp_path)
     (tmp_path / "sample.py").write_text("class Foo:\n def bar(self):\n  return 1\n", encoding="utf-8")
-    manager = LspManager(str(tmp_path))
+    manager = LspManager(str(tmp_path), create_lsp_client)
 
     try:
         assert manager.initialized is False
@@ -255,7 +255,7 @@ async def test_lsp_tool_waits_for_initialization(tmp_path):
 @pytest.mark.asyncio
 async def test_lsp_manager_warm_up_starts_available_servers(tmp_path):
     _write_fake_lsp(tmp_path)
-    manager = LspManager(str(tmp_path))
+    manager = LspManager(str(tmp_path), create_lsp_client)
     manager._servers = {
         "python": LspServerConfig(
             language="python",
@@ -279,7 +279,7 @@ async def test_lsp_manager_warm_up_starts_available_servers(tmp_path):
 
 @pytest.mark.asyncio
 async def test_lsp_manager_warm_up_skips_unavailable_servers(tmp_path):
-    manager = LspManager(str(tmp_path))
+    manager = LspManager(str(tmp_path), create_lsp_client)
     manager._servers = {
         "python": LspServerConfig(
             language="python",
@@ -299,7 +299,7 @@ async def test_lsp_manager_warm_up_skips_unavailable_servers(tmp_path):
 
 @pytest.mark.asyncio
 async def test_lsp_manager_warm_up_records_per_server_errors(tmp_path, monkeypatch):
-    manager = LspManager(str(tmp_path))
+    manager = LspManager(str(tmp_path), create_lsp_client)
     manager._servers = {
         "python": LspServerConfig(
             language="python",
@@ -327,7 +327,7 @@ async def test_lsp_manager_warm_up_records_per_server_errors(tmp_path, monkeypat
 @pytest.mark.asyncio
 async def test_lsp_manager_requests_use_extended_timeout(tmp_path):
     (tmp_path / "sample.py").write_text("class Foo:\n    pass\n", encoding="utf-8")
-    manager = LspManager(str(tmp_path))
+    manager = LspManager(str(tmp_path), create_lsp_client)
     manager._servers = {
         "python": LspServerConfig(
             language="python",
@@ -402,12 +402,14 @@ async def test_lsp_request_timeout_raises_lsp_timeout_error(tmp_path):
 @pytest.mark.asyncio
 async def test_lsp_tool_timeout_uses_unified_metadata(tmp_path, monkeypatch):
     class TimeoutService:
+        workspace = str(tmp_path)
+
         async def diagnostics(self, file_path=None):
             raise LspTimeoutError("diagnostics timed out")
 
-    ctx = ToolContext(workspace=str(tmp_path), lsp_manager=TimeoutService())
+    ctx = ToolContext(workspace=str(tmp_path))
 
-    result = await LspTool().execute(
+    result = await LspTool(TimeoutService()).execute(
         {"operation": "diagnostics"},
         ctx,
     )
@@ -420,7 +422,7 @@ async def test_lsp_tool_timeout_uses_unified_metadata(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_lsp_start_cancellation_rolls_back_owned_process_and_tasks(tmp_path, monkeypatch):
-    import voidx.lsp.client as client_module
+    import voidx.lsp.adapters.client.stdio as client_module
 
     class FakeProcess:
         def __init__(self):
@@ -489,7 +491,7 @@ async def test_lsp_start_cancellation_rolls_back_owned_process_and_tasks(tmp_pat
 
 @pytest.mark.asyncio
 async def test_lsp_manager_cancellation_stops_client_before_propagating(tmp_path, monkeypatch):
-    import voidx.lsp.manager as manager_module
+    import voidx.lsp.application.manager as manager_module
 
     start_entered = asyncio.Event()
     stop_finished = asyncio.Event()
@@ -509,7 +511,7 @@ async def test_lsp_manager_cancellation_stops_client_before_propagating(tmp_path
             await asyncio.sleep(0)
             stop_finished.set()
 
-    manager = LspManager(str(tmp_path))
+    manager = LspManager(str(tmp_path), lambda config, cwd: FakeClient(config, cwd=cwd))
     manager._servers = {
         "python": LspServerConfig(
             language="python",
@@ -519,7 +521,6 @@ async def test_lsp_manager_cancellation_stops_client_before_propagating(tmp_path
         ),
     }
     manager._initialized = True
-    monkeypatch.setattr(manager_module, "LspClient", FakeClient)
 
     task = asyncio.create_task(manager._ensure_client("python"))
     await start_entered.wait()
@@ -538,7 +539,7 @@ async def test_lsp_manager_formats_only_requested_range_without_writing(tmp_path
     target = tmp_path / "sample.py"
     original = "class Foo:\n def bar(self):\n  return 1\n"
     target.write_text(original, encoding="utf-8")
-    manager = LspManager(str(tmp_path))
+    manager = LspManager(str(tmp_path), create_lsp_client)
     range_ = LspRange(
         start=LspPosition(line=1, character=0),
         end=LspPosition(line=3, character=0),
@@ -559,7 +560,7 @@ async def test_lsp_manager_formats_only_requested_range_without_writing(tmp_path
 async def test_lsp_manager_rejects_range_formatting_without_capability(tmp_path, monkeypatch):
     target = tmp_path / "sample.py"
     target.write_text("print( 1 )\n", encoding="utf-8")
-    manager = LspManager(str(tmp_path))
+    manager = LspManager(str(tmp_path), create_lsp_client)
 
     class FakeClient:
         capabilities = {"documentFormattingProvider": True}
@@ -586,7 +587,7 @@ async def test_lsp_manager_rejects_range_formatting_without_capability(tmp_path,
 async def test_lsp_manager_rejects_range_formatting_edits_outside_request(tmp_path, monkeypatch):
     target = tmp_path / "sample.py"
     target.write_text("first\nsecond\n", encoding="utf-8")
-    manager = LspManager(str(tmp_path))
+    manager = LspManager(str(tmp_path), create_lsp_client)
 
     class FakeClient:
         capabilities = {"documentRangeFormattingProvider": True}
@@ -620,7 +621,7 @@ async def test_lsp_manager_rejects_range_formatting_edits_outside_request(tmp_pa
 async def test_lsp_manager_rejects_range_formatting_edit_with_invalid_document_position(tmp_path, monkeypatch):
     target = tmp_path / "sample.py"
     target.write_text("first\nsecond\n", encoding="utf-8")
-    manager = LspManager(str(tmp_path))
+    manager = LspManager(str(tmp_path), create_lsp_client)
 
     class FakeClient:
         capabilities = {"documentRangeFormattingProvider": True}

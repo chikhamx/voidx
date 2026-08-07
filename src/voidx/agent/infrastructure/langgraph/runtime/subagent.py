@@ -27,14 +27,16 @@ from voidx.agent.infrastructure.langgraph.runtime.tool_executor.types import _Ex
 from voidx.agent.infrastructure.langgraph.runtime.tool_executor.workflow import (
     _state_update_from_executed_tools,
 )
-from voidx.runtime.intent import PersonaName, TaskIntent
+from voidx.agent.domain.task.intent import PersonaName, TaskIntent
 from voidx.llm.message_markers import GUIDANCE_MARKER
 from voidx.agent.application.runtime_context import (
     ContextCompilerCache,
     InteractionMode,
     RuntimeContextBuilder,
 )
-from voidx.runtime.task_state import GoalResolution, GoalSpec, TaskState, TodoRunState, WorkflowRoute
+from voidx.agent.domain.task.state import GoalResolution, GoalSpec, TaskState
+from voidx.agent.domain.task.todo import TodoRunState
+from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.agent.application.tool_messages import sanitize_tool_message_content
 from voidx.agent.infrastructure.tool_result_storage import maybe_persist_tool_result
 from voidx.agent.domain.profile import RuntimeProfile
@@ -51,8 +53,8 @@ from voidx.llm.usage import (
     estimate_message_tokens,
     extract_token_usage,
 )
-from voidx.memory.service import save_context_frame_from_messages
-from voidx.memory.subagents import append_subagent_event
+from voidx.agent.adapters.persistence.context_frame_repository import save_context_frame_from_messages
+from voidx.agent.adapters.persistence.subagent_repository import append_subagent_event
 from voidx.runtime.ui import (
     CaptureConsole,
     OutputTree,
@@ -60,12 +62,19 @@ from voidx.runtime.ui import (
     StatusUpdated,
     StreamingRenderer,
 )
-from voidx.tools.service import ToolContext, ToolRegistry, TaskTracker
-from voidx.tools.message import MessageTool
+from voidx.tooling.application.execution import AuthorizationRuntime
+from voidx.tooling.domain.file_tracking import FileStateStore
+from voidx.tooling.adapters.lsp_post_edit import LspPostEditFormatter
+from voidx.tooling.adapters.scoped_plugin import bind_scoped_plugins
+from voidx.tooling.application.registry import ToolRegistry
+from voidx.agent.application.runtime.task_tracker import TaskTracker
+from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext, AgentToolRuntime
+from voidx.agent.adapters.tools.plugins import bind_agent_tool_runtime
+from voidx.agent.adapters.tools.subagent_message import MessageTool
 from voidx.runtime.ui_port import AgentUiPort, runtime_ui_port
 
 
-_SAFETY_STEP_LIMIT = 50
+_SAFETY_STEP_LIMIT = 100
 _RESULT_CONTRACT_RETRY_LIMIT = 2
 _BLOCKED_CHILD_TOOLS = {"agent", "clarify", "checkpoint"}
 _CHILD_WORKFLOW_MODE_BY_JOIN = {
@@ -129,7 +138,10 @@ async def run_subagent(
         message_tool = MessageTool(
             description="Report results or progress to your parent agent, and read messages from your parent."
         )
-        agent_tools.register(message_tool.id, message_tool, message_tool.description, message_tool.parameters_schema())
+        if agent_tools.get(message_tool.id) is None:
+            agent_tools.register_plugin(message_tool)
+        else:
+            agent_tools.replace(message_tool.id, message_tool, message_tool.description, message_tool.parameters_schema())
     # Child constraints are fixed: delegation/interaction tools never reach a child,
     # regardless of AgentDef.can_delegate.
     agent_tools = agent_tools.filtered_copy(set(agent_tools.ids()) - _BLOCKED_CHILD_TOOLS)
@@ -215,7 +227,7 @@ async def run_subagent(
         context.apply_to_messages(messages)
 
     def apply_state_update(update: dict) -> bool:
-        nonlocal persona
+        nonlocal ctx, persona
         if not update:
             return False
         if "persona" in update and update.get("persona"):
@@ -246,18 +258,17 @@ async def run_subagent(
             sub_task_state.todo_state = (
                 TodoRunState.model_validate(raw_todo) if raw_todo is not None else None
             )
-        ctx.persona = persona
-        ctx.task_intent = sub_task_state.current_intent.value
-        ctx.goal_type = (
+        ctx = ctx.model_copy(update={"persona": persona, "turn_count": step})
+        ctx.runtime.task_intent = sub_task_state.current_intent.value
+        ctx.runtime.goal_type = (
             sub_task_state.workflow_route.join
             if sub_task_state.workflow_route is not None
             else ""
         )
-        ctx.goal_target = sub_task_state.current_goal.label if sub_task_state.current_goal else ""
-        ctx.turn_count = step
-        ctx.active_workflow_names = active_workflow_names(sub_task_state.workflow_runs)
-        ctx.workflow_runs = list(sub_task_state.workflow_runs.values())
-        ctx.workflow_route = (
+        ctx.runtime.goal_target = sub_task_state.current_goal.label if sub_task_state.current_goal else ""
+        ctx.runtime.active_workflow_names = active_workflow_names(sub_task_state.workflow_runs)
+        ctx.runtime.workflow_runs = list(sub_task_state.workflow_runs.values())
+        ctx.runtime.workflow_route = (
             sub_task_state.workflow_route.model_dump(mode="json")
             if sub_task_state.workflow_route is not None
             else None
@@ -281,15 +292,26 @@ async def run_subagent(
     if permission_snapshot is not None:
         snapshot_grants = permission_snapshot.get_access_grants()
 
-    ctx = ToolContext(
-        workspace=config.workspace,
-        session_id=session_id or "default",
-        persona=persona,
-        interaction_mode=interaction_mode.value,
+    agent_runtime = AgentToolRuntime(
+        subagent_transport=agent_gateway,
+        run_id=run_identity,
+        access_grants=(
+            (lambda: permission_snapshot.get_access_grants())
+            if permission_snapshot is not None
+            else None
+        ),
+        revocation_epoch=(
+            (lambda: permission_snapshot.revocation_epoch)
+            if permission_snapshot is not None
+            else None
+        ),
         task_intent=sub_task_state.current_intent.value,
-        goal_type=plan.join if plan is not None else "",
+        goal_type=(
+            sub_task_state.workflow_route.join
+            if sub_task_state.workflow_route is not None
+            else ""
+        ),
         goal_target=sub_task_state.current_goal.label if sub_task_state.current_goal else "",
-        turn_count=0,
         active_workflow_names=active_workflow_names(sub_task_state.workflow_runs),
         workflow_runs=list(sub_task_state.workflow_runs.values()),
         workflow_route=(
@@ -297,22 +319,51 @@ async def run_subagent(
             if sub_task_state.workflow_route is not None
             else None
         ),
-        lsp_manager=lsp_manager,
-        tool_registry=agent_tools,
-        agent_gateway=agent_gateway,
-        agent_run_id=run_identity,
-        format_after_edit_enabled=config.lsp_format_after_edit,
-        permission_mode=config.permission_mode.value,
-        sandbox_readable_files=list(snapshot_grants.readable_files) if snapshot_grants is not None else list(config.sandbox_readable_files),
-        sandbox_readable_dirs=list(snapshot_grants.readable_dirs) if snapshot_grants is not None else list(config.sandbox_readable_dirs),
-        sandbox_writable_files=list(snapshot_grants.writable_files) if snapshot_grants is not None else list(config.sandbox_writable_files),
-        sandbox_writable_dirs=list(snapshot_grants.writable_dirs) if snapshot_grants is not None else list(config.sandbox_writable_dirs),
-        get_access_grants=(
-            (lambda: permission_snapshot.get_access_grants())
-            if permission_snapshot is not None
+    )
+    bind_agent_tool_runtime(agent_tools, agent_runtime)
+
+    lsp_operations = None
+    if lsp_manager is not None:
+        from voidx.lsp.application.service import LspOperationsService
+
+        lsp_operations = LspOperationsService(lsp_manager)
+
+    bind_scoped_plugins(
+        agent_tools,
+        authorization=AuthorizationRuntime(
+            read_files=list(snapshot_grants.readable_files) if snapshot_grants is not None else list(config.sandbox_readable_files),
+            read_dirs=list(snapshot_grants.readable_dirs) if snapshot_grants is not None else list(config.sandbox_readable_dirs),
+            write_files=list(snapshot_grants.writable_files) if snapshot_grants is not None else list(config.sandbox_writable_files),
+            write_dirs=list(snapshot_grants.writable_dirs) if snapshot_grants is not None else list(config.sandbox_writable_dirs),
+            access_grants_reader=(
+                (lambda: permission_snapshot.get_access_grants())
+                if permission_snapshot is not None
+                else None
+            ),
+            revocation_epoch_reader=(
+                (lambda: permission_snapshot.revocation_epoch)
+                if permission_snapshot is not None
+                else None
+            ),
+        ),
+        files=FileStateStore(),
+        formatter=(
+            LspPostEditFormatter(
+                lsp_operations,
+                enabled=config.lsp_format_after_edit,
+            )
+            if lsp_operations is not None
             else None
         ),
-        get_revocation_epoch=(lambda: permission_snapshot.revocation_epoch) if permission_snapshot is not None else None,
+    )
+
+    ctx = ToolContext(
+        workspace=config.workspace,
+        runtime=agent_runtime,
+        session_id=session_id or "default",
+        persona=persona,
+        interaction_mode=interaction_mode.value,
+        turn_count=0,
     )
 
     # Register with tracker
@@ -371,7 +422,7 @@ async def run_subagent(
             else:
                 ui_port.ui.step_header(persona)
 
-            ctx.turn_count = step
+            ctx = ctx.model_copy(update={"turn_count": step})
             llm_messages = [*messages, *drain_guard_guidance()]
             model_with_tools = model.bind_tools(tool_defs) if tool_defs else model
             renderer = StreamingRenderer(ui_port.console, debug=debug, agent_id=agent_id, headless=True)

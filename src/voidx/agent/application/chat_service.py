@@ -9,8 +9,8 @@ from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.domain.thread import AgentThread
-from voidx.agent.runtime.contracts import TurnRequest, TurnResult
-from voidx.memory.service import SessionInfo, create_session
+from voidx.agent.application.runtime.contracts import TurnRequest, TurnResult
+from voidx.agent.adapters.persistence.session_repository import SessionInfo, create_session
 
 CHAT_PROFILE = RuntimeProfile(
     profile_id="chat", revision=1, name="Chat", prompt_policy=ChatPromptPolicy()

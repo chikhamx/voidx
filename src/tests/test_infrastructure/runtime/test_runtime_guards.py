@@ -11,7 +11,7 @@ from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import (
     error_kind_from_result,
     todo_status_signature,
 )
-from voidx.tools.base import ToolResult
+from voidx.tooling.domain.result import ToolResult
 
 
 def test_failure_loop_guidance_escalates_and_blocks_same_call():

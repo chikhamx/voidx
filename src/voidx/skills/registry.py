@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from voidx.paths import voidx_global_skills_dir, voidx_workspace_skills_dir
+from voidx.platform.paths import voidx_global_skills_dir, voidx_workspace_skills_dir
 from voidx.skills.schema import SkillDefinition, SkillMeta, SkillScope
 
 SKILL_FILENAME = "SKILL.md"

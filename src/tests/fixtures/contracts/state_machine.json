@@ -1,0 +1,612 @@
+{
+  "lifecycle": [
+    {
+      "current": "created",
+      "decision": "continue",
+      "outcome": {
+        "result": "waiting"
+      }
+    },
+    {
+      "current": "created",
+      "decision": "completed",
+      "outcome": {
+        "result": "completed"
+      }
+    },
+    {
+      "current": "created",
+      "decision": "blocked",
+      "outcome": {
+        "result": "blocked"
+      }
+    },
+    {
+      "current": "created",
+      "decision": "needs_user",
+      "outcome": {
+        "result": "needs_user"
+      }
+    },
+    {
+      "current": "created",
+      "decision": "failed",
+      "outcome": {
+        "result": "failed"
+      }
+    },
+    {
+      "current": "created",
+      "decision": "stop",
+      "outcome": {
+        "result": "cancelled"
+      }
+    },
+    {
+      "current": "ready",
+      "decision": "continue",
+      "outcome": {
+        "result": "waiting"
+      }
+    },
+    {
+      "current": "ready",
+      "decision": "completed",
+      "outcome": {
+        "result": "completed"
+      }
+    },
+    {
+      "current": "ready",
+      "decision": "blocked",
+      "outcome": {
+        "result": "blocked"
+      }
+    },
+    {
+      "current": "ready",
+      "decision": "needs_user",
+      "outcome": {
+        "result": "needs_user"
+      }
+    },
+    {
+      "current": "ready",
+      "decision": "failed",
+      "outcome": {
+        "result": "failed"
+      }
+    },
+    {
+      "current": "ready",
+      "decision": "stop",
+      "outcome": {
+        "result": "cancelled"
+      }
+    },
+    {
+      "current": "running",
+      "decision": "continue",
+      "outcome": {
+        "result": "waiting"
+      }
+    },
+    {
+      "current": "running",
+      "decision": "completed",
+      "outcome": {
+        "result": "completed"
+      }
+    },
+    {
+      "current": "running",
+      "decision": "blocked",
+      "outcome": {
+        "result": "blocked"
+      }
+    },
+    {
+      "current": "running",
+      "decision": "needs_user",
+      "outcome": {
+        "result": "needs_user"
+      }
+    },
+    {
+      "current": "running",
+      "decision": "failed",
+      "outcome": {
+        "result": "failed"
+      }
+    },
+    {
+      "current": "running",
+      "decision": "stop",
+      "outcome": {
+        "result": "cancelled"
+      }
+    },
+    {
+      "current": "waiting",
+      "decision": "continue",
+      "outcome": {
+        "result": "waiting"
+      }
+    },
+    {
+      "current": "waiting",
+      "decision": "completed",
+      "outcome": {
+        "result": "completed"
+      }
+    },
+    {
+      "current": "waiting",
+      "decision": "blocked",
+      "outcome": {
+        "result": "blocked"
+      }
+    },
+    {
+      "current": "waiting",
+      "decision": "needs_user",
+      "outcome": {
+        "result": "needs_user"
+      }
+    },
+    {
+      "current": "waiting",
+      "decision": "failed",
+      "outcome": {
+        "result": "failed"
+      }
+    },
+    {
+      "current": "waiting",
+      "decision": "stop",
+      "outcome": {
+        "result": "cancelled"
+      }
+    },
+    {
+      "current": "paused",
+      "decision": "continue",
+      "outcome": {
+        "result": "waiting"
+      }
+    },
+    {
+      "current": "paused",
+      "decision": "completed",
+      "outcome": {
+        "result": "completed"
+      }
+    },
+    {
+      "current": "paused",
+      "decision": "blocked",
+      "outcome": {
+        "result": "blocked"
+      }
+    },
+    {
+      "current": "paused",
+      "decision": "needs_user",
+      "outcome": {
+        "result": "needs_user"
+      }
+    },
+    {
+      "current": "paused",
+      "decision": "failed",
+      "outcome": {
+        "result": "failed"
+      }
+    },
+    {
+      "current": "paused",
+      "decision": "stop",
+      "outcome": {
+        "result": "cancelled"
+      }
+    },
+    {
+      "current": "needs_user",
+      "decision": "continue",
+      "outcome": {
+        "result": "waiting"
+      }
+    },
+    {
+      "current": "needs_user",
+      "decision": "completed",
+      "outcome": {
+        "result": "completed"
+      }
+    },
+    {
+      "current": "needs_user",
+      "decision": "blocked",
+      "outcome": {
+        "result": "blocked"
+      }
+    },
+    {
+      "current": "needs_user",
+      "decision": "needs_user",
+      "outcome": {
+        "result": "needs_user"
+      }
+    },
+    {
+      "current": "needs_user",
+      "decision": "failed",
+      "outcome": {
+        "result": "failed"
+      }
+    },
+    {
+      "current": "needs_user",
+      "decision": "stop",
+      "outcome": {
+        "result": "cancelled"
+      }
+    },
+    {
+      "current": "retry_wait",
+      "decision": "continue",
+      "outcome": {
+        "result": "waiting"
+      }
+    },
+    {
+      "current": "retry_wait",
+      "decision": "completed",
+      "outcome": {
+        "result": "completed"
+      }
+    },
+    {
+      "current": "retry_wait",
+      "decision": "blocked",
+      "outcome": {
+        "result": "blocked"
+      }
+    },
+    {
+      "current": "retry_wait",
+      "decision": "needs_user",
+      "outcome": {
+        "result": "needs_user"
+      }
+    },
+    {
+      "current": "retry_wait",
+      "decision": "failed",
+      "outcome": {
+        "result": "failed"
+      }
+    },
+    {
+      "current": "retry_wait",
+      "decision": "stop",
+      "outcome": {
+        "result": "cancelled"
+      }
+    },
+    {
+      "current": "blocked",
+      "decision": "continue",
+      "outcome": {
+        "result": "waiting"
+      }
+    },
+    {
+      "current": "blocked",
+      "decision": "completed",
+      "outcome": {
+        "result": "completed"
+      }
+    },
+    {
+      "current": "blocked",
+      "decision": "blocked",
+      "outcome": {
+        "result": "blocked"
+      }
+    },
+    {
+      "current": "blocked",
+      "decision": "needs_user",
+      "outcome": {
+        "result": "needs_user"
+      }
+    },
+    {
+      "current": "blocked",
+      "decision": "failed",
+      "outcome": {
+        "result": "failed"
+      }
+    },
+    {
+      "current": "blocked",
+      "decision": "stop",
+      "outcome": {
+        "result": "cancelled"
+      }
+    },
+    {
+      "current": "cancelling",
+      "decision": "continue",
+      "outcome": {
+        "result": "cancelled"
+      }
+    },
+    {
+      "current": "cancelling",
+      "decision": "completed",
+      "outcome": {
+        "result": "cancelled"
+      }
+    },
+    {
+      "current": "cancelling",
+      "decision": "blocked",
+      "outcome": {
+        "result": "cancelled"
+      }
+    },
+    {
+      "current": "cancelling",
+      "decision": "needs_user",
+      "outcome": {
+        "result": "cancelled"
+      }
+    },
+    {
+      "current": "cancelling",
+      "decision": "failed",
+      "outcome": {
+        "result": "cancelled"
+      }
+    },
+    {
+      "current": "cancelling",
+      "decision": "stop",
+      "outcome": {
+        "result": "cancelled"
+      }
+    },
+    {
+      "current": "completed",
+      "decision": "continue",
+      "outcome": {
+        "error": "terminal lifecycle state cannot transition: completed",
+        "error_type": "ValueError"
+      }
+    },
+    {
+      "current": "completed",
+      "decision": "completed",
+      "outcome": {
+        "error": "terminal lifecycle state cannot transition: completed",
+        "error_type": "ValueError"
+      }
+    },
+    {
+      "current": "completed",
+      "decision": "blocked",
+      "outcome": {
+        "error": "terminal lifecycle state cannot transition: completed",
+        "error_type": "ValueError"
+      }
+    },
+    {
+      "current": "completed",
+      "decision": "needs_user",
+      "outcome": {
+        "error": "terminal lifecycle state cannot transition: completed",
+        "error_type": "ValueError"
+      }
+    },
+    {
+      "current": "completed",
+      "decision": "failed",
+      "outcome": {
+        "error": "terminal lifecycle state cannot transition: completed",
+        "error_type": "ValueError"
+      }
+    },
+    {
+      "current": "completed",
+      "decision": "stop",
+      "outcome": {
+        "error": "terminal lifecycle state cannot transition: completed",
+        "error_type": "ValueError"
+      }
+    },
+    {
+      "current": "failed",
+      "decision": "continue",
+      "outcome": {
+        "error": "terminal lifecycle state cannot transition: failed",
+        "error_type": "ValueError"
+      }
+    },
+    {
+      "current": "failed",
+      "decision": "completed",
+      "outcome": {
+        "error": "terminal lifecycle state cannot transition: failed",
+        "error_type": "ValueError"
+      }
+    },
+    {
+      "current": "failed",
+      "decision": "blocked",
+      "outcome": {
+        "error": "terminal lifecycle state cannot transition: failed",
+        "error_type": "ValueError"
+      }
+    },
+    {
+      "current": "failed",
+      "decision": "needs_user",
+      "outcome": {
+        "error": "terminal lifecycle state cannot transition: failed",
+        "error_type": "ValueError"
+      }
+    },
+    {
+      "current": "failed",
+      "decision": "failed",
+      "outcome": {
+        "error": "terminal lifecycle state cannot transition: failed",
+        "error_type": "ValueError"
+      }
+    },
+    {
+      "current": "failed",
+      "decision": "stop",
+      "outcome": {
+        "error": "terminal lifecycle state cannot transition: failed",
+        "error_type": "ValueError"
+      }
+    },
+    {
+      "current": "cancelled",
+      "decision": "continue",
+      "outcome": {
+        "error": "terminal lifecycle state cannot transition: cancelled",
+        "error_type": "ValueError"
+      }
+    },
+    {
+      "current": "cancelled",
+      "decision": "completed",
+      "outcome": {
+        "error": "terminal lifecycle state cannot transition: cancelled",
+        "error_type": "ValueError"
+      }
+    },
+    {
+      "current": "cancelled",
+      "decision": "blocked",
+      "outcome": {
+        "error": "terminal lifecycle state cannot transition: cancelled",
+        "error_type": "ValueError"
+      }
+    },
+    {
+      "current": "cancelled",
+      "decision": "needs_user",
+      "outcome": {
+        "error": "terminal lifecycle state cannot transition: cancelled",
+        "error_type": "ValueError"
+      }
+    },
+    {
+      "current": "cancelled",
+      "decision": "failed",
+      "outcome": {
+        "error": "terminal lifecycle state cannot transition: cancelled",
+        "error_type": "ValueError"
+      }
+    },
+    {
+      "current": "cancelled",
+      "decision": "stop",
+      "outcome": {
+        "error": "terminal lifecycle state cannot transition: cancelled",
+        "error_type": "ValueError"
+      }
+    }
+  ],
+  "turn": [
+    {
+      "current": "initial",
+      "outcome": {
+        "error": "invalid turn transition: initial -> initial",
+        "error_type": "ValueError"
+      },
+      "target": "initial"
+    },
+    {
+      "current": "initial",
+      "outcome": {
+        "result": "running"
+      },
+      "target": "running"
+    },
+    {
+      "current": "initial",
+      "outcome": {
+        "error": "invalid turn transition: initial -> committed",
+        "error_type": "ValueError"
+      },
+      "target": "committed"
+    },
+    {
+      "current": "running",
+      "outcome": {
+        "error": "invalid turn transition: running -> initial",
+        "error_type": "ValueError"
+      },
+      "target": "initial"
+    },
+    {
+      "current": "running",
+      "outcome": {
+        "error": "invalid turn transition: running -> running",
+        "error_type": "ValueError"
+      },
+      "target": "running"
+    },
+    {
+      "current": "running",
+      "outcome": {
+        "result": "committed"
+      },
+      "target": "committed"
+    },
+    {
+      "current": "committed",
+      "outcome": {
+        "error": "invalid turn transition: committed -> initial",
+        "error_type": "ValueError"
+      },
+      "target": "initial"
+    },
+    {
+      "current": "committed",
+      "outcome": {
+        "error": "invalid turn transition: committed -> running",
+        "error_type": "ValueError"
+      },
+      "target": "running"
+    },
+    {
+      "current": "committed",
+      "outcome": {
+        "error": "invalid turn transition: committed -> committed",
+        "error_type": "ValueError"
+      },
+      "target": "committed"
+    }
+  ],
+  "workflow_sources": {
+    "dependency": "workflow",
+    "description": "trigger",
+    "explicit": "explicit",
+    "name": "trigger",
+    "trigger:file": "trigger"
+  },
+  "workflow_statuses": [
+    "pending",
+    "active",
+    "satisfied",
+    "blocked",
+    "skipped"
+  ]
+}

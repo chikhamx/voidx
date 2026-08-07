@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voidx.llm.providers import base
+import voidx.llm.providers.base as base
 from voidx.llm.providers.base import ProviderSpec
 from voidx.llm.providers.common import nested_reasoning
 

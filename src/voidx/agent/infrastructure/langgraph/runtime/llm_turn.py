@@ -24,12 +24,8 @@ from voidx.agent.application.prompts import (
 )
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.agent.infrastructure.langgraph.state import AgentState
-from voidx.runtime.task_state import (
-    TaskState,
-    TodoRunState,
-    goal_label,
-    goal_type_from_join,
-)
+from voidx.agent.domain.task.state import TaskState, goal_label, goal_type_from_join
+from voidx.agent.domain.task.todo import TodoRunState
 from voidx.agent.infrastructure.langgraph.runtime.tool_surface import (
     ToolSurfaceContext,
     resolve_tool_surface,

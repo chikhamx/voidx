@@ -1,8 +1,11 @@
 """Gateway permission classification: mcp op=call → mcp:{server}:{tool}."""
 
-from voidx.permission.context import PermissionContext
-from voidx.permission.engine import authorize_tool_call
-from voidx.permission.rules import PermissionCapability, classify_tool_call
+from voidx.tooling.domain.authorization import PermissionContext
+from voidx.tooling.application.authorization import authorize_tool_call
+from voidx.tooling.policy.permission.rules import (
+    PermissionCapability,
+    classify_tool_call,
+)
 
 
 def _classify(args: dict):

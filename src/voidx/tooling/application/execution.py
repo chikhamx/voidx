@@ -1,0 +1,75 @@
+"""Explicit application services used by scoped Tooling plugins."""
+
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+
+from pydantic import ConfigDict, Field, SkipValidation
+
+from voidx.tooling.domain.context import ToolExecutionContext
+from voidx.tooling.domain.file_tracking import FileStateStore
+from voidx.tooling.domain.grants import AccessGrants
+from voidx.tooling.ports.interaction import InteractionPort
+from voidx.tooling.ports.post_edit import PostEditFormatter
+from voidx.tooling.ports.invoker import ToolInvoker
+from voidx.tooling.ports.process import ProcessSandbox
+
+
+GrantWriter = Callable[..., object | Awaitable[object]]
+GrantTargetLocker = Callable[..., object | Awaitable[object]]
+ExecutionLeaseFactory = Callable[[str], object]
+
+
+@dataclass
+class AuthorizationRuntime:
+    read_files: list[str] = field(default_factory=list)
+    read_dirs: list[str] = field(default_factory=list)
+    write_files: list[str] = field(default_factory=list)
+    write_dirs: list[str] = field(default_factory=list)
+    access_grants_reader: Callable[[], AccessGrants] | None = None
+    revocation_epoch_reader: Callable[[], int] | None = None
+    grant_writer: GrantWriter | None = None
+    target_locker: GrantTargetLocker | None = None
+    execution_lease_factory: ExecutionLeaseFactory | None = None
+    interaction: InteractionPort | None = None
+
+    def access_grants(self) -> AccessGrants:
+        if self.access_grants_reader is not None:
+            return self.access_grants_reader()
+        return AccessGrants.from_parts(
+            readable_files=self.read_files,
+            readable_dirs=self.read_dirs,
+            writable_files=self.write_files,
+            writable_dirs=self.write_dirs,
+        )
+
+    def sandbox_paths(self, *, write: bool) -> list[str]:
+        writable = [*self.write_files, *self.write_dirs]
+        return writable if write else [*self.read_files, *self.read_dirs, *writable]
+
+
+
+
+class CallbackInteractionPort:
+    def __init__(self, callback: Callable[..., object]) -> None:
+        self._callback = callback
+
+    async def request(self, interaction):
+        result = self._callback(interaction)
+        return await result if isinstance(result, Awaitable) else result
+
+
+class FileToolContext(ToolExecutionContext):
+    authorization_service: SkipValidation[AuthorizationRuntime] = Field(default_factory=AuthorizationRuntime)
+    file_state: SkipValidation[FileStateStore] = Field(default_factory=FileStateStore)
+    post_edit_formatter: SkipValidation[PostEditFormatter | None] = None
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+class ShellToolContext(FileToolContext):
+    process_sandbox: SkipValidation[ProcessSandbox | None] = None
+    tool_invoker: SkipValidation[ToolInvoker | None] = None
+
+
+__all__ = ["AuthorizationRuntime", "FileStateStore", "FileToolContext", "ShellToolContext"]

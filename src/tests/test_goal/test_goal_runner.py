@@ -3,10 +3,10 @@ from __future__ import annotations
 import pytest
 from langchain_core.messages import AIMessage
 
-from voidx.agent.domain.goal import GOAL_PROFILE, GoalSpec, GoalState
+from voidx.agent.domain.automation.goal import GOAL_PROFILE, GoalSpec, GoalState
 from voidx.agent.domain.thread import AgentThread, LifecycleState
-from voidx.agent.goal.runner import GoalRuntimeRunner
-from voidx.agent.runtime.contracts import TurnResult
+from voidx.agent.application.automation.goal.runner import GoalRuntimeRunner
+from voidx.agent.application.runtime.contracts import TurnResult
 
 
 class Runtime:
@@ -83,9 +83,9 @@ async def test_goal_runner_fails_closed_when_evaluator_submits_nothing() -> None
 
 @pytest.mark.asyncio
 async def test_goal_runner_blocks_before_work_when_attempt_limit_reached() -> None:
-    from voidx.agent.domain.goal import GoalSpec, GoalState
+    from voidx.agent.domain.automation.goal import GoalSpec, GoalState
     from voidx.agent.domain.thread import AgentThread
-    from voidx.agent.goal.runner import GoalRuntimeRunner
+    from voidx.agent.application.automation.goal.runner import GoalRuntimeRunner
 
     class Runtime:
         calls = 0

@@ -3,8 +3,9 @@ from langchain_core.messages import AIMessage
 
 from voidx.agent.application.agents import AgentDef
 from voidx.config import Config
-from voidx.runtime import GoalResolution, GoalSpec, IntentResolution, PlanResolution, TaskIntent
-from voidx.tools.agent import AgentResultContract
+from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
+from voidx.agent.domain.task.intent import TaskIntent
+from voidx.agent.adapters.tools.subagent import AgentResultContract
 
 
 class FakeModel:

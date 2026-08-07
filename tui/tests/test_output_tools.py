@@ -6,8 +6,8 @@ from rich.cells import cell_len
 from rich.console import Console
 from rich.text import Text
 
-from voidx.ui.output.dock import dock
-from voidx.ui.output.dock.formatting import text_from_line
+from voidx.presentation.output.dock import dock
+from voidx.presentation.output.dock.formatting import text_from_line
 
 
 def test_turn_render_uses_full_width_user_background(tmp_path):
@@ -28,7 +28,7 @@ def test_turn_render_uses_full_width_user_background(tmp_path):
 
 
 def test_tool_call_renders_metadata_with_branch_rows():
-    from voidx.ui.output.tree import OutputTree
+    from voidx.presentation.output.tree import OutputTree
 
     tree = OutputTree()
     assistant = tree.new_node(tree.root, node_type="assistant", header="● voidx")
@@ -54,7 +54,7 @@ def test_tool_call_renders_metadata_with_branch_rows():
 
 
 def test_tool_call_text_aligns_with_assistant_text_start():
-    from voidx.ui.output.tree import OutputTree
+    from voidx.presentation.output.tree import OutputTree
 
     tree = OutputTree()
     assistant = tree.new_node(tree.root, node_type="assistant", header="● voidx")
@@ -80,7 +80,7 @@ def test_tool_call_text_aligns_with_assistant_text_start():
 
 
 def test_agent_text_blocks_are_spaced_after_tool_calls():
-    from voidx.ui.output.tree import OutputTree
+    from voidx.presentation.output.tree import OutputTree
 
     tree = OutputTree()
     assistant = tree.new_node(tree.root, node_type="assistant", header="")
@@ -107,7 +107,7 @@ def test_agent_text_blocks_are_spaced_after_tool_calls():
 
 
 def test_thinking_stream_starts_immediately_after_last_tool_call_without_header():
-    from voidx.ui.output.tree import OutputTree
+    from voidx.presentation.output.tree import OutputTree
 
     tree = OutputTree()
     assistant = tree.new_node(tree.root, node_type="assistant", header="")

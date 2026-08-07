@@ -17,7 +17,7 @@ cli = typer.Typer(
 
 
 def _vconsole():
-    from voidx.ui.output.console import VoidConsole
+    from voidx.presentation.output.console import VoidConsole
     return VoidConsole()
 
 
@@ -30,7 +30,7 @@ async def _select_start_session(
     resume: str | None,
     vconsole,
 ):
-    from voidx.memory.session import (
+    from voidx.agent.adapters.persistence.session_repository import (
         get_session,
     )
 
@@ -58,15 +58,15 @@ async def _run_chat(
     web_port: int = 0,
     chat: bool = False,
 ) -> None:
-    from voidx.ui.output.dock import set_dock, BottomInputDock
+    from voidx.presentation.output.dock import set_dock, BottomInputDock
     set_dock(BottomInputDock())
 
-    from voidx.config import Settings
-    from voidx.agent.composition import build_agent_app
+    from voidx.bootstrap.agent import build_agent_app
+    from voidx.bootstrap.application import build_settings
 
     vconsole = _vconsole()
     ws_path = str(Path(workspace).resolve())
-    settings = await Settings.create(ws_path)
+    settings = await build_settings(ws_path)
 
     # Bind settings to catalog early so list_models() merges custom models
     from voidx.llm.catalog import bind_settings
@@ -92,7 +92,7 @@ async def _run_chat(
     )
 
     if not session and (chat or new_session):
-        from voidx.memory.session import create_session
+        from voidx.agent.adapters.persistence.session_repository import create_session
         session = await create_session(
             workspace=ws_path,
             provider=cfg.model.provider,
@@ -153,7 +153,7 @@ def main(
 @cli.command()
 def sessions() -> None:
     """List saved sessions."""
-    from voidx.memory.session import list_sessions
+    from voidx.agent.adapters.persistence.session_repository import list_sessions
     vconsole = _vconsole()
 
     async def _run():

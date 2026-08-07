@@ -13,16 +13,17 @@ from voidx.agent.infrastructure.langgraph.runtime.streaming import stream_llm as
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
 from voidx.agent.application.runtime_context import RuntimeContextBuilder
-from voidx.runtime.task_state import TaskState, TodoRunState
+from voidx.agent.domain.task.state import TaskState
+from voidx.agent.domain.task.todo import TodoRunState
 from voidx.config import Config, ModelConfig
 from voidx.llm.compaction import CompactionSelection
 from voidx.llm.message_markers import is_guidance_message
-from voidx.memory.context_frames import load_context_frames
-from voidx.memory.session import MessageRow, create_session, delete_session, save_message
-from voidx.ui.output.console import StreamingRenderer
-from voidx.ui.output.dock import ANSI_LINE_PREFIX, BottomInputDock, set_dock
-from voidx.ui.output.events import AnsiAppended, DockEventConsumer, StatusFinished, StatusUpdated, ui_events
-from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
+from voidx.agent.adapters.persistence.context_frame_repository import load_context_frames
+from voidx.agent.adapters.persistence.session_repository import MessageRow, create_session, delete_session, save_message
+from voidx.presentation.output.console import StreamingRenderer
+from voidx.presentation.output.dock import ANSI_LINE_PREFIX, BottomInputDock, set_dock
+from voidx.presentation.output.events import AnsiAppended, DockEventConsumer, StatusFinished, StatusUpdated, ui_events
+from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 
 def _plain(line: str) -> str:
     return line.replace(ANSI_LINE_PREFIX, "")
@@ -90,7 +91,7 @@ class FakeDsmlStreamingModel:
             '也必须在 commands 列表中注册:\n\n'
             '<｜｜DSML｜｜tool_calls>\n'
             '<｜｜DSML｜｜invoke name="search">\n'
-            '<｜｜DSML｜｜parameter name="path" string="true">src/voidx/ui/commands.py</｜｜DSML｜｜parameter>\n'
+            '<｜｜DSML｜｜parameter name="path" string="true">src/voidx/presentation/commands.py</｜｜DSML｜｜parameter>\n'
             '<｜｜DSML｜｜parameter name="pattern" string="true">permissions</｜｜DSML｜｜parameter>\n'
             '</｜｜DSML｜｜invoke>\n'
             '</｜｜DSML｜｜tool_calls>'
@@ -105,7 +106,7 @@ class FakeMalformedDsmlStreamingModel:
         yield AIMessageChunk(content=(
             '<|||DSML||tool_calls>\n'
             '<||DSML||invoke name="search">\n'
-            '<||DSML||parameter name="path" string="true">src/voidx/ui/commands.py</||DSML||parameter>\n'
+            '<||DSML||parameter name="path" string="true">src/voidx/presentation/commands.py</||DSML||parameter>\n'
             '</||DSML||invoke>\n'
             '</|||DSML||tool_calls>'
         ))

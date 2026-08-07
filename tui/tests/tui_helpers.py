@@ -7,8 +7,8 @@ from rich.console import Console
 from rich.text import Text
 
 
-from voidx.ui.commands import COMMANDS
-from voidx.ui.output.dock import BottomInputDock, set_dock
+from voidx.presentation.commands import COMMANDS
+from voidx.presentation.output.dock import BottomInputDock, set_dock
 from voidx_cli import PureTui
 
 

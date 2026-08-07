@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from voidx.agent.slash import SlashHandler
 from voidx.agent.slash.registry import SLASH_COMMANDS
-from voidx.ui.commands import COMMANDS
+from voidx.presentation.commands import COMMANDS
 
 
 def test_registry_entries_are_well_formed() -> None:

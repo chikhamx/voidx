@@ -11,7 +11,7 @@ import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, RemoveMessage, SystemMessage, ToolMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
-import voidx.memory.store as store
+import voidx.persistence.sqlite as store
 
 from voidx.agent.application.agents import (
     AgentDef,
@@ -30,7 +30,7 @@ from voidx.agent.application.runtime_context import InteractionMode, RuntimeCont
 from voidx.config import Config, Settings, UserProfile
 from voidx.llm.compaction import CompactionSelection
 from voidx.agent.application.instruction import InstructionService, WorkflowRuntimeContext
-from voidx.memory.session import (
+from voidx.agent.adapters.persistence.session_repository import (
     MessageRow,
     SessionInfo,
     create_session,
@@ -38,18 +38,20 @@ from voidx.memory.session import (
     load_messages,
     save_message,
 )
-from voidx.memory.transcript import load_transcript
-from voidx.permission.service import PermissionService
-from voidx.runtime import GoalResolution, GoalSpec, IntentResolution, PlanResolution, TaskIntent
+from voidx.presentation.transcript_snapshot import load_transcript
+from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
+from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
+from voidx.agent.domain.task.intent import TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
-from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER
-from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
-from voidx.runtime.task_state import TaskState, ToolStatePatch, WorkflowRoute
-from voidx.tools.base import ToolContext, ToolResult
-from voidx.tools.agent import AgentResultContract, AgentTool
-from voidx.tools.registry import ToolRegistry
-from voidx.ui.output.dock import BottomInputDock, set_dock
-from voidx.ui.output.events import (
+from voidx.agent.application.automation.workflow.context import WORKFLOW_CONTEXT_MARKER
+from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
+from voidx.agent.domain.task.state import TaskState, ToolStatePatch, WorkflowRoute
+from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
+from voidx.tooling.domain.result import ToolResult
+from voidx.agent.adapters.tools.subagent import AgentResultContract, AgentTool
+from voidx.tooling.application.registry import ToolRegistry
+from voidx.presentation.output.dock import BottomInputDock, set_dock
+from voidx.presentation.output.events import (
     AssistantStreamCommitted,
     AssistantStreamUpdated,
     DockEventConsumer,
@@ -171,8 +173,8 @@ async def test_execute_tools_keeps_non_todo_result_in_mixed_batch(tmp_path):
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
             return ToolResult(output="read output")
 
-    graph.tools.register("todo", FakeTodoTool(), "fake todo", {"type": "object", "properties": {}})
-    graph.tools.register("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
+    graph.tools.replace("todo", FakeTodoTool(), "fake todo", {"type": "object", "properties": {}})
+    graph.tools.replace("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
 
     async def allow_all(
         tool_calls,
@@ -220,7 +222,7 @@ async def test_execute_tools_warns_on_malformed_todo_metadata_without_events(tmp
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
             return ToolResult(output="todo output", metadata={"todo_items": "bad"})
 
-    graph.tools.register("todo", FakeTodoTool(), "fake todo", {"type": "object", "properties": {}})
+    graph.tools.replace("todo", FakeTodoTool(), "fake todo", {"type": "object", "properties": {}})
     monkeypatch.setattr(graph._ui.ui, "warn", warnings.append)
 
     async def allow_all(
@@ -270,7 +272,7 @@ async def test_execute_tools_read_todo_no_warning_without_events(tmp_path, monke
                 metadata={"todo_op": "read"},
             )
 
-    graph.tools.register("todo", FakeTodoTool(), "fake todo", {"type": "object", "properties": {}})
+    graph.tools.replace("todo", FakeTodoTool(), "fake todo", {"type": "object", "properties": {}})
     monkeypatch.setattr(graph._ui.ui, "warn", warnings.append)
 
     async def allow_all(
@@ -319,7 +321,7 @@ async def test_execute_tools_read_todo_no_warning_with_events(tmp_path, monkeypa
                 metadata={"todo_op": "read"},
             )
 
-    graph.tools.register("todo", FakeTodoTool(), "fake todo", {"type": "object", "properties": {}})
+    graph.tools.replace("todo", FakeTodoTool(), "fake todo", {"type": "object", "properties": {}})
     monkeypatch.setattr(graph._ui, "via_events", lambda: True)
 
     async def fake_emit(event):
@@ -503,7 +505,7 @@ async def test_execute_tools_wraps_write_risk_tool_with_workspace_write_lock(tmp
             events.append(("execute", ctx.session_id))
             return ToolResult(output="write output")
 
-    graph.tools.register("write", FakeWriteTool(), "fake write", {"type": "object", "properties": {}})
+    graph.tools.replace("write", FakeWriteTool(), "fake write", {"type": "object", "properties": {}})
 
     async def allow_all(
         tool_calls,
@@ -562,7 +564,7 @@ async def test_execute_tools_releases_workspace_write_lock_on_tool_exception(tmp
             events.append(("execute", ctx.session_id))
             raise RuntimeError("boom")
 
-    graph.tools.register("write", FailingWriteTool(), "failing write", {"type": "object", "properties": {}})
+    graph.tools.replace("write", FailingWriteTool(), "failing write", {"type": "object", "properties": {}})
 
     async def allow_all(
         tool_calls,
@@ -621,7 +623,7 @@ async def test_execute_tools_does_not_lock_read_only_tool(tmp_path):
             events.append(("execute", ctx.session_id))
             return ToolResult(output="read output")
 
-    graph.tools.register("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
+    graph.tools.replace("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
 
     async def allow_all(
         tool_calls,
@@ -652,7 +654,7 @@ async def test_execute_tools_does_not_lock_read_only_tool(tmp_path):
 @pytest.mark.asyncio
 async def test_execute_tools_terminates_turn_when_tool_started_notification_times_out(tmp_path, monkeypatch):
     from voidx.agent.infrastructure.langgraph.runtime.tool_executor import executor as executor_module
-    from voidx.ui.output.events.bus import UiEventTimeout
+    from voidx.presentation.output.events.bus import UiEventTimeout
 
     graph = _graph(tmp_path)
 
@@ -666,7 +668,7 @@ async def test_execute_tools_terminates_turn_when_tool_started_notification_time
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
             return ToolResult(output="should not execute")
 
-    graph.tools.register("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
+    graph.tools.replace("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
 
     async def allow_all(
         tool_calls,
@@ -733,7 +735,7 @@ async def test_execute_tools_returns_tool_error_when_result_rendering_fails(tmp_
                 raise RuntimeError("render exploded")
             return None
 
-    graph.tools.register("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
+    graph.tools.replace("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
 
     async def allow_all(
         tool_calls,
@@ -787,7 +789,7 @@ async def test_execute_tools_emits_heartbeat_while_tool_is_still_running(tmp_pat
             await asyncio.sleep(0.03)
             return ToolResult(output="read output")
 
-    graph.tools.register("read", SlowReadTool(), "slow read", {"type": "object", "properties": {}})
+    graph.tools.replace("read", SlowReadTool(), "slow read", {"type": "object", "properties": {}})
 
     async def allow_all(
         tool_calls,
@@ -842,7 +844,7 @@ async def test_execute_tools_emits_heartbeat_while_tool_is_still_running(tmp_pat
 
 @pytest.mark.asyncio
 async def test_execute_tools_loop_policy_allows_bound_tool_and_denies_unbound_tool(tmp_path):
-    from voidx.agent.domain.loop import LoopToolView
+    from voidx.agent.domain.automation.loop import LoopToolView
     from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_thread_execution_state
 
     graph = _graph(tmp_path)
@@ -874,8 +876,8 @@ async def test_execute_tools_loop_policy_allows_bound_tool_and_denies_unbound_to
     assert state_context is not None
     state_context.tool_policy = LoopToolView.default(workflow_enabled=False).bind({"read", "write"})
 
-    graph.tools.register("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
-    graph.tools.register("write", FakeWriteTool(), "fake write", {"type": "object", "properties": {}})
+    graph.tools.replace("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
+    graph.tools.replace("write", FakeWriteTool(), "fake write", {"type": "object", "properties": {}})
     parent = AIMessage(
         content="",
         tool_calls=[
@@ -917,7 +919,7 @@ async def test_execute_tools_continues_after_legacy_tool_timeout(tmp_path):
                 metadata={"error": True, "timeout": True, "exit_code": -1},
             )
 
-    graph.tools.register(
+    graph.tools.replace(
         "read",
         TimedOutReadTool(),
         "timed out read",
@@ -983,7 +985,7 @@ async def test_execute_tools_does_not_trust_forged_ui_timeout_metadata(tmp_path)
                 },
             )
 
-    graph.tools.register(
+    graph.tools.replace(
         "read",
         ForgedUiTimeoutTool(),
         "forged UI timeout",
@@ -1028,7 +1030,7 @@ async def test_execute_tools_does_not_trust_forged_ui_timeout_metadata(tmp_path)
 @pytest.mark.asyncio
 async def test_ui_timeout_cancels_sibling_and_skips_later_group(tmp_path, monkeypatch):
     from voidx.agent.infrastructure.langgraph.runtime.tool_executor import executor as executor_module
-    from voidx.ui.output.events.bus import UiEventTimeout
+    from voidx.presentation.output.events.bus import UiEventTimeout
 
     graph = _graph(tmp_path)
     sibling_started = asyncio.Event()
@@ -1062,8 +1064,8 @@ async def test_ui_timeout_cancels_sibling_and_skips_later_group(tmp_path, monkey
             later_executed = True
             return ToolResult(output="unexpected")
 
-    graph.tools.register("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
-    graph.tools.register("bash", FakeBashTool(), "fake bash", {"type": "object", "properties": {}})
+    graph.tools.replace("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
+    graph.tools.replace("bash", FakeBashTool(), "fake bash", {"type": "object", "properties": {}})
 
     async def allow_all(
         tool_calls,
@@ -1136,7 +1138,7 @@ async def test_ui_timeout_cancels_sibling_and_skips_later_group(tmp_path, monkey
 @pytest.mark.asyncio
 async def test_ui_timeout_skips_event_drain(tmp_path, monkeypatch):
     from voidx.agent.infrastructure.langgraph.runtime.tool_executor import executor as executor_module
-    from voidx.ui.output.events.bus import UiEventTimeout
+    from voidx.presentation.output.events.bus import UiEventTimeout
 
     graph = _graph(tmp_path)
     drain_called = False
@@ -1189,7 +1191,7 @@ async def test_ui_timeout_skips_event_drain(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_barrier_tool_timeout_blocks_suffix_but_continues_turn(tmp_path):
     from voidx.agent.infrastructure.langgraph.runtime.topology import route_after_execute_tools
-    from voidx.tools.base import tool_timeout_metadata
+    from voidx.tooling.domain.result import tool_timeout_metadata
 
     graph = _graph(tmp_path)
     suffix_executed = False
@@ -1219,13 +1221,13 @@ async def test_barrier_tool_timeout_blocks_suffix_but_continues_turn(tmp_path):
             suffix_executed = True
             return ToolResult(output="unexpected")
 
-    graph.tools.register(
+    graph.tools.replace(
         "checkpoint",
         TimedOutCheckpointTool(),
         "timed out checkpoint",
         {"type": "object", "properties": {}},
     )
-    graph.tools.register(
+    graph.tools.replace(
         "read",
         SuffixReadTool(),
         "suffix read",
@@ -1283,7 +1285,7 @@ async def test_barrier_tool_timeout_blocks_suffix_but_continues_turn(tmp_path):
 async def test_ui_timeout_preserves_mixed_tool_result_order_and_reasons(tmp_path, monkeypatch):
     from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import tool_call_key
     from voidx.agent.infrastructure.langgraph.runtime.tool_executor import executor as executor_module
-    from voidx.ui.output.events.bus import UiEventTimeout
+    from voidx.presentation.output.events.bus import UiEventTimeout
 
     graph = _graph(tmp_path)
     slow_started = asyncio.Event()
@@ -1319,13 +1321,13 @@ async def test_ui_timeout_preserves_mixed_tool_result_order_and_reasons(tmp_path
             executed_ids.append("later-bash")
             return ToolResult(output="unexpected")
 
-    graph.tools.register(
+    graph.tools.replace(
         "read",
         MixedReadTool(),
         "mixed read",
         {"type": "object", "properties": {}},
     )
-    graph.tools.register(
+    graph.tools.replace(
         "bash",
         LaterBashTool(),
         "later bash",
@@ -1454,7 +1456,7 @@ async def test_infrastructure_results_do_not_pollute_runtime_guards():
 async def test_ordinary_tool_timeout_remains_runtime_guard_eligible():
     from voidx.agent.infrastructure.langgraph.runtime.tool_executor.guards import _record_runtime_guard_outcomes
     from voidx.agent.infrastructure.langgraph.runtime.tool_executor.types import _ExecutedTool, _tool_result_ok
-    from voidx.tools.base import tool_timeout_metadata
+    from voidx.tooling.domain.result import tool_timeout_metadata
 
     guard_state = RuntimeGuardState()
     host = SimpleNamespace(_pending_guidance=[])
@@ -1539,8 +1541,8 @@ async def test_real_event_bus_stall_terminates_turn_without_drain(tmp_path, monk
     termination that skips drain and leaves no pending task."""
     from voidx.agent.infrastructure.langgraph.runtime.tool_executor import executor as executor_module
     from voidx.agent.infrastructure.langgraph.runtime.topology import route_after_execute_tools
-    from voidx.ui.output.events.bus import UiEventBus
-    from voidx.ui.output.events.schema import ToolStarted
+    from voidx.presentation.output.events.bus import UiEventBus
+    from voidx.presentation.output.events.schema import ToolStarted
 
     graph = _graph(tmp_path)
 
@@ -1554,7 +1556,7 @@ async def test_real_event_bus_stall_terminates_turn_without_drain(tmp_path, monk
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
             return ToolResult(output="should not execute")
 
-    graph.tools.register("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
+    graph.tools.replace("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
 
     async def allow_all(
         tool_calls,
@@ -1659,7 +1661,7 @@ async def test_prefix_terminal_blocks_barrier_and_suffix(tmp_path, monkeypatch):
     from executing, and route to end."""
     from voidx.agent.infrastructure.langgraph.runtime.tool_executor import executor as executor_module
     from voidx.agent.infrastructure.langgraph.runtime.topology import route_after_execute_tools
-    from voidx.ui.output.events.bus import UiEventTimeout
+    from voidx.presentation.output.events.bus import UiEventTimeout
 
     graph = _graph(tmp_path)
     barrier_executed = False
@@ -1699,9 +1701,9 @@ async def test_prefix_terminal_blocks_barrier_and_suffix(tmp_path, monkeypatch):
             suffix_executed = True
             return ToolResult(output="unexpected")
 
-    graph.tools.register("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
-    graph.tools.register("checkpoint", FakeCheckpointTool(), "fake checkpoint", {"type": "object", "properties": {}})
-    graph.tools.register("bash", FakeBashTool(), "fake bash", {"type": "object", "properties": {}})
+    graph.tools.replace("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
+    graph.tools.replace("checkpoint", FakeCheckpointTool(), "fake checkpoint", {"type": "object", "properties": {}})
+    graph.tools.replace("bash", FakeBashTool(), "fake bash", {"type": "object", "properties": {}})
 
     async def allow_all(
         tool_calls,
@@ -1758,7 +1760,7 @@ async def test_barrier_terminal_blocks_suffix(tmp_path, monkeypatch):
     executing, and route to end."""
     from voidx.agent.infrastructure.langgraph.runtime.tool_executor import executor as executor_module
     from voidx.agent.infrastructure.langgraph.runtime.topology import route_after_execute_tools
-    from voidx.ui.output.events.bus import UiEventTimeout
+    from voidx.presentation.output.events.bus import UiEventTimeout
 
     graph = _graph(tmp_path)
     suffix_executed = False
@@ -1785,8 +1787,8 @@ async def test_barrier_terminal_blocks_suffix(tmp_path, monkeypatch):
             suffix_executed = True
             return ToolResult(output="unexpected")
 
-    graph.tools.register("checkpoint", FakeCheckpointTool(), "fake checkpoint", {"type": "object", "properties": {}})
-    graph.tools.register("bash", FakeBashTool(), "fake bash", {"type": "object", "properties": {}})
+    graph.tools.replace("checkpoint", FakeCheckpointTool(), "fake checkpoint", {"type": "object", "properties": {}})
+    graph.tools.replace("bash", FakeBashTool(), "fake bash", {"type": "object", "properties": {}})
 
     async def allow_all(
         tool_calls,
@@ -1838,7 +1840,7 @@ async def test_ui_timeout_no_inherited_block_after_recovery(tmp_path, monkeypatc
     """After a UI event bus timeout, the same tool call must execute without
     inheriting a repeated-failure block from the infrastructure event."""
     from voidx.agent.infrastructure.langgraph.runtime.tool_executor import executor as executor_module
-    from voidx.ui.output.events.bus import UiEventTimeout
+    from voidx.presentation.output.events.bus import UiEventTimeout
 
     graph = _graph(tmp_path)
 
@@ -1852,7 +1854,7 @@ async def test_ui_timeout_no_inherited_block_after_recovery(tmp_path, monkeypatc
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
             return ToolResult(output="read output")
 
-    graph.tools.register("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
+    graph.tools.replace("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
 
     async def allow_all(
         tool_calls,
@@ -1907,14 +1909,14 @@ async def test_ui_timeout_no_inherited_block_after_recovery(tmp_path, monkeypatc
 
 @pytest.mark.asyncio
 async def test_execute_tools_skips_calls_after_loop_commit_in_same_batch(tmp_path):
-    from voidx.agent.domain.loop import LOOP_PROFILE, LoopSpec
+    from voidx.agent.domain.automation.loop import LOOP_PROFILE, LoopSpec
     from voidx.agent.domain.turn_context import TurnExecutionContext
     from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
         ThreadExecutionState,
         _CURRENT_THREAD_EXECUTION_STATE,
     )
-    from voidx.agent.loop.controller import LoopAttemptController
-    from voidx.tools.loop import LoopTool
+    from voidx.agent.application.automation.loop.controller import LoopAttemptController
+    from voidx.agent.adapters.tools.automation.loop import LoopTool
 
     events: list[object] = []
 
@@ -1943,7 +1945,7 @@ async def test_execute_tools_skips_calls_after_loop_commit_in_same_batch(tmp_pat
     ))
     try:
         graph = _graph(tmp_path)
-        graph.tools.register("loop", LoopTool(), "loop", {"type": "object", "properties": {}})
+        graph.tools.replace("loop", LoopTool(), "loop", {"type": "object", "properties": {}})
 
         executed = []
 
@@ -1958,7 +1960,7 @@ async def test_execute_tools_skips_calls_after_loop_commit_in_same_batch(tmp_pat
                 executed.append("mcp")
                 return ToolResult(output="mcp output")
 
-        graph.tools.register("mcp", FakeMcpTool(), "fake mcp", {"type": "object", "properties": {}})
+        graph.tools.replace("mcp", FakeMcpTool(), "fake mcp", {"type": "object", "properties": {}})
 
         async def allow_all(tool_calls, plan_mode: bool, session_id: str, interaction_mode=None):
             return tool_calls, []
@@ -2001,14 +2003,14 @@ async def test_execute_tools_skips_calls_after_loop_commit_in_same_batch(tmp_pat
 
 @pytest.mark.asyncio
 async def test_execute_tools_stops_turn_after_goal_intake_init(tmp_path):
-    from voidx.agent.domain.goal import GOAL_PROFILE
+    from voidx.agent.domain.automation.goal import GOAL_PROFILE
     from voidx.agent.domain.turn_context import TurnExecutionContext
-    from voidx.agent.goal.intake_controller import GoalIntakeController
+    from voidx.agent.application.automation.goal.intake_controller import GoalIntakeController
     from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
         ThreadExecutionState,
         _CURRENT_THREAD_EXECUTION_STATE,
     )
-    from voidx.tools.goal import GoalTool
+    from voidx.agent.adapters.tools.automation.goal import GoalTool
 
     test_dock = BottomInputDock()
     set_dock(test_dock)
@@ -2031,7 +2033,7 @@ async def test_execute_tools_stops_turn_after_goal_intake_init(tmp_path):
     ))
     try:
         graph = _graph(tmp_path)
-        graph.tools.register("goal", GoalTool(), "goal", {"type": "object", "properties": {}})
+        graph.tools.replace("goal", GoalTool(), "goal", {"type": "object", "properties": {}})
 
         executed = []
 
@@ -2046,7 +2048,7 @@ async def test_execute_tools_stops_turn_after_goal_intake_init(tmp_path):
                 executed.append("mcp")
                 return ToolResult(output="mcp output")
 
-        graph.tools.register("mcp", FakeMcpTool(), "fake mcp", {"type": "object", "properties": {}})
+        graph.tools.replace("mcp", FakeMcpTool(), "fake mcp", {"type": "object", "properties": {}})
 
         async def allow_all(tool_calls, plan_mode: bool, session_id: str, interaction_mode=None):
             return tool_calls, []
@@ -2081,14 +2083,14 @@ async def test_execute_tools_stops_turn_after_goal_intake_init(tmp_path):
 
 @pytest.mark.asyncio
 async def test_execute_tools_stops_turn_after_goal_intake_cancel(tmp_path):
-    from voidx.agent.domain.goal import GOAL_PROFILE
+    from voidx.agent.domain.automation.goal import GOAL_PROFILE
     from voidx.agent.domain.turn_context import TurnExecutionContext
-    from voidx.agent.goal.intake_controller import GoalIntakeController
+    from voidx.agent.application.automation.goal.intake_controller import GoalIntakeController
     from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
         ThreadExecutionState,
         _CURRENT_THREAD_EXECUTION_STATE,
     )
-    from voidx.tools.goal import GoalTool
+    from voidx.agent.adapters.tools.automation.goal import GoalTool
 
     test_dock = BottomInputDock()
     set_dock(test_dock)
@@ -2111,7 +2113,7 @@ async def test_execute_tools_stops_turn_after_goal_intake_cancel(tmp_path):
     ))
     try:
         graph = _graph(tmp_path)
-        graph.tools.register("goal", GoalTool(), "goal", {"type": "object", "properties": {}})
+        graph.tools.replace("goal", GoalTool(), "goal", {"type": "object", "properties": {}})
 
         class CancelApp:
             async def ask_choice(self, prompt, choices, **kwargs):
@@ -2135,7 +2137,7 @@ async def test_execute_tools_stops_turn_after_goal_intake_cancel(tmp_path):
                 executed.append("mcp")
                 return ToolResult(output="mcp output")
 
-        graph.tools.register("mcp", FakeMcpTool(), "fake mcp", {"type": "object", "properties": {}})
+        graph.tools.replace("mcp", FakeMcpTool(), "fake mcp", {"type": "object", "properties": {}})
 
         async def allow_all(tool_calls, plan_mode: bool, session_id: str, interaction_mode=None):
             return tool_calls, []
@@ -2168,14 +2170,14 @@ async def test_execute_tools_stops_turn_after_goal_intake_cancel(tmp_path):
 
 @pytest.mark.asyncio
 async def test_execute_tools_stops_turn_after_goal_evaluator_decision(tmp_path):
-    from voidx.agent.domain.goal import GOAL_PROFILE
+    from voidx.agent.domain.automation.goal import GOAL_PROFILE
     from voidx.agent.domain.turn_context import TurnExecutionContext
-    from voidx.agent.goal.controller import GoalController
+    from voidx.agent.application.automation.goal.controller import GoalController
     from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
         ThreadExecutionState,
         _CURRENT_THREAD_EXECUTION_STATE,
     )
-    from voidx.tools.goal import GoalTool
+    from voidx.agent.adapters.tools.automation.goal import GoalTool
 
     test_dock = BottomInputDock()
     set_dock(test_dock)
@@ -2198,7 +2200,7 @@ async def test_execute_tools_stops_turn_after_goal_evaluator_decision(tmp_path):
     ))
     try:
         graph = _graph(tmp_path)
-        graph.tools.register("goal", GoalTool(), "goal", {"type": "object", "properties": {}})
+        graph.tools.replace("goal", GoalTool(), "goal", {"type": "object", "properties": {}})
 
         executed = []
 
@@ -2213,7 +2215,7 @@ async def test_execute_tools_stops_turn_after_goal_evaluator_decision(tmp_path):
                 executed.append("mcp")
                 return ToolResult(output="mcp output")
 
-        graph.tools.register("mcp", FakeMcpTool(), "fake mcp", {"type": "object", "properties": {}})
+        graph.tools.replace("mcp", FakeMcpTool(), "fake mcp", {"type": "object", "properties": {}})
 
         async def allow_all(tool_calls, plan_mode: bool, session_id: str, interaction_mode=None):
             return tool_calls, []

@@ -5,9 +5,9 @@ from pydantic import ValidationError
 
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.thread import AgentThread, LifecycleState
-from voidx.agent.domain.turn import TurnExecution
+from voidx.agent.domain.turn.state import TurnExecution
 from voidx.agent.domain.turn_context import TurnExecutionContext
-from voidx.agent.runtime.contracts import TurnRequest, TurnResult
+from voidx.agent.application.runtime.contracts import TurnRequest, TurnResult
 
 
 def test_runtime_profile_is_immutable_and_versioned():

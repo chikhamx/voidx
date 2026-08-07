@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from voidx.tools.base import ToolResult
-from voidx.workflow.auto_advance import auto_advance_events
-from voidx.workflow.runtime import (
+from voidx.tooling.domain.result import ToolResult
+from voidx.agent.application.automation.workflow.auto_advance import auto_advance_events
+from voidx.agent.application.automation.workflow.runtime import (
     WorkflowActivationSource,
     WorkflowRunState,
     WorkflowRunStatus,

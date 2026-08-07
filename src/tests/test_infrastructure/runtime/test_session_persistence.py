@@ -11,7 +11,7 @@ import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, RemoveMessage, SystemMessage, ToolMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
-import voidx.memory.store as store
+import voidx.persistence.sqlite as store
 from voidx.agent.domain.turn_context import TurnExecutionContext
 
 from voidx.agent.application.agents import (
@@ -32,7 +32,7 @@ from voidx.config import Config, Settings, UserProfile
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.llm.compaction import CompactionSelection
 from voidx.agent.application.instruction import InstructionService, WorkflowRuntimeContext
-from voidx.memory.session import (
+from voidx.agent.adapters.persistence.session_repository import (
     MessageRow,
     SessionInfo,
     create_session,
@@ -40,18 +40,21 @@ from voidx.memory.session import (
     load_messages,
     save_message,
 )
-from voidx.memory.transcript import load_transcript
-from voidx.permission.service import PermissionService
-from voidx.runtime import GoalResolution, GoalSpec, IntentResolution, PlanResolution, TaskIntent
+from voidx.presentation.transcript_snapshot import load_transcript
+from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
+from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
+from voidx.agent.domain.task.intent import TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
-from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER
-from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
-from voidx.runtime.task_state import TaskState, ToolStatePatch, WorkflowRoute
-from voidx.tools.base import ToolContext, ToolResult
-from voidx.tools.agent import AgentResultContract, AgentTool
-from voidx.tools.registry import ToolRegistry
-from voidx.ui.output.dock import BottomInputDock, set_dock
-from voidx.ui.output.events import DockEventConsumer, TurnStarted, ui_events
+from voidx.agent.application.automation.workflow.context import WORKFLOW_CONTEXT_MARKER
+from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
+from voidx.agent.domain.task.state import TaskState, ToolStatePatch
+from voidx.agent.domain.automation.workflow import WorkflowRoute
+from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
+from voidx.tooling.domain.result import ToolResult
+from voidx.agent.adapters.tools.subagent import AgentResultContract, AgentTool
+from voidx.tooling.application.registry import ToolRegistry
+from voidx.presentation.output.dock import BottomInputDock, set_dock
+from voidx.presentation.output.events import DockEventConsumer, TurnStarted, ui_events
 
 
 def _graph(tmp_path):
@@ -292,7 +295,7 @@ async def test_run_turn_uses_execution_context_session_id_for_persistence(tmp_pa
 @pytest.mark.asyncio
 async def test_run_turn_loads_execution_context_runtime_state(tmp_path):
     from voidx.agent.application.runtime_context import InteractionMode
-    from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
+    from voidx.agent.adapters.persistence.runtime_state_repository import RuntimeStateSnapshot, save_runtime_state
     from voidx.agent.domain.turn_context import TurnExecutionContext
 
     active = await create_session(workspace=str(tmp_path), title="Active")
@@ -387,7 +390,7 @@ async def test_run_turn_model_enabled_first_turn_syncs_default_task_state(tmp_pa
 @pytest.mark.asyncio
 async def test_run_turn_model_enabled_borrowed_context_does_not_leak_task_state(tmp_path):
     from voidx.agent.application.runtime_context import InteractionMode
-    from voidx.memory.runtime_state import RuntimeStateSnapshot, load_runtime_state, save_runtime_state
+    from voidx.agent.adapters.persistence.runtime_state_repository import RuntimeStateSnapshot, load_runtime_state, save_runtime_state
     from voidx.agent.domain.turn_context import TurnExecutionContext
 
     active = await create_session(workspace=str(tmp_path), title="Active")
@@ -446,7 +449,7 @@ async def test_run_turn_model_enabled_borrowed_context_does_not_leak_task_state(
 @pytest.mark.asyncio
 async def test_run_turn_isolates_concurrent_execution_context_state(tmp_path):
     from voidx.agent.application.runtime_context import InteractionMode
-    from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
+    from voidx.agent.adapters.persistence.runtime_state_repository import RuntimeStateSnapshot, save_runtime_state
     from voidx.agent.domain.turn_context import TurnExecutionContext
 
     session_a = await create_session(workspace=str(tmp_path), title="Session A")

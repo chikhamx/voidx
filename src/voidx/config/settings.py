@@ -13,7 +13,7 @@ from typing import Literal
 
 from voidx.config.defaults import DEFAULT_MODEL, DEFAULT_PROVIDER
 from voidx.config.models import Config, ModelConfig, Profile, UserProfile
-from voidx.config.ports import model_profile_store
+from voidx.config.ports import ModelProfileStore
 from voidx.config.settings_agent import SettingsAgentMixin
 from voidx.config.settings_api_keys import SettingsApiKeyMixin
 from voidx.config.settings_code_ide import SettingsCodeIdeMixin
@@ -25,7 +25,7 @@ from voidx.config.settings_retry import SettingsRetryMixin
 from voidx.config.settings_skills import SettingsSkillsMixin
 from voidx.config.settings_update import SettingsUpdateMixin
 from voidx.config.settings_web import SettingsWebMixin
-from voidx.paths import SETTINGS_FILE, SKILLS_STATE_FILE
+from voidx.platform.paths import SETTINGS_FILE, SKILLS_STATE_FILE
 
 logger = logging.getLogger(__name__)
 _SETTINGS_WRITE_LOCK = threading.RLock()
@@ -82,7 +82,13 @@ class Settings(
 ):
     """Persistent settings backed by ``.voidx/settings.json`` in the workspace directory."""
 
-    def __init__(self, workspace: str = ".") -> None:
+    def __init__(
+        self,
+        workspace: str = ".",
+        *,
+        profile_store: ModelProfileStore | None = None,
+    ) -> None:
+        self._profile_store = profile_store
         self._workspace = Path(workspace).resolve()
         self._path = self._workspace / SETTINGS_FILE
         self._global_path = _settings_home() / SETTINGS_FILE
@@ -95,8 +101,14 @@ class Settings(
         self._effective_cache: dict | None = None
 
     @classmethod
-    async def create(cls, workspace: str = ".") -> Settings:
+    async def create(
+        cls,
+        workspace: str = ".",
+        *,
+        profile_store: ModelProfileStore | None = None,
+    ) -> Settings:
         settings = cls.__new__(cls)
+        settings._profile_store = profile_store
         settings._workspace = Path(workspace).resolve()
         settings._path = settings._workspace / SETTINGS_FILE
         settings._global_path = _settings_home() / SETTINGS_FILE
@@ -317,8 +329,13 @@ class Settings(
 
     # ── profiles API ─────────────────────────────────────────────────────
 
+    def _profiles(self) -> ModelProfileStore:
+        if self._profile_store is None:
+            raise RuntimeError("model profile store was not configured by bootstrap")
+        return self._profile_store
+
     async def list_profiles(self) -> list[Profile]:
-        return await model_profile_store().list()
+        return await self._profiles().list()
 
     async def resolve_profile(self, name: str = "") -> Profile | None:
         if not name:
@@ -331,11 +348,11 @@ class Settings(
         return profiles[0] if profiles else None
 
     async def save_profile(self, profile: Profile, *, scope: ModelProfileScope = "local") -> Path:
-        await model_profile_store().save(profile)
+        await self._profiles().save(profile)
         return self.set_current_profile(profile.name, scope=scope)
 
     async def delete_profile(self, name: str) -> Path:
-        await model_profile_store().delete(name)
+        await self._profiles().delete(name)
         if self._current_profile_name() == name:
             profiles = await self.list_profiles()
             next_profile = profiles[0] if profiles else None
@@ -447,7 +464,7 @@ class Settings(
         )
 
     async def _get_profile(self, name: str) -> Profile | None:
-        return await model_profile_store().get(name)
+        return await self._profiles().get(name)
 
     async def _migrate_legacy_profiles(self) -> None:
         profiles_data = self._data.get("profiles", {})
@@ -475,7 +492,7 @@ class Settings(
                 base_url=base_url,
                 protocol=protocol,
             )
-            await model_profile_store().save(profile)
+            await self._profiles().save(profile)
             first_imported = first_imported or profile.name
             changed = True
 

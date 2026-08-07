@@ -7,8 +7,8 @@ import pytest
 
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.thread import AgentThread, LifecycleState, RuntimeDecision
-from voidx.agent.runtime.dispatcher import RuntimeDispatcher
-from voidx.memory.thread_store import ThreadStore
+from voidx.agent.application.runtime.dispatcher import RuntimeDispatcher
+from voidx.agent.adapters.persistence.thread_repository import ThreadStore
 
 
 @pytest.fixture(autouse=True)

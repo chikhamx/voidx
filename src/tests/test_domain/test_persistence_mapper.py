@@ -3,15 +3,11 @@ from voidx.agent.infrastructure.runtime_state_mapper import (
     agent_runtime_from_snapshot,
     snapshot_from_agent_runtime,
 )
-from voidx.memory.service import RuntimeStateSnapshot
-from voidx.runtime import (
-    GoalSpec,
-    InteractionMode,
-    TaskIntent,
-    TaskState,
-    TodoRunState,
-    WorkflowRoute,
-)
+from voidx.agent.adapters.persistence.runtime_state_repository import RuntimeStateSnapshot
+from voidx.agent.domain.task.state import GoalSpec, TaskState
+from voidx.agent.domain.task.intent import InteractionMode, TaskIntent
+from voidx.agent.domain.task.todo import TodoRunState
+from voidx.agent.domain.automation.workflow import WorkflowRoute
 
 
 def test_agent_runtime_snapshot_round_trip_preserves_persisted_json() -> None:

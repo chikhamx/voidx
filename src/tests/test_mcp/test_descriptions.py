@@ -5,7 +5,7 @@ import pytest
 
 from voidx.config import McpServerConfig
 from voidx.mcp.description_cache import McpDescriptionCache, description_fingerprint
-from voidx.mcp.description_generator import McpDescriptionBatch, McpDescriptionGenerator
+from voidx.tooling.adapters.mcp_description_generator import McpDescriptionBatch, McpDescriptionGenerator
 from voidx.mcp.schema import McpToolDef
 
 

@@ -535,6 +535,14 @@ def test_get_context_limit_xunfei_coding_plan():
     assert get_context_limit("xunfei-coding-plan") == 200_000
 
 
+def test_get_context_limit_floor_200k():
+    """Provider context limits never go below 200K; unknown providers fall back to 200K."""
+    assert get_context_limit("openrouter") == 200_000
+    assert get_context_limit("typex") == 200_000
+    assert get_context_limit("longcat") == 200_000
+    assert get_context_limit("no-such-provider") == 200_000
+
+
 def test_xunfei_coding_plan_strips_stainless_headers():
     """Third-party relays with openai protocol get x-stainless-* headers cleared."""
     model = create_chat_model(

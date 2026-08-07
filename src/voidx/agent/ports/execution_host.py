@@ -5,11 +5,11 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from voidx.agent.domain.state import SessionRuntimeState
-from voidx.agent.domain.turn import TurnPhase
+from voidx.agent.domain.turn.state import TurnPhase
 from voidx.config import Config, Settings
-from voidx.memory.service import SessionInfo
-from voidx.runtime.intent import InteractionMode
-from voidx.runtime.task_state import TaskState
+from voidx.agent.adapters.persistence.session_repository import SessionInfo
+from voidx.agent.domain.task.intent import InteractionMode
+from voidx.agent.domain.task.state import TaskState
 
 
 class ExecutionHost(Protocol):

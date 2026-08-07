@@ -2,17 +2,10 @@ import sys
 from pathlib import Path
 
 
-from voidx.runtime.task_state import (
-    GoalResolution,
-    GoalSpec,
-    IntentResolution,
-    PlanResolution,
-    TaskState,
-    TurnExchange,
-    WorkflowRoute,
-)
-from voidx.runtime.intent import TaskIntent
-from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
+from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution, TaskState, TurnExchange
+from voidx.agent.domain.automation.workflow import WorkflowRoute
+from voidx.agent.domain.task.intent import TaskIntent
+from voidx.agent.domain.automation.workflow import WorkflowRunState, WorkflowRunStatus
 
 
 def _resolution(

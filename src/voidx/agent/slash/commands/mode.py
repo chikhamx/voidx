@@ -1,8 +1,8 @@
 """Slash interaction-mode helpers and /goal command."""
 from __future__ import annotations
 
-from voidx.diffing import git_diff, git_diff_stat
-from voidx.runtime.intent import InteractionMode
+from voidx.tooling.adapters.git_diff import git_diff, git_diff_stat
+from voidx.agent.domain.task.intent import InteractionMode
 from voidx.runtime.ui import get_dock, paste_clipboard_image, session_tracker, ui
 
 
@@ -23,7 +23,7 @@ class ModeCommandsMixin:
         ui.print(f"[dim]Mode set to [cyan]{labels.get(parsed, parsed.value)}[/cyan]{suffix}[/dim]")
 
     async def _goal(self, arg: str) -> None:
-        from voidx.agent.domain.goal import GoalSpec
+        from voidx.agent.domain.automation.goal import GoalSpec
 
         text = arg.strip()
         if not text:

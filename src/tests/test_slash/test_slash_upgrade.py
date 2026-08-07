@@ -103,7 +103,7 @@ async def test_upgrade_on_off_status_usesettings(tmp_path, monkeypatch):
 
 
 def test_upgrade_commands_are_in_palette():
-    from voidx.ui.commands import COMMANDS
+    from voidx.presentation.commands import COMMANDS
 
     assert ("/upgrade", "Check for voidx updates") in COMMANDS
     assert ("/upgrade now", "Upgrade voidx in the current Python environment") in COMMANDS

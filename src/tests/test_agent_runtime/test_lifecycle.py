@@ -23,7 +23,7 @@ def test_lifecycle_completed_is_terminal_and_not_overwritten() -> None:
 
 
 def test_lifecycle_controller_clamps_continue_delay() -> None:
-    from voidx.agent.runtime.lifecycle import ContinuationPolicy, LifecycleController
+    from voidx.agent.application.runtime.lifecycle import ContinuationPolicy, LifecycleController
 
     controller = LifecycleController(
         ContinuationPolicy(min_delay_seconds=60, max_delay_seconds=300)

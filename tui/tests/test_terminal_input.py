@@ -9,8 +9,8 @@ from types import SimpleNamespace
 from rich.cells import cell_len
 from rich.console import Console
 
-from voidx.ui.commands import COMMANDS
-from voidx.ui.output.dock import dock
+from voidx.presentation.commands import COMMANDS
+from voidx.presentation.output.dock import dock
 import voidx_cli.terminal_mixin as terminal_mixin
 from voidx_cli import (
     PureTui,
@@ -451,7 +451,7 @@ def test_transient_output_appends_to_dock(tmp_path):
         title="LSP",
     )
 
-    from voidx.ui.output.dock import dock as dock_instance
+    from voidx.presentation.output.dock import dock as dock_instance
     tree_lines = dock_instance.tree.render(80)
     rendered = "\n".join(tree_lines)
 

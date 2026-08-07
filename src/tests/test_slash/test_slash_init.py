@@ -10,7 +10,7 @@ import pytest
 from voidx.agent.slash import SlashHandler
 from tests.test_slash.context import command_context
 from voidx.agent.slash.init_prompt import INIT_PROMPT
-from voidx.ui.commands import COMMANDS
+from voidx.presentation.commands import COMMANDS
 
 
 def _capture_output(monkeypatch):

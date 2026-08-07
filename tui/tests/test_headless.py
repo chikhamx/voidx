@@ -5,12 +5,12 @@ import asyncio
 import pytest
 
 from voidx.agent.application.coding_service import CODING_PROFILE
-from voidx.ui.output.types import ThreadExecutionContext
+from voidx.presentation.output.types import ThreadExecutionContext
 from tui_helpers import _tui
 
 
 def test_thread_context_compatibility_alias():
-    from voidx.ui.output.types import TurnExecutionContext
+    from voidx.presentation.output.types import TurnExecutionContext
 
     assert ThreadExecutionContext is TurnExecutionContext
 

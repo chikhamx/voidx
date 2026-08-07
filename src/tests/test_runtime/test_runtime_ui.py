@@ -12,7 +12,7 @@ def test_noop_ui_sink_does_not_load_ui_modules():
 
         from voidx.runtime.ui import console, ui, use_noop_ui_sink
 
-        preloaded = [name for name in sys.modules if name.startswith("voidx.ui")]
+        preloaded = [name for name in sys.modules if name.startswith("voidx.presentation")]
         if preloaded:
             raise SystemExit(f"preloaded UI modules: {preloaded[:5]}")
 
@@ -30,7 +30,7 @@ def test_noop_ui_sink_does_not_load_ui_modules():
         with console:
             console.print("captured")
 
-        loaded = [name for name in sys.modules if name.startswith("voidx.ui")]
+        loaded = [name for name in sys.modules if name.startswith("voidx.presentation")]
         if loaded:
             raise SystemExit(f"loaded UI modules: {loaded[:5]}")
         """
@@ -74,7 +74,7 @@ def test_console_proxy_supports_rich_live_context_manager():
 
 
 def test_frontend_factory_registers_and_creates_frontend():
-    from voidx.runtime import ui as runtime_ui
+    import voidx.runtime.ui as runtime_ui
 
     created = []
 
@@ -99,7 +99,7 @@ def test_frontend_factory_registers_and_creates_frontend():
 
 
 def test_frontend_factory_errors_without_registered_frontend():
-    from voidx.runtime import ui as runtime_ui
+    import voidx.runtime.ui as runtime_ui
 
     original_factory = runtime_ui._default_frontend_factory
     runtime_ui.reset_default_frontend()

@@ -1,15 +1,17 @@
 """MCP tools are exposed through the gateway only."""
 
+from tests.tool_registry import build_registry
 import json
 import sys
 
 import pytest
 
 from voidx.config import Settings
-from voidx.mcp.manager import McpManager
-from voidx.permission.service import PermissionService
-from voidx.tools.base import ToolContext
-from voidx.tools.registry import ToolRegistry
+from voidx.mcp.application.manager import McpManager
+from voidx.mcp.adapters.client import create_mcp_client
+from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
+from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
+from voidx.tooling.application.registry import ToolRegistry
 
 
 _FAKE_SERVER = """
@@ -86,8 +88,8 @@ class TestGatewayMode:
     @pytest.mark.asyncio
     async def test_gateway_mode_skips_direct_registration_but_keeps_catalog(self, tmp_path):
         settings = _write_env(tmp_path, {"mcp": {"exposure": "gateway"}})
-        registry = ToolRegistry(settings=settings)
-        manager = McpManager(settings, registry, PermissionService())
+        registry = build_registry(settings=settings)
+        manager = McpManager(settings.list_mcp_servers(), create_mcp_client)
 
         await manager.start_all()
         await manager.wait_ready()
@@ -113,8 +115,8 @@ class TestAutoExposure:
                 }
             }
         })
-        registry = ToolRegistry(settings=settings)
-        manager = McpManager(settings, registry, PermissionService())
+        registry = build_registry(settings=settings)
+        manager = McpManager(settings.list_mcp_servers(), create_mcp_client)
 
         await manager.start_all()
         await manager.wait_ready()
@@ -128,8 +130,8 @@ class TestAutoExposure:
     @pytest.mark.asyncio
     async def test_legacy_direct_mode_still_uses_gateway_without_wrappers(self, tmp_path):
         settings = _write_env(tmp_path)
-        registry = ToolRegistry(settings=settings)
-        manager = McpManager(settings, registry, PermissionService())
+        registry = build_registry(settings=settings)
+        manager = McpManager(settings.list_mcp_servers(), create_mcp_client)
 
         await manager.start_all()
         await manager.wait_ready()
@@ -143,8 +145,8 @@ class TestAutoExposure:
     @pytest.mark.asyncio
     async def test_legacy_hybrid_mode_still_uses_gateway_without_wrappers(self, tmp_path):
         settings = _write_env(tmp_path, {"mcp": {"exposure": "hybrid"}})
-        registry = ToolRegistry(settings=settings)
-        manager = McpManager(settings, registry, PermissionService())
+        registry = build_registry(settings=settings)
+        manager = McpManager(settings.list_mcp_servers(), create_mcp_client)
 
         await manager.start_all()
         await manager.wait_ready()
@@ -159,13 +161,13 @@ class TestAutoExposure:
 class TestGatewayEndToEnd:
     @pytest.mark.asyncio
     async def test_gateway_mode_full_call_flow(self, tmp_path):
-        from voidx.mcp.gateway import McpGatewayTool
+        from voidx.tooling.adapters.mcp import McpGatewayTool
 
         settings = _write_env(tmp_path, {"mcp": {"exposure": "gateway"}})
-        registry = ToolRegistry(settings=settings)
-        manager = McpManager(settings, registry, PermissionService())
+        registry = build_registry(settings=settings)
+        manager = McpManager(settings.list_mcp_servers(), create_mcp_client)
         gateway = McpGatewayTool(manager)
-        registry.register(gateway.id, gateway, gateway.description, gateway.parameters_schema())
+        registry.replace(gateway.id, gateway, gateway.description, gateway.parameters_schema())
 
         await manager.start_all()
         await manager.wait_ready()

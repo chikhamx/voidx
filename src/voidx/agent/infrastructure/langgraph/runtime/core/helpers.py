@@ -4,11 +4,11 @@ from enum import Enum
 
 from voidx.agent.application.agents import AgentDef
 from voidx.agent.application.runtime_context import COMPACTION_GUIDE_MARKER, InteractionMode
-from voidx.runtime.intent import PersonaName
+from voidx.agent.domain.task.intent import PersonaName
 from voidx.llm.compaction import SUMMARY_TEMPLATE
-from voidx.runtime.task_state import GoalResolution, TaskState
-from voidx.workflow import workflow_personas
-from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
+from voidx.agent.domain.task.state import GoalResolution, TaskState
+from voidx.agent.domain.automation.workflow_policy import workflow_personas
+from voidx.agent.domain.automation.workflow import WorkflowRunState, WorkflowRunStatus
 
 
 def _is_context_overflow_error(exc: Exception) -> bool:

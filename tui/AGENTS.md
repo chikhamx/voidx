@@ -28,7 +28,7 @@
 - `PureTui` composes behavior via mixins — keep new behavior in a mixin or dedicated module, not in `app.py`.
 - Renderers receive `RenderState` and write to a `Console`; they do not mutate state.
 - Input parsing is pure where possible — side effects (clipboard, submit) stay in `app.py`.
-- Use `voidx.ui.output.dock` for dock-aware output; never write to stdout directly.
+- Use `voidx.presentation.output.dock` for dock-aware output; never write to stdout directly.
 
 ## Testing
 - Tests in `tests/`, one file per concern, mirroring `voidx_cli/` modules.

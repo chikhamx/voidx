@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from voidx.agent.domain.loop import LoopDecision, LoopSpec
-from voidx.tools.base import ToolContext
-from voidx.tools.loop import LoopTool
+from voidx.agent.domain.automation.loop import LoopDecision, LoopSpec
+from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext, AgentToolRuntime
+from voidx.agent.adapters.tools.automation.loop import LoopTool
 
-from tests.test_tools.test_loop import FakeLoopController
+from tests.test_agent.adapters.tools.test_loop import FakeLoopController
 
 
 def _ctx(controller) -> ToolContext:
-    return ToolContext(workspace="/tmp/workspace", loop_controller=controller)
+    return ToolContext(workspace="/tmp/workspace", runtime=AgentToolRuntime(loop_control=controller))
 
 
 @pytest.mark.asyncio

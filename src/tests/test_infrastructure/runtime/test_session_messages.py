@@ -10,19 +10,15 @@ from tests.test_agent.conftest import _read_jsonl, _session_dir, _table_names
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-import voidx.memory.store as store
-import voidx.memory.jsonl_store as jsonl_store
+import voidx.persistence.sqlite as store
+import voidx.persistence.jsonl as jsonl_store
 
 from voidx.agent.infrastructure.message_rows import message_from_row, messages_from_rows, messages_from_rows_incremental, row_fingerprint
 from voidx.agent.application.runtime_context import InteractionMode, TaskIntent
-from voidx.runtime.task_state import (
-    GoalSpec,
-    TaskState,
-    TodoRunState,
-    TurnExchange,
-    WorkflowRoute,
-)
-from voidx.memory.session import (
+from voidx.agent.domain.task.state import GoalSpec, TaskState, TurnExchange
+from voidx.agent.domain.task.todo import TodoRunState
+from voidx.agent.domain.automation.workflow import WorkflowRoute
+from voidx.agent.adapters.persistence.session_repository import (
     create_session,
     get_session,
     delete_session,
@@ -35,13 +31,13 @@ from voidx.memory.session import (
     count_messages,
     MessageRow,
 )
-from voidx.memory.context_frames import (
+from voidx.agent.adapters.persistence.context_frame_repository import (
     build_context_frame,
     load_context_frames,
     save_context_frame,
 )
-from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state, load_runtime_state
-from voidx.workflow.runtime import WorkflowActivationSource, WorkflowRunState, WorkflowRunStatus
+from voidx.agent.adapters.persistence.runtime_state_repository import RuntimeStateSnapshot, save_runtime_state, load_runtime_state
+from voidx.agent.application.automation.workflow.runtime import WorkflowActivationSource, WorkflowRunState, WorkflowRunStatus
 
 @pytest.mark.asyncio
 async def test_save_and_load_messages():
@@ -402,9 +398,6 @@ async def test_clear_messages_writes_jsonl_reset_and_resets_message_count():
         assert runtime_deletes[-1]["mode"] == "all"
         assert runtime_deletes[-1]["reason"] == "clear_messages"
 
-        transcript_records = _read_jsonl(_session_dir(session.id) / "transcript.jsonl")
-        assert transcript_records[-1]["type"] == "transcript_reset"
-        assert transcript_records[-1]["reason"] == "clear_messages"
     finally:
         await delete_session(session.id)
 

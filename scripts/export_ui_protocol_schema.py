@@ -12,7 +12,7 @@ if str(SRC_ROOT) in sys.path:
     sys.path.remove(str(SRC_ROOT))
 sys.path.insert(0, str(SRC_ROOT))
 
-from voidx.ui.protocol import export_protocol_schema
+from voidx.presentation.protocol import export_protocol_schema
 
 
 def main() -> None:

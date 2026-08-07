@@ -8,8 +8,8 @@ from rich.cells import cell_len
 from rich.console import Console
 
 from voidx.llm.usage import UsageStats
-from voidx.ui.commands import COMMANDS
-from voidx.ui.output.types import UiStatus
+from voidx.presentation.commands import COMMANDS
+from voidx.presentation.output.types import UiStatus
 from voidx_cli import PureTui
 
 

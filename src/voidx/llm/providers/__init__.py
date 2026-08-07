@@ -1,26 +1,9 @@
-"""Built-in LLM providers — importing this package registers all specs.
+"""Provider registry primitives.
 
-Each provider module calls ``base.register`` at import time.  Keep the
-import list exhaustive; ``voidx.llm.provider`` and ``voidx.llm.catalog``
-resolve everything through the registry.
+Built-in providers are loaded explicitly by :mod:`voidx.llm.providers.registry`;
+importing this package does not import provider implementations.
 """
 
-from voidx.llm.providers import (
-    anthropic,
-    deepseek,
-    doubao,
-    gemini,
-    kimi,
-    longcat,
-    mimo,
-    minimax,
-    openai,
-    openrouter,
-    qwen,
-    typex,
-    xunfei,
-    zhipu,
-)
 from voidx.llm.providers.base import (
     PROTOCOL_DEEPSEEK,
     ProviderSpec,
@@ -28,6 +11,9 @@ from voidx.llm.providers.base import (
     get,
     register,
 )
+from voidx.llm.providers.registry import load_builtins
+
+load_builtins()
 
 __all__ = [
     "PROTOCOL_DEEPSEEK",
@@ -35,18 +21,4 @@ __all__ = [
     "all_specs",
     "get",
     "register",
-    "anthropic",
-    "deepseek",
-    "doubao",
-    "gemini",
-    "kimi",
-    "longcat",
-    "mimo",
-    "minimax",
-    "openai",
-    "openrouter",
-    "qwen",
-    "typex",
-    "xunfei",
-    "zhipu",
 ]

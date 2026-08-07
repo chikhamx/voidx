@@ -1,9 +1,9 @@
 """Language Server Protocol integration."""
 
-from __future__ import annotations
-
+from voidx.lsp.application.manager import LspManager
+from voidx.lsp.application.service import LspService
 from voidx.lsp.config import LSP_CONFIG_FILE, load_lsp_servers
-from voidx.lsp.schema import (
+from voidx.lsp.domain import (
     LspDiagnostic,
     LspDoctorCheck,
     LspLocation,
@@ -13,15 +13,6 @@ from voidx.lsp.schema import (
     LspServerConfig,
     LspSymbol,
 )
-
-
-def __getattr__(name: str):
-    if name == "LspManager":
-        from voidx.lsp.manager import LspManager
-
-        return LspManager
-    raise AttributeError(name)
-
 
 __all__ = [
     "LSP_CONFIG_FILE",
@@ -33,6 +24,7 @@ __all__ = [
     "LspRange",
     "LspRuntimeStatus",
     "LspServerConfig",
+    "LspService",
     "LspSymbol",
     "load_lsp_servers",
 ]

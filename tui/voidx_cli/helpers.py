@@ -8,8 +8,8 @@ from rich.cells import cell_len
 from rich.markup import escape as rich_escape
 from rich.text import Text
 
-from voidx.ui.output.dock.formatting import ANSI_LINE_PREFIX
-from voidx.ui.tools.file_picker import FileCandidate, format_size
+from voidx.presentation.output.dock.formatting import ANSI_LINE_PREFIX
+from voidx.presentation.tools.file_picker import FileCandidate, format_size
 
 _ANSI_STRIP_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 

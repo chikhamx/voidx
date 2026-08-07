@@ -7,17 +7,19 @@ from typing import Any, Protocol
 from voidx.agent.application.agent_service import RunLoopStartupError
 
 
-class AgentExecution(Protocol):
-    """Execution object required by the agent facade."""
-
+class AgentRunLoop(Protocol):
     async def run(self, **kwargs: Any) -> None: ...
 
 
 class AgentFacade:
-    """Stable application boundary around the current agent execution engine."""
+    """Stable application boundary with presentation supplied separately."""
 
-    def __init__(self, execution: AgentExecution) -> None:
+    def __init__(self, execution: Any, *, run_loop: AgentRunLoop) -> None:
         self._execution = execution
+        self._run_loop = run_loop
 
     async def run(self, **kwargs: Any) -> None:
-        await self._execution.run(**kwargs)
+        await self._run_loop.run(**kwargs)
+
+
+__all__ = ["AgentFacade", "RunLoopStartupError"]

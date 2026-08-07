@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from voidx.diffing import diff_stat
+from voidx.tooling.domain.diff import diff_stat
 from voidx.logging.tool_log import log_tool_event
 from voidx.runtime.ui import (
     FileChangeAppended,

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from voidx.mcp.schema import McpToolDef
-from voidx.paths import voidx_workspace_dir
+from voidx.platform.paths import voidx_workspace_dir
 
 _CACHE_VERSION = 1
 _CACHE_FILE_NAME = "mcp-descriptions.json"

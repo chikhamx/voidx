@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from rich.text import Text
 
-from voidx.ui.output.dock import dock
+from voidx.presentation.output.dock import dock
 from .helpers import _clip_cells
 
 

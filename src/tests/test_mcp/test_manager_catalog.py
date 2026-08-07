@@ -1,14 +1,16 @@
 """McpManager exposes discovered tools through a single McpCatalog snapshot."""
 
+from tests.tool_registry import build_registry
 import json
 import sys
 
 import pytest
 
 from voidx.config import Settings
-from voidx.mcp.manager import McpManager
-from voidx.permission.service import PermissionService
-from voidx.tools.registry import ToolRegistry
+from voidx.mcp.application.manager import McpManager
+from voidx.mcp.adapters.client import create_mcp_client
+from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
+from voidx.tooling.application.registry import ToolRegistry
 
 
 _FAKE_SERVER = """
@@ -57,7 +59,7 @@ def _write_env(tmp_path, tools_field=None):
 @pytest.mark.asyncio
 async def test_catalog_snapshot_reflects_discovered_tools(tmp_path):
     settings = _write_env(tmp_path)
-    manager = McpManager(settings, ToolRegistry(settings=settings), PermissionService())
+    manager = McpManager(settings.list_mcp_servers(), create_mcp_client)
 
     await manager.start_all()
     await manager.wait_ready()
@@ -77,7 +79,7 @@ async def test_catalog_snapshot_reflects_discovered_tools(tmp_path):
 @pytest.mark.asyncio
 async def test_catalog_only_contains_config_allowed_tools(tmp_path):
     settings = _write_env(tmp_path, tools_field=["search"])
-    manager = McpManager(settings, ToolRegistry(settings=settings), PermissionService())
+    manager = McpManager(settings.list_mcp_servers(), create_mcp_client)
 
     await manager.start_all()
     await manager.wait_ready()
@@ -91,11 +93,15 @@ async def test_catalog_only_contains_config_allowed_tools(tmp_path):
 
 @pytest.mark.asyncio
 async def test_config_denied_tool_maps_to_gateway_resource(tmp_path):
-    from voidx.permission.engine import authorize_tool_call
+    from voidx.tooling.application.authorization import authorize_tool_call
+
+    from voidx.bootstrap.tooling import apply_mcp_tool_denials
 
     settings = _write_env(tmp_path, tools_field={"search": True, "blocked": False})
     permission = PermissionService()
-    manager = McpManager(settings, ToolRegistry(settings=settings), permission)
+    configs = settings.list_mcp_servers()
+    apply_mcp_tool_denials(configs, permission)
+    manager = McpManager(configs, create_mcp_client)
 
     await manager.start_all()
     await manager.wait_ready()

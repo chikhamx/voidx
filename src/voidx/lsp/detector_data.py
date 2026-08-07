@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voidx.lsp.schema import LspServerConfig
+from voidx.lsp.domain import LspServerConfig
 
 
 # ---------------------------------------------------------------------------

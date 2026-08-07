@@ -9,7 +9,7 @@ from rich.cells import cell_len
 from rich.text import Text
 
 from voidx.llm.usage import format_token_count
-from voidx.ui.output.dock import (
+from voidx.presentation.output.dock import (
     active_agent_step_text,
     active_compaction_detail_text,
     active_compaction_text,

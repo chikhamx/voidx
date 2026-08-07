@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from voidx.workflow.types import WorkflowRunState
+    from voidx.agent.domain.automation.workflow import WorkflowRunState
 
 
 def active_workflow_names(value: object) -> list[str]:
@@ -14,7 +14,7 @@ def active_workflow_names(value: object) -> list[str]:
     Accepts a list/dict of WorkflowRunState or raw dicts, or an object
     with a ``workflow_runs`` attribute.
     """
-    from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
+    from voidx.agent.domain.automation.workflow import WorkflowRunState, WorkflowRunStatus
 
     items: list[WorkflowRunState] = []
     raw = value

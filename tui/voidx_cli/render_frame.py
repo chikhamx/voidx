@@ -11,8 +11,8 @@ from rich.cells import cell_len
 from rich.console import Console, Group
 from rich.text import Text
 
-from voidx.ui.output.dock import dock
-from voidx.ui.output.dock.formatting import text_from_line
+from voidx.presentation.output.dock import dock
+from voidx.presentation.output.dock.formatting import text_from_line
 from .helpers import _rendered_row_count
 from .state import RenderStats
 

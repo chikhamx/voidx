@@ -10,7 +10,7 @@ import pytest
 from rich.console import Console
 
 from voidx.config import Settings
-from voidx.ui.commands import COMMANDS
+from voidx.presentation.commands import COMMANDS
 from voidx_cli import PureTui
 
 

@@ -16,7 +16,7 @@ from tui_helpers import _tui, _FakeStdout
 
 from rich.console import Console
 
-from voidx.ui.output.dock import set_dock, BottomInputDock
+from voidx.presentation.output.dock import set_dock, BottomInputDock
 
 
 def test_guidance_after_tool_does_not_overlay_stream(tmp_path, monkeypatch):

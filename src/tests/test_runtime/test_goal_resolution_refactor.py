@@ -1,8 +1,8 @@
 import pytest
 
 from voidx.agent.application.instruction import InstructionService
-from voidx.runtime.intent import TaskIntent
-from voidx.runtime.task_state import (
+from voidx.agent.domain.task.intent import TaskIntent
+from voidx.agent.domain.task.state import (
     GoalResolution,
     GoalSpec,
     IntentResolution,
@@ -10,12 +10,12 @@ from voidx.runtime.task_state import (
     TaskState,
     ToolStatePatch,
 )
-from voidx.tools.workflow import WorkflowTool
-from voidx.tools.service import ToolContext
-from voidx.tools.service import ToolResult
-from voidx.workflow.reconcile import reconcile_workflow_runs_for_turn
-from voidx.workflow.runtime import advance_workflow_states
-from voidx.workflow.types import (
+from voidx.agent.adapters.tools.automation.workflow import WorkflowTool
+from tests.agent_tool_context import agent_tool_context as ToolContext
+from voidx.tooling.domain.result import ToolResult
+from voidx.agent.application.automation.workflow.reconcile import reconcile_workflow_runs_for_turn
+from voidx.agent.application.automation.workflow.runtime import advance_workflow_states
+from voidx.agent.domain.automation.workflow import (
     WorkflowRunState,
     WorkflowRunStatus,
     WorkflowStateEvent,
@@ -24,7 +24,7 @@ from voidx.workflow.types import (
 
 
 def test_goal_type_compatibility_exports_are_removed():
-    import voidx.runtime.task_state as agent_task_state
+    import voidx.agent.domain.task.state as agent_task_state
     import voidx.runtime as runtime
 
     for module in (runtime, agent_task_state):

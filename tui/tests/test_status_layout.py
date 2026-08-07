@@ -12,8 +12,8 @@ from rich.console import Console
 from rich.style import Style
 
 from voidx.llm.usage import UsageStats
-from voidx.ui.commands import COMMANDS
-from voidx.ui.output.dock import dock
+from voidx.presentation.commands import COMMANDS
+from voidx.presentation.output.dock import dock
 from voidx_cli import PureTui, _rendered_row_count
 from voidx_cli.state import InputState, RenderState
 

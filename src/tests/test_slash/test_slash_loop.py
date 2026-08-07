@@ -119,7 +119,7 @@ async def test_loop_start_value_error_is_reported_as_ui_error(tmp_path, monkeypa
 
     class FailingService(FakeLoopService):
         async def start(self, parent_thread_id, spec):
-            from voidx.agent.loop.prompt_materialize import PromptMaterializeError
+            from voidx.agent.application.automation.loop.prompt_materialize import PromptMaterializeError
 
             raise PromptMaterializeError("Referenced path not found: missing.md")
 

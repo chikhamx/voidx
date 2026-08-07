@@ -2,7 +2,7 @@
 
 Add a new top-level command in exactly one place: ``SLASH_COMMANDS``.
 The dispatch table (``SlashHandler.dispatch``), ``/help`` output, and the
-command palette catalog (``voidx.ui.commands.COMMANDS``) all derive from it.
+command palette catalog (``voidx.presentation.commands.COMMANDS``) all derive from it.
 """
 from __future__ import annotations
 

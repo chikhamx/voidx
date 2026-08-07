@@ -1,7 +1,8 @@
+from tests.tool_registry import build_registry
 def test_tool_registry_keeps_lifecycle_tool_definitions_stable() -> None:
-    from voidx.tools.registry import ToolRegistry
+    from voidx.tooling.application.registry import ToolRegistry
 
-    registry = ToolRegistry()
+    registry = build_registry()
     first = {tool.id: (tool.description, tool.parameters) for tool in registry.list() if tool.id in {"goal", "loop"}}
     second = {tool.id: (tool.description, tool.parameters) for tool in registry.list() if tool.id in {"goal", "loop"}}
 
@@ -10,7 +11,7 @@ def test_tool_registry_keeps_lifecycle_tool_definitions_stable() -> None:
 
 
 def test_goal_evaluator_view_does_not_allow_goal_or_write_tools() -> None:
-    from voidx.agent.domain.goal import GoalToolView
+    from voidx.agent.domain.automation.goal import GoalToolView
 
     view = GoalToolView.default(phase="evaluator").bind({"read", "write", "replace", "manage", "lsp_format", "goal"})
 

@@ -3,10 +3,10 @@ from __future__ import annotations
 import pytest
 
 from voidx.agent.application.coding_service import CODING_PROFILE
-from voidx.agent.domain.goal import GOAL_PROFILE, GoalSpec, GoalState
+from voidx.agent.domain.automation.goal import GOAL_PROFILE, GoalSpec, GoalState
 from voidx.agent.domain.thread import AgentThread, AgentThreadState, LifecycleState, RuntimeDecision
-from voidx.agent.goal.scheduler import GoalRuntimeScheduler
-from voidx.memory.thread_store import ThreadStore
+from voidx.agent.application.automation.goal.scheduler import GoalRuntimeScheduler
+from voidx.agent.adapters.persistence.thread_repository import ThreadStore
 
 
 @pytest.fixture(autouse=True)

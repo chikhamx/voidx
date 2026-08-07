@@ -4,9 +4,9 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from voidx.agent.application.goal_service import GoalService
-from voidx.agent.domain.goal import GoalSpec, GoalState
-from voidx.memory.thread_store import ThreadStore
+from voidx.agent.application.automation.goal.goal_service import GoalService
+from voidx.agent.domain.automation.goal import GoalSpec, GoalState
+from voidx.agent.adapters.persistence.thread_repository import ThreadStore
 
 
 @pytest.fixture(autouse=True)

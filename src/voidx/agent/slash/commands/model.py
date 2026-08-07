@@ -326,7 +326,7 @@ class ModelCommandsMixin:
     async def _model_switch(self, target: str) -> None:
         from voidx.config import Profile
         from voidx.llm.service import create_chat_model
-        from voidx.memory.service import update_session_model
+        from voidx.agent.adapters.persistence.session_repository import update_session_model
 
         target, scope = self._model_switch_scope(target)
 

@@ -1,13 +1,13 @@
-from voidx.runtime.intent import TaskIntent
-from voidx.runtime.task_state import (
+from voidx.agent.domain.task.intent import TaskIntent
+from voidx.agent.domain.task.state import (
     GoalResolution,
     GoalSpec,
     IntentResolution,
     PlanResolution,
     TaskState,
 )
-from voidx.workflow.reconcile import reconcile_workflow_runs_for_turn
-from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
+from voidx.agent.application.automation.workflow.reconcile import reconcile_workflow_runs_for_turn
+from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 
 
 def _goal(desc: str = "agent_name semantic cleanup") -> GoalSpec:

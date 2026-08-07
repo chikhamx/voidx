@@ -16,14 +16,14 @@ from voidx.agent.domain.compaction import CompactionResult, PreflightCompactionR
 from voidx.agent.infrastructure.graph_compaction import GraphCompactionAdapter
 from voidx.agent.infrastructure.langgraph.runtime.tool_executor import ToolExecutorAdapter
 from typing import Any, TYPE_CHECKING
-from voidx.permission.context import PermissionDecision
-from voidx.permission.risk import RiskLevel
-from voidx.runtime.intent import PersonaName
+from voidx.tooling.domain.authorization import PermissionDecision
+from voidx.tooling.domain.risk import RiskLevel
+from voidx.agent.domain.task.intent import PersonaName
 from voidx.runtime.ui import PermissionToolDetail
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from voidx.agent.application.runtime_context import ContextCompilerCache, InteractionMode, raw_semantic_messages
 from voidx.agent.infrastructure.langgraph.state import AgentState
-from voidx.runtime.task_state import TaskState, goal_type_from_join
+from voidx.agent.domain.task.state import TaskState, goal_type_from_join
 from voidx.agent.infrastructure.langgraph.runtime.streaming import extract_text
 from voidx.agent.infrastructure.langgraph.runtime.topology import latest_ai_message
 from voidx.llm.usage import estimate_context_tokens
@@ -48,6 +48,7 @@ from voidx.agent.infrastructure.langgraph.runtime.core.helpers import (
 from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id as _current_parent_tool_call_id
 from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState
 from voidx.agent.infrastructure.langgraph.runtime.session_runtime import SessionRuntime
+from voidx.agent.ports.presentation import NullPresentationSnapshotPort, PresentationSnapshotPort
 from voidx.agent.infrastructure.langgraph.runtime.llm_turn import LlmTurn
 from voidx.agent.infrastructure.langgraph.runtime.permission_flow import PermissionFlow, _tool_call_key
 from voidx.agent.infrastructure.langgraph.runtime.session_runtime import _sanitize_generated_title
@@ -62,23 +63,21 @@ from voidx.agent.infrastructure.langgraph.runtime.turn_runner import TurnRunner
 from voidx.agent.infrastructure.langgraph.runtime.wiring import (
     bind_settings_to_catalog,
     build_compaction_service,
-    build_external_managers,
-    build_permission_service,
-    build_tool_registry,
-    register_agent_tool,
 )
+from voidx.bootstrap.tooling import build_tool_registry, register_agent_tool
 from voidx.agent.application.runtime_context import (
     ContextCompilerCache,
     InteractionMode,
 )
-from voidx.runtime.task_state import GoalResolution, TaskState, goal_type_from_join
+from voidx.agent.domain.task.state import GoalResolution, TaskState, goal_type_from_join
 from voidx.agent.application.todo_state import apply_todo_state_to_host
 from voidx.config import Config, Settings
-from voidx.permission.ai_approval import AiApprovalService
+from voidx.tooling.application.ai_approval import AiApprovalService
 from voidx.agent.application.instruction import InstructionService
 from voidx.llm.message_markers import GUIDANCE_MARKER
 from voidx.llm.service import create_chat_model
-from voidx.memory.service import SessionInfo, append_subagent_event
+from voidx.agent.adapters.persistence.session_repository import SessionInfo
+from voidx.agent.adapters.persistence.subagent_repository import append_subagent_event
 from voidx.runtime.ui import (
     GuidanceSubmitted,
     OutputNode,
@@ -138,6 +137,21 @@ def _tool_executor_for(execution: Any) -> ToolExecutorAdapter:
 
 
 
+
+
+
+
+def _in_memory_permission_service(config: Config, *, settings=None, notifier):
+    from voidx.tooling.adapters.permission.in_memory_state import create_permission_service
+
+    return create_permission_service(
+        permission_mode=config.permission_mode.value,
+        sandbox_readable_files=list(config.sandbox_readable_files),
+        sandbox_readable_dirs=list(config.sandbox_readable_dirs),
+        sandbox_writable_files=list(config.sandbox_writable_files),
+        sandbox_writable_dirs=list(config.sandbox_writable_dirs),
+        notifier=notifier,
+    )
 
 
 class LangGraphExecution:
@@ -323,7 +337,19 @@ class LangGraphExecution:
         else:
             self._default_runtime_guards = value
 
-    def __init__(self, config: Config, api_key: str | None, session: SessionInfo | None = None, settings: Settings | None = None):
+    def __init__(
+        self,
+        config: Config,
+        api_key: str | None,
+        session: SessionInfo | None = None,
+        settings: Settings | None = None,
+        *,
+        presentation_snapshots: PresentationSnapshotPort | None = None,
+        external_manager_factory: Callable[..., tuple[Any, Any]] | None = None,
+        mcp_reference_resolver: Callable[..., Awaitable[Any]] | None = None,
+        web_route: Callable[..., Awaitable[Any]] | None = None,
+        permission_service_factory: Callable[..., Any] = _in_memory_permission_service,
+    ):
         self.config = config
         self.api_key = api_key
         self.model = create_chat_model(api_key, config.model) if api_key else None
@@ -331,6 +357,9 @@ class LangGraphExecution:
         self.agent_gateway = AgentGateway()
         self._workspace = config.workspace
         self._settings = settings
+        self._mcp_reference_resolver = mcp_reference_resolver
+        self._web_route = web_route
+        self._permission_service_factory = permission_service_factory
         self._ai_approval = AiApprovalService()
         self._ui = runtime_ui_port
         self._gateway_session = None
@@ -343,10 +372,11 @@ class LangGraphExecution:
             settings=settings,
             config=config,
             subagent_runner=self._subagent_runner,
+            web_route=self._web_route,
         )
 
         self._instruction = InstructionService(self._workspace, settings=settings)
-        self._permission = build_permission_service(config, settings=self._settings, notifier=self._ui.ui.print)
+        self._permission = self._permission_service_factory(config, settings=self._settings, notifier=self._ui.ui.print)
 
         self._interaction_mode: InteractionMode = InteractionMode.AUTO
         self._debug: bool = False
@@ -381,7 +411,10 @@ class LangGraphExecution:
         self._compaction_coordinator = CompactionCoordinator(self)
         self._llm_turn = LlmTurn(self)
         self._permission_flow = PermissionFlow(self)
-        self._session_runtime = SessionRuntime(self)
+        self._session_runtime = SessionRuntime(
+            self,
+            presentation_snapshots=presentation_snapshots or NullPresentationSnapshotPort(),
+        )
         self._tool_executor = ToolExecutorAdapter(self)
         self._turn_runner = TurnRunner(self)
         self._skill_service: SkillService | None = None
@@ -394,15 +427,23 @@ class LangGraphExecution:
         from voidx.agent.slash import SlashHandler
 
         self._slash = SlashHandler(self)
-        self._mcp_manager, self._lsp_manager = build_external_managers(
-            settings=self._settings,
-            tools=self.tools,
-            permission=self._permission,
-            workspace=self._workspace,
-            model=self.model,
-            model_config=self.config.model,
-        )
-        self._instruction.set_mcp_description_provider(self._mcp_manager.generated_descriptions)
+        self._mcp_manager = None
+        self._lsp_manager = None
+        if external_manager_factory is not None:
+            self._mcp_manager, self._lsp_manager = external_manager_factory(
+                settings=self._settings,
+                tools=self.tools,
+                permission=self._permission,
+                workspace=self._workspace,
+                model=self.model,
+                model_config=self.config.model,
+            )
+            self._instruction.set_mcp_description_provider(self._mcp_manager.generated_descriptions)
+        self._lsp_operations = None
+        if self._lsp_manager is not None:
+            from voidx.lsp.application.service import LspOperationsService
+
+            self._lsp_operations = LspOperationsService(self._lsp_manager)
         if TYPE_CHECKING:
             _host_contract: Any = self
 
@@ -518,9 +559,10 @@ class LangGraphExecution:
             settings=settings,
             config=self.config,
             subagent_runner=self._subagent_runner,
+            web_route=self._web_route,
         )
         old_permission = getattr(self, "_permission", None)
-        self._permission = build_permission_service(self.config, settings=settings, notifier=self._ui.ui.print)
+        self._permission = self._permission_service_factory(self.config, settings=settings, notifier=self._ui.ui.print)
         if old_permission is not None and hasattr(old_permission, "ai_approval_count"):
             self._permission.ai_approval_count = old_permission.ai_approval_count
         self._tool_executor = ToolExecutorAdapter(self)
@@ -637,6 +679,9 @@ class LangGraphExecution:
     def bind_startup_presenter(self, presenter) -> None:
         self._startup_presenter = presenter
 
+    def bind_presentation_snapshots(self, snapshots: PresentationSnapshotPort) -> None:
+        self._session_runtime.presentation_snapshots = snapshots
+
     def bind_coding_turn_runner(
         self,
         runner: Callable[..., Awaitable[Any]],
@@ -694,10 +739,11 @@ class LangGraphExecution:
         task.add_done_callback(self._clear_session_tasks.discard)
 
     async def _clear_session_storage(self, session_id: str) -> None:
-        from voidx.memory.service import clear_messages, update_title
+        from voidx.agent.adapters.persistence.session_repository import clear_messages, update_title
 
         try:
             await clear_messages(session_id)
+            await self._session_runtime.presentation_snapshots.clear(session_id)
             await update_title(session_id, "New session", touch=False)
         except Exception as exc:
             self._ui.ui.print(f"[red]Clear cleanup failed: {exc}[/red]")
@@ -733,7 +779,7 @@ class LangGraphExecution:
         if self._session is None:
             return
 
-        from voidx.memory.service import update_title
+        from voidx.agent.adapters.persistence.session_repository import update_title
 
         self._invalidate_session_title_generation()
         await update_title(self._session.id, title)
@@ -987,7 +1033,7 @@ class LangGraphExecution:
         return _turn_runner_for(self)
 
     def runtime_snapshot(self):
-        from voidx.agent.domain.turn import TurnPhase
+        from voidx.agent.domain.turn.state import TurnPhase
         from voidx.agent.infrastructure.langgraph.state_mapper import LangGraphStateMapper
 
         return LangGraphStateMapper().runtime_from_execution(self, turn_phase=TurnPhase.RUNNING)

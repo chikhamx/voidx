@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.infrastructure.langgraph.execution import GUIDANCE_MAX_CHARS
-from voidx.ui.output.events.schema import GuidanceSubmitted
+from voidx.presentation.output.events.schema import GuidanceSubmitted
 
 
 class _Events:

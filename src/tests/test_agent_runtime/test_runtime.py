@@ -8,7 +8,7 @@ from voidx.agent.domain.events import AgentEvent
 from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.domain.thread import AgentThread
 from voidx.agent.domain.turn_context import TurnExecutionContext
-from voidx.agent.runtime import AgentRuntime, TurnRequest
+from voidx.agent.application.runtime import AgentRuntime, TurnRequest
 
 
 @dataclass
@@ -147,7 +147,7 @@ async def test_runtime_resolves_lazy_identity_from_engine_session_id():
 
 
 def test_turn_metadata_from_context_uses_runtime_profile():
-    from voidx.agent.domain.loop import LOOP_PROFILE
+    from voidx.agent.domain.automation.loop import LOOP_PROFILE
     from voidx.agent.domain.profile import RuntimeProfile
     from voidx.agent.domain.turn_metadata import turn_metadata_from_context
 

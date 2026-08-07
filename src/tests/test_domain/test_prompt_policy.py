@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from voidx.agent.application.prompts import CHAT_PROFILE_SPEC
 from voidx.agent.application.runtime_context import ContextSection
-from voidx.agent.domain.goal import (
+from voidx.agent.domain.automation.goal import (
     GOAL_EVALUATOR_DIRECTIVE,
     GOAL_IDLE_DIRECTIVE,
     GOAL_INTAKE_DIRECTIVE,
     GOAL_PROFILE,
 )
-from voidx.agent.domain.loop import (
+from voidx.agent.domain.automation.loop import (
     LOOP_IDLE_DIRECTIVE,
     LOOP_PROFILE,
 )
@@ -154,7 +154,7 @@ class TestProfileWiring:
         assert isinstance(LOOP_PROFILE.prompt_policy, LoopPromptPolicy)
 
     def test_loop_profile_for_spec_preserves_prompt_policy(self):
-        from voidx.agent.domain.loop import LoopSpec, loop_profile_for_spec
+        from voidx.agent.domain.automation.loop import LoopSpec, loop_profile_for_spec
 
         spec = LoopSpec(prompt="test", interval_seconds=60)
         profile = loop_profile_for_spec(spec)

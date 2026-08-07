@@ -1,0 +1,562 @@
+"""Tests for the file and write tools."""
+
+from tests.tool_registry import build_registry
+import json
+import sys
+from pathlib import Path
+
+
+import pytest
+
+import voidx.persistence.sqlite as store
+from voidx.tooling.application.execution import AuthorizationRuntime, CallbackInteractionPort, FileToolContext as ToolContext
+from voidx.tooling.application.registry import ToolRegistry
+
+
+def _history_rows(session_id: str = "sid-1") -> list[dict]:
+    manifest = store.DATA_DIR / "sessions" / session_id / "file-history" / "manifest.jsonl"
+    return [
+        json.loads(line)
+        for line in manifest.read_text(encoding="utf-8").splitlines()
+    ]
+
+
+class TestFileTool:
+    @pytest.mark.asyncio
+    async def test_file_create_then_line_insert_writes_empty_file_without_read(self, tmp_path):
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+
+        created = await r.execute_tool("manage", {"op": "create", "paths": "new.txt"}, ctx)
+        inserted = await r.execute_tool(
+            "write",
+            {"file_path": "new.txt", "op": "insert", "lineno": 1, "new_string": "hello\n"},
+            ctx,
+        )
+
+        assert created.metadata.get("error") is not True
+        assert inserted.metadata.get("error") is not True
+        assert (tmp_path / "new.txt").read_text(encoding="utf-8") == "hello\n"
+
+    @pytest.mark.asyncio
+    async def test_file_create_returns_next_step_hint_for_write_tool(self, tmp_path):
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+
+        result = await r.execute_tool("manage", {"op": "create", "paths": "hint.txt"}, ctx)
+
+        assert result.metadata.get("error") is not True
+        assert result.next_step_hint == 'Created file hint.txt. Use write op="append" to add content.'
+
+    @pytest.mark.asyncio
+    async def test_file_create_overwrite_has_no_next_step_hint(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(store, "DATA_DIR", tmp_path / ".voidx")
+        (tmp_path / "existing.txt").write_text("old\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path), session_id="sid-1")
+        r = build_registry()
+
+        await r.execute_tool("read", {"file_path": "existing.txt"}, ctx)
+        result = await r.execute_tool(
+            "manage", {"op": "create", "paths": "existing.txt", "overwrite": True}, ctx
+        )
+
+        assert result.metadata.get("error") is not True
+        assert result.next_step_hint == ""
+
+    @pytest.mark.asyncio
+    async def test_file_create_overwrite_saves_version_and_clears_coverage(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(store, "DATA_DIR", tmp_path / ".voidx")
+        target = tmp_path / "existing.txt"
+        target.write_text("old\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path), session_id="sid-1")
+        r = build_registry()
+        await r.execute_tool("read", {"file_path": "existing.txt"}, ctx)
+        key = str(target.resolve())
+        assert key in ctx.file_state.read_coverage
+
+        result = await r.execute_tool(
+            "manage",
+            {"op": "create", "paths": "existing.txt", "overwrite": True},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert target.read_text(encoding="utf-8") == ""
+        assert key not in ctx.file_state.read_coverage
+        rows = _history_rows()
+        assert rows[0]["path"] == "existing.txt"
+        assert (store.DATA_DIR / "sessions" / "sid-1" / "file-history" / rows[0]["snapshot"]).read_text(encoding="utf-8") == "old\n"
+
+    @pytest.mark.asyncio
+    async def test_file_delete_saves_version_and_clears_state(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(store, "DATA_DIR", tmp_path / ".voidx")
+        target = tmp_path / "delete.txt"
+        target.write_text("gone\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path), session_id="sid-1")
+        r = build_registry()
+        await r.execute_tool("read", {"file_path": "delete.txt"}, ctx)
+        key = str(target.resolve())
+
+        result = await r.execute_tool("manage", {"op": "delete", "paths": "delete.txt"}, ctx)
+
+        assert result.metadata.get("error") is not True
+        assert not target.exists()
+        assert key not in ctx.file_state.read_coverage
+        assert key not in ctx.file_state.mtimes
+        assert _history_rows()[0]["path"] == "delete.txt"
+
+    @pytest.mark.asyncio
+    async def test_file_move_migrates_coverage_and_mtime(self, tmp_path):
+        source = tmp_path / "source.txt"
+        dest = tmp_path / "nested" / "dest.txt"
+        source.write_text("one\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+        await r.execute_tool("read", {"file_path": "source.txt"}, ctx)
+        source_key = str(source.resolve())
+
+        result = await r.execute_tool(
+            "manage",
+            {"op": "move", "moves": [{"src": "source.txt", "dest": "nested/dest.txt"}]},
+            ctx,
+        )
+
+        dest_key = str(dest.resolve())
+        assert result.metadata.get("error") is not True
+        assert not source.exists()
+        assert dest.read_text(encoding="utf-8") == "one\n"
+        assert source_key not in ctx.file_state.read_coverage
+        assert source_key not in ctx.file_state.mtimes
+        assert dest_key in ctx.file_state.read_coverage
+        assert dest_key in ctx.file_state.mtimes
+
+
+class TestWriteTool:
+    @pytest.mark.asyncio
+    async def test_line_insert_requires_read_coverage_for_non_empty_bof(self, tmp_path):
+        target = tmp_path / "target.txt"
+        target.write_text("one\ntwo\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+
+        blocked = await r.execute_tool(
+            "write",
+            {"file_path": "target.txt", "op": "insert", "lineno": 1, "new_string": "zero\n"},
+            ctx,
+        )
+        await r.execute_tool("read", {"file_path": "target.txt", "offset": 1, "limit": 1}, ctx)
+        inserted = await r.execute_tool(
+            "write",
+            {"file_path": "target.txt", "op": "insert", "lineno": 1, "new_string": "zero\n"},
+            ctx,
+        )
+
+        assert blocked.metadata.get("error") is True
+        assert "read" in blocked.output.lower()
+        assert "Retry after reading lines 1-1." in blocked.output
+        assert inserted.metadata.get("error") is not True
+        assert target.read_text(encoding="utf-8") == "zero\none\ntwo\n"
+
+    @pytest.mark.asyncio
+    async def test_line_insert_appends_at_end(self, tmp_path):
+        target = tmp_path / "append.txt"
+        target.write_text("one\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+
+        result = await r.execute_tool(
+            "write",
+            {"file_path": "append.txt", "op": "append", "new_string": "two\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert target.read_text(encoding="utf-8") == "one\ntwo\n"
+
+
+class TestWriteFullOverwriteCoverage:
+    @pytest.mark.asyncio
+    async def test_full_overwrite_preserves_coverage_for_unchanged_region(self, tmp_path):
+        target = tmp_path / "overwrite.txt"
+        target.write_text("\n".join(f"line {i}" for i in range(1, 21)) + "\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+        await r.execute_tool("read", {"file_path": "overwrite.txt"}, ctx)
+        lines = [f"line {i}" for i in range(1, 21)]
+        lines[1] = "LINE 2"
+        lines[2] = "LINE 3"
+        overwritten = await r.execute_tool(
+            "write",
+            {"file_path": "overwrite.txt", "op": "write", "new_string": "\n".join(lines) + "\n"},
+            ctx,
+        )
+        edit = await r.execute_tool(
+            "replace",
+            {"file_path": "overwrite.txt", "bounds": [{"line_no": 10, "anchor": "line 10"}], "new_string": "LINE 10"},
+            ctx,
+        )
+
+        assert overwritten.metadata.get("error") is not True
+        assert edit.metadata.get("error") is not True
+
+    @pytest.mark.asyncio
+    async def test_new_file_written_is_editable_without_read(self, tmp_path):
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+        created = await r.execute_tool(
+            "write",
+            {"file_path": "fresh.txt", "op": "write", "new_string": "one\ntwo\nthree\n"},
+            ctx,
+        )
+        edit = await r.execute_tool(
+            "replace",
+            {"file_path": "fresh.txt", "bounds": [{"line_no": 2, "anchor": "two"}], "new_string": "TWO"},
+            ctx,
+        )
+
+        assert created.metadata.get("error") is not True
+        assert edit.metadata.get("error") is not True
+        assert (tmp_path / "fresh.txt").read_text(encoding="utf-8") == "one\nTWO\nthree\n"
+
+
+class TestWriteAppendOp:
+    """Tests for op='append' — new feature from spec."""
+
+    @pytest.mark.asyncio
+    async def test_append_to_empty_file(self, tmp_path):
+        target = tmp_path / "empty.txt"
+        target.write_text("", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+
+        result = await r.execute_tool(
+            "write",
+            {"file_path": "empty.txt", "op": "append", "new_string": "first\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert target.read_text(encoding="utf-8") == "first\n"
+
+    @pytest.mark.asyncio
+    async def test_append_to_non_empty_file(self, tmp_path):
+        target = tmp_path / "has.txt"
+        target.write_text("one\ntwo\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+
+        result = await r.execute_tool(
+            "write",
+            {"file_path": "has.txt", "op": "append", "new_string": "three\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert target.read_text(encoding="utf-8") == "one\ntwo\nthree\n"
+
+
+    @pytest.mark.asyncio
+    async def test_append_output_uses_numbered_diff_but_diff_stays_standard(self, tmp_path):
+        target = tmp_path / "numbered-append.txt"
+        target.write_text("one\ntwo\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+
+        result = await r.execute_tool(
+            "write",
+            {"file_path": "numbered-append.txt", "op": "append", "new_string": "three\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert "+3\tthree" in result.output
+        assert "+three" in result.diff
+        assert "+3\tthree" not in result.diff
+    @pytest.mark.asyncio
+    async def test_append_no_read_coverage_needed(self, tmp_path):
+        target = tmp_path / "noverify.txt"
+        target.write_text("existing\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+        # No read call — append should still work
+
+        result = await r.execute_tool(
+            "write",
+            {"file_path": "noverify.txt", "op": "append", "new_string": "added\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert target.read_text(encoding="utf-8") == "existing\nadded\n"
+
+    @pytest.mark.asyncio
+    async def test_append_empty_new_string_returns_no_changes(self, tmp_path):
+        target = tmp_path / "skip.txt"
+        target.write_text("keep\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+
+        result = await r.execute_tool(
+            "write",
+            {"file_path": "skip.txt", "op": "append", "new_string": ""},
+            ctx,
+        )
+
+        assert result.title == "No changes"
+        assert target.read_text(encoding="utf-8") == "keep\n"
+
+    @pytest.mark.asyncio
+    async def test_append_with_lineno_ignored(self, tmp_path):
+        target = tmp_path / "ignore.txt"
+        target.write_text("data\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+
+        result = await r.execute_tool(
+            "write",
+            {"file_path": "ignore.txt", "op": "append", "lineno": 3, "new_string": "added\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert target.read_text(encoding="utf-8") == "data\nadded\n"
+
+    @pytest.mark.asyncio
+    async def test_append_file_not_found(self, tmp_path):
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+
+        result = await r.execute_tool(
+            "write",
+            {"file_path": "missing.txt", "op": "append", "new_string": "nope\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is True
+
+
+class TestWriteInsert1Based:
+    """Tests for insert lineno 1-based insert-before semantics."""
+
+    @pytest.mark.asyncio
+    async def test_insert_lineno1_at_bof(self, tmp_path):
+        target = tmp_path / "bof.txt"
+        target.write_text("one\ntwo\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+        await r.execute_tool("read", {"file_path": "bof.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "write",
+            {"file_path": "bof.txt", "op": "insert", "lineno": 1, "new_string": "zero\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert target.read_text(encoding="utf-8") == "zero\none\ntwo\n"
+
+    @pytest.mark.asyncio
+    async def test_insert_lineno2_before_second_line(self, tmp_path):
+        """lineno=2 means insert before line 2, between the first and second lines."""
+        target = tmp_path / "mid.txt"
+        target.write_text("aaa\nbbb\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+        await r.execute_tool("read", {"file_path": "mid.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "write",
+            {"file_path": "mid.txt", "op": "insert", "lineno": 2, "new_string": "inserted\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert target.read_text(encoding="utf-8") == "aaa\ninserted\nbbb\n"
+
+    @pytest.mark.asyncio
+    async def test_insert_lineno_total_lines_plus_one_no_coverage_needed(self, tmp_path):
+        """lineno=total_lines+1 is append position, no read coverage required."""
+        target = tmp_path / "end.txt"
+        target.write_text("one\ntwo\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+        # No read call — inserting at total_lines should not require coverage
+
+        result = await r.execute_tool(
+            "write",
+            {"file_path": "end.txt", "op": "insert", "lineno": 3, "new_string": "three\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert target.read_text(encoding="utf-8") == "one\ntwo\nthree\n"
+        assert result.next_step_hint == 'Insert at EOF is append; use write op="append" next time.'
+
+    @pytest.mark.asyncio
+    async def test_insert_lineno_beyond_total_lines_errors(self, tmp_path):
+        target = tmp_path / "short.txt"
+        target.write_text("only\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+        await r.execute_tool("read", {"file_path": "short.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "write",
+            {"file_path": "short.txt", "op": "insert", "lineno": 5, "new_string": "oops\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is True
+
+    @pytest.mark.asyncio
+    async def test_insert_lineno_negative_rejected(self, tmp_path):
+        """lineno=-1 is no longer valid for insert; should be rejected."""
+        target = tmp_path / "neg.txt"
+        target.write_text("data\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+
+        result = await r.execute_tool(
+            "write",
+            {"file_path": "neg.txt", "op": "insert", "lineno": -1, "new_string": "nope\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is True
+
+
+class TestExternalWriteApproval:
+    @pytest.mark.asyncio
+    async def test_deferred_path_denied_by_user(self, tmp_path):
+        from voidx.tooling.domain.interaction import (
+            UserInteraction,
+            UserResponse,
+        )
+
+        workspace = tmp_path / "workspace"
+        external = tmp_path / "external"
+        workspace.mkdir()
+        external.mkdir()
+        target = external / "denied.txt"
+        seen_request: UserInteraction | None = None
+
+        async def fake_interact(req: UserInteraction) -> UserResponse:
+            nonlocal seen_request
+            seen_request = req
+            return UserResponse(value="deny")
+
+        ctx = ToolContext(workspace=str(workspace), authorization_service=AuthorizationRuntime(interaction=CallbackInteractionPort(fake_interact)))
+        result = await build_registry().execute_tool(
+            "write",
+            {"file_path": str(target), "op": "write", "new_string": "secret\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is True
+        assert seen_request is not None
+        assert target.exists() is False
+
+    @pytest.mark.asyncio
+    async def test_read_grant_does_not_allow_write(self, tmp_path):
+        from voidx.tooling.domain.interaction import (
+            UserInteraction,
+            UserResponse,
+        )
+
+        workspace = tmp_path / "workspace"
+        external = tmp_path / "external"
+        workspace.mkdir()
+        external.mkdir()
+        target = external / "file.txt"
+        target.write_text("original\n", encoding="utf-8")
+        seen_request: UserInteraction | None = None
+
+        async def fake_interact(req: UserInteraction) -> UserResponse:
+            nonlocal seen_request
+            seen_request = req
+            return UserResponse(value="deny")
+
+        ctx = ToolContext(
+            workspace=str(workspace),
+            authorization_service=AuthorizationRuntime(
+                read_files=[str(target)],
+                interaction=CallbackInteractionPort(fake_interact),
+            ),
+        )
+        result = await build_registry().execute_tool(
+            "write",
+            {"file_path": str(target), "op": "append", "new_string": "changed\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is True
+        assert seen_request is not None
+        assert target.read_text(encoding="utf-8") == "original\n"
+
+    @pytest.mark.asyncio
+    async def test_file_grant_does_not_cover_sibling(self, tmp_path):
+        from voidx.tooling.domain.interaction import (
+            UserInteraction,
+            UserResponse,
+        )
+
+        workspace = tmp_path / "workspace"
+        external = tmp_path / "external"
+        workspace.mkdir()
+        external.mkdir()
+        granted = external / "granted.txt"
+        sibling = external / "sibling.txt"
+        granted.write_text("ok\n", encoding="utf-8")
+        seen_request: UserInteraction | None = None
+
+        async def fake_interact(req: UserInteraction) -> UserResponse:
+            nonlocal seen_request
+            seen_request = req
+            return UserResponse(value="deny")
+
+        ctx = ToolContext(
+            workspace=str(workspace),
+            authorization_service=AuthorizationRuntime(
+                write_files=[str(granted)],
+                interaction=CallbackInteractionPort(fake_interact),
+            ),
+        )
+        result = await build_registry().execute_tool(
+            "write",
+            {"file_path": str(sibling), "op": "write", "new_string": "nope\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is True
+        assert seen_request is not None
+        assert sibling.exists() is False
+
+    @pytest.mark.asyncio
+    async def test_write_missing_external_target(self, tmp_path):
+        from voidx.tooling.domain.interaction import (
+            UserInteraction,
+            UserResponse,
+        )
+
+        workspace = tmp_path / "workspace"
+        external = tmp_path / "external"
+        workspace.mkdir()
+        external.mkdir()
+        target = external / "new.txt"
+        seen_request: UserInteraction | None = None
+
+        async def fake_interact(req: UserInteraction) -> UserResponse:
+            nonlocal seen_request
+            seen_request = req
+            return UserResponse(value="allow")
+
+        ctx = ToolContext(workspace=str(workspace), authorization_service=AuthorizationRuntime(interaction=CallbackInteractionPort(fake_interact)))
+        result = await build_registry().execute_tool(
+            "write",
+            {"file_path": str(target), "op": "write", "new_string": "created\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert seen_request is not None
+        assert target.read_text(encoding="utf-8") == "created\n"

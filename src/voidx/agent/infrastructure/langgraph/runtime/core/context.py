@@ -8,8 +8,8 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from voidx.agent.application.message_trimming import trim_superseded_file_tools
 from voidx.agent.application.runtime_context import ContextCompiler
-from voidx.runtime.task_state import TaskState
-from voidx.memory.service import save_context_frame_from_messages
+from voidx.agent.domain.task.state import TaskState
+from voidx.agent.adapters.persistence.context_frame_repository import save_context_frame_from_messages
 
 
 def rebuild_llm_messages(

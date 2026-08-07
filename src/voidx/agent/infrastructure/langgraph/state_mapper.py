@@ -5,7 +5,7 @@ from __future__ import annotations
 from voidx.agent.ports.execution_host import ExecutionHost
 
 from voidx.agent.domain.state import SessionRuntimeState
-from voidx.agent.domain.turn import TurnPhase
+from voidx.agent.domain.turn.state import TurnPhase
 
 
 class LangGraphStateMapper:

@@ -4,9 +4,9 @@ from voidx.agent.infrastructure.langgraph.runtime.tool_executor.workflow import 
     _state_update_from_executed_tools,
 )
 from voidx.agent.infrastructure.langgraph.runtime.tool_executor.types import _ExecutedTool
-from voidx.runtime.task_state import ToolStatePatch
-from voidx.tools.base import ToolResult
-from voidx.workflow.types import (
+from voidx.agent.domain.task.state import ToolStatePatch
+from voidx.tooling.domain.result import ToolResult
+from voidx.agent.domain.automation.workflow import (
     WorkflowRunState,
     WorkflowRunStatus,
     WorkflowStateEvent,

@@ -8,7 +8,8 @@ from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage
 from typing_extensions import NotRequired, TypedDict
 
-from voidx.runtime.task_state import TaskState, TodoRunState
+from voidx.agent.domain.task.state import TaskState
+from voidx.agent.domain.task.todo import TodoRunState
 
 
 class AgentState(TypedDict):

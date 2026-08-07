@@ -29,7 +29,7 @@ from voidx.lsp.detector_data import (
     _NPM_PACKAGE_MAP,
     _PIP_PACKAGE_MAP,
 )
-from voidx.lsp.schema import LspServerConfig
+from voidx.lsp.domain import LspServerConfig
 
 
 def detect_servers() -> dict[str, LspServerConfig]:

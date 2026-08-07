@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from voidx.agent.infrastructure.langgraph.runtime.todo_events import todo_updated_event
-from voidx.tools.base import ToolResult
-from voidx.ui.output.events.schema import TodoItemPayload, TodoUpdated
+from voidx.tooling.domain.result import ToolResult
+from voidx.presentation.output.events.schema import TodoItemPayload, TodoUpdated
 
 
 # ── todo_updated_event unit tests ──────────────────────────────────
@@ -112,8 +112,8 @@ class TestTodoUpdatedEvent:
 class TestApplyTodoStateToHost:
     def test_tracker_restored_with_all_statuses(self):
         from voidx.agent.application.todo_state import apply_todo_state_to_host
-        from voidx.runtime.task_state import TodoRunItem, TodoRunState
-        from voidx.tools.task_tracker import TaskTracker
+        from voidx.agent.domain.task.todo import TodoRunItem, TodoRunState
+        from voidx.agent.application.runtime.task_tracker import TaskTracker
 
         state = TodoRunState(
             summary="1/3 done · 1 active · 1 pending",

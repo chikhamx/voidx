@@ -9,7 +9,7 @@ import pytest
 from voidx.agent.slash import SlashHandler
 from tests.test_slash.context import command_context
 from voidx.agent.slash.runtime import _select_from_list
-from voidx.runtime.task_state import GoalSpec, TaskState
+from voidx.agent.domain.task.state import GoalSpec, TaskState
 from voidx.config import (
     CodeIde,
     Config,
@@ -19,11 +19,11 @@ from voidx.config import (
     Settings,
     UserProfile,
 )
-from voidx.permission.service import PermissionService
+from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
 from voidx.llm.catalog import STATIC_MODELS
 from voidx.llm.usage import UsageStats
-from voidx.memory.model_profiles import delete_model_profile_async
-from voidx.ui.tools.clipboard_image import ClipboardImageResult
+from voidx.config.adapters.profile_repository import delete_model_profile_async
+from voidx.presentation.tools.clipboard_image import ClipboardImageResult
 
 
 class FakeChoiceApp:
@@ -230,7 +230,7 @@ async def test_language_and_tone_headless_empty_input_cancels(tmp_path):
 
 
 def test_language_and_tone_reset_commands_are_hidden_from_palette():
-    from voidx.ui.commands import COMMANDS
+    from voidx.presentation.commands import COMMANDS
 
     names = [name for name, _description in COMMANDS]
 
@@ -241,7 +241,7 @@ def test_language_and_tone_reset_commands_are_hidden_from_palette():
 
 
 def test_model_ctx_command_is_in_palette():
-    from voidx.ui.commands import COMMANDS
+    from voidx.presentation.commands import COMMANDS
 
     assert ("/model ctx", "Set context window size") in COMMANDS
 

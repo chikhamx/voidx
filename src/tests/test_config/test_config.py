@@ -15,8 +15,8 @@ from voidx.config import (
     UserProfile,
     WebToolRoute,
 )
-import voidx.memory.store as store
-from voidx.memory.model_profiles import delete_model_profile_async
+import voidx.persistence.sqlite as store
+from voidx.config.adapters.profile_repository import delete_model_profile_async
 
 
 def _set_home(monkeypatch, path: Path) -> None:
@@ -339,7 +339,7 @@ def test_settings_saves_mcp_server_and_web_routes(tmp_path):
     settings.save_mcp_server(McpServerConfig(
         name="voidx-web",
         command="python",
-        args=["-m", "voidx.mcp.server.web"],
+        args=["-m", "voidx.tooling.adapters.mcp_web_server"],
         tools=["web_search", "web_fetch"],
     ))
     settings.set_web_tool_route(
@@ -367,7 +367,7 @@ def test_settings_set_mcp_server_disabled_clears_web_routes(tmp_path):
     settings.save_mcp_server(McpServerConfig(
         name="voidx-web",
         command="python",
-        args=["-m", "voidx.mcp.server.web"],
+        args=["-m", "voidx.tooling.adapters.mcp_web_server"],
         tools=["web_search", "web_fetch"],
     ))
     settings.set_web_tool_route(

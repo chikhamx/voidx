@@ -12,8 +12,8 @@ from rich.console import Console
 from rich.style import Style
 
 from voidx.llm.usage import UsageStats
-from voidx.ui.commands import COMMANDS
-from voidx.ui.output.dock import dock
+from voidx.presentation.commands import COMMANDS
+from voidx.presentation.output.dock import dock
 from voidx_cli import PureTui, _rendered_row_count
 from voidx_cli.state import InputState, RenderState
 
@@ -949,7 +949,7 @@ def test_busy_activity_label_clears_guidance_preview_after_commit(tmp_path, monk
 
 
 def test_loop_waiting_renders_countdown_when_idle(tmp_path, monkeypatch):
-    from voidx.ui.output.dock import dock
+    from voidx.presentation.output.dock import dock
 
     monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 500.0)
     monkeypatch.setattr("voidx_cli.render_activity.time.time", lambda: 1_000.0)
@@ -967,7 +967,7 @@ def test_loop_waiting_renders_countdown_when_idle(tmp_path, monkeypatch):
 
 
 def test_loop_waiting_countdown_reaches_zero_hides_waiting_line(tmp_path, monkeypatch):
-    from voidx.ui.output.dock import dock
+    from voidx.presentation.output.dock import dock
 
     monkeypatch.setattr("voidx_cli.render_activity.time.time", lambda: 1_000.0)
     tui = _tui(tmp_path)
@@ -982,7 +982,7 @@ def test_loop_waiting_countdown_reaches_zero_hides_waiting_line(tmp_path, monkey
 
 
 def test_loop_waiting_hidden_when_busy(tmp_path, monkeypatch):
-    from voidx.ui.output.dock import dock
+    from voidx.presentation.output.dock import dock
 
     monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 500.0)
     tui = _tui(tmp_path)
@@ -1021,7 +1021,7 @@ def test_loop_turn_in_progress_uses_default_label_without_local_busy_state(tmp_p
     activity label instead of a lone spinner glyph.
     """
     from voidx.agent.domain.turn_metadata import TurnMetadata
-    from voidx.ui.output.dock import dock
+    from voidx.presentation.output.dock import dock
 
     monkeypatch.setattr("voidx_cli.app.random.choice", lambda _choices: "Thinking")
     tui = _tui(tmp_path)
@@ -1049,7 +1049,7 @@ def test_loop_turn_in_progress_renders_vibe_line_not_countdown(tmp_path, monkeyp
     should show the normal busy/vibe line, not disappear or show a countdown.
     """
     from voidx.agent.domain.turn_metadata import TurnMetadata
-    from voidx.ui.output.dock import dock
+    from voidx.presentation.output.dock import dock
 
     monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 500.0)
     monkeypatch.setattr("voidx_cli.app.random.choice", lambda _choices: "Thinking")
@@ -1077,7 +1077,7 @@ def test_loop_turn_finished_clears_vibe_line_back_to_countdown(tmp_path, monkeyp
     line should switch back to the countdown, not stay on the vibe line.
     """
     from voidx.agent.domain.turn_metadata import TurnMetadata
-    from voidx.ui.output.dock import dock
+    from voidx.presentation.output.dock import dock
 
     monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 500.0)
     monkeypatch.setattr("voidx_cli.render_activity.time.time", lambda: 1_000.0)
@@ -1143,7 +1143,7 @@ async def test_loop_waiting_record_arrival_starts_timer(tmp_path, monkeypatch):
 
 def test_ctrl_c_stops_loop_even_when_choice_prompt_active(tmp_path, monkeypatch):
     from voidx.agent.domain.turn_metadata import TurnMetadata
-    from voidx.ui.output.dock import dock
+    from voidx.presentation.output.dock import dock
     tui = _tui(tmp_path)
     tui._busy = False
     tui._active_choice = [("Yes", "y", "Allow this tool use once")]
@@ -1165,7 +1165,7 @@ def test_ctrl_c_stops_loop_even_when_choice_prompt_active(tmp_path, monkeypatch)
 
 
 def test_ctrl_c_does_not_stop_loop_for_regular_turn_in_progress(tmp_path, monkeypatch):
-    from voidx.ui.output.dock import dock
+    from voidx.presentation.output.dock import dock
     tui = _tui(tmp_path)
     tui._busy = False
     dock.start_turn("ordinary coding/chat turn")
@@ -1181,7 +1181,7 @@ def test_ctrl_c_does_not_stop_loop_for_regular_turn_in_progress(tmp_path, monkey
 
 def test_ctrl_c_interrupts_loop_turn_in_progress(tmp_path, monkeypatch):
     from voidx.agent.domain.turn_metadata import TurnMetadata
-    from voidx.ui.output.dock import dock
+    from voidx.presentation.output.dock import dock
     tui = _tui(tmp_path)
     tui._busy = False
     dock.start_turn(
@@ -1203,7 +1203,7 @@ def test_ctrl_c_interrupts_loop_turn_in_progress(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_ctrl_c_stops_running_loop_even_if_input_has_text(tmp_path, monkeypatch):
     from voidx.agent.domain.turn_metadata import TurnMetadata
-    from voidx.ui.output.dock import dock
+    from voidx.presentation.output.dock import dock
 
     tui = _tui(tmp_path)
     started = asyncio.Event()
@@ -1255,7 +1255,7 @@ async def test_ctrl_c_stops_running_loop_even_if_input_has_text(tmp_path, monkey
 @pytest.mark.asyncio
 async def test_ctrl_c_interrupts_running_loop_submit_task(tmp_path, monkeypatch):
     from voidx.agent.domain.turn_metadata import TurnMetadata
-    from voidx.ui.output.dock import dock
+    from voidx.presentation.output.dock import dock
 
     tui = _tui(tmp_path)
     started = asyncio.Event()
@@ -1306,7 +1306,7 @@ async def test_ctrl_c_interrupts_running_loop_submit_task(tmp_path, monkeypatch)
 
 
 def test_ctrl_c_interrupts_loop_waiting(tmp_path, monkeypatch):
-    from voidx.ui.output.dock import dock
+    from voidx.presentation.output.dock import dock
     tui = _tui(tmp_path)
     tui._busy = False
     dock.record_status("loop:waiting", "Looping", "9999999999.0")
@@ -1323,7 +1323,7 @@ def test_ctrl_c_interrupts_loop_waiting(tmp_path, monkeypatch):
 
 
 def test_ctrl_c_stops_loop_even_if_input_has_text(tmp_path, monkeypatch):
-    from voidx.ui.output.dock import dock
+    from voidx.presentation.output.dock import dock
     tui = _tui(tmp_path)
     tui._busy = False
     dock.record_status("loop:waiting", "Looping", "9999999999.0")
@@ -1344,7 +1344,7 @@ def test_ctrl_c_stops_loop_even_if_input_has_text(tmp_path, monkeypatch):
 
 
 def test_first_slash_command_does_not_lock_loop_waiting_context(tmp_path):
-    from voidx.ui.output.dock import dock
+    from voidx.presentation.output.dock import dock
 
     tui = _tui(tmp_path)
     dock.record_status("loop:waiting", "Looping", "9999999999.0")
@@ -1361,7 +1361,7 @@ def test_first_slash_command_does_not_lock_loop_waiting_context(tmp_path):
 
 def test_first_slash_command_does_not_lock_active_turn_context(tmp_path):
     from voidx.agent.domain.turn_metadata import TurnMetadata
-    from voidx.ui.output.dock import dock
+    from voidx.presentation.output.dock import dock
 
     tui = _tui(tmp_path)
     dock.start_turn(
@@ -1383,7 +1383,7 @@ def test_first_slash_command_does_not_lock_active_turn_context(tmp_path):
 
 
 def test_external_slash_command_does_not_lock_loop_waiting_context(tmp_path):
-    from voidx.ui.output.dock import dock
+    from voidx.presentation.output.dock import dock
 
     tui = _tui(tmp_path)
     dock.record_status("loop:waiting", "Looping", "9999999999.0")
@@ -1398,7 +1398,7 @@ def test_external_slash_command_does_not_lock_loop_waiting_context(tmp_path):
 
 def test_first_plain_message_locks_default_coding_context(tmp_path):
     from voidx.agent.domain.turn_metadata import TurnMetadata
-    from voidx.ui.output.dock import dock
+    from voidx.presentation.output.dock import dock
 
     tui = _tui(tmp_path)
     tui._input_lines = ["first"]
@@ -1452,7 +1452,7 @@ def test_first_explicit_profile_context_locks_future_messages(tmp_path):
 
 
 def test_message_after_loop_waiting_keeps_loop_context(tmp_path):
-    from voidx.ui.output.dock import dock
+    from voidx.presentation.output.dock import dock
 
     tui = _tui(tmp_path)
     dock.record_status("loop:waiting", "Looping", "9999999999.0")
@@ -1469,7 +1469,7 @@ def test_message_after_loop_waiting_keeps_loop_context(tmp_path):
 
 def test_message_after_interrupting_loop_keeps_loop_context(tmp_path):
     from voidx.agent.domain.turn_metadata import TurnMetadata
-    from voidx.ui.output.dock import dock
+    from voidx.presentation.output.dock import dock
 
     tui = _tui(tmp_path)
     dock.start_turn(
@@ -1494,7 +1494,7 @@ def test_message_after_interrupting_loop_keeps_loop_context(tmp_path):
 
 def test_loop_turn_in_progress_uses_metadata_not_text(tmp_path):
     from voidx.agent.domain.turn_metadata import TurnMetadata
-    from voidx.ui.output.dock import dock
+    from voidx.presentation.output.dock import dock
 
     tui = _tui(tmp_path)
     tui._busy = False
@@ -1511,7 +1511,7 @@ def test_loop_turn_in_progress_uses_metadata_not_text(tmp_path):
 
 
 def test_ctrl_c_does_not_stop_loop_for_regular_text_that_starts_with_loop(tmp_path):
-    from voidx.ui.output.dock import dock
+    from voidx.presentation.output.dock import dock
 
     tui = _tui(tmp_path)
     tui._busy = False

@@ -6,8 +6,8 @@ import re
 import pytest
 from rich.console import Console
 
-from voidx.ui.tools.clipboard_image import ClipboardImageResult
-from voidx.ui.tools.clipboard_text import ClipboardTextResult
+from voidx.presentation.tools.clipboard_image import ClipboardImageResult
+from voidx.presentation.tools.clipboard_text import ClipboardTextResult
 
 def test_paste_clipboard_image_inserts_image_token(tmp_path, monkeypatch):
     def fake_paste(_workspace: str) -> ClipboardImageResult:

@@ -9,6 +9,13 @@ from voidx.config import Settings
 from voidx.skills.registry import SkillRegistry, normalize_skill_name
 from voidx.skills.schema import EXPLICIT_REF_RE, SkillDefinition
 from voidx.skills.service import SkillService
+from typing import Protocol
+
+
+class SkillLookup(Protocol):
+    def get(self, name: str) -> SkillDefinition | None: ...
+
+    def is_enabled(self, skill: SkillDefinition) -> bool: ...
 
 
 @dataclass(frozen=True)
@@ -29,7 +36,7 @@ def skill_reference_message(
     workspace: str,
     *,
     settings: Settings | None = None,
-    service: SkillService | None = None,
+    service: SkillLookup | None = None,
 ) -> SkillReferenceMessage:
     if "$" not in user_text:
         return SkillReferenceMessage()

@@ -20,9 +20,9 @@ from voidx.llm.compaction import (
 from voidx.llm.service import resolve_protocol
 from voidx.logging.tool_log import log_tool_event
 from voidx.llm.usage import estimate_context_tokens, estimate_message_tokens, extract_token_usage
-from voidx.memory.service import save_context_frame_from_messages
+from voidx.agent.adapters.persistence.context_frame_repository import save_context_frame_from_messages
 from voidx.runtime.ui import StatusFinished, StatusUpdated, StreamingRenderer
-from voidx.workflow.service import is_workflow_context_content
+from voidx.agent.application.automation.workflow.service import is_workflow_context_content
 
 RunCompactionAgent = Callable[[list, str | None], Awaitable[str | None]]
 PersistCompaction = Callable[[list], Awaitable[None]]
@@ -343,7 +343,7 @@ class CompactionCoordinator:
         last_message_id = _max_persisted_message_id(head_messages)
         if last_message_id is None:
             return
-        from voidx.memory.service import delete_messages_through
+        from voidx.agent.adapters.persistence.session_repository import delete_messages_through
 
         await delete_messages_through(host._session.id, last_message_id)
 
@@ -374,7 +374,7 @@ class CompactionCoordinator:
         if cache is not None:
             rows = list(cache)
         else:
-            from voidx.memory.service import load_messages
+            from voidx.agent.adapters.persistence.session_repository import load_messages
             rows = await load_messages(host._session.id)
 
         messages = messages_from_rows(rows)

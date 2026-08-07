@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from voidx.agent.domain.goal import GOAL_PROFILE, GoalSpec, GoalState, GoalToolView
+from voidx.agent.domain.automation.goal import GOAL_PROFILE, GoalSpec, GoalState, GoalToolView
 
 
 def test_goal_profile_is_first_class() -> None:
@@ -135,7 +135,7 @@ def test_goal_tool_view_evaluator_phase_excludes_execution_and_web_tools() -> No
 
 
 def test_goal_evaluator_directive_exists_for_evaluator_phase() -> None:
-    from voidx.agent.domain.goal import GOAL_EVALUATOR_DIRECTIVE
+    from voidx.agent.domain.automation.goal import GOAL_EVALUATOR_DIRECTIVE
 
     assert "decision" in GOAL_EVALUATOR_DIRECTIVE
     assert "evaluator" in GOAL_EVALUATOR_DIRECTIVE.lower()
@@ -144,8 +144,8 @@ def test_goal_evaluator_directive_exists_for_evaluator_phase() -> None:
 def test_goal_phase_directive_covers_intake_and_evaluator() -> None:
     from types import SimpleNamespace
 
-    from voidx.agent.domain.goal import GOAL_EVALUATOR_DIRECTIVE, GOAL_INTAKE_DIRECTIVE
-    from voidx.agent.domain.prompt_policy import GoalPromptPolicy
+    from voidx.agent.domain.automation.goal import GOAL_EVALUATOR_DIRECTIVE, GOAL_INTAKE_DIRECTIVE
+    from voidx.agent.domain.automation.goal import GoalPromptPolicy
 
     policy = GoalPromptPolicy()
 
@@ -188,7 +188,7 @@ def test_goal_tool_view_idle_phase_denies_bash() -> None:
 
 
 def test_goal_idle_directive_exists_for_idle_phase() -> None:
-    from voidx.agent.domain.goal import GOAL_IDLE_DIRECTIVE
+    from voidx.agent.domain.automation.goal import GOAL_IDLE_DIRECTIVE
 
     assert "goal" in GOAL_IDLE_DIRECTIVE.lower()
     assert "init" in GOAL_IDLE_DIRECTIVE.lower()
@@ -197,8 +197,8 @@ def test_goal_idle_directive_exists_for_idle_phase() -> None:
 def test_goal_phase_directive_covers_idle() -> None:
     from types import SimpleNamespace
 
-    from voidx.agent.domain.goal import GOAL_IDLE_DIRECTIVE
-    from voidx.agent.domain.prompt_policy import GoalPromptPolicy
+    from voidx.agent.domain.automation.goal import GOAL_IDLE_DIRECTIVE
+    from voidx.agent.domain.automation.goal import GoalPromptPolicy
 
     idle_ctx = SimpleNamespace(goal_phase="idle")
 

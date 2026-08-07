@@ -7,18 +7,20 @@ from dataclasses import replace
 from typing import Any
 from voidx.config import PermissionMode
 from voidx.logging.tool_log import log_tool_event
-from voidx.permission.ai_approval import is_ai_approval_candidate
-from voidx.permission.service import (
+from voidx.tooling.application.ai_approval import is_ai_approval_candidate
+from voidx.tooling.application.permission_service import (
     PermissionContext,
     authorize_tool_call,
     classify_tool_call,
 )
-from voidx.permission.context import PermissionDecision
-from voidx.permission.grants import AccessIntent, grant_for_intent
-from voidx.permission.session_rules import scoped_session_rule_for_decision
-from voidx.permission.schema import Action
-from voidx.permission.risk import ApprovalScope, RiskLevel
-from voidx.runtime.intent import PersonaName
+from voidx.tooling.domain.authorization import PermissionDecision
+from voidx.tooling.domain.grants import AccessIntent
+from voidx.tooling.policy.filesystem.grants import grant_for_intent
+from voidx.tooling.policy.permission.session_rules import scoped_session_rule_for_decision
+from voidx.tooling.domain.permission import Action
+from voidx.tooling.domain.risk import ApprovalScope, RiskLevel
+from voidx.agent.domain.task.intent import PersonaName
+from voidx.agent.adapters.tools.permission_projection import project_agent_tool_call
 from voidx.runtime.ui import PermissionPromptCleared, PermissionPromptShown, PermissionToolDetail
 from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_thread_execution_state
 
@@ -48,7 +50,7 @@ def _attach_ai_approval_failures(
 def _coerce_permission_decision(item: dict | PermissionDecision) -> PermissionDecision:
     if isinstance(item, PermissionDecision):
         return item
-    classified = classify_tool_call(item)
+    classified = classify_tool_call(project_agent_tool_call(item))
     return PermissionDecision(
         action=Action.ASK,
         tool_call=classified.tool_call,
@@ -250,15 +252,14 @@ class PermissionFlow:
             approved: list[dict] = []
             denied: list[tuple[dict, str]] = []
         need_ask: list[PermissionDecision] = []
-        context = PermissionContext.from_service(
-            host._permission,
+        context = host._permission.context_for(
             workspace=host._workspace,
             interaction_mode=interaction_mode,
             plan_mode=plan_mode,
         )
 
         for tc in tool_calls:
-            decision = authorize_tool_call(tc, context)
+            decision = authorize_tool_call(project_agent_tool_call(tc), context)
             if (
                 decision.action == Action.ASK
                 and decision.risk is not None

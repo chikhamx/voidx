@@ -1,16 +1,17 @@
 """The fixed `mcp` gateway tool is always registered alongside McpManager."""
 
+from tests.tool_registry import build_registry
 import json
 
-from voidx.agent.infrastructure.langgraph.runtime.wiring import build_external_managers
+from voidx.bootstrap.tooling import build_external_managers
 from voidx.config import Settings
-from voidx.permission.service import PermissionService
-from voidx.tools.registry import ToolRegistry
+from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
+from voidx.tooling.application.registry import ToolRegistry
 
 
 def _registry_with_mcp(tmp_path) -> ToolRegistry:
     settings = Settings(str(tmp_path))
-    registry = ToolRegistry(settings=settings)
+    registry = build_registry(settings=settings)
     build_external_managers(
         settings=settings,
         tools=registry,

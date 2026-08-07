@@ -85,7 +85,7 @@ async def test_skills_paths_prints_bundled_source(tmp_path, monkeypatch):
     assert "bundled" in rendered
 
 
-from voidx.ui.commands import COMMANDS
+from voidx.presentation.commands import COMMANDS
 
 
 def test_skills_subcommands_are_in_palette():

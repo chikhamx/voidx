@@ -1,5 +1,6 @@
 """Regression tests for core graph behavior."""
 
+from tests.tool_registry import build_registry
 import asyncio
 import json
 import sys
@@ -11,7 +12,7 @@ import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, RemoveMessage, SystemMessage, ToolMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
-import voidx.memory.store as store
+import voidx.persistence.sqlite as store
 
 from voidx.agent.application.agents import (
     AgentDef,
@@ -30,7 +31,7 @@ from voidx.agent.application.runtime_context import InteractionMode, RuntimeCont
 from voidx.config import Config, Settings, UserProfile
 from voidx.llm.compaction import CompactionSelection
 from voidx.agent.application.instruction import InstructionService, WorkflowRuntimeContext
-from voidx.memory.session import (
+from voidx.agent.adapters.persistence.session_repository import (
     MessageRow,
     SessionInfo,
     create_session,
@@ -38,18 +39,21 @@ from voidx.memory.session import (
     load_messages,
     save_message,
 )
-from voidx.memory.transcript import load_transcript
-from voidx.permission.service import PermissionService
-from voidx.runtime import GoalResolution, GoalSpec, IntentResolution, PlanResolution, TaskIntent
+from voidx.presentation.transcript_snapshot import load_transcript
+from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
+from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
+from voidx.agent.domain.task.intent import TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
-from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER
-from voidx.workflow.runtime import WorkflowRunState, WorkflowRunStatus
-from voidx.runtime.task_state import TaskState, ToolStatePatch, WorkflowRoute
-from voidx.tools.base import ToolContext, ToolResult
-from voidx.tools.agent import AgentResultContract, AgentTool
-from voidx.tools.registry import ToolRegistry
-from voidx.ui.output.dock import BottomInputDock, set_dock
-from voidx.ui.output.events import DockEventConsumer, TurnStarted, ui_events
+from voidx.agent.application.automation.workflow.context import WORKFLOW_CONTEXT_MARKER
+from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
+from voidx.agent.domain.task.state import TaskState, ToolStatePatch
+from voidx.agent.domain.automation.workflow import WorkflowRoute
+from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
+from voidx.tooling.domain.result import ToolResult
+from voidx.agent.adapters.tools.subagent import AgentResultContract, AgentTool
+from voidx.tooling.application.registry import ToolRegistry
+from voidx.presentation.output.dock import BottomInputDock, set_dock
+from voidx.presentation.output.events import DockEventConsumer, TurnStarted, ui_events
 
 
 def _graph(tmp_path):
@@ -505,7 +509,7 @@ async def test_subagent_tool_result_injects_next_step_hint_into_followup_message
     monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: model)
     monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
 
-    parent_tools = ToolRegistry()
+    parent_tools = build_registry()
     tool = HintTool()
     parent_tools.register(tool.id, tool, tool.description, tool.parameters_schema())
 
@@ -549,7 +553,7 @@ async def test_subagent_state_patch_is_applied_to_next_turn_context(tmp_path, mo
             return {"type": "object", "properties": {}}
 
         async def execute(self, _args, _ctx):
-            from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
+            from voidx.agent.domain.automation.workflow import WorkflowRunState, WorkflowRunStatus
 
             return ToolResult(
                 output="workflow advanced",
@@ -588,9 +592,9 @@ async def test_subagent_state_patch_is_applied_to_next_turn_context(tmp_path, mo
     monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: model)
     monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
 
-    parent_tools = ToolRegistry()
+    parent_tools = build_registry()
     tool = WorkflowTool()
-    parent_tools.register(tool.id, tool, tool.description, tool.parameters_schema())
+    parent_tools.replace(tool.id, tool, tool.description, tool.parameters_schema())
 
     from voidx.agent.infrastructure.langgraph.runtime.subagent import run_subagent
 
@@ -667,7 +671,7 @@ async def test_subagent_refreshes_workflow_runtime_after_route_patch(tmp_path, m
     monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: model)
     monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
 
-    parent_tools = ToolRegistry()
+    parent_tools = build_registry()
     tool = RouteTool()
     parent_tools.register(tool.id, tool, tool.description, tool.parameters_schema())
 
@@ -710,7 +714,7 @@ async def test_subagent_removes_completed_workflow_from_active_summaries(tmp_pat
             return {"type": "object", "properties": {}}
 
         async def execute(self, _args, _ctx):
-            from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
+            from voidx.agent.domain.automation.workflow import WorkflowRunState, WorkflowRunStatus
 
             return ToolResult(
                 output="workflow completed",
@@ -750,7 +754,7 @@ async def test_subagent_removes_completed_workflow_from_active_summaries(tmp_pat
     monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: model)
     monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
 
-    parent_tools = ToolRegistry()
+    parent_tools = build_registry()
     tool = CompleteWorkflowTool()
     parent_tools.register(tool.id, tool, tool.description, tool.parameters_schema())
     initial_run = WorkflowRunState(
@@ -849,7 +853,7 @@ async def test_subagent_route_patch_counts_as_progress_for_runtime_guard(tmp_pat
     monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
     monkeypatch.setattr(subagent_module, "cycle_summary_from_tools", record_cycle_summary)
 
-    parent_tools = ToolRegistry()
+    parent_tools = build_registry()
     tool = RouteTool()
     parent_tools.register(tool.id, tool, tool.description, tool.parameters_schema())
 
@@ -939,7 +943,7 @@ async def test_subagent_applies_state_patch_before_terminal_message_result(tmp_p
     monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: model)
     monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
 
-    parent_tools = ToolRegistry()
+    parent_tools = build_registry()
     tool = ResultMessageTool()
     parent_tools.register(tool.id, tool, tool.description, tool.parameters_schema())
 

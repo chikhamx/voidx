@@ -6,7 +6,7 @@ from voidx.agent.domain.prompt_policy import CodingPromptPolicy
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.domain.thread import AgentThread
-from voidx.agent.runtime.contracts import TurnRequest, TurnResult
+from voidx.agent.application.runtime.contracts import TurnRequest, TurnResult
 
 
 CODING_PROFILE = RuntimeProfile(

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-import voidx.memory.store as store
+import voidx.persistence.sqlite as store
 
 
 @pytest.fixture(autouse=True)

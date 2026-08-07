@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from voidx.agent.domain.goal import GoalToolView
+from voidx.agent.domain.automation.goal import GoalToolView
 from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
     ThreadExecutionState,
     _CURRENT_THREAD_EXECUTION_STATE,

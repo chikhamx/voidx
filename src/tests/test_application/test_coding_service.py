@@ -2,7 +2,7 @@ import pytest
 
 from voidx.agent.application.coding_service import CODING_PROFILE, CodingService
 from voidx.agent.domain.thread import LifecycleState
-from voidx.agent.runtime.contracts import TurnResult
+from voidx.agent.application.runtime.contracts import TurnResult
 from voidx.agent.domain.turn_context import TurnExecutionContext
 
 

@@ -7,7 +7,7 @@ import sys
 
 from rich.console import Console
 
-from voidx.ui.output.dock import dock
+from voidx.presentation.output.dock import dock
 
 
 def test_render_frame_pins_to_bottom_after_history_fills_terminal(tmp_path, monkeypatch):

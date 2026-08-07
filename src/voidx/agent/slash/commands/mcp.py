@@ -124,7 +124,7 @@ class McpCommandsMixin:
         return McpServerConfig(
             name=name,
             command=sys.executable,
-            args=["-m", "voidx.mcp.server.web"],
+            args=["-m", "voidx.tooling.adapters.mcp_web_server"],
             env=env,
             tools=["web_search", "web_fetch"],
         )
@@ -401,7 +401,7 @@ class McpCommandsMixin:
 
     @staticmethod
     async def _test_mcp_config(server: McpServerConfig, timeout: float = 30.0):
-        from voidx.mcp.client import McpClient
+        from voidx.mcp.adapters.client import McpClient
 
         client = McpClient(server)
         try:

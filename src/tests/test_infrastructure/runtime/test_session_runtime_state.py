@@ -10,18 +10,14 @@ from tests.test_agent.conftest import _read_jsonl, _session_dir, _table_names
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-import voidx.memory.store as store
-import voidx.memory.jsonl_store as jsonl_store
+import voidx.persistence.sqlite as store
+import voidx.persistence.jsonl as jsonl_store
 
 from voidx.agent.application.runtime_context import InteractionMode, TaskIntent
-from voidx.runtime.task_state import (
-    GoalSpec,
-    TaskState,
-    TodoRunState,
-    TurnExchange,
-    WorkflowRoute,
-)
-from voidx.memory.session import (
+from voidx.agent.domain.task.state import GoalSpec, TaskState, TurnExchange
+from voidx.agent.domain.task.todo import TodoRunState
+from voidx.agent.domain.automation.workflow import WorkflowRoute
+from voidx.agent.adapters.persistence.session_repository import (
     create_session,
     get_session,
     delete_session,
@@ -32,13 +28,13 @@ from voidx.memory.session import (
     clear_messages,
     MessageRow,
 )
-from voidx.memory.context_frames import (
+from voidx.agent.adapters.persistence.context_frame_repository import (
     build_context_frame,
     load_context_frames,
     save_context_frame,
 )
-from voidx.memory.jsonl_store import append_session_record
-from voidx.memory.runtime_state import (
+from voidx.persistence.jsonl import append_session_record
+from voidx.agent.adapters.persistence.runtime_state_repository import (
     MessageRuntimeSnapshot,
     RuntimeStateSnapshot,
     clear_runtime_state,
@@ -47,12 +43,12 @@ from voidx.memory.runtime_state import (
     save_message_runtime_snapshot,
     save_runtime_state,
 )
-from voidx.memory.transcript import (
+from voidx.presentation.transcript_snapshot import (
     TranscriptNodeRow,
     replace_transcript,
     load_transcript,
 )
-from voidx.workflow.runtime import WorkflowActivationSource, WorkflowRunState, WorkflowRunStatus
+from voidx.agent.application.automation.workflow.runtime import WorkflowActivationSource, WorkflowRunState, WorkflowRunStatus
 
 @pytest.mark.asyncio
 async def test_runtime_state_round_trips_structured_goal_state():

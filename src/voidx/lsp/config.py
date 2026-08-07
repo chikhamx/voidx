@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from voidx.lsp.schema import LspServerConfig
-from voidx.paths import LSP_CONFIG_FILE
+from voidx.lsp.domain import LspServerConfig
+from voidx.platform.paths import LSP_CONFIG_FILE
 
 DEFAULT_SERVERS: dict[str, LspServerConfig] = {
     "python": LspServerConfig(

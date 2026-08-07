@@ -41,16 +41,28 @@ class FakeIntakeRuntime:
         self.requests.append(request)
         controller = getattr(request.context, "goal_intake_controller", None)
         if self.loop_spec is not None:
-            from voidx.runtime.task_state import LoopSpec
+            from voidx.agent.domain.automation.loop import LoopSpec
 
             loop_controller = getattr(request.context, "loop_intake_controller", None)
             if loop_controller is not None:
                 await loop_controller.submit_init(LoopSpec(**self.loop_spec))
         if self.spec is not None and controller is not None:
-            from voidx.agent.domain.goal import GoalSpec
+            from voidx.agent.domain.automation.goal import GoalSpec
 
             await controller.submit_init(GoalSpec(**self.spec))
         return SimpleNamespace(final_assistant_summary=self.summary)
+
+
+class FakeEvents:
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+        self.turns: list[str] = []
+
+    def publish_message(self, message: str) -> None:
+        self.messages.append(message)
+
+    def start_turn(self, text: str) -> None:
+        self.turns.append(text)
 
 
 def _service(profile: str, **overrides):
@@ -60,12 +72,13 @@ def _service(profile: str, **overrides):
         loop_service=FakeLoopService(),
         goal_service=FakeGoalService(),
     )
+    overrides.setdefault("events", FakeEvents())
     return AgentService(execution, runtime=FakeIntakeRuntime(), **overrides)
 
 
 @pytest.mark.asyncio
 async def test_loop_profile_first_message_starts_dynamic_loop() -> None:
-    from voidx.agent.domain.loop import LoopSpec
+    from voidx.agent.domain.automation.loop import LoopSpec
 
     service = _service("loop")
     service._runtime.loop_spec = {"prompt": "fix the flaky test"}
@@ -93,7 +106,7 @@ async def test_loop_first_message_without_service_falls_through() -> None:
 
 @pytest.mark.asyncio
 async def test_goal_profile_first_message_starts_goal_from_message() -> None:
-    from voidx.agent.domain.goal import GoalSpec
+    from voidx.agent.domain.automation.goal import GoalSpec
 
     service = _service("goal")
     service._runtime.spec = {
@@ -156,13 +169,13 @@ async def test_autonomous_first_message_coding_profile_falls_through() -> None:
 @pytest.mark.asyncio
 async def test_first_message_is_persisted_so_intake_fires_once(monkeypatch) -> None:
     saved: list[tuple[str, str]] = []
-    from voidx.memory.session import MessageRow
+    from voidx.agent.adapters.persistence.session_repository import MessageRow
 
     async def fake_save_message(row: MessageRow) -> int:
         saved.append((row.session_id, row.content))
         return 1
 
-    monkeypatch.setattr("voidx.memory.service.save_message", fake_save_message)
+    monkeypatch.setattr("voidx.agent.adapters.persistence.session_repository.save_message", fake_save_message)
 
     service = _service("goal")
     service._runtime.spec = {
@@ -181,13 +194,13 @@ async def test_first_message_is_persisted_so_intake_fires_once(monkeypatch) -> N
 @pytest.mark.asyncio
 async def test_goal_intake_failure_persists_first_message(monkeypatch) -> None:
     saved: list[tuple[str, str]] = []
-    from voidx.memory.session import MessageRow
+    from voidx.agent.adapters.persistence.session_repository import MessageRow
 
     async def fake_save_message(row: MessageRow) -> int:
         saved.append((row.session_id, row.content))
         return 1
 
-    monkeypatch.setattr("voidx.memory.service.save_message", fake_save_message)
+    monkeypatch.setattr("voidx.agent.adapters.persistence.session_repository.save_message", fake_save_message)
 
     service = _service("goal")
     service._runtime.summary = "I need a clearer acceptance condition."
@@ -224,8 +237,7 @@ async def test_goal_profile_followup_does_not_fall_through_to_coding(monkeypatch
         coding_calls.append(user_text)
 
     service.run_coding_turn = fake_coding_turn  # type: ignore[method-assign]
-    printed: list[str] = []
-    monkeypatch.setattr("voidx.agent.application.agent_service.ui.print", lambda msg: printed.append(str(msg)))
+    printed = service._events.messages
 
     keep_running, exit_message = await service._handle_user_input(
         SimpleNamespace(consume_quiet_command=lambda _cmd: False),

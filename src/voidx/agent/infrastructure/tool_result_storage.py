@@ -8,8 +8,8 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from voidx.agent.application.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
-from voidx.memory import store
-from voidx.paths import voidx_workspace_dir
+import voidx.persistence.sqlite as store
+from voidx.platform.paths import voidx_workspace_dir
 
 TOOL_RESULT_PERSIST_THRESHOLD = DEFAULT_TOOL_MESSAGE_MAX_CHARS
 TOOL_RESULT_PREVIEW_CHARS = 2_000

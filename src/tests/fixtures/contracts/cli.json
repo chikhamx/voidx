@@ -1,0 +1,175 @@
+{
+  "cases": {
+    "help": {
+      "argv": [
+        "--help"
+      ],
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "                                                                                \n Usage: voidx [OPTIONS] COMMAND [ARGS]...                                       \n                                                                                \n A coding agent in your terminal.                                               \n                                                                                \n╭─ Options ────────────────────────────────────────────────────────────────────╮\n│ --workspace           -w      <str>  Working directory [default: .]          │\n│ --model               -m      <str>  Model name                              │\n│ --provider            -p      <str>  Provider                                │\n│ --resume              -r      <str>  Resume a session by ID                  │\n│ --new                 -n             Force new session                       │\n│ --web                                Start the Web UI gateway                │\n│ --web-headless                       Run without the terminal UI; requires   │\n│                                      --web                                   │\n│ --web-host                    <str>  Web UI gateway host                     │\n│                                      [default: 127.0.0.1]                    │\n│ --web-port                    <int>  Web UI gateway port [default: 0]        │\n│ --chat                -c             Start the session in Chat mode          │\n│                                      (restricted, read-only tools)           │\n│ --version                            Show version and exit                   │\n│ --install-completion                 Install completion for the current      │\n│                                      shell.                                  │\n│ --show-completion                    Show completion for the current shell,  │\n│                                      to copy it or customize the             │\n│                                      installation.                           │\n│ --help                               Show this message and exit.             │\n╰──────────────────────────────────────────────────────────────────────────────╯\n╭─ Commands ───────────────────────────────────────────────────────────────────╮\n│ sessions  List saved sessions.                                               │\n│ version   Show version info.                                                 │\n╰──────────────────────────────────────────────────────────────────────────────╯\n\n"
+    },
+    "missing_resume": {
+      "argv": [
+        "--resume",
+        "missing-session"
+      ],
+      "exit_code": 1,
+      "stderr": "",
+      "stdout": "Session not found: missing-session\n"
+    },
+    "sessions_empty": {
+      "argv": [
+        "sessions"
+      ],
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "No saved sessions.\n"
+    },
+    "version_command": {
+      "argv": [
+        "version"
+      ],
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "voidx v${VERSION}\n"
+    },
+    "version_option": {
+      "argv": [
+        "--version"
+      ],
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "voidx v${VERSION}\n"
+    },
+    "web_headless_without_web": {
+      "argv": [
+        "--web-headless"
+      ],
+      "exit_code": 2,
+      "stderr": "Usage: voidx [OPTIONS] COMMAND [ARGS]...\nTry 'voidx --help' for help.\n╭─ Error ──────────────────────────────────────────────────────────────────────╮\n│ Invalid value: --web-headless requires --web                                 │\n╰──────────────────────────────────────────────────────────────────────────────╯\n",
+      "stdout": ""
+    }
+  },
+  "commands": [
+    "sessions",
+    "version"
+  ],
+  "options": [
+    {
+      "default": ".",
+      "help": "Working directory",
+      "is_flag": false,
+      "name": "workspace",
+      "opts": [
+        "-w",
+        "--workspace"
+      ],
+      "required": false
+    },
+    {
+      "default": null,
+      "help": "Model name",
+      "is_flag": false,
+      "name": "model",
+      "opts": [
+        "-m",
+        "--model"
+      ],
+      "required": false
+    },
+    {
+      "default": null,
+      "help": "Provider",
+      "is_flag": false,
+      "name": "provider",
+      "opts": [
+        "-p",
+        "--provider"
+      ],
+      "required": false
+    },
+    {
+      "default": null,
+      "help": "Resume a session by ID",
+      "is_flag": false,
+      "name": "resume",
+      "opts": [
+        "-r",
+        "--resume"
+      ],
+      "required": false
+    },
+    {
+      "default": false,
+      "help": "Force new session",
+      "is_flag": true,
+      "name": "new",
+      "opts": [
+        "-n",
+        "--new"
+      ],
+      "required": false
+    },
+    {
+      "default": false,
+      "help": "Start the Web UI gateway",
+      "is_flag": true,
+      "name": "web",
+      "opts": [
+        "--web"
+      ],
+      "required": false
+    },
+    {
+      "default": false,
+      "help": "Run without the terminal UI; requires --web",
+      "is_flag": true,
+      "name": "web_headless",
+      "opts": [
+        "--web-headless"
+      ],
+      "required": false
+    },
+    {
+      "default": "127.0.0.1",
+      "help": "Web UI gateway host",
+      "is_flag": false,
+      "name": "web_host",
+      "opts": [
+        "--web-host"
+      ],
+      "required": false
+    },
+    {
+      "default": 0,
+      "help": "Web UI gateway port",
+      "is_flag": false,
+      "name": "web_port",
+      "opts": [
+        "--web-port"
+      ],
+      "required": false
+    },
+    {
+      "default": false,
+      "help": "Start the session in Chat mode (restricted, read-only tools)",
+      "is_flag": true,
+      "name": "chat",
+      "opts": [
+        "-c",
+        "--chat"
+      ],
+      "required": false
+    },
+    {
+      "default": false,
+      "help": "Show version and exit",
+      "is_flag": true,
+      "name": "version",
+      "opts": [
+        "--version"
+      ],
+      "required": false
+    }
+  ]
+}

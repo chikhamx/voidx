@@ -16,8 +16,8 @@ from voidx.agent.infrastructure.langgraph.runtime.turn_control import (
     TurnClassification,
     classify_turn_call,
 )
-from voidx.runtime.task_state import TaskState
-from voidx.tools.loop import LoopTool
+from voidx.agent.domain.task.state import TaskState
+from voidx.agent.adapters.tools.automation.loop import LoopTool
 
 
 @dataclass(frozen=True)
@@ -179,7 +179,7 @@ class GoalProtocol:
         self.verification_tool_definitions = verification_tool_definitions or []
 
     def tool_definitions(self) -> list[dict[str, Any]]:
-        from voidx.tools.goal import GoalTool
+        from voidx.agent.adapters.tools.automation.goal import GoalTool
 
         definitions = [{
             "type": "function",

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from voidx.mcp.references import mcp_reference_message
+from voidx.agent.adapters.mcp.references import mcp_reference_message
 from voidx.mcp.schema import McpToolDef
 from voidx.mcp.context import MCP_TOOL_CONTEXT_MARKER
 

@@ -10,15 +10,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from voidx.diffing import language_from_path
-from voidx.paths import CLIPBOARD_ATTACHMENT_DIR
-from voidx.runtime.attachments import MAX_IMAGE_ATTACHMENT_BYTES
+from voidx.platform.file_types import language_from_path
+from voidx.platform.paths import CLIPBOARD_ATTACHMENT_DIR
+from voidx.agent.domain.turn.attachments import (
+    MAX_IMAGE_ATTACHMENT_BYTES,
+    attachment_tokens,
+)
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 MAX_TEXT_ATTACHMENT_BYTES = 200_000
 MAX_DIR_LISTING_ITEMS = 500
 _DIR_TREE_SKIP = {"__pycache__", ".git", ".hg", ".svn", "node_modules", ".venv", "venv", "dist", "build", ".pytest_cache", ".mypy_cache"}
-_ATTACHMENT_RE = re.compile(r'(?<!\S)(?:@(?:"([^"]+)"|(\S+))|\[image-([^\]]+)\])')
 _CLIPBOARD_ATTACHMENT_DIR = CLIPBOARD_ATTACHMENT_DIR
 
 
@@ -75,7 +77,7 @@ def build_user_message_payload(
     extra_removed_spans: list[tuple[int, int]] | None = None,
 ) -> UserMessagePayload:
     workspace_path = Path(workspace).resolve()
-    tokens = _attachment_tokens(user_text)
+    tokens = attachment_tokens(user_text)
     removed_spans: list[tuple[int, int]] = []
     attachments: list[Attachment] = []
     path_references: list[PathReference] = []
@@ -175,31 +177,6 @@ def is_image_path(path: Path | str) -> bool:
     return Path(path).suffix.lower() in IMAGE_EXTENSIONS
 
 
-_PASTED_RE = re.compile(r"<pasted>\n.*?\n</pasted>", re.DOTALL)
-
-
-def _pasted_spans(text: str) -> list[tuple[int, int]]:
-    """Return (start, end) spans of all <pasted>...</pasted> blocks."""
-    return [(m.start(), m.end()) for m in _PASTED_RE.finditer(text)]
-
-
-def _attachment_tokens(text: str) -> list[tuple[int, int, str]]:
-    tokens: list[tuple[int, int, str]] = []
-    excluded = _pasted_spans(text)
-    for match in _ATTACHMENT_RE.finditer(text):
-        # Skip @-references and [image-] tokens inside <pasted> blocks —
-        # pasted content is quoted material (e.g. code with decorators),
-        # not user-authored attachment references.
-        if any(start <= match.start() < end for start, end in excluded):
-            continue
-        image_stem = match.group(3)
-        if image_stem:
-            raw_path = f":image:{image_stem}"
-        else:
-            raw_path = match.group(1) or match.group(2)
-        if raw_path:
-            tokens.append((match.start(), match.end(), raw_path))
-    return tokens
 
 
 def _remove_spans(text: str, spans: list[tuple[int, int]]) -> str:

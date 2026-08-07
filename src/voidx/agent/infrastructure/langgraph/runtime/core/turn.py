@@ -6,7 +6,7 @@ from typing import Any, Literal
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
 from voidx.agent.infrastructure.langgraph.runtime.core.loop import LlmLoopState
-from voidx.runtime.intent import InteractionMode
+from voidx.agent.domain.task.intent import InteractionMode
 from voidx.agent.infrastructure.langgraph.runtime.streaming import extract_text
 from voidx.agent.infrastructure.langgraph.runtime.topology import latest_user_text
 from voidx.agent.infrastructure.langgraph.runtime.turn_control import (
@@ -17,7 +17,7 @@ from voidx.agent.infrastructure.langgraph.runtime.turn_control import (
     normalize_terminal_message,
     validate_turn_call,
 )
-from voidx.runtime.task_state import (
+from voidx.agent.domain.task.state import (
     GoalResolution,
     GoalSpec,
     IntentResolution,
@@ -25,7 +25,7 @@ from voidx.runtime.task_state import (
 )
 from voidx.agent.application.runtime_context import TaskIntent
 from voidx.llm.message_markers import GUIDANCE_MARKER
-from voidx.workflow.service import reconcile_workflow_runs_for_turn
+from voidx.agent.application.automation.workflow.service import reconcile_workflow_runs_for_turn
 
 
 @dataclass

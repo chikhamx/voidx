@@ -1,0 +1,986 @@
+{
+  "objects": [
+    {
+      "name": "idx_context_frames_prefix",
+      "sql": "CREATE INDEX idx_context_frames_prefix\n            ON context_frames(session_id, prefix_hash)",
+      "tbl_name": "context_frames",
+      "type": "index"
+    },
+    {
+      "name": "idx_context_frames_session",
+      "sql": "CREATE INDEX idx_context_frames_session\n            ON context_frames(session_id, id)",
+      "tbl_name": "context_frames",
+      "type": "index"
+    },
+    {
+      "name": "idx_model_profiles_provider",
+      "sql": "CREATE INDEX idx_model_profiles_provider\n            ON model_profiles(provider)",
+      "tbl_name": "model_profiles",
+      "type": "index"
+    },
+    {
+      "name": "idx_runtime_attempts_thread",
+      "sql": "CREATE INDEX idx_runtime_attempts_thread\n            ON runtime_turn_attempts(thread_id, status)",
+      "tbl_name": "runtime_turn_attempts",
+      "type": "index"
+    },
+    {
+      "name": "idx_runtime_outbox_ready",
+      "sql": "CREATE INDEX idx_runtime_outbox_ready\n            ON runtime_outbox(delivered_at, available_at, claimed_until)",
+      "tbl_name": "runtime_outbox",
+      "type": "index"
+    },
+    {
+      "name": "agent_thread_frames",
+      "sql": "CREATE TABLE agent_thread_frames (\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            thread_id TEXT NOT NULL,\n            prefix_hash TEXT NOT NULL,\n            frame_hash TEXT NOT NULL,\n            metadata_json TEXT NOT NULL DEFAULT '{}',\n            created_at TEXT NOT NULL,\n            FOREIGN KEY (thread_id) REFERENCES agent_threads(id) ON DELETE CASCADE\n        )",
+      "tbl_name": "agent_thread_frames",
+      "type": "table"
+    },
+    {
+      "name": "agent_thread_messages",
+      "sql": "CREATE TABLE agent_thread_messages (\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            thread_id TEXT NOT NULL,\n            role TEXT NOT NULL,\n            payload_json TEXT NOT NULL,\n            status TEXT,\n            created_at TEXT NOT NULL,\n            FOREIGN KEY (thread_id) REFERENCES agent_threads(id) ON DELETE CASCADE\n        )",
+      "tbl_name": "agent_thread_messages",
+      "type": "table"
+    },
+    {
+      "name": "agent_thread_state",
+      "sql": "CREATE TABLE agent_thread_state (\n            thread_id TEXT PRIMARY KEY,\n            state_json TEXT NOT NULL,\n            state_version INTEGER NOT NULL DEFAULT 0,\n            updated_at TEXT NOT NULL,\n            FOREIGN KEY (thread_id) REFERENCES agent_threads(id) ON DELETE CASCADE\n        )",
+      "tbl_name": "agent_thread_state",
+      "type": "table"
+    },
+    {
+      "name": "agent_threads",
+      "sql": "CREATE TABLE agent_threads (\n            id TEXT PRIMARY KEY,\n            parent_thread_id TEXT,\n            session_id TEXT,\n            workspace TEXT NOT NULL DEFAULT '',\n            profile_id TEXT NOT NULL,\n            profile_revision INTEGER NOT NULL,\n            profile_json TEXT NOT NULL,\n            resource_scope_json TEXT NOT NULL DEFAULT '{}',\n            created_at TEXT NOT NULL,\n            updated_at TEXT NOT NULL\n        )",
+      "tbl_name": "agent_threads",
+      "type": "table"
+    },
+    {
+      "name": "context_frames",
+      "sql": "CREATE TABLE context_frames (\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            session_id TEXT NOT NULL,\n            user_message_id INTEGER,\n            frame_kind TEXT NOT NULL DEFAULT 'main',\n            agent_persona TEXT NOT NULL DEFAULT 'voidx',\n            provider TEXT NOT NULL,\n            model TEXT NOT NULL,\n            prefix_hash TEXT NOT NULL,\n            frame_hash TEXT NOT NULL,\n            message_count INTEGER NOT NULL,\n            token_estimate INTEGER NOT NULL DEFAULT 0,\n            file_path TEXT NOT NULL,\n            metadata_json TEXT NOT NULL DEFAULT '{}',\n            created_at TEXT NOT NULL,\n            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE\n        )",
+      "tbl_name": "context_frames",
+      "type": "table"
+    },
+    {
+      "name": "model_profiles",
+      "sql": "CREATE TABLE model_profiles (\n            name TEXT PRIMARY KEY,\n            provider TEXT NOT NULL,\n            model TEXT NOT NULL,\n            api_key TEXT NOT NULL DEFAULT '',\n            base_url TEXT,\n            protocol TEXT,\n            reasoning_effort TEXT,\n            created_at TEXT NOT NULL,\n            updated_at TEXT NOT NULL\n        )",
+      "tbl_name": "model_profiles",
+      "type": "table"
+    },
+    {
+      "name": "runtime_outbox",
+      "sql": "CREATE TABLE runtime_outbox (\n            id TEXT PRIMARY KEY,\n            thread_id TEXT NOT NULL,\n            source_attempt_id TEXT,\n            kind TEXT NOT NULL,\n            payload_json TEXT NOT NULL DEFAULT '{}',\n            expected_state_version INTEGER NOT NULL,\n            available_at REAL NOT NULL DEFAULT 0,\n            claimed_by TEXT,\n            claimed_until REAL,\n            delivered_at TEXT,\n            created_at TEXT NOT NULL,\n            FOREIGN KEY (thread_id) REFERENCES agent_threads(id) ON DELETE CASCADE,\n            FOREIGN KEY (source_attempt_id) REFERENCES runtime_turn_attempts(id) ON DELETE CASCADE,\n            UNIQUE(source_attempt_id, kind)\n        )",
+      "tbl_name": "runtime_outbox",
+      "type": "table"
+    },
+    {
+      "name": "runtime_turn_attempts",
+      "sql": "CREATE TABLE runtime_turn_attempts (\n            id TEXT PRIMARY KEY,\n            thread_id TEXT NOT NULL,\n            source_outbox_id TEXT NOT NULL UNIQUE,\n            input_frame_json TEXT NOT NULL,\n            base_state_version INTEGER NOT NULL,\n            profile_id TEXT NOT NULL,\n            profile_revision INTEGER NOT NULL,\n            status TEXT NOT NULL,\n            side_effect_started INTEGER NOT NULL DEFAULT 0,\n            lease_owner TEXT NOT NULL DEFAULT '',\n            fencing_token INTEGER NOT NULL,\n            lease_expires_at REAL NOT NULL DEFAULT 0,\n            updated_at TEXT NOT NULL,\n            FOREIGN KEY (thread_id) REFERENCES agent_threads(id) ON DELETE CASCADE\n        )",
+      "tbl_name": "runtime_turn_attempts",
+      "type": "table"
+    },
+    {
+      "name": "session_runtime_state",
+      "sql": "CREATE TABLE session_runtime_state (\n            session_id TEXT PRIMARY KEY,\n            interaction_mode TEXT NOT NULL DEFAULT 'auto',\n            current_intent TEXT NOT NULL DEFAULT 'coding',\n            previous_intent TEXT,\n            current_goal_json TEXT,\n            workflow_route_json TEXT NOT NULL DEFAULT '',\n            workflow_runs_json TEXT NOT NULL DEFAULT '{}',\n            todo_state_json TEXT NOT NULL DEFAULT '',\n            compaction_summary TEXT NOT NULL DEFAULT '',\n            session_time TEXT NOT NULL,\n            updated_at TEXT NOT NULL,\n            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE\n        )",
+      "tbl_name": "session_runtime_state",
+      "type": "table"
+    },
+    {
+      "name": "sessions",
+      "sql": "CREATE TABLE sessions (\n            id TEXT PRIMARY KEY,\n            title TEXT NOT NULL DEFAULT 'New session',\n            workspace TEXT NOT NULL DEFAULT '.',\n            directory TEXT NOT NULL DEFAULT '',\n            model_provider TEXT NOT NULL DEFAULT 'anthropic',\n            model_name TEXT NOT NULL DEFAULT 'claude-sonnet-4-6',\n            created_at TEXT NOT NULL,\n            updated_at TEXT NOT NULL,\n            message_count INTEGER NOT NULL DEFAULT 0,\n            runtime_profile TEXT NOT NULL DEFAULT 'coding'\n        )",
+      "tbl_name": "sessions",
+      "type": "table"
+    }
+  ],
+  "tables": {
+    "agent_thread_frames": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "name": "thread_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "name": "prefix_hash",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": null,
+          "name": "frame_hash",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": "'{}'",
+          "name": "metadata_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 5,
+          "dflt_value": null,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "thread_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "CASCADE",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "agent_threads",
+          "to": "id"
+        }
+      ]
+    },
+    "agent_thread_messages": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "name": "thread_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "name": "role",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": null,
+          "name": "payload_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": null,
+          "name": "status",
+          "notnull": 0,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 5,
+          "dflt_value": null,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "thread_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "CASCADE",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "agent_threads",
+          "to": "id"
+        }
+      ]
+    },
+    "agent_thread_state": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "thread_id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "name": "state_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "dflt_value": "0",
+          "name": "state_version",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 3,
+          "dflt_value": null,
+          "name": "updated_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "thread_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "CASCADE",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "agent_threads",
+          "to": "id"
+        }
+      ]
+    },
+    "agent_threads": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "name": "parent_thread_id",
+          "notnull": 0,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "name": "session_id",
+          "notnull": 0,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": "''",
+          "name": "workspace",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": null,
+          "name": "profile_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 5,
+          "dflt_value": null,
+          "name": "profile_revision",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 6,
+          "dflt_value": null,
+          "name": "profile_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 7,
+          "dflt_value": "'{}'",
+          "name": "resource_scope_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 8,
+          "dflt_value": null,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 9,
+          "dflt_value": null,
+          "name": "updated_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": []
+    },
+    "context_frames": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "name": "session_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "name": "user_message_id",
+          "notnull": 0,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 3,
+          "dflt_value": "'main'",
+          "name": "frame_kind",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": "'voidx'",
+          "name": "agent_persona",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 5,
+          "dflt_value": null,
+          "name": "provider",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 6,
+          "dflt_value": null,
+          "name": "model",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 7,
+          "dflt_value": null,
+          "name": "prefix_hash",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 8,
+          "dflt_value": null,
+          "name": "frame_hash",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 9,
+          "dflt_value": null,
+          "name": "message_count",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 10,
+          "dflt_value": "0",
+          "name": "token_estimate",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 11,
+          "dflt_value": null,
+          "name": "file_path",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 12,
+          "dflt_value": "'{}'",
+          "name": "metadata_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 13,
+          "dflt_value": null,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "session_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "CASCADE",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "sessions",
+          "to": "id"
+        }
+      ]
+    },
+    "model_profiles": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "name",
+          "notnull": 0,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "name": "provider",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "name": "model",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": "''",
+          "name": "api_key",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": null,
+          "name": "base_url",
+          "notnull": 0,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 5,
+          "dflt_value": null,
+          "name": "protocol",
+          "notnull": 0,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 6,
+          "dflt_value": null,
+          "name": "reasoning_effort",
+          "notnull": 0,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 7,
+          "dflt_value": null,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 8,
+          "dflt_value": null,
+          "name": "updated_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": []
+    },
+    "runtime_outbox": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "name": "thread_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "name": "source_attempt_id",
+          "notnull": 0,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": null,
+          "name": "kind",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": "'{}'",
+          "name": "payload_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 5,
+          "dflt_value": null,
+          "name": "expected_state_version",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 6,
+          "dflt_value": "0",
+          "name": "available_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "REAL"
+        },
+        {
+          "cid": 7,
+          "dflt_value": null,
+          "name": "claimed_by",
+          "notnull": 0,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 8,
+          "dflt_value": null,
+          "name": "claimed_until",
+          "notnull": 0,
+          "pk": 0,
+          "type": "REAL"
+        },
+        {
+          "cid": 9,
+          "dflt_value": null,
+          "name": "delivered_at",
+          "notnull": 0,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 10,
+          "dflt_value": null,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "source_attempt_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "CASCADE",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "runtime_turn_attempts",
+          "to": "id"
+        },
+        {
+          "from": "thread_id",
+          "id": 1,
+          "match": "NONE",
+          "on_delete": "CASCADE",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "agent_threads",
+          "to": "id"
+        }
+      ]
+    },
+    "runtime_turn_attempts": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "name": "thread_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "name": "source_outbox_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": null,
+          "name": "input_frame_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": null,
+          "name": "base_state_version",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 5,
+          "dflt_value": null,
+          "name": "profile_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 6,
+          "dflt_value": null,
+          "name": "profile_revision",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 7,
+          "dflt_value": null,
+          "name": "status",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 8,
+          "dflt_value": "0",
+          "name": "side_effect_started",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 9,
+          "dflt_value": "''",
+          "name": "lease_owner",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 10,
+          "dflt_value": null,
+          "name": "fencing_token",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 11,
+          "dflt_value": "0",
+          "name": "lease_expires_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "REAL"
+        },
+        {
+          "cid": 12,
+          "dflt_value": null,
+          "name": "updated_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "thread_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "CASCADE",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "agent_threads",
+          "to": "id"
+        }
+      ]
+    },
+    "session_runtime_state": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "session_id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "dflt_value": "'auto'",
+          "name": "interaction_mode",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "dflt_value": "'coding'",
+          "name": "current_intent",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": null,
+          "name": "previous_intent",
+          "notnull": 0,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": null,
+          "name": "current_goal_json",
+          "notnull": 0,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 5,
+          "dflt_value": "''",
+          "name": "workflow_route_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 6,
+          "dflt_value": "'{}'",
+          "name": "workflow_runs_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 7,
+          "dflt_value": "''",
+          "name": "todo_state_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 8,
+          "dflt_value": "''",
+          "name": "compaction_summary",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 9,
+          "dflt_value": null,
+          "name": "session_time",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 10,
+          "dflt_value": null,
+          "name": "updated_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "from": "session_id",
+          "id": 0,
+          "match": "NONE",
+          "on_delete": "CASCADE",
+          "on_update": "NO ACTION",
+          "seq": 0,
+          "table": "sessions",
+          "to": "id"
+        }
+      ]
+    },
+    "sessions": {
+      "columns": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "dflt_value": "'New session'",
+          "name": "title",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 2,
+          "dflt_value": "'.'",
+          "name": "workspace",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": "''",
+          "name": "directory",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": "'anthropic'",
+          "name": "model_provider",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 5,
+          "dflt_value": "'claude-sonnet-4-6'",
+          "name": "model_name",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 6,
+          "dflt_value": null,
+          "name": "created_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 7,
+          "dflt_value": null,
+          "name": "updated_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 8,
+          "dflt_value": "0",
+          "name": "message_count",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 9,
+          "dflt_value": "'coding'",
+          "name": "runtime_profile",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "foreign_keys": []
+    }
+  },
+  "user_version": 3
+}

@@ -7,22 +7,15 @@ from pathlib import Path
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from voidx.agent.application.goal_resolver import ResolverGoal, resolve_goal_for_turn
+from voidx.agent.application.automation.goal.goal_resolver import ResolverGoal, resolve_goal_for_turn
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.infrastructure.langgraph.runtime.turn_runner import _turn_exchange_from_final_messages
-from voidx.runtime.task_state import (
-    GoalResolution,
-    GoalSpec,
-    IntentResolution,
-    PlanResolution,
-    TaskState,
-    TurnExchange,
-    WorkflowRoute,
-)
+from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution, TaskState, TurnExchange
+from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.config import Config
-from voidx.memory.session import create_session, delete_session, load_messages
-from voidx.runtime.intent import TaskIntent
-from voidx.ui.output.dock import BottomInputDock, set_dock
+from voidx.agent.adapters.persistence.session_repository import create_session, delete_session, load_messages
+from voidx.agent.domain.task.intent import TaskIntent
+from voidx.presentation.output.dock import BottomInputDock, set_dock
 
 
 
@@ -164,7 +157,7 @@ async def test_goal_resolver_normal_request_returns_no_workflow_route():
 @pytest.mark.asyncio
 async def test_general_intent_with_active_workflow_preserves_coding():
     """GENERAL intent from LLM + active workflow → override to CODING, keep goal/join."""
-    from voidx.workflow.types import WorkflowRunState
+    from voidx.agent.domain.automation.workflow import WorkflowRunState
 
     task_state = TaskState(
         current_intent=TaskIntent.CODING,
@@ -220,7 +213,7 @@ async def test_general_intent_without_active_workflow_falls_back():
 @pytest.mark.asyncio
 async def test_general_intent_with_workflow_route_but_no_goal_falls_back():
     """GENERAL intent + active workflow route but no current_goal → falls back to GENERAL."""
-    from voidx.workflow.types import WorkflowRunState
+    from voidx.agent.domain.automation.workflow import WorkflowRunState
 
     task_state = TaskState(
         workflow_route=WorkflowRoute(join="tdd"),
@@ -249,7 +242,7 @@ async def test_general_intent_with_workflow_route_but_no_goal_falls_back():
 @pytest.mark.asyncio
 async def test_general_intent_with_active_workflow_from_runs():
     """GENERAL intent + active workflow in workflow_runs (no route) → override to CODING."""
-    from voidx.workflow.types import WorkflowRunState
+    from voidx.agent.domain.automation.workflow import WorkflowRunState
 
     task_state = TaskState(
         current_intent=TaskIntent.CODING,
@@ -281,7 +274,7 @@ async def test_general_intent_with_active_workflow_from_runs():
 @pytest.mark.asyncio
 async def test_resolver_prompt_includes_active_workflow_state():
     """When current_goal is set, the system prompt includes active workflow info."""
-    from voidx.workflow.types import WorkflowRunState
+    from voidx.agent.domain.automation.workflow import WorkflowRunState
 
     task_state = TaskState(
         current_intent=TaskIntent.CODING,
@@ -399,7 +392,7 @@ async def test_intent_window_size_4_includes_more_context():
 @pytest.mark.asyncio
 async def test_resolver_success_with_new_goal_preserves_new_goal_over_old():
     """Resolver 成功返回新 goal + 活跃 workflow → 信任新 goal，不用老 goal 覆盖。"""
-    from voidx.workflow.types import WorkflowRunState
+    from voidx.agent.domain.automation.workflow import WorkflowRunState
 
     task_state = TaskState(
         current_intent=TaskIntent.CODING,
@@ -429,7 +422,7 @@ async def test_resolver_success_with_new_goal_preserves_new_goal_over_old():
 @pytest.mark.asyncio
 async def test_resolver_success_coding_with_new_goal_short_continuation_preserves_new_goal():
     """Resolver 成功返回 CODING + 新 goal + 短续接 + 活跃 workflow → 信任新 goal。"""
-    from voidx.workflow.types import WorkflowRunState
+    from voidx.agent.domain.automation.workflow import WorkflowRunState
 
     task_state = TaskState(
         current_intent=TaskIntent.CODING,

@@ -4,25 +4,27 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-import voidx.memory.store as store
+import voidx.persistence.sqlite as store
 
 
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.application.agent_service import AgentService
-from voidx.agent.runtime import AgentRuntime
+from voidx.agent.application.runtime import AgentRuntime
 from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
 from voidx.agent.infrastructure.langgraph.state_mapper import LangGraphStateMapper
 from voidx.agent.infrastructure.memory_session import MemorySessionAdapter
 from voidx.agent.infrastructure.null_events import NullEventPublisher
-from voidx.agent.domain.turn import TurnPhase
+from voidx.agent.domain.turn.state import TurnPhase
 from voidx.agent.infrastructure.langgraph.execution import _sanitize_generated_title
 from voidx.config import Config, ModelConfig
 from voidx.llm.usage import UsageStats
-from voidx.runtime import InteractionMode, TaskState
-from voidx.tools.task_tracker import TaskTracker
-from voidx.ui.output.dock import BottomInputDock, set_dock
-from voidx.ui.output.events import DockEventConsumer, ui_events
-from voidx.ui.protocol import UiSubmitCommand
+from voidx.agent.domain.task.intent import InteractionMode
+from voidx.agent.domain.task.state import TaskState
+from voidx.agent.application.runtime.task_tracker import TaskTracker
+from voidx.presentation.output.dock import BottomInputDock, set_dock
+from voidx.presentation.output.events import DockEventConsumer, ui_events
+from voidx.presentation.protocol import UiSubmitCommand
+from voidx.presentation.terminal.run_loop import TerminalRunLoop
 from voidx.runtime.ui_port import runtime_ui_port
 
 
@@ -97,9 +99,15 @@ def _service(execution) -> AgentService:
     return AgentService(execution, runtime)
 
 
+def _service_and_run_loop(execution) -> tuple[AgentService, TerminalRunLoop]:
+    service = _service(execution)
+    return service, TerminalRunLoop(execution, service)
+
+
 def _graph(session=None, workspace: str = "/tmp/workspace") -> AgentService:
     execution = SimpleNamespace()
     graph = _service(execution)
+    run_loop_holder = {}
     execution.session = session
     execution.workspace = workspace
     execution.model = object()
@@ -110,6 +118,7 @@ def _graph(session=None, workspace: str = "/tmp/workspace") -> AgentService:
     execution.settings = SimpleNamespace(list_mcp_servers=lambda: [], path=f"{workspace}/.voidx/settings.json")
     execution.permission = SimpleNamespace(
         status_label=lambda: "default",
+        permission_mode_label=lambda: "default",
         clear_session_permissions=lambda: None,
     )
     execution.usage_stats = UsageStats()
@@ -145,7 +154,29 @@ def _graph(session=None, workspace: str = "/tmp/workspace") -> AgentService:
     )
     execution.session_id = session.id if session is not None else ""
     execution._dispatch_slash = lambda _inp: False
+    execution.bind_presentation_snapshots = lambda _adapter: None
+    execution.bind_startup_presenter = lambda presenter: setattr(execution, "_startup_presenter", presenter)
+
+    def run_loop():
+        loop = run_loop_holder.get("loop")
+        if loop is None:
+            loop = TerminalRunLoop(execution, graph)
+            run_loop_holder["loop"] = loop
+        return loop
+
+    async def handle_web_command(app, command):
+        await run_loop()._command_handler.handle(app, command)
+
+    graph.run = lambda **kwargs: run_loop().run(**kwargs)
+    graph._handle_web_command = handle_web_command
+    graph._show_startup = lambda **kwargs: run_loop()._startup.show(**kwargs)
+    graph._run_loop_for_test = run_loop
     return graph
+
+
+def _graph_and_run_loop(session=None, workspace: str = "/tmp/workspace") -> tuple[AgentService, TerminalRunLoop]:
+    service = _graph(session=session, workspace=workspace)
+    return service, TerminalRunLoop(service._execution, service)
 
 
 def _disable_external_managers(graph) -> None:

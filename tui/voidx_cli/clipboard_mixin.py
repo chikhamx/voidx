@@ -5,11 +5,11 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from voidx.ui.tools.clipboard_image import (
+from voidx.presentation.tools.clipboard_image import (
     ClipboardImageResult,
     paste_clipboard_image as _paste_clipboard_image_from_system,
 )
-from voidx.ui.tools.clipboard_text import (
+from voidx.presentation.tools.clipboard_text import (
     ClipboardTextResult,
     read_clipboard_text as _read_clipboard_text_from_system,
 )

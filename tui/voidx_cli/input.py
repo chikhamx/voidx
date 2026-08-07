@@ -63,7 +63,7 @@ class _InputEditorMixin:
         return f"[Pasted text #{paste_id} {len(text)} chars]"
 
     def _register_image_paste(self, stem: str, size: int) -> str:
-        from voidx.ui.tools.attachment_tokens import image_attachment_token_text
+        from voidx.presentation.tools.attachment_tokens import image_attachment_token_text
 
         paste_id = self._paste_next_id
         display = f"[Pasted image #{paste_id} {self._format_paste_size(size)}]"

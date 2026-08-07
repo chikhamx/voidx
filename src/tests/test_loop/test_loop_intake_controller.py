@@ -2,8 +2,8 @@
 
 import pytest
 
-from voidx.agent.domain.loop import LoopSpec
-from voidx.agent.loop.intake_controller import LoopIntakeController
+from voidx.agent.domain.automation.loop import LoopSpec
+from voidx.agent.application.automation.loop.intake_controller import LoopIntakeController
 
 
 @pytest.mark.asyncio

@@ -5,10 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from voidx.agent.infrastructure.langgraph.runtime.permission_flow import _permission_choices
-from voidx.permission.context import PermissionContext, PermissionDecision
-from voidx.permission.grants import AccessIntent
-from voidx.permission.rules import classify_tool_call
-from voidx.permission.schema import Action
+from voidx.tooling.domain.authorization import PermissionContext, PermissionDecision
+from voidx.tooling.domain.grants import AccessIntent
+from voidx.tooling.policy.permission.rules import classify_tool_call
+from voidx.tooling.domain.permission import Action
 
 
 def _intent(path: str, access: str = "write", object_type: str = "file") -> AccessIntent:

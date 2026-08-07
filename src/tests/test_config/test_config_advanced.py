@@ -13,8 +13,8 @@ from voidx.config import (
     UserProfile,
     WebToolRoute,
 )
-import voidx.memory.store as store
-from voidx.memory.model_profiles import delete_model_profile_async
+import voidx.persistence.sqlite as store
+from voidx.config.adapters.profile_repository import delete_model_profile_async
 
 
 def _set_home(monkeypatch, path: Path) -> None:

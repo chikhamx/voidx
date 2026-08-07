@@ -116,7 +116,7 @@ class _LazyConsole:
 
     def _load(self) -> AgentUiSink:
         if self._target is None:
-            cls = getattr(import_module("voidx.ui.output.console"), "VoidConsole")
+            cls = getattr(import_module("voidx.presentation.output.console"), "VoidConsole")
             self._target = cls()
         return self._target
 
@@ -206,55 +206,55 @@ def create_frontend(status: Any, commands: list[tuple[str, str]]) -> Any:
     if _default_frontend_factory is None:
         raise RuntimeError("No frontend registered. Install or register an interaction frontend.")
     return _default_frontend_factory(status, commands)
-COMMANDS = _LazyAttr("voidx.ui.commands", "COMMANDS")
-AssistantStreamCommitted = _LazyAttr("voidx.ui.output.events", "AssistantStreamCommitted")
-AssistantStreamUpdated = _LazyAttr("voidx.ui.output.events", "AssistantStreamUpdated")
-CaptureConsole = _LazyAttr("voidx.ui.output.capture", "CaptureConsole")
-CompositeEventConsumer = _LazyAttr("voidx.ui.output.events", "CompositeEventConsumer")
-DockEventConsumer = _LazyAttr("voidx.ui.output.events", "DockEventConsumer")
-FileChangeAppended = _LazyAttr("voidx.ui.output.events", "FileChangeAppended")
-GatewayEventConsumer = _LazyAttr("voidx.ui.gateway", "GatewayEventConsumer")
-GatewayHeadlessFrontend = _LazyAttr("voidx.ui.gateway", "GatewayHeadlessFrontend")
-GatewayServer = _LazyAttr("voidx.ui.gateway", "GatewayServer")
-GatewaySession = _LazyAttr("voidx.ui.gateway", "GatewaySession")
-GuidanceCommitted = _LazyAttr("voidx.ui.output.events", "GuidanceCommitted")
-GuidanceSubmitted = _LazyAttr("voidx.ui.output.events", "GuidanceSubmitted")
-MessageAppended = _LazyAttr("voidx.ui.output.events", "MessageAppended")
-InputSet = _LazyAttr("voidx.ui.output.events", "InputSet")
-McpServerStatus = _LazyAttr("voidx.ui.output.types", "McpServerStatus")
-OutputNode = _LazyAttr("voidx.ui.output.tree", "OutputNode")
-OutputTree = _LazyAttr("voidx.ui.output.tree", "OutputTree")
-PermissionToolDetail = _LazyAttr("voidx.ui.output.events", "PermissionToolDetail")
-PermissionPromptShown = _LazyAttr("voidx.ui.output.events", "PermissionPromptShown")
-PermissionPromptCleared = _LazyAttr("voidx.ui.output.events", "PermissionPromptCleared")
-StartupShown = _LazyAttr("voidx.ui.output.events", "StartupShown")
-RefreshRequested = _LazyAttr("voidx.ui.output.events", "RefreshRequested")
-StatusFinished = _LazyAttr("voidx.ui.output.events", "StatusFinished")
-StatusUpdated = _LazyAttr("voidx.ui.output.events", "StatusUpdated")
-StreamingRenderer = _LazyAttr("voidx.ui.output.console", "StreamingRenderer")
-SubagentFinished = _LazyAttr("voidx.ui.output.events", "SubagentFinished")
-SubagentStarted = _LazyAttr("voidx.ui.output.events", "SubagentStarted")
-ToolFinished = _LazyAttr("voidx.ui.output.events", "ToolFinished")
-ToolResultAppended = _LazyAttr("voidx.ui.output.events", "ToolResultAppended")
-TurnCancelled = _LazyAttr("voidx.ui.output.events", "TurnCancelled")
-TurnCompleted = _LazyAttr("voidx.ui.output.events", "TurnCompleted")
-TurnFailed = _LazyAttr("voidx.ui.output.events", "TurnFailed")
-ToolStarted = _LazyAttr("voidx.ui.output.events", "ToolStarted")
-TodoCleared = _LazyAttr("voidx.ui.output.events", "TodoCleared")
-TodoCommitted = _LazyAttr("voidx.ui.output.events", "TodoCommitted")
-TodoItemPayload = _LazyAttr("voidx.ui.output.events", "TodoItemPayload")
-TodoUpdated = _LazyAttr("voidx.ui.output.events", "TodoUpdated")
-TurnStarted = _LazyAttr("voidx.ui.output.events", "TurnStarted")
-UiStatus = _LazyAttr("voidx.ui.output.types", "UiStatus")
-WarningAppended = _LazyAttr("voidx.ui.output.events", "WarningAppended")
-ToolDisplayMode = _LazyAttr("voidx.ui.output.display_policy", "ToolDisplayMode")
-ToolDisplayPolicy = _LazyAttr("voidx.ui.output.display_policy", "ToolDisplayPolicy")
-DEFAULT_DISPLAY_RULES = _LazyAttr("voidx.ui.output.display_policy", "DEFAULT_DISPLAY_RULES")
-dock = _LazyAttr("voidx.ui.output.dock", "dock")
-session_tracker = _LazyAttr("voidx.ui.session", "session_tracker")
-ui_events = _LazyAttr("voidx.ui.output.events", "ui_events")
-InteractionFrontend = _LazyAttr("voidx.ui.output.types", "InteractionFrontend")
-paste_clipboard_image = _LazyAttr("voidx.ui.tools.clipboard_image", "paste_clipboard_image")
+COMMANDS = _LazyAttr("voidx.presentation.commands", "COMMANDS")
+AssistantStreamCommitted = _LazyAttr("voidx.presentation.output.events", "AssistantStreamCommitted")
+AssistantStreamUpdated = _LazyAttr("voidx.presentation.output.events", "AssistantStreamUpdated")
+CaptureConsole = _LazyAttr("voidx.presentation.output.capture", "CaptureConsole")
+CompositeEventConsumer = _LazyAttr("voidx.presentation.output.events", "CompositeEventConsumer")
+DockEventConsumer = _LazyAttr("voidx.presentation.output.events", "DockEventConsumer")
+FileChangeAppended = _LazyAttr("voidx.presentation.output.events", "FileChangeAppended")
+GatewayEventConsumer = _LazyAttr("voidx.presentation.gateway", "GatewayEventConsumer")
+GatewayHeadlessFrontend = _LazyAttr("voidx.presentation.gateway", "GatewayHeadlessFrontend")
+GatewayServer = _LazyAttr("voidx.presentation.gateway", "GatewayServer")
+GatewaySession = _LazyAttr("voidx.presentation.gateway", "GatewaySession")
+GuidanceCommitted = _LazyAttr("voidx.presentation.output.events", "GuidanceCommitted")
+GuidanceSubmitted = _LazyAttr("voidx.presentation.output.events", "GuidanceSubmitted")
+MessageAppended = _LazyAttr("voidx.presentation.output.events", "MessageAppended")
+InputSet = _LazyAttr("voidx.presentation.output.events", "InputSet")
+McpServerStatus = _LazyAttr("voidx.presentation.output.types", "McpServerStatus")
+OutputNode = _LazyAttr("voidx.presentation.output.tree", "OutputNode")
+OutputTree = _LazyAttr("voidx.presentation.output.tree", "OutputTree")
+PermissionToolDetail = _LazyAttr("voidx.presentation.output.events", "PermissionToolDetail")
+PermissionPromptShown = _LazyAttr("voidx.presentation.output.events", "PermissionPromptShown")
+PermissionPromptCleared = _LazyAttr("voidx.presentation.output.events", "PermissionPromptCleared")
+StartupShown = _LazyAttr("voidx.presentation.output.events", "StartupShown")
+RefreshRequested = _LazyAttr("voidx.presentation.output.events", "RefreshRequested")
+StatusFinished = _LazyAttr("voidx.presentation.output.events", "StatusFinished")
+StatusUpdated = _LazyAttr("voidx.presentation.output.events", "StatusUpdated")
+StreamingRenderer = _LazyAttr("voidx.presentation.output.console", "StreamingRenderer")
+SubagentFinished = _LazyAttr("voidx.presentation.output.events", "SubagentFinished")
+SubagentStarted = _LazyAttr("voidx.presentation.output.events", "SubagentStarted")
+ToolFinished = _LazyAttr("voidx.presentation.output.events", "ToolFinished")
+ToolResultAppended = _LazyAttr("voidx.presentation.output.events", "ToolResultAppended")
+TurnCancelled = _LazyAttr("voidx.presentation.output.events", "TurnCancelled")
+TurnCompleted = _LazyAttr("voidx.presentation.output.events", "TurnCompleted")
+TurnFailed = _LazyAttr("voidx.presentation.output.events", "TurnFailed")
+ToolStarted = _LazyAttr("voidx.presentation.output.events", "ToolStarted")
+TodoCleared = _LazyAttr("voidx.presentation.output.events", "TodoCleared")
+TodoCommitted = _LazyAttr("voidx.presentation.output.events", "TodoCommitted")
+TodoItemPayload = _LazyAttr("voidx.presentation.output.events", "TodoItemPayload")
+TodoUpdated = _LazyAttr("voidx.presentation.output.events", "TodoUpdated")
+TurnStarted = _LazyAttr("voidx.presentation.output.events", "TurnStarted")
+UiStatus = _LazyAttr("voidx.presentation.output.types", "UiStatus")
+WarningAppended = _LazyAttr("voidx.presentation.output.events", "WarningAppended")
+ToolDisplayMode = _LazyAttr("voidx.presentation.output.display_policy", "ToolDisplayMode")
+ToolDisplayPolicy = _LazyAttr("voidx.presentation.output.display_policy", "ToolDisplayPolicy")
+DEFAULT_DISPLAY_RULES = _LazyAttr("voidx.presentation.output.display_policy", "DEFAULT_DISPLAY_RULES")
+dock = _LazyAttr("voidx.presentation.output.dock", "dock")
+session_tracker = _LazyAttr("voidx.presentation.session", "session_tracker")
+ui_events = _LazyAttr("voidx.presentation.output.events", "ui_events")
+InteractionFrontend = _LazyAttr("voidx.presentation.output.types", "InteractionFrontend")
+paste_clipboard_image = _LazyAttr("voidx.presentation.tools.clipboard_image", "paste_clipboard_image")
 
 
 def _attr(module_name: str, attr_name: str) -> Any:
@@ -262,43 +262,43 @@ def _attr(module_name: str, attr_name: str) -> Any:
 
 
 def _fmt_args(args: dict[str, object]) -> str:
-    return _attr("voidx.ui.output.console", "_fmt_args")(args)
+    return _attr("voidx.presentation.output.console", "_fmt_args")(args)
 
 
 def _title(text: str) -> str:
-    return _attr("voidx.ui.output.console", "_title")(text)
+    return _attr("voidx.presentation.output.console", "_title")(text)
 
 
 def code_ide_status(settings: Any) -> str:
-    return _attr("voidx.ui.tools.code_ide", "code_ide_status")(settings)
+    return _attr("voidx.presentation.tools.code_ide", "code_ide_status")(settings)
 
 
 def detect_code_ides() -> list[Any]:
-    return _attr("voidx.ui.tools.code_ide", "detect_code_ides")()
+    return _attr("voidx.presentation.tools.code_ide", "detect_code_ides")()
 
 
 def emit_web_gateway_bootstrap(url: str) -> None:
-    return _attr("voidx.ui.gateway.bootstrap", "emit_web_gateway_bootstrap")(url)
+    return _attr("voidx.presentation.gateway.bootstrap", "emit_web_gateway_bootstrap")(url)
 
 
 def get_dock() -> Any:
-    return _attr("voidx.ui.output.dock", "get_dock")()
+    return _attr("voidx.presentation.output.dock", "get_dock")()
 
 
 def normalize_ide(value: str) -> str:
-    return _attr("voidx.ui.tools.code_ide", "normalize_ide")(value)
+    return _attr("voidx.presentation.tools.code_ide", "normalize_ide")(value)
 
 
 def show_startup(**kwargs: Any) -> None:
-    return _attr("voidx.ui.session", "show_startup")(**kwargs)
+    return _attr("voidx.presentation.session", "show_startup")(**kwargs)
 
 
 def transcript_rows_to_tree(rows: list[Any]) -> Any:
-    return _attr("voidx.ui.transcript", "transcript_rows_to_tree")(rows)
+    return _attr("voidx.presentation.transcript_snapshot", "transcript_rows_to_tree")(rows)
 
 
 def tree_to_transcript_rows(session_id: str, tree: Any) -> tuple[list[Any], int]:
-    return _attr("voidx.ui.transcript", "tree_to_transcript_rows")(session_id, tree)
+    return _attr("voidx.presentation.transcript_snapshot", "tree_to_transcript_rows")(session_id, tree)
 
 
 def ui_command_kind(command: Any) -> str:
@@ -306,4 +306,4 @@ def ui_command_kind(command: Any) -> str:
 
 
 def via_events() -> bool:
-    return bool(_attr("voidx.ui.output.events", "via_events")())
+    return bool(_attr("voidx.presentation.output.events", "via_events")())

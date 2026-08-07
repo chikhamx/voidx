@@ -6,23 +6,23 @@ from pathlib import Path
 from typing import Any
 
 from voidx.config import Settings
-from voidx.paths import voidx_workspace_dir
+from voidx.platform.paths import voidx_workspace_dir
 from voidx.skills.service import SkillRegistry, SkillService
-from voidx.ui.output.dock.formatting import strip_pasted_wrapper
-from voidx.ui.tools.attachment_tokens import attachment_token_text
-from voidx.ui.tools.file_picker import (
+from voidx.presentation.output.dock.formatting import strip_pasted_wrapper
+from voidx.presentation.tools.attachment_tokens import attachment_token_text
+from voidx.presentation.tools.file_picker import (
     AttachmentToken,
     FileCandidate,
     find_attachment_token,
     list_file_candidates,
 )
-from voidx.ui.tools.skill_picker import (
+from voidx.presentation.tools.skill_picker import (
     SkillCandidate,
     SkillToken,
     find_skill_token,
     list_skill_candidates,
 )
-from voidx.ui.tools.mcp_picker import (
+from voidx.presentation.tools.mcp_picker import (
     McpCandidate,
     list_mcp_candidates,
 )

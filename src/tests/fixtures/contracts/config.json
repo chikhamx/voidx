@@ -1,0 +1,66 @@
+{
+  "default": {
+    "agent": {
+      "description": "Primary coding agent.",
+      "model": null,
+      "name": "build",
+      "tools": null
+    },
+    "ask_compact": false,
+    "compaction_post_target_ratio": 0.1,
+    "compaction_soft_ratio": 0.75,
+    "inline_compaction_enabled": false,
+    "log_llm_diagnostic": true,
+    "log_llm_exchange": false,
+    "lsp_format_after_edit": true,
+    "model": {
+      "base_url": null,
+      "context_window": null,
+      "max_tokens": 8192,
+      "model": "claude-sonnet-4-6",
+      "protocol": null,
+      "provider": "anthropic",
+      "reasoning_effort": "xhigh",
+      "temperature": 0.3
+    },
+    "permission_mode": "safe",
+    "persistent_readable_dirs": [],
+    "persistent_readable_files": [],
+    "persistent_writable_dirs": [],
+    "persistent_writable_files": [],
+    "sandbox_readable_dirs": [],
+    "sandbox_readable_files": [],
+    "sandbox_writable_dirs": [],
+    "sandbox_writable_files": [],
+    "user_profile": {
+      "language": "",
+      "tone": ""
+    },
+    "workspace": "."
+  },
+  "global_keys": [
+    "bocha_api_key",
+    "codeIde",
+    "mcpServers",
+    "retry",
+    "tavily_api_key",
+    "update_check",
+    "userProfile",
+    "web"
+  ],
+  "workspace_only_keys": [
+    "ai_approval",
+    "ask_compact",
+    "lsp",
+    "permission_mode",
+    "persistent_readable_dirs",
+    "persistent_readable_files",
+    "persistent_writable_dirs",
+    "persistent_writable_files",
+    "sandbox_readable_dirs",
+    "sandbox_readable_files",
+    "sandbox_writable_dirs",
+    "sandbox_writable_files",
+    "skills"
+  ]
+}

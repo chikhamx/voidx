@@ -1,14 +1,16 @@
 """McpClient preserves serverInfo and instructions from the initialize handshake."""
 
+from tests.tool_registry import build_registry
 import json
 import sys
 
 import pytest
 
 from voidx.config import Settings
-from voidx.mcp.manager import McpManager
-from voidx.permission.service import PermissionService
-from voidx.tools.registry import ToolRegistry
+from voidx.mcp.application.manager import McpManager
+from voidx.mcp.adapters.client import create_mcp_client
+from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
+from voidx.tooling.application.registry import ToolRegistry
 
 
 _FAKE_SERVER = """
@@ -54,7 +56,7 @@ def _write_env(tmp_path):
 @pytest.mark.asyncio
 async def test_catalog_entry_carries_server_info_and_instructions(tmp_path):
     settings = _write_env(tmp_path)
-    manager = McpManager(settings, ToolRegistry(settings=settings), PermissionService())
+    manager = McpManager(settings.list_mcp_servers(), create_mcp_client)
 
     await manager.start_all()
     await manager.wait_ready()

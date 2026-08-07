@@ -1,6 +1,7 @@
 from voidx.agent.domain.state import SessionRuntimeState
-from voidx.agent.domain.turn import TurnPhase, advance_turn
-from voidx.runtime import GoalSpec, InteractionMode, TaskIntent, TaskState
+from voidx.agent.domain.turn.state import TurnPhase, advance_turn
+from voidx.agent.domain.task.state import GoalSpec, TaskState
+from voidx.agent.domain.task.intent import InteractionMode, TaskIntent
 
 
 def test_agent_runtime_owns_domain_state_without_graph() -> None:

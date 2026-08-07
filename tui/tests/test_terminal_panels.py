@@ -9,8 +9,8 @@ from types import SimpleNamespace
 from rich.cells import cell_len
 from rich.console import Console
 
-from voidx.ui.commands import COMMANDS
-from voidx.ui.output.dock import dock
+from voidx.presentation.commands import COMMANDS
+from voidx.presentation.output.dock import dock
 import voidx_cli.terminal_mixin as terminal_mixin
 from voidx_cli import (
     PureTui,
@@ -310,14 +310,14 @@ def test_dock_tool_header_uses_raw_args_without_rich_markup(tmp_path):
     try:
         tool = dock.start_tool(
             "Reading",
-            'file_path="[cyan]src/voidx/ui/dock.py[/cyan]"',
+            'file_path="[cyan]src/voidx/presentation/dock.py[/cyan]"',
             tool_name="read",
-            raw_args={"file_path": "src/voidx/ui/dock.py"},
+            raw_args={"file_path": "src/voidx/presentation/dock.py"},
         )
         dock.finish_tool_node(tool, "read", 0.0, True, "15/151 lines")
 
         rendered = "\n".join(_rich_plain(line) for line in dock.tree.render(120))
-        assert 'Read("src/voidx/ui/dock.py")' in rendered
+        assert 'Read("src/voidx/presentation/dock.py")' in rendered
         assert "15/151 lines" in rendered
         assert "Read 15/151 lines" not in rendered
         assert "[cyan]" not in rendered

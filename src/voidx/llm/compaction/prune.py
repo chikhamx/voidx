@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from voidx.llm.compaction import constants
+import voidx.llm.compaction.constants as constants
 from voidx.llm.context import count_tokens
 
 

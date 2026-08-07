@@ -8,7 +8,7 @@ from types import MethodType, SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
-import voidx.memory.store as store
+import voidx.persistence.sqlite as store
 
 
 from voidx.agent.slash import SlashHandler
@@ -18,7 +18,7 @@ from voidx.agent.application.coding_service import CODING_PROFILE, CodingService
 from voidx.agent.application.agent_service import AgentService
 from voidx.agent.infrastructure.langgraph.execution import _sanitize_generated_title
 from voidx.agent.application.runtime_context import InteractionMode, TaskIntent
-from voidx.runtime.task_state import (
+from voidx.agent.domain.task.state import (
     GoalResolution,
     GoalSpec,
     IntentResolution,
@@ -27,15 +27,17 @@ from voidx.runtime.task_state import (
 )
 from voidx.config import Config, ModelConfig
 from voidx.llm.usage import UsageStats
-from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
-from voidx.memory.session import MessageRow, create_session, get_session, load_messages, save_message, update_title
+from voidx.agent.adapters.persistence.runtime_state_repository import RuntimeStateSnapshot, save_runtime_state
+from voidx.agent.adapters.persistence.session_repository import MessageRow, create_session, get_session, load_messages, save_message, update_title
 from voidx.selfupdate import UpdateCheckResult
-from voidx.workflow.runtime import WorkflowActivationSource, WorkflowRunState, WorkflowRunStatus
-from voidx.tools.task_tracker import TaskTracker
-from voidx.ui.output.dock import BottomInputDock, set_dock
-from voidx.ui.output.events import DockEventConsumer, ui_events
+from voidx.agent.application.automation.workflow.runtime import WorkflowActivationSource, WorkflowRunState, WorkflowRunStatus
+from voidx.agent.application.runtime.task_tracker import TaskTracker
+from voidx.presentation.output.dock import BottomInputDock, set_dock
+from voidx.presentation.output.events import DockEventConsumer, ui_events
 from voidx.agent.domain.turn_context import TurnExecutionContext
-from voidx.ui.protocol import UiCancelCommand, UiSubmitCommand
+from voidx.presentation.gateway.command_handler import GatewayCommandHandler
+from voidx.presentation.protocol import UiCancelCommand, UiSubmitCommand
+from voidx.presentation.terminal.startup import StartupPresenter
 from voidx.runtime.ui_port import runtime_ui_port
 from tests.test_infrastructure.runtime.run_loop_helpers import (
     FakeTui,
@@ -43,7 +45,9 @@ from tests.test_infrastructure.runtime.run_loop_helpers import (
     NoopMcpManager,
     NoopLspManager,
     _graph,
+    _graph_and_run_loop,
     _service,
+    _service_and_run_loop,
     _disable_external_managers,
 )
 
@@ -72,7 +76,7 @@ async def test_startup_update_check_appends_update_notice(tmp_path, monkeypatch)
     monkeypatch.setattr("voidx.selfupdate.check_for_update", fake_check_for_update)
     monkeypatch.setattr("voidx.selfupdate.upgrade_hint", lambda: "Run /upgrade now")
 
-    await graph._show_update_check_if_needed()
+    await StartupPresenter(graph._execution).show_update_check_if_needed()
 
     assert messages == [
         ("[yellow]Update available:[/yellow] voidx 1.0.0 -> 9.0.0. [dim]Run /upgrade now[/dim]", True)
@@ -101,7 +105,7 @@ async def test_startup_update_check_skips_when_ttl_not_due(tmp_path, monkeypatch
 
     monkeypatch.setattr("voidx.selfupdate.check_for_update", fail_check_for_update)
 
-    await graph._show_update_check_if_needed()
+    await StartupPresenter(graph._execution).show_update_check_if_needed()
 
     assert messages == []
 
@@ -109,7 +113,7 @@ async def test_startup_update_check_skips_when_ttl_not_due(tmp_path, monkeypatch
 @pytest.mark.asyncio
 async def test_quiet_slash_command_dispatches_without_turn(monkeypatch):
     FakeTui.instances = []
-    monkeypatch.setattr("voidx.agent.application.agent_service.create_frontend", FakeTui)
+    monkeypatch.setattr("voidx.presentation.terminal.run_loop.create_frontend", FakeTui)
     monkeypatch.setattr(runtime_ui_port, "show_startup", lambda **_: None)
 
     graph = _graph()
@@ -144,7 +148,7 @@ async def test_run_loop_default_context_includes_workspace(monkeypatch, tmp_path
         def set_external_command_handler(self, handler):
             self.command_handler = handler
 
-    monkeypatch.setattr("voidx.agent.application.agent_service.create_frontend", SubmitTui)
+    monkeypatch.setattr("voidx.presentation.terminal.run_loop.create_frontend", SubmitTui)
     monkeypatch.setattr(runtime_ui_port, "show_startup", lambda **_: None)
 
     graph = _graph(workspace=workspace)
@@ -185,7 +189,7 @@ async def test_run_loop_status_goal_label_reflects_task_state_current_goal(monke
         def set_external_command_handler(self, handler):
             pass
 
-    monkeypatch.setattr("voidx.agent.application.agent_service.create_frontend", CaptureTui)
+    monkeypatch.setattr("voidx.presentation.terminal.run_loop.create_frontend", CaptureTui)
     monkeypatch.setattr(runtime_ui_port, "show_startup", lambda **_: None)
 
     graph = _graph(workspace=str(tmp_path))
@@ -223,9 +227,9 @@ async def test_web_headless_uses_gateway_frontend_without_default_tui_factory(mo
         def set_external_request_handler(self, handler):
             self.request_handler = handler
 
-    monkeypatch.setattr("voidx.agent.application.agent_service.create_frontend", fail_create_frontend)
-    monkeypatch.setattr("voidx.agent.application.agent_service.GatewayHeadlessFrontend", ExitHeadlessFrontend)
-    monkeypatch.setattr("voidx.agent.application.agent_service.emit_web_gateway_bootstrap", lambda _url: None)
+    monkeypatch.setattr("voidx.presentation.terminal.run_loop.create_frontend", fail_create_frontend)
+    monkeypatch.setattr("voidx.presentation.terminal.run_loop.GatewayHeadlessFrontend", ExitHeadlessFrontend)
+    monkeypatch.setattr("voidx.presentation.terminal.run_loop.emit_web_gateway_bootstrap", lambda _url: None)
 
     test_dock = BottomInputDock()
     set_dock(test_dock)
@@ -273,9 +277,9 @@ async def test_web_non_headless_falls_back_to_gateway_frontend_when_tui_unavaila
     def fail_create_frontend(*_args, **_kwargs):
         raise RuntimeError("voidx_cli is required for terminal UI mode.")
 
-    monkeypatch.setattr("voidx.agent.application.agent_service.create_frontend", fail_create_frontend)
-    monkeypatch.setattr("voidx.agent.application.agent_service.GatewayHeadlessFrontend", ExitHeadlessFrontend)
-    monkeypatch.setattr("voidx.agent.application.agent_service.emit_web_gateway_bootstrap", lambda _url: None)
+    monkeypatch.setattr("voidx.presentation.terminal.run_loop.create_frontend", fail_create_frontend)
+    monkeypatch.setattr("voidx.presentation.terminal.run_loop.GatewayHeadlessFrontend", ExitHeadlessFrontend)
+    monkeypatch.setattr("voidx.presentation.terminal.run_loop.emit_web_gateway_bootstrap", lambda _url: None)
 
     test_dock = BottomInputDock()
     set_dock(test_dock)
@@ -323,8 +327,8 @@ async def test_non_web_create_frontend_failure_exits_with_error(monkeypatch, tmp
     def fail_create_frontend(*_args, **_kwargs):
         raise RuntimeError("voidx_cli is required for terminal UI mode.")
 
-    monkeypatch.setattr("voidx.agent.application.agent_service.create_frontend", fail_create_frontend)
-    monkeypatch.setattr("voidx.agent.application.agent_service.GatewayHeadlessFrontend", HeadlessFrontend)
+    monkeypatch.setattr("voidx.presentation.terminal.run_loop.create_frontend", fail_create_frontend)
+    monkeypatch.setattr("voidx.presentation.terminal.run_loop.GatewayHeadlessFrontend", HeadlessFrontend)
 
     messages: list[str] = []
 
@@ -478,7 +482,7 @@ async def test_clear_reprints_startup(tmp_path):
         model="mimo-v2.5",
     )
     execution = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
-    _service(execution)
+    _service_and_run_loop(execution)
     execution._interaction_mode = InteractionMode.GOAL
     execution._task_state = TaskState(current_goal=GoalSpec(desc="修复 UI"))
     restore_calls: list[bool] = []
@@ -522,7 +526,7 @@ async def test_clear_detaches_old_session_and_cleans_storage_in_background(tmp_p
     )
     await save_message(MessageRow(session_id=session.id, role="user", content="old question"))
     graph = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
-    _service(graph)
+    _service_and_run_loop(graph)
     graph._interaction_mode = InteractionMode.GOAL
     graph._task_state = TaskState(current_goal=GoalSpec(desc="old goal"))
 

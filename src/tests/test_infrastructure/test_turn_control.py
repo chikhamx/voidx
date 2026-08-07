@@ -183,7 +183,7 @@ async def test_invalid_turn_is_repaired_twice_before_failing():
     from types import SimpleNamespace
     from voidx.agent.infrastructure.langgraph.runtime.core.loop import LlmLoopState
     from voidx.agent.infrastructure.langgraph.runtime.core.turn import handle_turn_control_response
-    from voidx.runtime.task_state import TaskState
+    from voidx.agent.domain.task.state import TaskState
 
     graph = SimpleNamespace(_turn_metrics=SimpleNamespace(increment=lambda _name: None))
     loop = LlmLoopState(context_tokens=0)

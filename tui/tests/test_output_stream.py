@@ -6,9 +6,9 @@ from rich.cells import cell_len
 from rich.console import Console
 from rich.text import Text
 
-from voidx.ui.output.dock import dock
-from voidx.ui.output.dock.formatting import text_from_line
-from voidx.ui.output.console import StreamingRenderer
+from voidx.presentation.output.dock import dock
+from voidx.presentation.output.dock.formatting import text_from_line
+from voidx.presentation.output.console import StreamingRenderer
 
 
 def test_stream_reply_aligns_with_user_turn_start():

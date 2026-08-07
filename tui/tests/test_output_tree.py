@@ -6,7 +6,7 @@ from rich.cells import cell_len
 from rich.console import Console
 from rich.text import Text
 
-from voidx.ui.output.dock import dock
+from voidx.presentation.output.dock import dock
 
 def test_capture_renderable_reuses_console_and_clears_buffer(tmp_path):
     tui = _tui(tmp_path)
@@ -74,7 +74,7 @@ def test_input_history_is_bounded(tmp_path):
 
 
 def test_tree_incremental_render_only_rewalks_dirty_subtree():
-    from voidx.ui.output.tree import OutputTree
+    from voidx.presentation.output.tree import OutputTree
 
     tree = OutputTree()
     # Build a tree with two independent root children
@@ -122,7 +122,7 @@ def test_tree_incremental_render_only_rewalks_dirty_subtree():
 
 def test_tree_incremental_render_shifts_sibling_after_ranges():
     """After incremental splice, sibling-after nodes get shifted ranges."""
-    from voidx.ui.output.tree import OutputTree
+    from voidx.presentation.output.tree import OutputTree
 
     tree = OutputTree()
     turn = tree.new_node(tree.root, node_type="turn", header="Turn")
@@ -159,7 +159,7 @@ def test_tree_incremental_render_shifts_sibling_after_ranges():
 
 
 def test_output_tree_move_child_to_first_refreshes_sibling_flags():
-    from voidx.ui.output.tree import OutputTree
+    from voidx.presentation.output.tree import OutputTree
 
     tree = OutputTree()
     root = tree.root
@@ -177,7 +177,7 @@ def test_output_tree_move_child_to_first_refreshes_sibling_flags():
 
 def test_tree_incremental_render_shifts_click_map():
     """After incremental splice, _click_map rows shift correctly."""
-    from voidx.ui.output.tree import OutputTree
+    from voidx.presentation.output.tree import OutputTree
 
     tree = OutputTree()
     turn = tree.new_node(tree.root, node_type="turn", header="Turn")
@@ -213,7 +213,7 @@ def test_tree_incremental_render_shifts_click_map():
 
 
 def test_tree_line_map_tracks_non_clickable_body_rows():
-    from voidx.ui.output.tree import OutputTree
+    from voidx.presentation.output.tree import OutputTree
 
     tree = OutputTree()
     message = tree.new_node(
@@ -231,7 +231,7 @@ def test_tree_line_map_tracks_non_clickable_body_rows():
 
 
 def test_tree_inserts_gap_between_user_turn_and_assistant_without_spacer():
-    from voidx.ui.output.tree import OutputTree
+    from voidx.presentation.output.tree import OutputTree
 
     tree = OutputTree()
     tree.new_node(tree.root, node_type="turn", header="❯ user")
@@ -245,7 +245,7 @@ def test_tree_inserts_gap_between_user_turn_and_assistant_without_spacer():
 
 
 def test_tree_inserts_gap_between_root_assistant_messages_without_spacer():
-    from voidx.ui.output.tree import OutputTree
+    from voidx.presentation.output.tree import OutputTree
 
     tree = OutputTree()
     tree.new_node(tree.root, node_type="turn", header="❯ user")
@@ -261,7 +261,7 @@ def test_tree_inserts_gap_between_root_assistant_messages_without_spacer():
 
 
 def test_tree_inserts_gap_before_user_turn_after_assistant_without_spacer():
-    from voidx.ui.output.tree import OutputTree
+    from voidx.presentation.output.tree import OutputTree
 
     tree = OutputTree()
     tree.new_node(tree.root, node_type="turn", header="❯ first user")

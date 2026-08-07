@@ -1,6 +1,6 @@
 """Tests for LoopToolView idle phase — read-only + clarify + loop, no write/shell/web/mcp/skill."""
 
-from voidx.agent.domain.loop import LoopToolView, LOOP_IDLE_DIRECTIVE
+from voidx.agent.domain.automation.loop import LoopToolView, LOOP_IDLE_DIRECTIVE
 
 
 _ALL_TOOLS = {

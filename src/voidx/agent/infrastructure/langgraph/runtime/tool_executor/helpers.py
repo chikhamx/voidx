@@ -8,8 +8,12 @@ import os
 from langchain_core.messages import ToolMessage
 
 from voidx.agent.application.tool_messages import sanitize_tool_message_content
-from voidx.runtime.intent import PersonaName
-from voidx.tools.service import ToolResult, UserInteraction, UserResponse
+from voidx.agent.domain.task.intent import PersonaName
+from voidx.tooling.domain.result import ToolResult
+from voidx.tooling.domain.interaction import (
+    UserInteraction,
+    UserResponse,
+)
 
 from .types import (
     AGENT_RESULT_PREVIEW_CHARS,
@@ -301,9 +305,10 @@ def _requires_workspace_write_lock(tool_call: dict) -> bool:
     if name in _WORKSPACE_WRITE_LOCK_TOOLS:
         return True
     try:
-        from voidx.permission.rules import classify_tool_call
+        from voidx.agent.adapters.tools.permission_projection import project_agent_tool_call
+        from voidx.tooling.policy.permission.rules import classify_tool_call
 
-        classified = classify_tool_call({**tool_call, "name": name, "args": args})
+        classified = classify_tool_call(project_agent_tool_call({**tool_call, "name": name, "args": args}))
     except Exception:
         return name in {"bash", "powershell", "git", "agent"}
     return str(classified.capability.value) in _WORKSPACE_WRITE_LOCK_CAPABILITIES
@@ -499,8 +504,8 @@ def _apply_state_update(
     runtime_task_state is a mutable list [state, goal, workflow_runs_list].
     """
     from voidx.agent.application.todo_state import apply_todo_state_to_host
-    from voidx.runtime.intent import TaskIntent
-    from voidx.runtime.task_state import WorkflowRoute
+    from voidx.agent.domain.task.intent import TaskIntent
+    from voidx.agent.domain.automation.workflow import WorkflowRoute
 
     if not update:
         return

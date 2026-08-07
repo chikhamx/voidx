@@ -22,11 +22,11 @@ import httpx
 from voidx.logging.request_log import log_llm_diagnostic
 from voidx.mcp.auto import render_available_mcp_servers
 from voidx.logging.tool_log import log_tool_event
-from voidx.paths import voidx_home
+from voidx.platform.paths import voidx_home
 from voidx.skills.schema import SkillSelectionConfig
 from voidx.skills.service import SkillService
-from voidx.workflow.service import WorkflowService
-from voidx.workflow.types import WorkflowRunState
+from voidx.agent.application.automation.workflow.service import WorkflowService
+from voidx.agent.domain.automation.workflow import WorkflowRunState
 
 INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md"]  # CLAUDE.md for compat
 

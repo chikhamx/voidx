@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.messages import AIMessage
 
-import voidx.memory.store as store
+import voidx.persistence.sqlite as store
 
 from voidx.agent.application.chat_service import ChatService
 from voidx.agent.domain.profile import RuntimeProfile
@@ -17,10 +17,10 @@ from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.infrastructure.memory_session import MemorySessionAdapter
 from voidx.agent.infrastructure.null_events import NullEventPublisher
-from voidx.agent.runtime import AgentRuntime
+from voidx.agent.application.runtime import AgentRuntime
 from voidx.config import Config
-from voidx.memory.session import create_session, delete_session, get_session, load_messages
-from voidx.ui.output.dock import BottomInputDock, set_dock
+from voidx.agent.adapters.persistence.session_repository import create_session, delete_session, get_session, load_messages
+from voidx.presentation.output.dock import BottomInputDock, set_dock
 from voidx.agent.domain.turn_context import TurnExecutionContext
 
 

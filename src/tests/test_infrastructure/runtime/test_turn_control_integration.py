@@ -528,11 +528,11 @@ async def test_pending_stop_commits_after_execute_tools(tmp_path, monkeypatch):
             return {"type": "object", "properties": {}}
 
         async def execute(self, args: dict, ctx):
-            from voidx.tools.base import ToolResult
+            from voidx.tooling.domain.result import ToolResult
 
             return ToolResult(output="file contents")
 
-    graph.tools.register("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
+    graph.tools.replace("read", FakeReadTool(), "fake read", {"type": "object", "properties": {}})
 
     async def allow_all(tool_calls, plan_mode: bool, session_id: str, interaction_mode=None):
         return tool_calls, []
@@ -606,7 +606,7 @@ async def test_pending_stop_cleared_on_execute_tools_exception(tmp_path, monkeyp
         async def execute(self, args: dict, ctx):
             raise RuntimeError("tool boom")
 
-    graph.tools.register("read", BoomReadTool(), "boom", {"type": "object", "properties": {}})
+    graph.tools.replace("read", BoomReadTool(), "boom", {"type": "object", "properties": {}})
 
     async def allow_all(tool_calls, plan_mode: bool, session_id: str, interaction_mode=None):
         return tool_calls, []

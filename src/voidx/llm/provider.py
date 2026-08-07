@@ -267,6 +267,4 @@ def get_context_limit(provider: str, protocol: str = "", context_window: int | N
     spec = get(provider)
     if spec is not None and spec.context_limit:
         return spec.context_limit
-    if protocol == "anthropic":
-        return 200_000
-    return 128_000
+    return 200_000

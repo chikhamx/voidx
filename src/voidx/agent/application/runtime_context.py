@@ -13,20 +13,22 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, To
 from pydantic import BaseModel, ConfigDict, Field
 
 from voidx.agent.application.prompts import BaseSystemPrompt, WorkflowRuntimePrompt
-from voidx.runtime.task_state import GoalSpec, TodoRunState
+from voidx.agent.domain.prompt_contracts import ContextSection
+from voidx.agent.domain.task.state import GoalSpec
+from voidx.agent.domain.task.todo import TodoRunState
 from voidx.config import Config, UserProfile
-from voidx.runtime.intent import InteractionMode, TaskIntent
-from voidx.runtime.task_state import TodoStatus
+from voidx.agent.domain.task.intent import InteractionMode, TaskIntent
+from voidx.agent.domain.task.todo import TodoStatus
 from voidx.mcp.context import has_mcp_tool_context, strip_mcp_tool_context
 from voidx.skills.service import (
     has_skill_tool_context,
     strip_skill_tool_context,
 )
-from voidx.workflow.service import (
+from voidx.agent.application.automation.workflow.service import (
     is_workflow_context_content,
     workflow_exit_summaries,
 )
-from voidx.workflow.types import WorkflowRunState, WorkflowRunStatus
+from voidx.agent.domain.automation.workflow import WorkflowRunState, WorkflowRunStatus
 
 _CONTEXT_MARKER = "VOIDX_RUNTIME_CONTEXT"
 # Retained only to strip persisted overlays from sessions created before the
@@ -73,13 +75,13 @@ class ExecutionPolicy(BaseModel):
 
     @classmethod
     def from_config(cls, config: Config) -> "ExecutionPolicy":
-        from voidx.memory.store import DATA_DIR
+        from voidx.platform.paths import voidx_home
 
         extra = [
             *config.sandbox_writable_files,
             *config.sandbox_writable_dirs,
         ]
-        data_dir = str(DATA_DIR.resolve())
+        data_dir = str(voidx_home().resolve())
         if data_dir not in extra:
             extra.append(data_dir)
         return cls(
@@ -93,11 +95,6 @@ class RuntimeEnvelope(BaseModel):
     platform: str
     execution_policy: ExecutionPolicy
     user_profile: UserProfile = Field(default_factory=UserProfile)
-
-
-class ContextSection(BaseModel):
-    name: str
-    content: str
 
 
 class RuntimeContext(BaseModel):
@@ -180,7 +177,7 @@ class RuntimeContextBuilder:
         profile_sections: Iterable[ContextSection] = (),
         suppress_sections: Iterable[str] = (),
     ) -> None:
-        from voidx.runtime.task_state import TaskState as _TaskState
+        from voidx.agent.domain.task.state import TaskState as _TaskState
 
         ts = task_state if isinstance(task_state, _TaskState) else _TaskState()
         self._suppress_sections = set(suppress_sections)

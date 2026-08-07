@@ -14,7 +14,7 @@ from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import (
     only_tool_key,
     LOW_VALUE_REPETITIVE_TOOL_KEYS,
 )
-from voidx.tools.base import ToolResult
+from voidx.tooling.domain.result import ToolResult
 
 
 # ── tool_op_key ───────────────────────────────────────────────

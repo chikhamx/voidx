@@ -1,3 +1,4 @@
+from tests.tool_registry import build_registry
 import pytest
 from langchain_core.messages import AIMessage
 
@@ -5,8 +6,9 @@ from voidx.agent.application.agents import AgentDef
 from voidx.agent.gateway import AgentGateway
 from voidx.agent.infrastructure.langgraph.runtime.subagent import run_subagent
 from voidx.config import Config
-from voidx.runtime import GoalResolution, GoalSpec, IntentResolution, PlanResolution, TaskIntent
-from voidx.tools.agent import AgentResultContract
+from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
+from voidx.agent.domain.task.intent import TaskIntent
+from voidx.agent.adapters.tools.subagent import AgentResultContract
 
 
 class FakeModel:
@@ -241,10 +243,10 @@ async def test_run_subagent_wraps_final_text_as_result_message(tmp_path, monkeyp
 @pytest.mark.asyncio
 async def test_run_subagent_registers_message_and_blocks_parent_only_tools(tmp_path, monkeypatch):
     import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
-    from voidx.tools.agent import AgentTool
-    from voidx.tools.checkpoint import PlanCheckpointTool
-    from voidx.tools.clarify import ClarifyTool
-    from voidx.tools.registry import ToolRegistry
+    from voidx.agent.adapters.tools.subagent import AgentTool
+    from voidx.agent.adapters.tools.interaction.checkpoint import PlanCheckpointTool
+    from voidx.agent.adapters.tools.interaction.clarify import ClarifyTool
+    from voidx.tooling.application.registry import ToolRegistry
 
     gateway = AgentGateway()
     root_id = gateway.ensure_root("session-1")
@@ -267,11 +269,11 @@ async def test_run_subagent_registers_message_and_blocks_parent_only_tools(tmp_p
     monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: CapturingModel())
     monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
 
-    parent_tools = ToolRegistry()
+    parent_tools = build_registry()
     agent_tool = AgentTool(runner=None)
     parent_tools.register(agent_tool.id, agent_tool, agent_tool.description, agent_tool.parameters_schema())
     for tool in (ClarifyTool(), PlanCheckpointTool()):
-        parent_tools.register(tool.id, tool, tool.description, tool.parameters_schema())
+        parent_tools.replace(tool.id, tool, tool.description, tool.parameters_schema())
 
     assert "message" not in parent_tools.ids()
     assert "agent" in parent_tools.ids()
@@ -311,9 +313,9 @@ async def test_run_subagent_registers_message_and_blocks_parent_only_tools(tmp_p
 
 
 def test_root_tool_registry_does_not_register_message_by_default():
-    from voidx.tools.registry import ToolRegistry
+    from voidx.tooling.application.registry import ToolRegistry
 
-    registry = ToolRegistry()
+    registry = build_registry()
     assert "message" not in registry.ids()
 
 
@@ -343,10 +345,10 @@ async def test_run_subagent_guard_terminated_returns_findings_fallback(tmp_path,
     import json as _json
 
     import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
-    from voidx.tools.base import BaseTool, ToolResult
-    from voidx.tools.service import ToolRegistry
+    from voidx.tooling.domain.result import ToolResult
+    from voidx.tooling.application.registry import ToolRegistry
 
-    class FakeBashTool(BaseTool):
+    class FakeBashTool:
         id = "bash"
         description = "fake bash that is always policy-blocked"
 
@@ -365,9 +367,9 @@ async def test_run_subagent_guard_terminated_returns_findings_fallback(tmp_path,
                 metadata={"blocked": True, "error": True},
             )
 
-    parent_tools = ToolRegistry()
+    parent_tools = build_registry()
     fake_bash = FakeBashTool()
-    parent_tools.register("bash", fake_bash, fake_bash.description, fake_bash.parameters_schema())
+    parent_tools.replace("bash", fake_bash, fake_bash.description, fake_bash.parameters_schema())
 
     calls = {"n": 0}
 

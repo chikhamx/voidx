@@ -9,7 +9,7 @@ import pytest
 from voidx.agent.slash import SlashHandler
 from tests.test_slash.context import command_context
 from voidx.agent.slash.runtime import _select_from_list
-from voidx.runtime.task_state import GoalSpec, TaskState
+from voidx.agent.domain.task.state import GoalSpec, TaskState
 from voidx.config import (
     CodeIde,
     Config,
@@ -19,12 +19,12 @@ from voidx.config import (
     Settings,
     UserProfile,
 )
-from voidx.permission.service import PermissionService
+from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
 from voidx.llm.catalog import STATIC_MODELS
 from voidx.llm.usage import UsageStats
-from voidx.memory.model_profiles import ModelProfileRow, save_model_profile_async
-from voidx.memory.model_profiles import delete_model_profile_async
-from voidx.ui.tools.clipboard_image import ClipboardImageResult
+from voidx.config.adapters.profile_repository import ModelProfileRow, save_model_profile_async
+from voidx.config.adapters.profile_repository import delete_model_profile_async
+from voidx.presentation.tools.clipboard_image import ClipboardImageResult
 
 
 class FakeChoiceApp:
@@ -759,7 +759,7 @@ async def test_model_switch_profile_updates_session_db(tmp_path, monkeypatch):
     async def fake_update_session_model(session_id, provider, model):
         captured.append((session_id, provider, model))
 
-    monkeypatch.setattr("voidx.memory.service.update_session_model", fake_update_session_model)
+    monkeypatch.setattr("voidx.agent.adapters.persistence.session_repository.update_session_model", fake_update_session_model)
 
     try:
         await SlashHandler(graph).dispatch(f"/model switch {profile_name}")

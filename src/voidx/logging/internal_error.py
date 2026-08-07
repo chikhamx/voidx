@@ -18,7 +18,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-from voidx.paths import voidx_logs_dir
+from voidx.platform.paths import voidx_logs_dir
 
 _DEFAULT_LOG_DIR = voidx_logs_dir()
 _LOG_FILE_NAME = "internal_error.jsonl"

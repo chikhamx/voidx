@@ -8,20 +8,23 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langgraph.errors import GraphRecursionError
+
+from voidx.agent.infrastructure.langgraph.runtime.convergence import generate_fallback_summary
 
 from voidx.agent.application.attachments import build_user_message_payload, serialize_message_content
 from voidx.agent.infrastructure.message_rows import messages_from_rows_incremental
-from voidx.agent.application.goal_resolver import build_goal_resolution, resolve_plan_mode
+from voidx.agent.application.automation.goal.goal_resolver import build_goal_resolution, resolve_plan_mode
 from voidx.agent.application.runtime_context import TaskIntent
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.domain.turn_metadata import turn_metadata_from_context
-from voidx.runtime.intent import InteractionMode
+from voidx.agent.domain.task.intent import InteractionMode
 from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
     bind_thread_execution_context,
     current_thread_execution_state,
 )
 from voidx.agent.infrastructure.langgraph.state import AgentState
-from voidx.runtime.task_state import (
+from voidx.agent.domain.task.state import (
     GoalResolution,
     IntentResolution,
     TaskState,
@@ -31,21 +34,10 @@ from voidx.runtime.task_state import (
 )
 from voidx.llm.message_status import message_status
 from voidx.logging.tool_log import log_tool_event
-from voidx.memory.service import (
-    MessageRow,
-    MessageRuntimeSnapshot,
-    count_messages,
-    create_session,
-    delete_messages_from,
-    load_messages,
-    memory_now,
-    save_message,
-    save_message_runtime_snapshot,
-    touch_session,
-    update_title,
-)
-from voidx.skills.service import skill_reference_message
-from voidx.mcp.references import mcp_reference_message
+from voidx.agent.adapters.persistence.session_repository import MessageRow, count_messages, create_session, delete_messages_from, load_messages, save_message, touch_session, update_title
+from voidx.agent.adapters.persistence.runtime_state_repository import MessageRuntimeSnapshot, save_message_runtime_snapshot
+from voidx.persistence.sqlite import now as memory_now
+from voidx.skills.references import skill_reference_message
 from voidx.runtime.ui import (
     InputSet,
     StatusFinished,
@@ -58,11 +50,16 @@ from voidx.runtime.ui import (
     TurnStarted,
     GuidanceCommitted,
 )
-from voidx.workflow.service import reconcile_workflow_runs_for_turn
-from voidx.workflow.types import WorkflowRunStatus
+from voidx.agent.application.automation.workflow.service import reconcile_workflow_runs_for_turn
+from voidx.agent.domain.automation.workflow import WorkflowRunStatus
+
+class _EmptyReferenceMessage:
+    prefix = ""
+    remove_spans: list[tuple[int, int]] = []
+
 
 RESUME_FORCE_COMPACT_MESSAGE_COUNT = 500
-DEFAULT_RECURSION_LIMIT = 500
+DEFAULT_RECURSION_LIMIT = 2000
 RECENT_EXCHANGE_LIMIT = 3
 ASSISTANT_TEXT_MAX_CHARS = 500
 
@@ -142,11 +139,13 @@ class TurnRunner:
                     settings=host._settings,
                     service=skill_service,
                 )
-                mcp_refs = await mcp_reference_message(
-                    user_text,
-                    settings=host._settings,
-                    manager=host.mcp_manager if has_ref else None,
-                )
+                mcp_refs = _EmptyReferenceMessage()
+                if has_ref and host._mcp_reference_resolver is not None:
+                    mcp_refs = await host._mcp_reference_resolver(
+                        user_text,
+                        settings=host._settings,
+                        manager=host.mcp_manager,
+                    )
                 combined_prefix = "\n\n".join(
                     p for p in [skill_refs.prefix, mcp_refs.prefix] if p
                 )
@@ -224,7 +223,7 @@ class TurnRunner:
 
                 turn_msg = HumanMessage(content=payload.content, id=f"user_{time.time_ns()}")
                 msgs.append(turn_msg)
-                if host._session is None:
+                if host._session is None and not context.detached:
                     host._session = await create_session(workspace=host._workspace)
 
                 interaction_mode = getattr(
@@ -354,21 +353,23 @@ class TurnRunner:
                     ][-RECENT_EXCHANGE_LIMIT:]
                 if host.model is not None:
                     host._task_state = final_task_state
-                await save_message_runtime_snapshot(MessageRuntimeSnapshot(
-                    message_id=user_message_id,
-                    session_id=host._session.id,
-                    interaction_mode=interaction_mode,
-                    task_intent=final_task_state.current_intent,
-                    current_goal=final_task_state.current_goal,
-                    workflow_runs=final_task_state.workflow_runs,
-                ))
+                if host._session and user_message_id is not None and not context.detached:
+                    await save_message_runtime_snapshot(MessageRuntimeSnapshot(
+                        message_id=user_message_id,
+                        session_id=host._session.id,
+                        interaction_mode=interaction_mode,
+                        task_intent=final_task_state.current_intent,
+                        current_goal=final_task_state.current_goal,
+                        workflow_runs=final_task_state.workflow_runs,
+                    ))
                 # Runtime facade owns the final session runtime-state commit.
 
                 # ── prune old tool outputs after turn ──────────────────────────
                 host._compaction.prune(final["messages"])
 
-                # Persist new messages
-                if host._session:
+                # Persist new messages — detached turns (empty session_id,
+                # e.g. goal evaluator) must not write into any session.
+                if host._session and not context.detached:
                     turn_index = None
                     for i, msg in enumerate(final["messages"]):
                         if getattr(msg, "id", None) == turn_msg.id:
@@ -383,7 +384,7 @@ class TurnRunner:
                     new_messages = final["messages"][turn_index + 1:] if turn_index is not None else []
                     await _persist_new_messages(host, new_messages)
 
-# Update session title to match current goal after turn completes
+                    # Update session title to match current goal after turn completes
                     goal = final_task_state.current_goal
                     if goal is not None and goal.desc.strip():
                         title = goal.desc.strip()
@@ -417,6 +418,22 @@ class TurnRunner:
                     host._ui.dock.commit_todo_state()
                 if host._session:
                     await host._persist_transcript_snapshot()
+            except GraphRecursionError:
+                # 达到 recursion limit：用最后一次 state 生成总结，优雅收尾而非报错
+                final["max_steps"] = _resolve_recursion_limit()
+                fallback_text = generate_fallback_summary(final)
+                fallback_msg = AIMessage(content=fallback_text)
+                streamed_messages.append(fallback_msg)
+                await _persist_streamed_messages(
+                    host,
+                    streamed_messages,
+                    payload.content if payload else None,
+                )
+                if host._ui.via_events():
+                    await host._ui.events.emit(TurnCompleted())
+                    await host._ui.events.drain()
+                else:
+                    host._ui.ui.print(f"[yellow]{fallback_text}[/yellow]")
             except (KeyboardInterrupt, asyncio.CancelledError):
                 await _persist_streamed_messages(host, streamed_messages, payload.content if payload else None)
                 if host._ui.via_events():

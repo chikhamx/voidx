@@ -17,13 +17,15 @@ from voidx.agent.application.runtime_context import (
     raw_semantic_messages,
 )
 from voidx.agent.infrastructure.langgraph.state import AgentState
-from voidx.runtime.task_state import GoalSpec, TaskState, TodoRunState, WorkflowRoute
+from voidx.agent.domain.task.state import GoalSpec, TaskState
+from voidx.agent.domain.task.todo import TodoRunState
+from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.config import Config, UserProfile
 from voidx.skills.context import (
     SKILL_TOOL_CONTEXT_MARKER,
     SKILL_TOOL_CONTEXT_STRIPPED_MARKER,
 )
-from voidx.workflow.runtime import WorkflowActivationSource, WorkflowRunState, WorkflowRunStatus
+from voidx.agent.application.automation.workflow.runtime import WorkflowActivationSource, WorkflowRunState, WorkflowRunStatus
 
 def test_runtime_context_strips_historical_skill_tool_context(tmp_path):
     tool_output = (

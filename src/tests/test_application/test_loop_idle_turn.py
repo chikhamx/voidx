@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from voidx.agent.domain.loop import LoopSpec
+from voidx.agent.domain.automation.loop import LoopSpec
 from voidx.agent.domain.thread import AgentThread
 
 
@@ -38,7 +38,7 @@ class FakeLoopService:
 
 
 def _make_service(runtime, loop_service):
-    from voidx.agent.application.loop_idle import LoopIdleTurnService
+    from voidx.agent.application.automation.loop.loop_idle import LoopIdleTurnService
 
     return LoopIdleTurnService(runtime, loop_service)
 

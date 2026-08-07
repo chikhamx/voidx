@@ -10,11 +10,11 @@ import pytest
 
 from voidx.agent.slash import SlashHandler
 from tests.test_slash.context import command_context
-import voidx.memory.store as store
-from voidx.memory.session import MessageRow, create_session, delete_session, get_session, save_message
-from voidx.ui.commands import COMMANDS
-from voidx.ui.output.diff import make_file_diff
-from voidx.ui.session import session_tracker
+import voidx.persistence.sqlite as store
+from voidx.agent.adapters.persistence.session_repository import MessageRow, create_session, delete_session, get_session, save_message
+from voidx.presentation.commands import COMMANDS
+from voidx.presentation.output.diff import make_file_diff
+from voidx.presentation.session import session_tracker
 
 
 class FakeChoiceApp:
@@ -460,14 +460,14 @@ def test_quit_command_is_in_palette():
 
 @pytest.mark.asyncio
 async def test_switch_profile_reuses_fresh_session_in_place(monkeypatch):
-    from voidx.memory.session import SessionInfo, update_session_profile
+    from voidx.agent.adapters.persistence.session_repository import SessionInfo, update_session_profile
 
     updated: list[tuple[str, str]] = []
 
     async def fake_update(session_id: str, profile: str) -> None:
         updated.append((session_id, profile))
 
-    monkeypatch.setattr("voidx.memory.service.update_session_profile", fake_update)
+    monkeypatch.setattr("voidx.agent.adapters.persistence.session_repository.update_session_profile", fake_update)
 
     session = SessionInfo(id="fresh", workspace=".", message_count=0)
     calls: list[str] = []
@@ -486,7 +486,7 @@ async def test_switch_profile_reuses_fresh_session_in_place(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_switch_profile_creates_new_session_when_locked(monkeypatch):
-    from voidx.memory.session import SessionInfo
+    from voidx.agent.adapters.persistence.session_repository import SessionInfo
 
     session = SessionInfo(id="locked", workspace=".", message_count=3)
     calls: list[str] = []
@@ -505,7 +505,7 @@ async def test_switch_profile_creates_new_session_when_locked(monkeypatch):
 @pytest.mark.asyncio
 async def test_switch_profile_creates_goal_session_when_no_session(monkeypatch, isolated_memory_store):
     """/goal on a brand-new host (no session yet) must create a goal-profile session."""
-    from voidx.memory.session import SessionInfo
+    from voidx.agent.adapters.persistence.session_repository import SessionInfo
 
     created: list[SessionInfo] = []
     resumed: list[SessionInfo] = []
@@ -522,8 +522,8 @@ async def test_switch_profile_creates_goal_session_when_no_session(monkeypatch, 
     async def fake_resume_session(session: SessionInfo) -> None:
         resumed.append(session)
 
-    monkeypatch.setattr("voidx.memory.service.create_session", fake_create_session)
-    monkeypatch.setattr("voidx.memory.service.get_session", lambda _sid: None)
+    monkeypatch.setattr("voidx.agent.adapters.persistence.session_repository.create_session", fake_create_session)
+    monkeypatch.setattr("voidx.agent.adapters.persistence.session_repository.get_session", lambda _sid: None)
 
     output = _capture_output(monkeypatch)
     async def fake_show_startup(**kwargs) -> bool:

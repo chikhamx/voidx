@@ -3,9 +3,9 @@
 import pytest
 
 from voidx.mcp.catalog import McpCatalog
-from voidx.mcp.gateway import McpGatewayTool
+from voidx.tooling.adapters.mcp import McpGatewayTool
 from voidx.mcp.schema import McpCallResult, McpRuntimeStatus, McpToolDef
-from voidx.tools.base import ToolContext
+from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 
 
 _SEARCH_SCHEMA = {

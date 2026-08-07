@@ -4,8 +4,8 @@ import pytest
 
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.thread import AgentThread, LifecycleState, RuntimeDecision
-from voidx.agent.runtime.recovery import RuntimeRecoveryWorker
-from voidx.memory.thread_store import ThreadStore
+from voidx.agent.application.runtime.recovery import RuntimeRecoveryWorker
+from voidx.agent.adapters.persistence.thread_repository import ThreadStore
 
 
 @pytest.mark.asyncio
@@ -89,7 +89,7 @@ async def test_recovery_acknowledges_source_outbox_when_side_effect_started(tmp_
 
 class _FencingConflictStore(ThreadStore):
     async def set_needs_user_for_attempt(self, *args, **kwargs):
-        from voidx.memory.thread_store import ThreadStateConflict
+        from voidx.agent.adapters.persistence.thread_repository import ThreadStateConflict
 
         raise ThreadStateConflict("attempt lease conflict")
 

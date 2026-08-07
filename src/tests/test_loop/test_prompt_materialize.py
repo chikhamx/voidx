@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from voidx.agent.loop.prompt_materialize import (
+from voidx.agent.application.automation.loop.prompt_materialize import (
     PromptMaterializeError,
     materialize_loop_prompt,
 )

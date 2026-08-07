@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from voidx.agent.loop.scheduler import LoopRuntimeScheduler
-from voidx.memory.thread_store import ThreadStore
+from voidx.agent.application.automation.loop.scheduler import LoopRuntimeScheduler
+from voidx.agent.adapters.persistence.thread_repository import ThreadStore
 
 
 @dataclass

@@ -11,6 +11,8 @@ class AiApprovalConfig(BaseModel):
 
 from voidx.config.defaults import DEFAULT_MODEL, DEFAULT_PROVIDER
 from voidx.config.enums import PermissionMode, ReasoningEffort
+from voidx.mcp.domain.config import McpServerConfig
+from voidx.platform.retry_config import RetryConfig
 
 class Profile(BaseModel):
     """A named LLM configuration.  Name is ``provider/model`` (e.g. ``mimo/mimo-v2.5-pro``)."""
@@ -50,42 +52,6 @@ class AgentConfig(BaseModel):
     description: str = ""
     model: ModelConfig | None = None
     tools: set[str] | None = None
-
-
-class McpServerConfig(BaseModel):
-    name: str
-    command: str = ""
-    args: list[str] = Field(default_factory=list)
-    env: dict[str, str] = Field(default_factory=dict)
-    cwd: str | None = Field(
-        default=None,
-        description="Working directory for the subprocess. Inherited from parent if not set.",
-    )
-    headers: dict[str, str] = Field(default_factory=dict)
-    url: str = ""
-    disabled: bool = False
-    auto: bool = False
-    description: str = ""
-    source: str = ""
-    tools: list[str] | dict[str, object] | None = None
-    transport: str = ""  # "stdio" | "sse" | "streamable-http"; auto-detected from url if blank
-
-    @property
-    def effective_transport(self) -> str:
-        """Return the transport mode, auto-detecting from url when blank."""
-        if self.transport:
-            return self.transport
-        if self.url:
-            return "sse"
-        return "stdio"
-
-    @property
-    def tool_count(self) -> int:
-        if isinstance(self.tools, dict):
-            return len(self.tools)
-        if isinstance(self.tools, list):
-            return len(self.tools)
-        return 0
 
 
 class WebToolRoute(BaseModel):
@@ -140,15 +106,6 @@ class Config(BaseModel):
         default=True,
         description="Log goal-resolver diagnostic events to llm_requests.jsonl.",
     )
-
-class RetryConfig(BaseModel):
-    """Retry configuration for network/LLM calls."""
-
-    max_attempts: int = Field(default=3, ge=1, le=10)
-    base_delay: float = Field(default=1.0, ge=0.0, le=60.0)
-    max_delay: float = Field(default=10.0, ge=0.0, le=120.0)
-    jitter: bool = Field(default=True)
-
 
 class SkillSelectionConfig(BaseModel):
     enabled: set[str] = Field(default_factory=set)

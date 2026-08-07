@@ -4,10 +4,10 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from voidx.agent.application.goal_resolver import resolve_goal_for_turn, ResolverGoal
+from voidx.agent.application.automation.goal.goal_resolver import resolve_goal_for_turn, ResolverGoal
 from voidx.config import RetryConfig
-from voidx.runtime.intent import TaskIntent
-from voidx.runtime.task_state import TaskState
+from voidx.agent.domain.task.intent import TaskIntent
+from voidx.agent.domain.task.state import TaskState
 
 
 def _make_task_state() -> TaskState:

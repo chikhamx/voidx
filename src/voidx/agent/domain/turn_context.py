@@ -27,3 +27,4 @@ class TurnExecutionContext(BaseModel):
     goal_phase: str = "work"
     loop_intake_controller: Any | None = None
     loop_phase: str = "work"
+    detached: bool = False

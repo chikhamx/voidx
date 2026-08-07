@@ -9,7 +9,7 @@ from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import (
     build_failure_key,
     cycle_summary_from_tools,
 )
-from voidx.tools.service import ToolResult
+from voidx.tooling.domain.result import ToolResult
 
 from .types import _ExecutedTool, ToolResultOk
 

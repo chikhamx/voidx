@@ -38,7 +38,7 @@ async def test_run_chat_builds_agent_through_composition(monkeypatch, tmp_path) 
 
     class FakeSettings:
         @classmethod
-        async def create(cls, workspace: str):
+        async def create(cls, workspace: str, **kwargs):
             return cls()
 
         async def resolve_profile(self):
@@ -67,7 +67,7 @@ async def test_run_chat_builds_agent_through_composition(monkeypatch, tmp_path) 
         return None
 
     monkeypatch.setattr("voidx.config.Settings", FakeSettings)
-    monkeypatch.setattr("voidx.agent.composition.build_agent_app", fake_build_agent_app)
+    monkeypatch.setattr("voidx.bootstrap.agent.build_agent_app", fake_build_agent_app)
     monkeypatch.setattr("voidx.main._select_start_session", fake_select_start_session)
 
     await _run_chat(workspace=str(tmp_path), web=True, web_host="0.0.0.0", web_port=8123)

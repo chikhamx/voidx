@@ -33,7 +33,7 @@ class SessionCommandsMixin:
                 await self._clear()
                 return
 
-            from voidx.memory.service import create_session
+            from voidx.agent.adapters.persistence.session_repository import create_session
             config = getattr(self.host, "config", None)
             model_info = getattr(config, "model", None) if config else None
             provider = getattr(model_info, "provider", "anthropic") if model_info else "anthropic"
@@ -75,7 +75,7 @@ class SessionCommandsMixin:
         session = getattr(self.host, "session", None)
         message_count = getattr(session, "message_count", 0) or 0
         if session is not None and message_count == 0:
-            from voidx.memory.service import update_session_profile
+            from voidx.agent.adapters.persistence.session_repository import update_session_profile
 
             await update_session_profile(session.id, profile)
             session.runtime_profile = profile
@@ -108,7 +108,7 @@ class SessionCommandsMixin:
         else:
             scope = scope_parts[0]
 
-        from voidx.memory.cleanup import apply_session_delete_plan, plan_session_delete
+        from voidx.agent.adapters.persistence.session_cleanup import apply_session_delete_plan, plan_session_delete
 
         try:
             plan = await plan_session_delete(scope)
@@ -226,7 +226,7 @@ class SessionCommandsMixin:
         return choice == "yes"
 
     async def _list_sessions(self) -> None:
-        from voidx.memory.service import list_sessions
+        from voidx.agent.adapters.persistence.session_repository import list_sessions
 
         sessions = _order_sessions_by_workspace(
             await list_sessions(), getattr(self.host, "workspace", "")
@@ -253,7 +253,7 @@ class SessionCommandsMixin:
             await self._resume(f"/resume {sessions[idx].id}")
 
     async def _resume(self, cmd: str) -> None:
-        from voidx.memory.service import get_session, list_sessions
+        from voidx.agent.adapters.persistence.session_repository import get_session, list_sessions
 
         sid = cmd.removeprefix("/resume").strip()
         if not sid:

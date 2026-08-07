@@ -17,8 +17,8 @@ from voidx.runtime.ui import (
 )
 
 if TYPE_CHECKING:
-    from voidx.ui.output.events.schema import UiEvent
-    from voidx.ui.output.tree import OutputNode, OutputTree
+    from voidx.presentation.output.events.schema import UiEvent
+    from voidx.presentation.output.tree import OutputNode, OutputTree
 
 
 class AgentConsole(Protocol):

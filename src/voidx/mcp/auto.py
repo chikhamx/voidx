@@ -3,17 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from voidx.config import Settings
-    from voidx.config.models import McpServerConfig
+from typing import Any
 
 from voidx.mcp.descriptions import configured_server_description
 
 
 def render_available_mcp_servers(
-    settings: Settings | None,
+    settings: Any | None,
     *,
     descriptions: Mapping[str, str] | None = None,
 ) -> str:
@@ -38,7 +34,7 @@ def render_available_mcp_servers(
 
 
 def _server_summary(
-    server: McpServerConfig,
+    server: Any,
     descriptions: Mapping[str, str] | None = None,
 ) -> str:
     generated = (descriptions or {}).get(server.name, "").strip()

@@ -4,11 +4,11 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from voidx.agent.domain.loop import LoopSpec
+from voidx.agent.domain.automation.loop import LoopSpec
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.thread import AgentThread
-from voidx.agent.loop.scheduler import LoopRuntimeScheduler
-from voidx.memory.thread_store import ThreadStore
+from voidx.agent.application.automation.loop.scheduler import LoopRuntimeScheduler
+from voidx.agent.adapters.persistence.thread_repository import ThreadStore
 
 
 @pytest.fixture(autouse=True)
@@ -189,7 +189,7 @@ async def test_loop_runtime_scheduler_dispatches_its_own_outbox_when_other_work_
 
 @pytest.mark.asyncio
 async def test_loop_runner_publishes_waiting_record_with_next_wakeup(tmp_path) -> None:
-    from voidx.ui.output.events import StatusUpdated, ui_events
+    from voidx.presentation.output.events import StatusUpdated, ui_events
 
     emitted = []
 

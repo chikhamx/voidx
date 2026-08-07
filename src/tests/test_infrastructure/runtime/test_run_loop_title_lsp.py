@@ -8,7 +8,7 @@ from types import MethodType, SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
-import voidx.memory.store as store
+import voidx.persistence.sqlite as store
 
 
 from voidx.agent.slash import SlashHandler
@@ -16,7 +16,7 @@ from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.agent.application.agent_service import AgentService
 from voidx.agent.infrastructure.langgraph.execution import _sanitize_generated_title
 from voidx.agent.application.runtime_context import InteractionMode, TaskIntent
-from voidx.runtime.task_state import (
+from voidx.agent.domain.task.state import (
     GoalResolution,
     GoalSpec,
     IntentResolution,
@@ -25,14 +25,14 @@ from voidx.runtime.task_state import (
 )
 from voidx.config import Config
 from voidx.llm.usage import UsageStats
-from voidx.memory.runtime_state import RuntimeStateSnapshot, save_runtime_state
-from voidx.memory.session import MessageRow, create_session, get_session, load_messages, save_message, update_title
+from voidx.agent.adapters.persistence.runtime_state_repository import RuntimeStateSnapshot, save_runtime_state
+from voidx.agent.adapters.persistence.session_repository import MessageRow, create_session, get_session, load_messages, save_message, update_title
 from voidx.selfupdate import UpdateCheckResult
-from voidx.workflow.runtime import WorkflowActivationSource, WorkflowRunState, WorkflowRunStatus
-from voidx.tools.task_tracker import TaskTracker
-from voidx.ui.output.dock import BottomInputDock, set_dock
-from voidx.ui.output.events import DockEventConsumer, ui_events
-from voidx.ui.protocol import UiSubmitCommand
+from voidx.agent.application.automation.workflow.runtime import WorkflowActivationSource, WorkflowRunState, WorkflowRunStatus
+from voidx.agent.application.runtime.task_tracker import TaskTracker
+from voidx.presentation.output.dock import BottomInputDock, set_dock
+from voidx.presentation.output.events import DockEventConsumer, ui_events
+from voidx.presentation.protocol import UiSubmitCommand
 from voidx.runtime.ui_port import runtime_ui_port
 from tests.test_infrastructure.runtime.run_loop_helpers import (
     FakeTui,
@@ -41,6 +41,7 @@ from tests.test_infrastructure.runtime.run_loop_helpers import (
     NoopLspManager,
     _graph,
     _service,
+    _service_and_run_loop,
     _disable_external_managers,
 )
 
@@ -116,15 +117,15 @@ async def test_delete_empty_current_session_only_deletes_sessions_without_messag
 
 @pytest.mark.asyncio
 async def test_exit_cleanup_deletes_empty_current_session(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.agent.application.agent_service.create_frontend", ExitTui)
+    monkeypatch.setattr("voidx.presentation.terminal.run_loop.create_frontend", ExitTui)
     session = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
     execution = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
-    graph = _service(execution)
+    graph, run_loop = _service_and_run_loop(execution)
     _disable_external_managers(graph)
     test_dock = BottomInputDock()
     set_dock(test_dock)
     try:
-        await graph.run()
+        await run_loop.run()
     finally:
         test_dock.reset()
         set_dock(None)
@@ -135,17 +136,17 @@ async def test_exit_cleanup_deletes_empty_current_session(tmp_path, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_exit_cleanup_keeps_session_with_messages_even_new_session_title(tmp_path, monkeypatch):
-    monkeypatch.setattr("voidx.agent.application.agent_service.create_frontend", ExitTui)
+    monkeypatch.setattr("voidx.presentation.terminal.run_loop.create_frontend", ExitTui)
     session = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
     await save_message(MessageRow(session_id=session.id, role="user", content="hello"))
     await update_title(session.id, "New session")
     execution = LangGraphExecution(Config(workspace=str(tmp_path)), api_key=None, session=session)
-    graph = _service(execution)
+    graph, run_loop = _service_and_run_loop(execution)
     _disable_external_managers(graph)
     test_dock = BottomInputDock()
     set_dock(test_dock)
     try:
-        await graph.run()
+        await run_loop.run()
     finally:
         test_dock.reset()
         set_dock(None)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from voidx.agent.domain.state import SessionRuntimeState
-from voidx.memory.service import RuntimeStateSnapshot
+from voidx.agent.adapters.persistence.runtime_state_repository import RuntimeStateSnapshot
 
 
 def agent_runtime_from_snapshot(snapshot: RuntimeStateSnapshot) -> SessionRuntimeState:

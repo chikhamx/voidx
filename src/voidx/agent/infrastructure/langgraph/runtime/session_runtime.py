@@ -5,23 +5,14 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from voidx.agent.application.session_service import SessionService
 from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.infrastructure.memory_session import MemorySessionAdapter
-from voidx.memory.service import (
-    MessageRow,
-    count_messages,
-    delete_session,
-    load_messages,
-    load_transcript,
-    replace_transcript,
-    update_title,
-    update_title_if_current,
-)
+from voidx.agent.adapters.persistence.session_repository import MessageRow, count_messages, delete_session, load_messages, update_title, update_title_if_current
+from voidx.agent.ports.presentation import NullPresentationSnapshotPort, PresentationSnapshotPort
 from voidx.logging.tool_log import log_tool_event
-from voidx.runtime.ui import transcript_rows_to_tree, tree_to_transcript_rows
 from voidx.agent.infrastructure.tool_result_storage import cleanup_session_results
 
 TITLE_TIMEOUT_SECONDS = 10.0
@@ -33,12 +24,18 @@ SMART_TITLE_CHARS = 60
 class SessionRuntime:
     """Owns persisted runtime state, transcript snapshots, and title generation."""
 
-    def __init__(self, host: Any) -> None:
+    def __init__(
+        self,
+        host: Any,
+        *,
+        presentation_snapshots: PresentationSnapshotPort | None = None,
+    ) -> None:
         self.host = host
+        self.presentation_snapshots = presentation_snapshots or NullPresentationSnapshotPort()
 
     def reset_runtime_state_memory(self) -> None:
         from voidx.agent.application.runtime_context import InteractionMode
-        from voidx.runtime.task_state import TaskState
+        from voidx.agent.domain.task.state import TaskState
 
         host = self.host
         host._interaction_mode = InteractionMode.AUTO
@@ -79,7 +76,7 @@ class SessionRuntime:
         if host._session is None:
             return
         from voidx.agent.application.runtime_context import InteractionMode
-        from voidx.runtime.task_state import TaskState
+        from voidx.agent.domain.task.state import TaskState
 
         runtime = SessionRuntimeState(
             interaction_mode=getattr(host, "_interaction_mode", None) or InteractionMode.AUTO,
@@ -102,24 +99,16 @@ class SessionRuntime:
         host = self.host
         if host._session is None:
             return
-        active_dock = host._ui.get_dock()
-        if active_dock is None:
-            return
-        rows, turn_count = tree_to_transcript_rows(host._session.id, active_dock.tree)
-        await replace_transcript(host._session.id, rows, turn_count=turn_count)
+        await self.presentation_snapshots.persist_current(host._session.id)
 
     async def restore_transcript_snapshot(self, *, append: bool = False) -> bool:
         host = self.host
         if host._session is None:
             return False
-        active_dock = host._ui.get_dock()
-        if active_dock is None:
-            return False
-        rows = await load_transcript(host._session.id)
-        if not rows:
-            return False
-        active_dock.restore_tree(transcript_rows_to_tree(rows), append=append)
-        return True
+        return await self.presentation_snapshots.restore_current(
+            host._session.id,
+            append=append,
+        )
 
     def invalidate_session_title_generation(self) -> None:
         host = self.host

@@ -11,7 +11,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 
 from voidx.agent.application.attachments import parse_structured_content
 from voidx.llm.message_status import message_status
-from voidx.memory.service import MessageRow
+from voidx.agent.adapters.persistence.session_repository import MessageRow
 from voidx.agent.application.runtime_context import RowMessageCacheEntry
 
 

@@ -6,8 +6,9 @@ import logging
 
 from pydantic import BaseModel, Field, model_validator
 
-from voidx.runtime.intent import PersonaName
-from voidx.workflow.service import WorkflowService
+from voidx.agent.domain.prompt_contracts import BaseSystemProfile, CHAT_PROFILE_SPEC
+from voidx.agent.domain.task.intent import PersonaName
+from voidx.agent.application.automation.workflow.service import WorkflowService
 
 logger = logging.getLogger(__name__)
 
@@ -53,14 +54,6 @@ class BaseSystemPrompt(BaseModel):
         elif self.global_rules:
             sections.append("## Global Rules\n\n" + _render_bullets(self.global_rules))
         return "\n\n".join(sections)
-
-
-class BaseSystemProfile(BaseModel):
-    """Profile-scoped base system prompt assembly spec."""
-
-    identity: str
-    style_names: list[str] = Field(default_factory=list)
-    global_section_names: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class WorkflowRuntimePrompt(BaseModel):
@@ -306,24 +299,6 @@ CODING_PROFILE_SPEC = BaseSystemProfile(
     global_section_names={
         "Runtime Rules": ["workflow_gates"],
         "Workspace Rules": ["workspace_facts", "read_before_edit", "smallest_change", "preserve_dirty"],
-        "Verification Rules": ["fresh_verification"],
-        "Collaboration Rules": ["min_questions", "follow_requests"],
-    },
-)
-
-
-CHAT_PROFILE_SPEC = BaseSystemProfile(
-    identity="You are voidx, a conversational assistant.",
-    style_names=[
-        "language",
-        "tone",
-        "concise",
-        "internals_chat",
-        "progress_preamble",
-        "summarize_results",
-        "uncertainty",
-    ],
-    global_section_names={
         "Verification Rules": ["fresh_verification"],
         "Collaboration Rules": ["min_questions", "follow_requests"],
     },

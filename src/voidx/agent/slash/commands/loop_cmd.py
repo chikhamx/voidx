@@ -1,7 +1,7 @@
 """Slash /loop commands."""
 from __future__ import annotations
 
-from voidx.agent.domain.loop import LoopSpec
+from voidx.agent.domain.automation.loop import LoopSpec
 from voidx.runtime.ui import ui
 from voidx.agent.slash.helpers import _parse_interval
 

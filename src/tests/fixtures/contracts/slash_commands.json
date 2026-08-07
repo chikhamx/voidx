@@ -1,0 +1,224 @@
+[
+  {
+    "arg": "args",
+    "desc": "Allow a tool for this session",
+    "method": "_cmd_allow",
+    "name": "/allow"
+  },
+  {
+    "arg": "args",
+    "desc": "Configure Bocha API key for web search",
+    "method": "_bocha",
+    "name": "/bocha"
+  },
+  {
+    "arg": "args",
+    "desc": "Start a new chat session",
+    "method": "_chat_shortcut",
+    "name": "/chat"
+  },
+  {
+    "arg": "args",
+    "desc": "Start a new coding session",
+    "method": "_coding_shortcut",
+    "name": "/coding"
+  },
+  {
+    "arg": "none",
+    "desc": "Start a new session with empty context",
+    "method": "_clear",
+    "name": "/clear"
+  },
+  {
+    "arg": "args",
+    "desc": "Choose app for opening changed files",
+    "method": "_code_ide",
+    "name": "/code-ide"
+  },
+  {
+    "arg": "none",
+    "desc": "Manually trigger context compaction",
+    "method": "_cmd_compact",
+    "name": "/compact"
+  },
+  {
+    "arg": "args",
+    "desc": "Toggle verbose step/tool output",
+    "method": "_debug",
+    "name": "/debug"
+  },
+  {
+    "arg": "args",
+    "desc": "Deny a tool for this session",
+    "method": "_cmd_deny",
+    "name": "/deny"
+  },
+  {
+    "arg": "none",
+    "desc": "Show git working tree diff with syntax highlighting",
+    "method": "_show_diff",
+    "name": "/diff"
+  },
+  {
+    "arg": "none",
+    "desc": "Exit voidx",
+    "method": "_noop",
+    "name": "/exit"
+  },
+  {
+    "arg": "args",
+    "desc": "Switch to goal mode or manage the current goal",
+    "method": "_goal",
+    "name": "/goal"
+  },
+  {
+    "arg": "args",
+    "desc": "Add guidance to the running agent turn",
+    "method": "_guide",
+    "name": "/guide"
+  },
+  {
+    "arg": "none",
+    "desc": "Show all commands",
+    "method": "_show_help",
+    "name": "/help"
+  },
+  {
+    "arg": "args",
+    "desc": "Generate AGENTS.md for this project",
+    "method": "_init",
+    "name": "/init"
+  },
+  {
+    "arg": "args",
+    "desc": "Set response language preference",
+    "method": "_lang",
+    "name": "/lang"
+  },
+  {
+    "arg": "none",
+    "desc": "List saved sessions",
+    "method": "_list_sessions",
+    "name": "/list"
+  },
+  {
+    "arg": "args",
+    "desc": "Toggle LLM logging",
+    "method": "_log",
+    "name": "/log"
+  },
+  {
+    "arg": "args",
+    "desc": "Switch to loop mode or manage the current loop",
+    "method": "_loop",
+    "name": "/loop"
+  },
+  {
+    "arg": "args",
+    "desc": "Manage language servers",
+    "method": "_lsp",
+    "name": "/lsp"
+  },
+  {
+    "arg": "args",
+    "desc": "Manage MCP servers",
+    "method": "_mcp",
+    "name": "/mcp"
+  },
+  {
+    "arg": "args",
+    "desc": "Switch configured model",
+    "method": "_dispatch_model",
+    "name": "/model"
+  },
+  {
+    "arg": "none",
+    "desc": "Paste an image from the clipboard",
+    "method": "_paste_clipboard_image",
+    "name": "/paste"
+  },
+  {
+    "arg": "args",
+    "desc": "Choose permission mode",
+    "method": "_permission_mode",
+    "name": "/permission"
+  },
+  {
+    "arg": "none",
+    "desc": "Show current permission rules",
+    "method": "_cmd_permissions",
+    "name": "/permissions"
+  },
+  {
+    "arg": "none",
+    "desc": "Enter plan mode (writes and write-capable bash blocked)",
+    "method": "_cmd_plan",
+    "name": "/plan"
+  },
+  {
+    "arg": "none",
+    "desc": "Exit voidx",
+    "method": "_noop",
+    "name": "/quit"
+  },
+  {
+    "arg": "inp",
+    "desc": "Resume a session (select from list or specify ID)",
+    "method": "_resume",
+    "name": "/resume"
+  },
+  {
+    "arg": "none",
+    "desc": "Revert file changes from the current turn",
+    "method": "_rollback",
+    "name": "/rollback"
+  },
+  {
+    "arg": "args",
+    "desc": "Manage sessions (new/list/resume/del)",
+    "method": "_session",
+    "name": "/session"
+  },
+  {
+    "arg": "args",
+    "desc": "Manage local skills",
+    "method": "_skills",
+    "name": "/skills"
+  },
+  {
+    "arg": "args",
+    "desc": "Configure Tavily API key for web search",
+    "method": "_tavily",
+    "name": "/tavily"
+  },
+  {
+    "arg": "inp",
+    "desc": "Set session title",
+    "method": "_set_title",
+    "name": "/title"
+  },
+  {
+    "arg": "args",
+    "desc": "Set response tone preference",
+    "method": "_tone",
+    "name": "/tone"
+  },
+  {
+    "arg": "none",
+    "desc": "Return to auto mode",
+    "method": "_cmd_unplan",
+    "name": "/unplan"
+  },
+  {
+    "arg": "args",
+    "desc": "Check for voidx updates",
+    "method": "_upgrade",
+    "name": "/upgrade"
+  },
+  {
+    "arg": "none",
+    "desc": "Show token usage for this session",
+    "method": "_usage",
+    "name": "/usage"
+  }
+]

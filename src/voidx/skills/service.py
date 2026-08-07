@@ -19,10 +19,6 @@ from voidx.skills.context import (
 )
 
 
-def skill_reference_message(*args, **kwargs):
-    from voidx.skills.references import skill_reference_message as _skill_reference_message
-
-    return _skill_reference_message(*args, **kwargs)
 
 
 class SkillService:

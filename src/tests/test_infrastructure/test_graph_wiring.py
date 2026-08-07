@@ -5,9 +5,10 @@ from dataclasses import dataclass, field
 import pytest
 
 from voidx.agent.domain.state import SessionRuntimeState
-from voidx.agent.domain.turn import TurnPhase
+from voidx.agent.domain.turn.state import TurnPhase
 from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
-from voidx.runtime import InteractionMode, TaskState
+from voidx.agent.domain.task.intent import InteractionMode
+from voidx.agent.domain.task.state import TaskState
 
 
 @dataclass

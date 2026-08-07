@@ -10,7 +10,7 @@ import pytest
 from rich.console import Console
 
 from voidx.config import Settings
-from voidx.ui.commands import COMMANDS
+from voidx.presentation.commands import COMMANDS
 from voidx_cli import PureTui
 
 
@@ -275,7 +275,7 @@ def test_loop_prompt_accepts_attachment_candidate_in_command_args(tmp_path):
 
 
 def test_attachment_matches_are_cached_per_token(tmp_path, monkeypatch):
-    from voidx.ui.tools.file_picker import FileCandidate
+    from voidx.presentation.tools.file_picker import FileCandidate
 
     calls: list[str] = []
 
@@ -516,7 +516,7 @@ async def test_tui_busy_clear_cancels_current_submit_and_runs_clear_next(tmp_pat
 
 
 def test_permission_commands_include_ai_approval_mode():
-    from voidx.ui.commands import COMMANDS
+    from voidx.presentation.commands import COMMANDS
 
     commands = dict(COMMANDS)
     assert "/permission ai_approval" in commands

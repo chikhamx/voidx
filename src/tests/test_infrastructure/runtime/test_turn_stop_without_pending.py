@@ -15,7 +15,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Too
 
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.config import Config, ModelConfig
-from voidx.ui.output.events import AssistantStreamCommitted, AssistantStreamUpdated
+from voidx.presentation.output.events import AssistantStreamCommitted, AssistantStreamUpdated
 from tests.test_infrastructure.runtime.stream_llm_helpers import FakeRenderer
 
 

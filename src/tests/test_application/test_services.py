@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 from voidx.agent.domain.thread import AgentThread
 from voidx.agent.domain.turn_context import TurnExecutionContext
-from voidx.agent.runtime import AgentRuntime, TurnRequest
+from voidx.agent.application.runtime import AgentRuntime, TurnRequest
 from voidx.agent.domain.compaction import CompactionResult
 from voidx.agent.domain.events import AgentEventKind
 from voidx.agent.domain.state import SessionRuntimeState

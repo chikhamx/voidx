@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from voidx.agent.domain.goal import GOAL_PROFILE
+from voidx.agent.domain.automation.goal import GOAL_PROFILE
 from voidx.agent.domain.thread import AgentThread
 from voidx.agent.domain.turn_context import TurnExecutionContext
-from voidx.agent.goal.evaluator import GoalEvaluator
+from voidx.agent.application.automation.goal.evaluator import GoalEvaluator
 
 
 class Runtime:
@@ -70,7 +70,7 @@ async def test_goal_evaluator_runs_with_independent_context() -> None:
 @pytest.mark.asyncio
 async def test_goal_evaluator_prompt_includes_work_evidence() -> None:
     from voidx.agent.domain.thread import LifecycleState
-    from voidx.agent.runtime.contracts import TurnResult
+    from voidx.agent.application.runtime.contracts import TurnResult
 
     runtime = Runtime()
     thread = AgentThread(thread_id="goal:t:run", session_id="goal:t:run")

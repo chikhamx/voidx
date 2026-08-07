@@ -9,10 +9,10 @@ from tests.test_agent.conftest import _read_jsonl, _session_dir, _table_names
 
 import pytest
 
-import voidx.memory.store as store
-import voidx.memory.jsonl_store as jsonl_store
+import voidx.persistence.sqlite as store
+import voidx.persistence.jsonl as jsonl_store
 
-from voidx.memory.session import (
+from voidx.agent.adapters.persistence.session_repository import (
     create_session,
     get_session,
     delete_session,
@@ -20,13 +20,13 @@ from voidx.memory.session import (
     load_messages,
     MessageRow,
 )
-from voidx.memory.transcript import (
+from voidx.presentation.transcript_snapshot import (
     TranscriptNodeRow,
     append_transcript_summary,
     load_transcript,
     replace_transcript,
 )
-from voidx.memory.jsonl_store import append_session_record
+from voidx.persistence.jsonl import append_session_record
 
 @pytest.mark.asyncio
 async def test_replace_and_load_transcript_nodes():

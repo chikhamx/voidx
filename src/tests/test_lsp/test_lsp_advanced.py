@@ -1,3 +1,4 @@
+from tests.tool_registry import build_registry
 import json
 import sys
 from pathlib import Path
@@ -8,15 +9,14 @@ import pytest
 
 from voidx.agent.slash import SlashHandler
 from voidx.agent.application.tool_filters import filter_unavailable_lsp_tools
-from voidx.lsp.client import LSP_REQUEST_TIMEOUT_SECONDS, encode_lsp_message
-from voidx.lsp.errors import LspConnectionError, LspServerUnavailable
-from voidx.lsp.manager import LspManager, apply_text_edits
-from voidx.lsp.schema import LspServerConfig
-from voidx.tools.base import ToolContext
-from voidx.tools.lsp import LspFormatTool
-from voidx.tools.registry import ToolRegistry
-import voidx.memory.store as store
-import voidx.tools.lsp as lsp_module
+from voidx.lsp.adapters.client import LSP_REQUEST_TIMEOUT_SECONDS, encode_lsp_message, create_lsp_client
+from voidx.lsp.domain.errors import LspConnectionError, LspServerUnavailable
+from voidx.lsp.application.manager import LspManager, apply_text_edits
+from voidx.lsp.domain.schema import LspServerConfig
+from voidx.tooling.application.execution import FileToolContext as ToolContext
+from voidx.tooling.adapters.lsp import LspFormatTool
+from voidx.tooling.application.registry import ToolRegistry
+import voidx.persistence.sqlite as store
 
 
 FAKE_LSP_SERVER = r'''
@@ -134,8 +134,8 @@ def test_lsp_doctor_reports_initializing_without_io(monkeypatch, tmp_path):
     def fail_load(_workspace):
         raise AssertionError("load_lsp_servers should not run from doctor/statuses")
 
-    monkeypatch.setattr("voidx.lsp.manager.load_lsp_servers", fail_load)
-    manager = LspManager(str(tmp_path))
+    monkeypatch.setattr("voidx.lsp.application.manager.load_lsp_servers", fail_load)
+    manager = LspManager(str(tmp_path), create_lsp_client)
 
     checks = manager.doctor()
     statuses = manager.statuses()
@@ -146,7 +146,7 @@ def test_lsp_doctor_reports_initializing_without_io(monkeypatch, tmp_path):
 
 
 def test_lsp_warmup_languages_does_not_mutate_resolved_command(monkeypatch, tmp_path):
-    manager = LspManager(str(tmp_path))
+    manager = LspManager(str(tmp_path), create_lsp_client)
     manager._servers = {
         "python": LspServerConfig(
             language="python",
@@ -154,7 +154,7 @@ def test_lsp_warmup_languages_does_not_mutate_resolved_command(monkeypatch, tmp_
             extensions=[".py"],
         )
     }
-    monkeypatch.setattr("voidx.lsp.manager._resolve_command", lambda command: "/bin/pyright-langserver")
+    monkeypatch.setattr("voidx.lsp.application.manager._resolve_command", lambda command: "/bin/pyright-langserver")
 
     assert manager._warmup_languages() == ["python"]
     assert manager._servers["python"].resolved_command == ""
@@ -187,9 +187,9 @@ def test_tool_filter_uses_cached_lsp_availability():
 async def test_lsp_tools_use_context_manager(tmp_path):
     _write_fake_lsp(tmp_path)
     (tmp_path / "sample.py").write_text("class Foo:\n def bar(self):\n  return 1\n", encoding="utf-8")
-    manager = LspManager(str(tmp_path))
-    registry = ToolRegistry()
-    ctx = ToolContext(workspace=str(tmp_path), lsp_manager=manager)
+    manager = LspManager(str(tmp_path), create_lsp_client)
+    registry = build_registry(lsp_operations=manager)
+    ctx = ToolContext(workspace=str(tmp_path))
 
     try:
         symbols = await registry.execute_tool("lsp", {"operation": "symbols", "file_path": "sample.py"}, ctx)
@@ -216,12 +216,11 @@ async def test_lsp_format_tool_saves_file_version_before_format(tmp_path, monkey
             old_text = path.read_text(encoding="utf-8")
             return True, old_text, "print(1)\n"
 
-    monkeypatch.setattr(lsp_module, "_service", lambda _ctx: FakeService())
 
-    ctx = ToolContext(workspace=str(tmp_path), session_id="sid-1", lsp_manager=object())
+    ctx = ToolContext(workspace=str(tmp_path), session_id="sid-1")
     key = str(target.resolve())
-    ctx.file_read_coverage[key] = {"ranges": [{"start_line": 1, "end_line": 1}]}
-    result = await LspFormatTool().execute(
+    ctx.file_state.read_coverage[key] = {"ranges": [{"start_line": 1, "end_line": 1}]}
+    result = await LspFormatTool(FakeService()).execute(
         {
             "file_path": "sample.py",
             "start_line": 1,
@@ -237,8 +236,8 @@ async def test_lsp_format_tool_saves_file_version_before_format(tmp_path, monkey
     assert target.read_text(encoding="utf-8") == "print(1)\n"
     assert result.diff is not None
     history_dir = store.DATA_DIR / "sessions" / "sid-1" / "file-history"
-    assert key in ctx.file_mtimes
-    assert key not in ctx.file_read_coverage
+    assert key in ctx.file_state.mtimes
+    assert key not in ctx.file_state.read_coverage
     rows = [
         json.loads(line)
         for line in (history_dir / "manifest.jsonl").read_text(encoding="utf-8").splitlines()
@@ -256,7 +255,7 @@ async def test_lsp_manager_reports_missing_server(tmp_path):
         encoding="utf-8",
     )
     (tmp_path / "sample.py").write_text("print('x')\n", encoding="utf-8")
-    manager = LspManager(str(tmp_path))
+    manager = LspManager(str(tmp_path), create_lsp_client)
 
     with pytest.raises(LspServerUnavailable, match="Command not found"):
         await manager.diagnostics("sample.py", wait=0)
@@ -290,7 +289,7 @@ async def test_lsp_doctor_reports_available_missing_and_disabled_servers(tmp_pat
         }),
         encoding="utf-8",
     )
-    manager = LspManager(str(tmp_path))
+    manager = LspManager(str(tmp_path), create_lsp_client)
     await manager.initialize()
 
     checks = {check.language: check for check in manager.doctor()}
@@ -338,7 +337,10 @@ async def test_slash_lsp_dispatches_status_and_restart(tmp_path):
             ]
 
     manager = FakeLspManager()
-    graph = SimpleNamespace(lsp_manager=manager, workspace=str(tmp_path))
+    graph = SimpleNamespace(
+        lsp_manager=manager,
+        workspace=str(tmp_path),
+    )
     handler = SlashHandler(graph)
 
     assert await handler.dispatch("/lsp status") is True
@@ -357,12 +359,11 @@ async def test_lsp_format_tool_accepts_eof_position_after_trailing_newline(tmp_p
             old_text = target.read_text(encoding="utf-8")
             return False, old_text, old_text
 
-    monkeypatch.setattr(lsp_module, "_service", lambda _ctx: FakeService())
 
-    ctx = ToolContext(workspace=str(tmp_path), lsp_manager=object())
+    ctx = ToolContext(workspace=str(tmp_path))
     key = str(target.resolve())
-    ctx.file_read_coverage[key] = {"ranges": [{"start_line": 1, "end_line": 1}]}
-    result = await LspFormatTool().execute(
+    ctx.file_state.read_coverage[key] = {"ranges": [{"start_line": 1, "end_line": 1}]}
+    result = await LspFormatTool(FakeService()).execute(
         {
             "file_path": "sample.py",
             "start_line": 1,
@@ -376,8 +377,8 @@ async def test_lsp_format_tool_accepts_eof_position_after_trailing_newline(tmp_p
     assert result.metadata.get("error") is not True
     assert result.metadata["formatted"] is False
 
-    assert key in ctx.file_mtimes
-    assert key in ctx.file_read_coverage
+    assert key in ctx.file_state.mtimes
+    assert key in ctx.file_state.read_coverage
 
 @pytest.mark.asyncio
 async def test_lsp_format_tool_does_not_overwrite_concurrent_change(tmp_path, monkeypatch):
@@ -390,9 +391,8 @@ async def test_lsp_format_tool_does_not_overwrite_concurrent_change(tmp_path, mo
             target.write_text("concurrent = True\n", encoding="utf-8")
             return True, original, "print(1)\n"
 
-    monkeypatch.setattr(lsp_module, "_service", lambda _ctx: FakeService())
 
-    result = await LspFormatTool().execute(
+    result = await LspFormatTool(FakeService()).execute(
         {
             "file_path": "sample.py",
             "start_line": 1,
@@ -400,7 +400,7 @@ async def test_lsp_format_tool_does_not_overwrite_concurrent_change(tmp_path, mo
             "end_line": 2,
             "end_character": 0,
         },
-        ToolContext(workspace=str(tmp_path), lsp_manager=object()),
+        ToolContext(workspace=str(tmp_path)),
     )
 
     assert result.metadata["error"] is True

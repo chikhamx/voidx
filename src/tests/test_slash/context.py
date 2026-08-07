@@ -3,7 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-from voidx.runtime import InteractionMode, TaskState
+from voidx.agent.domain.task.intent import InteractionMode
+from voidx.agent.domain.task.state import TaskState
 
 
 def command_context(**overrides: Any) -> SimpleNamespace:

@@ -9,10 +9,10 @@ from tests.test_agent.conftest import _create_legacy_db, _create_new_store_db, _
 
 import pytest
 
-import voidx.memory.store as store
-import voidx.memory.jsonl_store as jsonl_store
+import voidx.persistence.sqlite as store
+import voidx.persistence.jsonl as jsonl_store
 
-from voidx.memory.session import (
+from voidx.agent.adapters.persistence.session_repository import (
     create_session,
     get_session,
     list_sessions,
@@ -25,13 +25,13 @@ from voidx.memory.session import (
     update_title,
     MessageRow,
 )
-from voidx.memory.cleanup import plan_session_delete
-from voidx.memory.transcript import (
+from voidx.agent.adapters.persistence.session_cleanup import plan_session_delete
+from voidx.presentation.transcript_snapshot import (
     TranscriptNodeRow,
     replace_transcript,
     load_transcript,
 )
-from voidx.memory.context_frames import (
+from voidx.agent.adapters.persistence.context_frame_repository import (
     build_context_frame,
     load_context_frames,
     save_context_frame,
@@ -402,7 +402,7 @@ async def test_list_sessions_returns_directory():
 
 @pytest.mark.asyncio
 async def test_fork_session_copies_directory():
-    from voidx.memory.session import fork_session
+    from voidx.agent.adapters.persistence.session_repository import fork_session
     original = await create_session(directory="Downloads")
     forked = await fork_session(original.id)
     assert forked is not None

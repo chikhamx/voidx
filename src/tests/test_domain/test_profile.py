@@ -33,7 +33,7 @@ def test_thread_store_profile_json_roundtrip_with_policy() -> None:
     import warnings
 
     from voidx.agent.domain.prompt_policy import CodingPromptPolicy
-    from voidx.memory.thread_store import _json_profile
+    from voidx.agent.adapters.persistence.thread_repository import _json_profile
 
     profile = RuntimeProfile(
         profile_id="coding", revision=1, name="Coding", prompt_policy=CodingPromptPolicy()

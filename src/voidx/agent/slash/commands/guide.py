@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from voidx.agent.slash.init_prompt import INIT_PROMPT
-from voidx.runtime.intent import InteractionMode
+from voidx.agent.domain.task.intent import InteractionMode
 from voidx.runtime.ui import ui
 
 

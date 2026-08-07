@@ -7,11 +7,11 @@ from typing import TYPE_CHECKING
 from langchain_core.messages import AIMessage, ToolMessage
 
 from voidx.logging.tool_log import log_tool_event
-from voidx.runtime.intent import InteractionMode
+from voidx.agent.domain.task.intent import InteractionMode
 from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
 from voidx.agent.application.workflow_utils import active_workflow_names
 from voidx.agent.application.todo_state import todo_run_state_from_result
-from voidx.runtime.task_state import goal_label, goal_type_from_join
+from voidx.agent.domain.task.state import goal_label, goal_type_from_join
 from voidx.agent.application.tool_messages import sanitize_tool_message_content
 from voidx.agent.infrastructure.tool_result_storage import maybe_persist_tool_result
 from voidx.agent.infrastructure.langgraph.runtime.todo_events import todo_updated_event
@@ -25,8 +25,18 @@ from voidx.runtime.ui import (
     WarningAppended,
     UiEventTimeout,
 )
-from voidx.tools.loop import LoopTool
-from voidx.tools.service import ApprovedToolRisk, ToolContext, ToolResult
+from voidx.agent.adapters.tools.automation.loop import LoopTool
+from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext, AgentToolRuntime
+from voidx.agent.adapters.tools.plugins import bind_agent_tool_runtime
+from voidx.tooling.domain.risk import ApprovedToolRisk
+from voidx.tooling.application.execution import (
+    AuthorizationRuntime,
+    CallbackInteractionPort,
+)
+from voidx.tooling.adapters.lsp_post_edit import LspPostEditFormatter
+from voidx.tooling.adapters.scoped_plugin import bind_scoped_plugins
+from voidx.tooling.domain.file_tracking import FileStateStore
+from voidx.tooling.domain.result import ToolResult
 
 from .types import ToolResultOk, _ExecutedTool, _task_state_for_state, _tool_result_ok
 from .guards import (
@@ -204,54 +214,81 @@ class ToolExecutorAdapter:
         runtime_persona_ref = [runtime_persona, runtime_task_intent]
         runtime_task_state_ref = [runtime_task_state, runtime_goal, runtime_workflow_runs]
 
+        permission = host._permission
+        agent_runtime = AgentToolRuntime(
+            loop_control=getattr(thread_state.turn_context, "loop_controller", None),
+            goal_control=getattr(thread_state.turn_context, "goal_controller", None),
+            goal_intake=getattr(thread_state.turn_context, "goal_intake_controller", None),
+            loop_intake=getattr(thread_state.turn_context, "loop_intake_controller", None),
+            workflow_repeat_state=host._workflow_repeat_tracker,
+            subagent_transport=getattr(host, "agent_gateway", None),
+            run_id=(
+                getattr(host, "agent_gateway", None).ensure_root(session_id)
+                if getattr(host, "agent_gateway", None) is not None
+                else ""
+            ),
+            interaction=_make_interact_callback(getattr(host, "_app", None)),
+            events=getattr(host, "tool_ui_events", None),
+            access_grants=permission.get_access_grants,
+            revocation_epoch=lambda: permission.revocation_epoch,
+        )
+        bind_agent_tool_runtime(host.tools, agent_runtime)
+
+        authorization_runtime = AuthorizationRuntime(
+            read_files=list(permission.sandbox_readable_files),
+            read_dirs=list(permission.sandbox_readable_dirs),
+            write_files=list(permission.sandbox_writable_files),
+            write_dirs=list(permission.sandbox_writable_dirs),
+            access_grants_reader=permission.get_access_grants,
+            revocation_epoch_reader=lambda: permission.revocation_epoch,
+            grant_writer=permission.add_grant,
+            target_locker=permission.acquire_grant_targets,
+            execution_lease_factory=permission.execution_lease_for_tool,
+            interaction=CallbackInteractionPort(
+                _make_interact_callback(getattr(host, "_app", None))
+            ),
+        )
+        bind_scoped_plugins(
+            host.tools,
+            authorization=authorization_runtime,
+            files=FileStateStore(
+                mtimes=host._file_mtimes,
+                read_coverage=host._file_read_coverage,
+            ),
+            process_sandbox=getattr(permission, "process_sandbox", None),
+            formatter=(
+                LspPostEditFormatter(
+                    host._lsp_operations,
+                    enabled=host.config.lsp_format_after_edit,
+                )
+                if host._lsp_operations is not None
+                else None
+            ),
+        )
+
         def make_context() -> ToolContext:
+            agent_runtime.task_intent = str(runtime_persona_ref[1] or "coding")
+            agent_runtime.goal_type = goal_type_from_join(
+                runtime_task_state_ref[0].workflow_route.join
+                if runtime_task_state_ref[0].workflow_route is not None
+                else None
+            )
+            agent_runtime.goal_target = goal_label(runtime_task_state_ref[1])
+            agent_runtime.active_workflow_names = active_workflow_names(runtime_task_state_ref[2])
+            agent_runtime.workflow_runs = runtime_task_state_ref[2]
+            agent_runtime.workflow_route = (
+                runtime_task_state_ref[0].workflow_route.model_dump(mode="json")
+                if runtime_task_state_ref[0].workflow_route is not None
+                else None
+            )
+            agent_runtime.goal_phase = getattr(thread_state.turn_context, "goal_phase", "work")
             return ToolContext(
                 workspace=workspace,
+                runtime=agent_runtime,
                 session_id=session_id,
                 persona=runtime_persona_ref[0],
                 interaction_mode=interaction_mode or (InteractionMode.PLAN.value if plan_mode else InteractionMode.AUTO.value),
-                task_intent=str(runtime_persona_ref[1] or "coding"),
-                goal_type=goal_type_from_join(
-                    runtime_task_state_ref[0].workflow_route.join
-                    if runtime_task_state_ref[0].workflow_route is not None
-                    else None
-                ),
-                goal_target=goal_label(runtime_task_state_ref[1]),
                 turn_count=turn_count,
-                active_workflow_names=active_workflow_names(runtime_task_state_ref[2]),
-                workflow_runs=runtime_task_state_ref[2],
-                workflow_route=runtime_task_state_ref[0].workflow_route.model_dump(mode="json")
-                if runtime_task_state_ref[0].workflow_route is not None
-                else None,
-                file_mtimes=host._file_mtimes,
-                file_read_coverage=host._file_read_coverage,
-                workflow_repeat_tracker=host._workflow_repeat_tracker,
-                mcp_manager=getattr(host, "_mcp_manager", None),
-                lsp_manager=getattr(host, "_lsp_manager", None),
-                loop_controller=getattr(thread_state.turn_context, "loop_controller", None),
-                goal_controller=getattr(thread_state.turn_context, "goal_controller", None),
-                goal_intake_controller=getattr(thread_state.turn_context, "goal_intake_controller", None),
-                goal_phase=getattr(thread_state.turn_context, "goal_phase", "work"),
-                format_after_edit_enabled=host.config.lsp_format_after_edit,
-                tool_registry=host.tools,
-                agent_gateway=getattr(host, "agent_gateway", None),
-                agent_run_id=(
-                    getattr(host, "agent_gateway", None).ensure_root(session_id)
-                    if getattr(host, "agent_gateway", None) is not None
-                    else ""
-                ),
-                permission_mode=host._permission.permission_mode,
-                sandbox_readable_files=list(host._permission.sandbox_readable_files),
-                sandbox_readable_dirs=list(host._permission.sandbox_readable_dirs),
-                sandbox_writable_files=list(host._permission.sandbox_writable_files),
-                sandbox_writable_dirs=list(host._permission.sandbox_writable_dirs),
-                get_access_grants=host._permission.get_access_grants,
-                get_revocation_epoch=lambda: host._permission.revocation_epoch,
-                add_grant=host._permission.add_grant,
-                acquire_grant_targets=host._permission.acquire_grant_targets,
-                acquire_execution_lease=host._permission.execution_lease_for_tool,
-                process_sandbox=getattr(host._permission, "process_sandbox", None),
-                interact=_make_interact_callback(getattr(host, "_app", None)),
             )
 
         ctx = make_context()
@@ -354,7 +391,12 @@ class ToolExecutorAdapter:
                     name=f"voidx-tool-heartbeat:{tid}",
                 )
             try:
-                host._ui.session_tracker.capture_tool_call(tid, targs, ctx.workspace, [*ctx.sandbox_readable_files, *ctx.sandbox_readable_dirs, *ctx.sandbox_writable_files, *ctx.sandbox_writable_dirs])
+                host._ui.session_tracker.capture_tool_call(
+                    tid,
+                    targs,
+                    ctx.workspace,
+                    authorization_runtime.sandbox_paths(write=False),
+                )
                 parent_tool_token = current_parent_tool_call_id.set(tool_event_id)
                 lock_manager = _workspace_write_lock_manager(host) if _requires_workspace_write_lock(tc) else None
                 lock_acquired = False
@@ -369,14 +411,12 @@ class ToolExecutorAdapter:
                                 output="Workspace write lock acquisition cancelled before tool start.",
                                 metadata={"blocked": True, "error": True},
                             )
-                    previous_approved_tool_risks = ctx.approved_tool_risks
-                    ctx.approved_tool_risks = _approved_tool_risks_for_call(tc)
-                    try:
-                        if tid == "loop" and ctx.loop_controller is not None:
-                            return await LoopTool().execute(targs, ctx)
-                        return await host.tools.execute_tool(tid, targs, ctx)
-                    finally:
-                        ctx.approved_tool_risks = previous_approved_tool_risks
+                    tool_ctx = ctx.model_copy(
+                        update={"approved_tool_risks": tuple(_approved_tool_risks_for_call(tc))}
+                    )
+                    if tid == "loop" and tool_ctx.runtime.loop_control is not None:
+                        return await LoopTool().execute(targs, tool_ctx)
+                    return await host.tools.execute_tool(tid, targs, tool_ctx)
 
                 try:
                     if lease_factory is not None:

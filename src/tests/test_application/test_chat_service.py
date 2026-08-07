@@ -5,7 +5,7 @@ import pytest
 from voidx.agent.application.chat_service import ChatService
 from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.domain.thread import AgentThread, LifecycleState
-from voidx.agent.runtime.contracts import TurnResult
+from voidx.agent.application.runtime.contracts import TurnResult
 
 
 class FakeRuntime:
@@ -28,7 +28,7 @@ async def test_chat_service_creates_isolated_session_and_delegates(monkeypatch):
     runtime = FakeRuntime()
 
     async def fake_create_session(**kwargs):
-        from voidx.memory.service import SessionInfo
+        from voidx.agent.adapters.persistence.session_repository import SessionInfo
         return SessionInfo(id="chat-session", workspace="", runtime_profile="chat")
 
     monkeypatch.setattr("voidx.agent.application.chat_service.create_session", fake_create_session)
@@ -71,7 +71,7 @@ async def test_route_chat_turn_routes_resumed_chat_session_when_thread_id_empty(
     from types import SimpleNamespace
 
     from voidx.agent.application.agent_service import AgentService
-    from voidx.memory.service import SessionInfo
+    from voidx.agent.adapters.persistence.session_repository import SessionInfo
 
     class FakeChatService:
         def __init__(self):
@@ -87,7 +87,7 @@ async def test_route_chat_turn_routes_resumed_chat_session_when_thread_id_empty(
         assert session_id == "chat-session"
         return SessionInfo(id=session_id, runtime_profile="chat")
 
-    monkeypatch.setattr("voidx.memory.service.get_session", fake_get_session)
+    monkeypatch.setattr("voidx.agent.adapters.persistence.session_repository.get_session", fake_get_session)
 
     routed = await service._route_chat_turn("hello", thread_id="")
 
@@ -101,7 +101,7 @@ async def test_route_chat_turn_does_not_route_coding_session(monkeypatch):
     from types import SimpleNamespace
 
     from voidx.agent.application.agent_service import AgentService
-    from voidx.memory.service import SessionInfo
+    from voidx.agent.adapters.persistence.session_repository import SessionInfo
 
     class FakeChatService:
         async def run_turn(self, **kwargs):
@@ -114,7 +114,7 @@ async def test_route_chat_turn_does_not_route_coding_session(monkeypatch):
     async def fake_get_session(session_id):
         return SessionInfo(id=session_id, runtime_profile="coding")
 
-    monkeypatch.setattr("voidx.memory.service.get_session", fake_get_session)
+    monkeypatch.setattr("voidx.agent.adapters.persistence.session_repository.get_session", fake_get_session)
 
     routed = await service._route_chat_turn("hello", thread_id="")
 

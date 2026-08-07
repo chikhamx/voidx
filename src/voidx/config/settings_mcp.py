@@ -78,6 +78,7 @@ class SettingsMcpMixin:
         servers[name] = {**fields, "auto": auto}
         return self._save_target_mapping("mcpServers", servers, target)
 
+
     def _mcp_servers_data(self) -> dict:
         data = self._effective_data()
         servers = data.get("mcpServers")

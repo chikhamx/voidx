@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from voidx.agent.domain.loop import (
+from voidx.agent.domain.automation.loop import (
     LOOP_PROFILE,
     LoopDecision,
     LoopMode,

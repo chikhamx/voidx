@@ -8,16 +8,16 @@ from voidx.llm.compaction import COMPACTION_REQUEST
 from voidx.agent.application.instruction import InstructionService
 from voidx.config import Settings
 from voidx.skills.registry import SkillRegistry, parse_skill_file
-from voidx.workflow.context import WORKFLOW_CONTEXT_MARKER, WORKFLOW_CONTEXT_SCOPE
-from voidx.workflow.dag import DEFAULT_WORKFLOW_DAG
-from voidx.workflow.policy import (
+from voidx.agent.application.automation.workflow.context import WORKFLOW_CONTEXT_MARKER, WORKFLOW_CONTEXT_SCOPE
+from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
+from voidx.agent.domain.automation.workflow_policy import (
     is_workflow_terminal_condition,
     workflow_edges,
     workflow_exit_summaries,
     workflow_terminal_condition,
     workflow_transitions,
 )
-from voidx.workflow.runtime import (
+from voidx.agent.application.automation.workflow.runtime import (
     WorkflowActivationSource,
     WorkflowRunState,
     WorkflowRunStatus,
@@ -28,8 +28,8 @@ from voidx.workflow.runtime import (
 from voidx.skills.schema import SkillSelectionConfig
 from voidx.skills.references import skill_reference_message
 from voidx.skills.service import SkillService
-from voidx.ui.tools.skill_picker import list_skill_candidates
-from voidx.workflow.service import WorkflowService
+from voidx.presentation.tools.skill_picker import list_skill_candidates
+from voidx.agent.application.automation.workflow.service import WorkflowService
 from tests.test_skills.conftest import _write_skill
 
 
@@ -342,7 +342,7 @@ def test_list_skill_candidates_accepts_prebuilt_service(tmp_path, monkeypatch):
     def fail_settings(*_args, **_kwargs):
         raise AssertionError("Settings should not be constructed when service is supplied")
 
-    monkeypatch.setattr("voidx.ui.tools.skill_picker.Settings", fail_settings)
+    monkeypatch.setattr("voidx.presentation.tools.skill_picker.Settings", fail_settings)
 
     candidates = list_skill_candidates(str(workspace), "do", service=service)
 

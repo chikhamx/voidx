@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voidx.ui.output.dock import active_permission_request_detail_text
+from voidx.presentation.output.dock import active_permission_request_detail_text
 
 from .helpers import _candidate_meta, _escape_markup
 

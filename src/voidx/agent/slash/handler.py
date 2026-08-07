@@ -1,6 +1,7 @@
 """Slash command handler — routes slash commands to domain mixins."""
 from __future__ import annotations
 
+import asyncio
 from inspect import isawaitable
 from typing import Any
 from voidx.agent.slash.registry import REGISTRY, SlashCommand

@@ -5,7 +5,7 @@ import re
 import time
 from voidx.config import CodeIde
 from voidx.selfupdate import UpgradeResult
-from voidx.tools.service import ToolContext
+from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 
 def _ide_label(value: str) -> str:
     labels = {

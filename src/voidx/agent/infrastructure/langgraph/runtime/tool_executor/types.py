@@ -5,7 +5,8 @@ from dataclasses import dataclass
 
 from langchain_core.messages import ToolMessage
 
-from voidx.runtime.task_state import GoalSpec, TaskState, TodoRunState
+from voidx.agent.domain.task.state import GoalSpec, TaskState
+from voidx.agent.domain.task.todo import TodoRunState
 
 
 @dataclass
@@ -76,7 +77,7 @@ def _todo_state_for_state(value: object | None) -> TodoRunState | None:
 
 
 def _workflow_runs_for_state(value: object) -> list:
-    from voidx.workflow.types import WorkflowRunState
+    from voidx.agent.domain.automation.workflow import WorkflowRunState
     runs: list[WorkflowRunState] = []
     items = value.values() if isinstance(value, dict) else value or []
     for item in items:

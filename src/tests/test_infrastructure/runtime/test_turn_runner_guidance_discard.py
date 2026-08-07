@@ -16,7 +16,7 @@ from voidx.agent.infrastructure.langgraph.runtime.turn_runner import TurnRunner
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.llm.usage import UsageStats
-from voidx.ui.output.events.schema import GuidanceCommitted, WarningAppended
+from voidx.presentation.output.events.schema import GuidanceCommitted, WarningAppended
 
 
 class _RecordingEvents:

@@ -12,7 +12,7 @@ from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hin
 from voidx.agent.infrastructure.langgraph.state import AgentState
 from voidx.llm.message_markers import is_guidance_message
 
-from voidx.memory.service import SessionInfo
+from voidx.agent.adapters.persistence.session_repository import SessionInfo
 
 
 def build_graph(host: Any):

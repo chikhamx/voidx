@@ -22,11 +22,11 @@ from rich.text import Text
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.logging import log_internal_error
 from voidx.logging.external import install_external_log_bridge
-from voidx.paths import voidx_workspace_dir
-from voidx.ui.output.dock import dock
-from voidx.ui.output.dock.formatting import text_from_line
-from voidx.ui.output.tree import OutputTree
-from voidx.ui.output.types import SubmitHandler, ThreadExecutionContext, coding_turn_context_for_queue
+from voidx.platform.paths import voidx_workspace_dir
+from voidx.presentation.output.dock import dock
+from voidx.presentation.output.dock.formatting import text_from_line
+from voidx.presentation.output.tree import OutputTree
+from voidx.presentation.output.types import SubmitHandler, ThreadExecutionContext, coding_turn_context_for_queue
 from .helpers import (
     _ENTER_TERMINAL_SEQUENCE,
     _EXIT_TERMINAL_SEQUENCE,
@@ -296,7 +296,7 @@ class PureTui(
         self._mcp_catalog_provider = provider
 
     def show_transient_output(self, text: str, title: str = "") -> None:
-        from voidx.ui.output.dock import dock
+        from voidx.presentation.output.dock import dock
         dock.append_message(text)
 
     def queue_quiet_command(self, command: str) -> None:
@@ -737,7 +737,7 @@ class PureTui(
                 keep_running = True
             except Exception as exc:
                 self._last_error = str(exc)
-                from voidx.ui.output.events import ErrorAppended, ui_events, via_events
+                from voidx.presentation.output.events import ErrorAppended, ui_events, via_events
 
                 if via_events():
                     ui_events.emit_direct(ErrorAppended(message=str(exc)))

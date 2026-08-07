@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 from langchain_core.messages import AIMessage
 
-from voidx.agent.domain.goal import GOAL_PROFILE
-from voidx.agent.domain.loop import LOOP_PROFILE, LoopSpec
+from voidx.agent.domain.automation.goal import GOAL_PROFILE
+from voidx.agent.domain.automation.loop import LOOP_PROFILE, LoopSpec
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.infrastructure.langgraph.runtime.core.loop import LlmLoopState
@@ -19,9 +19,9 @@ from voidx.agent.infrastructure.langgraph.runtime.turn_control import (
     LOOP_DECISION_PROMPT,
     TurnClassification,
 )
-from voidx.agent.goal.controller import GoalController
-from voidx.agent.goal.intake_controller import GoalIntakeController
-from voidx.agent.loop.controller import LoopAttemptController
+from voidx.agent.application.automation.goal.controller import GoalController
+from voidx.agent.application.automation.goal.intake_controller import GoalIntakeController
+from voidx.agent.application.automation.loop.controller import LoopAttemptController
 
 
 def _turn_stop_msg() -> AIMessage:
@@ -252,7 +252,7 @@ def _bind_thread_state(loop_controller=None):
 
     state = ThreadExecutionState()
     if loop_controller is not None:
-        from voidx.agent.domain.loop import LOOP_PROFILE
+        from voidx.agent.domain.automation.loop import LOOP_PROFILE
         from voidx.agent.domain.turn_context import TurnExecutionContext
 
         state.turn_context = TurnExecutionContext(

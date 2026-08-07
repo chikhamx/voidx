@@ -5,10 +5,10 @@ from __future__ import annotations
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 
-from voidx.agent.domain.loop import LOOP_PROFILE
-from voidx.agent.domain.goal import GOAL_PROFILE
+from voidx.agent.domain.automation.loop import LOOP_PROFILE
+from voidx.agent.domain.automation.goal import GOAL_PROFILE
 from voidx.agent.domain.turn_context import TurnExecutionContext
-from voidx.agent.goal.controller import GoalController
+from voidx.agent.application.automation.goal.controller import GoalController
 from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
     ThreadExecutionState,
     _CURRENT_THREAD_EXECUTION_STATE,

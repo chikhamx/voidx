@@ -5,7 +5,7 @@ from voidx.agent.infrastructure.runtime_state_mapper import (
     agent_runtime_from_snapshot,
     snapshot_from_agent_runtime,
 )
-from voidx.memory.service import clear_runtime_state, load_runtime_state, save_runtime_state
+from voidx.agent.adapters.persistence.runtime_state_repository import clear_runtime_state, load_runtime_state, save_runtime_state
 
 
 class MemorySessionAdapter:

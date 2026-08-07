@@ -7,7 +7,7 @@ import subprocess
 
 import pytest
 
-from voidx.runtime import processes
+import voidx.platform.processes as processes
 
 
 class _FakeProcess:
