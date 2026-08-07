@@ -1,5 +1,5 @@
 from voidx.agent.gateway.gateway import AgentGateway, AgentGatewayError
-from voidx.agent.gateway.models import (
+from voidx.agent.domain.subagent import (
     AgentMessage,
     AgentMessageType,
     AgentRun,

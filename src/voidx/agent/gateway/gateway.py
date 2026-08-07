@@ -8,20 +8,21 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from voidx.agent.gateway.models import (
+from voidx.agent.domain.subagent import (
     USER_MESSAGE_TYPES,
+    TERMINAL_STATUSES,
+    AgentGatewayError,
     AgentMessage,
     UserMessageType,
     AgentRun,
     AgentRunStatus,
+    ensure_control_route,
+    ensure_open_send,
+    ensure_send_route,
+    finish_run,
 )
 
 
-class AgentGatewayError(ValueError):
-    pass
-
-
-_TERMINAL_STATUSES: set[AgentRunStatus] = {"completed", "failed", "cancelled"}
 
 
 @dataclass
@@ -108,7 +109,7 @@ class AgentGateway:
                 await self._finish(run_id, status="failed", error=str(exc)[:500])
             else:
                 current = self._runs.get(run_id)
-                if current is not None and current.run.status not in _TERMINAL_STATUSES:
+                if current is not None and current.run.status not in TERMINAL_STATUSES:
                     await self._finish(run_id, status="completed", result=result)
 
         record.task = asyncio.create_task(_run())
@@ -129,8 +130,8 @@ class AgentGateway:
         async with self._send_lock:
             source = self._require_run(sender_run_id)
             target = self._require_run(target_run_id)
-            self._validate_route(source, target, operation="send")
-            self._validate_send_open(source, target)
+            ensure_send_route(source.run, target.run)
+            ensure_open_send(source.run, target.run)
             self._validate_payload(payload)
             message = AgentMessage(
                 message_id=f"msg_{uuid.uuid4().hex}",
@@ -171,8 +172,8 @@ class AgentGateway:
             raise AgentGatewayError("timeout must be greater than or equal to 0")
         requester = self._require_run(requester_run_id)
         target = self._require_run(target_run_id)
-        self._validate_route(requester, target, operation="control")
-        if target.run.status in _TERMINAL_STATUSES:
+        ensure_control_route(requester.run, target.run)
+        if target.run.status in TERMINAL_STATUSES:
             return self._copy_run(target.run, wait_outcome="already_terminal")
         if timeout == 0:
             await target.done.wait()
@@ -180,7 +181,7 @@ class AgentGateway:
         try:
             await asyncio.wait_for(target.done.wait(), timeout=timeout)
         except TimeoutError:
-            if target.run.status in _TERMINAL_STATUSES:
+            if target.run.status in TERMINAL_STATUSES:
                 return self._copy_run(target.run, wait_outcome="terminal_reached_during_wait")
             return self._copy_run(target.run, wait_outcome="timed_out_still_running")
         return self._copy_run(target.run, wait_outcome="terminal_reached_during_wait")
@@ -188,14 +189,14 @@ class AgentGateway:
     def get_run(self, *, requester_run_id: str, target_run_id: str) -> AgentRun:
         requester = self._require_run(requester_run_id)
         target = self._require_run(target_run_id)
-        self._validate_route(requester, target, operation="control")
+        ensure_control_route(requester.run, target.run)
         return self._copy_run(target.run)
 
     async def cancel(self, *, requester_run_id: str, target_run_id: str) -> AgentRun:
         requester = self._require_run(requester_run_id)
         target = self._require_run(target_run_id)
-        self._validate_route(requester, target, operation="control")
-        if target.run.status not in _TERMINAL_STATUSES:
+        ensure_control_route(requester.run, target.run)
+        if target.run.status not in TERMINAL_STATUSES:
             if target.task is not None:
                 target.task.cancel()
                 try:
@@ -231,7 +232,7 @@ class AgentGateway:
 
     async def _close_records(self, records: list[_RunRecord]) -> None:
         for record in records:
-            if record.run.status not in _TERMINAL_STATUSES and record.task is not None:
+            if record.run.status not in TERMINAL_STATUSES and record.task is not None:
                 record.task.cancel()
         for record in records:
             if record.task is not None:
@@ -252,13 +253,15 @@ class AgentGateway:
         send_lifecycle: bool = True,
     ) -> None:
         record = self._runs.get(run_id)
-        if record is None or record.run.status in _TERMINAL_STATUSES:
+        if record is None or record.run.status in TERMINAL_STATUSES:
             return
-        result_payload = self._result_payload(result) if result is not None else None
-        record.run.status = status
-        record.run.result = result_payload
-        record.run.error = error
-        record.run.updated_at = time.time()
+        record.run = finish_run(
+            record.run,
+            status=status,
+            result=result,
+            error=error,
+            now=time.time(),
+        )
         record.done.set()
         if send_lifecycle and not record.terminal_sent and record.run.parent_run_id:
             record.terminal_sent = True
@@ -301,26 +304,6 @@ class AgentGateway:
         await record.inbox.put(message)
 
 
-    def _validate_send_open(self, source: _RunRecord, target: _RunRecord) -> None:
-        if source.run.status in _TERMINAL_STATUSES:
-            raise AgentGatewayError("Source run is terminal")
-        if target.run.status in _TERMINAL_STATUSES:
-            raise AgentGatewayError("Target run is terminal")
-
-    def _validate_route(self, source: _RunRecord, target: _RunRecord, *, operation: str) -> None:
-        if source.run.session_id != target.run.session_id:
-            raise AgentGatewayError("Runs must belong to the same session")
-        if operation == "send":
-            if source.run.agent_type == "root" and target.run.parent_run_id == source.run.run_id:
-                return
-            if target.run.run_id == source.run.parent_run_id:
-                return
-            raise AgentGatewayError("Route not allowed")
-        if operation == "control":
-            if source.run.agent_type == "root" and target.run.parent_run_id == source.run.run_id:
-                return
-            raise AgentGatewayError("Route not allowed")
-        raise AgentGatewayError(f"Unknown operation: {operation}")
 
     def _require_run(self, run_id: str) -> _RunRecord:
         record = self._runs.get(run_id)
@@ -336,11 +319,6 @@ class AgentGateway:
         if len(encoded) > self._max_payload_bytes:
             raise AgentGatewayError("Payload is too large")
 
-    @staticmethod
-    def _result_payload(value: dict[str, Any] | str) -> dict[str, Any]:
-        if isinstance(value, dict):
-            return dict(value)
-        return {"result": value}
 
     @staticmethod
     def _copy_run(run: AgentRun, *, wait_outcome=None) -> AgentRun:

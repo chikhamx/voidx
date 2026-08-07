@@ -1,0 +1,43 @@
+"""Subagent transport and parent-result ports."""
+
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
+from typing import Any, Protocol
+
+from voidx.agent.domain.subagent import AgentMessage, AgentRun, UserMessageType
+
+
+SubagentRunner = Callable[[str], Awaitable[str | dict[str, Any]]]
+
+
+class SubagentTransport(Protocol):
+    def ensure_root(self, session_id: str) -> str: ...
+    async def spawn(
+        self,
+        *,
+        session_id: str,
+        parent_run_id: str,
+        agent_name: str,
+        description: str,
+        runner: SubagentRunner,
+    ) -> AgentRun: ...
+    async def send(
+        self,
+        *,
+        sender_run_id: str,
+        target_run_id: str,
+        message_type: UserMessageType,
+        payload: dict[str, Any],
+    ) -> AgentMessage: ...
+    async def receive(self, *, run_id: str, limit: int = 1, timeout: float = 0) -> list[AgentMessage]: ...
+    async def wait(self, *, requester_run_id: str, target_run_id: str, timeout: float) -> AgentRun: ...
+    def get_run(self, *, requester_run_id: str, target_run_id: str) -> AgentRun: ...
+    async def cancel(self, *, requester_run_id: str, target_run_id: str) -> AgentRun: ...
+    def get_parent_run_id(self, run_id: str) -> str | None: ...
+    async def close_session(self, session_id: str) -> None: ...
+    async def close_all(self) -> None: ...
+
+
+class ParentResultPublisher(Protocol):
+    def publish(self, parent_thread_id: str, text: str) -> None: ...
