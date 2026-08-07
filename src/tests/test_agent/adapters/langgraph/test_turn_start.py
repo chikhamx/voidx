@@ -19,8 +19,8 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Too
 
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from voidx.config import Config, ModelConfig
-from tests.test_infrastructure.runtime.stream_llm_helpers import FakeRenderer
-from tests.test_infrastructure.runtime.test_turn_control_integration import (
+from tests.test_agent.adapters.langgraph.runtime.stream_llm_helpers import FakeRenderer
+from tests.test_agent.adapters.langgraph.runtime.test_turn_control_integration import (
     ScriptedStreamingModel,
     _turn_args,
     _turn_start_chunk,

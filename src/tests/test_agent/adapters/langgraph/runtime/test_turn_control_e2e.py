@@ -8,7 +8,7 @@ from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.infrastructure.langgraph.runtime.turn_control import TURN_TOOL_DEFINITION
 from voidx.config import Config, ModelConfig
-from tests.test_infrastructure.runtime.stream_llm_helpers import FakeRenderer
+from tests.test_agent.adapters.langgraph.runtime.stream_llm_helpers import FakeRenderer
 
 
 class ScriptedStreamingModel:

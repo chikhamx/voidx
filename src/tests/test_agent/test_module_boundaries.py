@@ -149,7 +149,7 @@ def test_agent_application_does_not_import_langgraph():
 
 def test_agent_production_entrypoints_do_not_import_legacy_graph():
     entrypoints = (
-        "src/voidx/agent/composition.py",
+        "src/voidx/bootstrap/agent.py",
         "src/voidx/agent/facade.py",
         "src/voidx/main.py",
     )

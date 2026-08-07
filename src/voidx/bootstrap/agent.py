@@ -219,7 +219,7 @@ def build_agent_app(
         presentation_ui,
         settings_factory=build_settings,
     )
-    return AgentFacade(components.service, run_loop=run_loop)
+    return AgentFacade(run_loop=run_loop)
 
 
 __all__ = [

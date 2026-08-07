@@ -38,7 +38,7 @@ from voidx.presentation.protocol import UiSubmitCommand
 from tests.presentation_ui import make_presentation_ui
 
 runtime_ui_port = make_presentation_ui()
-from tests.test_infrastructure.runtime.run_loop_helpers import (
+from tests.test_agent.adapters.langgraph.runtime.run_loop_helpers import (
     FakeTui,
     ExitTui,
     NoopMcpManager,

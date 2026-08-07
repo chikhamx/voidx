@@ -2,23 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Protocol
 
 from voidx.agent.application.agent_service import RunLoopStartupError
 
 
 class AgentRunLoop(Protocol):
-    async def run(self, **kwargs: Any) -> None: ...
+    async def run(self, **kwargs: object) -> None: ...
 
 
 class AgentFacade:
     """Stable application boundary with presentation supplied separately."""
 
-    def __init__(self, execution: Any, *, run_loop: AgentRunLoop) -> None:
-        self._execution = execution
+    def __init__(self, *, run_loop: AgentRunLoop) -> None:
         self._run_loop = run_loop
 
-    async def run(self, **kwargs: Any) -> None:
+    async def run(self, **kwargs: object) -> None:
         await self._run_loop.run(**kwargs)
 
 

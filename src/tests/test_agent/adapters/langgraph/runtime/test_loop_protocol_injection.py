@@ -13,7 +13,7 @@ from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
     ThreadExecutionState,
     _CURRENT_THREAD_EXECUTION_STATE,
 )
-from tests.test_infrastructure.runtime.test_turn_control_e2e import (
+from tests.test_agent.adapters.langgraph.runtime.test_turn_control_e2e import (
     ScriptedStreamingModel,
     _make_graph,
     _text_chunk,

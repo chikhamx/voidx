@@ -101,3 +101,15 @@ def test_parent_result_publisher_is_a_concrete_adapter():
     assert path.exists()
     source = path.read_text(encoding="utf-8")
     assert "class AsyncParentResultPublisher" in source
+
+
+def test_agent_facade_only_owns_run_loop_entrypoint():
+    path = AGENT / "facade.py"
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    facade = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "AgentFacade")
+    constructor = next(node for node in facade.body if isinstance(node, ast.FunctionDef) and node.name == "__init__")
+    assert [arg.arg for arg in constructor.args.args] == ["self"]
+    assert [arg.arg for arg in constructor.args.kwonlyargs] == ["run_loop"]
+    assert "_execution" not in source
+    assert "Any" not in source

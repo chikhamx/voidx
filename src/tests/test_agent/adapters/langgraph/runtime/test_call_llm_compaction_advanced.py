@@ -35,7 +35,7 @@ from voidx.presentation.output.events import (
     ui_events,
 )
 from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
-from tests.test_infrastructure.runtime.stream_llm_helpers import (
+from tests.test_agent.adapters.langgraph.runtime.stream_llm_helpers import (
     _plain,
     FakeStreamingModel,
     FakeUsageStreamingModel,

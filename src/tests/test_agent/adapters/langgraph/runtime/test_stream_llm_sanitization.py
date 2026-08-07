@@ -26,7 +26,7 @@ from voidx.presentation.output.dock import ANSI_LINE_PREFIX, BottomInputDock, se
 from voidx.presentation.output.events import AnsiAppended, DockEventConsumer, StatusFinished, StatusUpdated, ui_events
 from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 from tests.presentation_ui import make_presentation_ui
-from tests.test_infrastructure.runtime.stream_llm_helpers import (
+from tests.test_agent.adapters.langgraph.runtime.stream_llm_helpers import (
     _plain,
     FakeStreamingModel,
     FakeUsageStreamingModel,

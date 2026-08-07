@@ -17,7 +17,7 @@ from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
 from voidx.config import Config, ModelConfig
 from voidx.presentation.output.events import AssistantStreamCommitted, AssistantStreamUpdated
-from tests.test_infrastructure.runtime.stream_llm_helpers import FakeRenderer
+from tests.test_agent.adapters.langgraph.runtime.stream_llm_helpers import FakeRenderer
 
 
 class ScriptedStreamingModel:

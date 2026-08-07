@@ -73,7 +73,6 @@ def test_bootstrap_build_agent_app_owns_terminal_composition(monkeypatch):
     app = build_agent_app(object(), "key")
 
     assert isinstance(app, AgentFacade)
-    assert app._execution is service
     assert isinstance(app._run_loop, TerminalRunLoop)
     assert app._run_loop._status_reader._host is execution
     assert app._run_loop._sessions._host is execution
@@ -92,7 +91,7 @@ async def test_agent_facade_run_delegates_to_run_loop():
         async def run(self, **kwargs):
             captured.update(kwargs)
 
-    app = AgentFacade(object(), run_loop=RunLoop())
+    app = AgentFacade(run_loop=RunLoop())
 
     await app.run(web=True, web_headless=True, web_host="0.0.0.0", web_port=8787, web_token="token")
 

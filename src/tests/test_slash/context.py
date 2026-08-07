@@ -19,6 +19,8 @@ def command_context(**overrides: Any) -> SimpleNamespace:
         task_state=TaskState(),
         workspace=".",
         mcp_manager=None,
+        loop_service=None,
+        goal_service=None,
         _interaction_mode=None,
         _plan_mode=False,
     )
