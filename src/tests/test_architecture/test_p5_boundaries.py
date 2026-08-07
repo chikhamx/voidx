@@ -70,3 +70,34 @@ def test_langgraph_subagent_does_not_probe_transport_implementation():
     path = AGENT / "infrastructure" / "langgraph" / "runtime" / "subagent.py"
     source = path.read_text(encoding="utf-8")
     assert "_gateway_run_by_id" not in source
+
+
+def test_agent_composition_moved_to_bootstrap():
+    assert not (AGENT / "composition.py").exists()
+    source = (ROOT / "src" / "voidx" / "bootstrap" / "agent.py").read_text(encoding="utf-8")
+    assert "class ApplicationResources" in source
+    assert "class AgentResources" in source
+    assert "class IntegrationResources" in source
+    assert "SimpleNamespace" not in source
+
+
+def test_automation_services_are_not_dynamically_injected_or_probed():
+    paths = [
+        AGENT / "infrastructure" / "input_router.py",
+        AGENT / "infrastructure" / "langgraph" / "execution.py",
+        AGENT / "slash" / "commands" / "loop_cmd.py",
+        AGENT / "slash" / "commands" / "mode.py",
+    ]
+    source = "\n".join(path.read_text(encoding="utf-8") for path in paths)
+    assert 'getattr(self._execution, "loop_service"' not in source
+    assert 'getattr(self._execution, "goal_service"' not in source
+    assert 'getattr(self, "loop_service"' not in source
+    assert 'getattr(self.host, "loop_service"' not in source
+    assert 'getattr(self.host, "goal_service"' not in source
+
+
+def test_parent_result_publisher_is_a_concrete_adapter():
+    path = AGENT / "adapters" / "persistence" / "parent_result_publisher.py"
+    assert path.exists()
+    source = path.read_text(encoding="utf-8")
+    assert "class AsyncParentResultPublisher" in source

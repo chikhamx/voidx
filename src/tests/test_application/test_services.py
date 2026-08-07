@@ -247,8 +247,11 @@ def _agent_service_with_coding(execution, coding_service):
         None,
         NullAgentEventPublisher(),
         ports,
+        chat_service=None,
+        coding_service=coding_service,
+        loop_service=None,
+        goal_service=None,
     )
-    router.bind_turn_services(chat_service=None, coding_service=coding_service)
     return AgentService(ports, ports, router, ports)
 @pytest.mark.asyncio
 async def test_agent_service_binds_coding_runner_and_preserves_display_text():

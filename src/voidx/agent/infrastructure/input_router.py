@@ -8,17 +8,27 @@ from voidx.agent.ports.presentation import AgentEventPublisher, GuidancePort
 
 
 class LangGraphAutonomousInputRouter:
-    def __init__(self, host: Any, runtime: Any, events: AgentEventPublisher, guidance: GuidancePort) -> None:
+    def __init__(
+        self,
+        host: Any,
+        runtime: Any,
+        events: AgentEventPublisher,
+        guidance: GuidancePort,
+        *,
+        chat_service: Any,
+        coding_service: Any,
+        loop_service: Any,
+        goal_service: Any,
+    ) -> None:
         self._execution = host
         self._runtime = runtime
         self._events = events
         self._guidance = guidance
-        self._chat_service = None
-        self._coding_service = None
-
-    def bind_turn_services(self, *, chat_service: Any, coding_service: Any) -> None:
         self._chat_service = chat_service
         self._coding_service = coding_service
+        self._loop_service = loop_service
+        self._goal_service = goal_service
+
 
     def start_turn(self, text: str) -> None:
         self._events.start_turn(text)
@@ -102,7 +112,7 @@ class LangGraphAutonomousInputRouter:
             return False
 
         parent = getattr(session, "id", None) or getattr(self._execution, "session_id", None)
-        service = getattr(self._execution, f"{profile}_service", None)
+        service = self._goal_service if profile == "goal" else self._loop_service
         status = None
         if service is not None and hasattr(service, "status"):
             try:
@@ -150,7 +160,7 @@ class LangGraphAutonomousInputRouter:
         from voidx.agent.application.automation.goal.goal_idle import GoalIdleTurnService
         from voidx.agent.domain.thread import AgentThread
 
-        goal_service = getattr(self._execution, "goal_service", None)
+        goal_service = self._goal_service
         if goal_service is None:
             return
         session = getattr(self._execution, "session", None)
@@ -183,7 +193,7 @@ class LangGraphAutonomousInputRouter:
         from voidx.agent.application.automation.loop.loop_idle import LoopIdleTurnService
         from voidx.agent.domain.thread import AgentThread
 
-        loop_service = getattr(self._execution, "loop_service", None)
+        loop_service = self._loop_service
         if loop_service is None:
             return
         session = getattr(self._execution, "session", None)
@@ -239,7 +249,7 @@ class LangGraphAutonomousInputRouter:
         way the session stays in loop mode. A persistent user-input record keeps
         the first message in the host session history.
         """
-        service = getattr(self._execution, "loop_service", None)
+        service = self._loop_service
         if service is None:
             return False
         parent = thread_id or self._execution.session_id or ""
@@ -256,7 +266,7 @@ class LangGraphAutonomousInputRouter:
         way the session stays in goal mode. A persistent user-input record keeps
         the first message in the host session history.
         """
-        goal_service = getattr(self._execution, "goal_service", None)
+        goal_service = self._goal_service
         if goal_service is None:
             return False
         parent = thread_id or self._execution.session_id or ""

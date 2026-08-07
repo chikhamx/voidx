@@ -14,7 +14,7 @@ class LoopCmdCommandsMixin:
         if arg == "help":
             self.host.ui.print("[dim]Usage: /loop [interval] <prompt>, /loop stop, /loop status, /loop resume[/dim]")
             return
-        service = getattr(self.host, "loop_service", None)
+        service = self.host.loop_service
         if service is None:
             self.host.ui.error("/loop is not available in this session.")
             return

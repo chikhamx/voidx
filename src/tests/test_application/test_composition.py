@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from voidx.agent.application.agent_service import AgentService
 from voidx.agent.application.coding_service import CodingService
 from voidx.agent.application.runtime import AgentRuntime
-from voidx.agent.composition import AgentComponents, build_agent_components
+from voidx.bootstrap.agent import AgentResources, build_agent_components
 from voidx.agent.facade import AgentFacade
 from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
 from voidx.agent.infrastructure.memory_session import MemorySessionAdapter
@@ -19,21 +19,23 @@ runtime_ui_port = make_presentation_ui()
 def test_build_agent_components_wires_presentation_neutral_runtime(monkeypatch):
     execution = SimpleNamespace(
         session=None,
+        model=None,
         session_id="",
         workspace="",
         slash=SimpleNamespace(dispatch=lambda _command: False),
         bind_coding_turn_runner=lambda _runner: None,
+        bind_automation_services=lambda _loop, _goal: None,
         can_submit_guidance=lambda: False,
         submit_guidance=lambda *_args, **_kwargs: False,
     )
     monkeypatch.setattr(
-        "voidx.agent.composition.LangGraphExecution",
+        "voidx.bootstrap.agent.LangGraphExecution",
         lambda config, api_key, *, session, settings, ui, workspace_write_lock, external_manager_factory, mcp_reference_resolver, web_route: execution,
     )
 
-    components = build_agent_components(object(), "key", ui=runtime_ui_port)
+    components = build_agent_components(SimpleNamespace(workspace=""), "key", ui=runtime_ui_port)
 
-    assert isinstance(components, AgentComponents)
+    assert isinstance(components, AgentResources)
     assert components.execution is execution
     assert isinstance(components.service, AgentService)
     assert not hasattr(components.service, "_execution")
@@ -61,7 +63,7 @@ def test_bootstrap_build_agent_app_owns_terminal_composition(monkeypatch):
 
     def fake_build_agent_components(config, api_key, **kwargs):
         captured.update(kwargs)
-        return AgentComponents(execution=execution, service=service)
+        return AgentResources(execution=execution, service=service)
 
     monkeypatch.setattr(
         "voidx.bootstrap.agent.build_agent_components",

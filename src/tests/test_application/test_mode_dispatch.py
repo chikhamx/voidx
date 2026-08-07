@@ -76,7 +76,11 @@ def _service(profile: str, **overrides):
     events = overrides.get("events", FakeEvents())
     runtime = overrides.get("runtime", FakeIntakeRuntime())
     guidance = SimpleNamespace(submit_guidance=lambda *_args, **_kwargs: False)
-    return LangGraphAutonomousInputRouter(execution, runtime, events, guidance)
+    return LangGraphAutonomousInputRouter(
+        execution, runtime, events, guidance,
+        chat_service=None, coding_service=None,
+        loop_service=execution.loop_service, goal_service=execution.goal_service,
+    )
 
 
 @pytest.mark.asyncio
@@ -89,8 +93,8 @@ async def test_loop_profile_first_message_starts_dynamic_loop() -> None:
     handled = await service.route_first_message("fix the flaky test", thread_id="")
 
     assert handled is True
-    assert len(service._execution.loop_service.started) == 1
-    parent, spec = service._execution.loop_service.started[0]
+    assert len(service._loop_service.started) == 1
+    parent, spec = service._loop_service.started[0]
     assert parent == "host-session"
     assert isinstance(spec, LoopSpec)
     assert spec.prompt == "fix the flaky test"
@@ -100,7 +104,7 @@ async def test_loop_profile_first_message_starts_dynamic_loop() -> None:
 @pytest.mark.asyncio
 async def test_loop_first_message_without_service_falls_through() -> None:
     service = _service("loop")
-    service._execution.loop_service = None
+    service._loop_service = None
 
     handled = await service.route_first_message("hello", thread_id="")
 
@@ -124,8 +128,8 @@ async def test_goal_profile_first_message_starts_goal_from_message() -> None:
     )
 
     assert handled is True
-    assert len(service._execution.goal_service.started) == 1
-    parent, spec = service._execution.goal_service.started[0]
+    assert len(service._goal_service.started) == 1
+    parent, spec = service._goal_service.started[0]
     assert parent == "host-session"
     assert isinstance(spec, GoalSpec)
     assert "refactor the auth module" in spec.objective
@@ -139,7 +143,7 @@ async def test_goal_first_message_intake_failure_reports_and_consumes() -> None:
     handled = await service.route_first_message("something vague", thread_id="")
 
     assert handled is True
-    assert service._execution.goal_service.started == []
+    assert service._goal_service.started == []
 
 
 @pytest.mark.asyncio
@@ -157,7 +161,7 @@ async def test_autonomous_first_message_only_fires_once() -> None:
 
     assert first is True
     assert second is False
-    assert len(service._execution.goal_service.started) == 1
+    assert len(service._goal_service.started) == 1
 
 
 @pytest.mark.asyncio
@@ -213,7 +217,7 @@ async def test_goal_intake_failure_persists_first_message(monkeypatch) -> None:
     assert handled is True
     assert service._execution.session.message_count == 1
     assert saved == [("host-session", "something vague")]
-    assert service._execution.goal_service.started == []
+    assert service._goal_service.started == []
 
 
 
@@ -222,7 +226,7 @@ async def test_goal_profile_followup_does_not_fall_through_to_coding(monkeypatch
     """After goal intake starts, later host-session messages must not run coding."""
     service = _service("goal")
     service._execution.session.message_count = 1
-    service._execution.goal_service = FakeGoalService()
+    service._goal_service = FakeGoalService()
 
     async def fake_status(_parent):
         return SimpleNamespace(
@@ -233,7 +237,7 @@ async def test_goal_profile_followup_does_not_fall_through_to_coding(monkeypatch
             state="running",
         )
 
-    service._execution.goal_service.status = fake_status  # type: ignore[method-assign]
+    service._goal_service.status = fake_status  # type: ignore[method-assign]
     printed = service._events.messages
 
     handled = await service.route_followup("please also cover edge cases", thread_id="")

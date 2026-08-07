@@ -11,6 +11,7 @@ from voidx.agent.application.autonomous import (
     parent_id,
 )
 from voidx.agent.domain.automation.goal import GOAL_PROFILE, GoalSpec, GoalState
+from voidx.agent.ports.subagent import ParentResultPublisher
 from voidx.agent.domain.thread import (
     TERMINAL_LIFECYCLES,
     AgentThread,
@@ -35,11 +36,16 @@ class GoalStatus:
 
 
 class GoalService(AutonomousServiceBase[GoalSpec, GoalScheduler]):
-    def __init__(self, *, store: ThreadStore, scheduler: GoalScheduler, workspace: str, result_notifier=None) -> None:
+    def __init__(
+        self,
+        *,
+        store: ThreadStore,
+        scheduler: GoalScheduler,
+        workspace: str,
+        result_publisher: ParentResultPublisher | None = None,
+    ) -> None:
         super().__init__(store=store, scheduler=scheduler, workspace=workspace)
-        # Optional callable(parent_thread_id, text) invoked once when a goal
-        # reaches a terminal lifecycle, so the host session can record the result.
-        self._result_notifier = result_notifier
+        self._result_publisher = result_publisher
         self._terminal_notified: set[str] = set()
 
     def _spec_thread_id(self, spec: GoalSpec, parent: str) -> str:
@@ -125,7 +131,7 @@ class GoalService(AutonomousServiceBase[GoalSpec, GoalScheduler]):
         )
 
     def _notify_terminal_once(self, parent: str, spec: GoalSpec, loaded) -> None:
-        if self._result_notifier is None:
+        if self._result_publisher is None:
             return
         goal_thread_id = spec.goal_thread_id(parent)
         if goal_thread_id in self._terminal_notified:
@@ -139,7 +145,7 @@ class GoalService(AutonomousServiceBase[GoalSpec, GoalScheduler]):
             f"(attempts {state.attempt_count}/{state.max_attempts})"
             + (f"\nsummary: {summary}" if summary else "")
         )
-        self._result_notifier(parent, text)
+        self._result_publisher.publish(parent, text)
 
     async def stop(self, parent_thread_id: str | None) -> bool:
         parent = parent_id(parent_thread_id)

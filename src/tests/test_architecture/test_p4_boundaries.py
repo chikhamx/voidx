@@ -173,7 +173,7 @@ def test_global_runtime_ui_port_is_removed():
 
 
 def test_production_agent_composition_requires_explicit_ui_port():
-    path = ROOT / "src" / "voidx" / "agent" / "composition.py"
+    path = ROOT / "src" / "voidx" / "bootstrap" / "agent.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
     function = next(
         node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "build_agent_components"

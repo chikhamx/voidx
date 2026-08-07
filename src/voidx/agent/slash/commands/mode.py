@@ -29,7 +29,7 @@ class ModeCommandsMixin:
         if not text:
             await self._switch_profile("goal")
             return
-        service = getattr(self.host, "goal_service", None)
+        service = self.host.goal_service
         if service is None:
             self.host.ui.print("[dim]/goal runtime is not available in this session.[/dim]")
             return

@@ -114,8 +114,7 @@ def _service(execution) -> AgentService:
         can_submit_guidance=lambda: callable(getattr(execution, "submit_guidance", None)),
         submit_guidance=lambda text, **kwargs: bool(getattr(execution, "submit_guidance", lambda *_a, **_k: False)(text, **kwargs)),
     )
-    router = LangGraphAutonomousInputRouter(execution, runtime, NullAgentEventPublisher(), guidance)
-    router.bind_turn_services(chat_service=None, coding_service=None)
+    router = LangGraphAutonomousInputRouter(execution, runtime, NullAgentEventPublisher(), guidance, chat_service=None, coding_service=None, loop_service=None, goal_service=None)
     return AgentService(inputs, inputs, router, guidance)
 
 

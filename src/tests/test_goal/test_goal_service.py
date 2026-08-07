@@ -187,6 +187,14 @@ async def test_goal_service_new_instance_recovers_status_and_stop_from_store(tmp
     assert await recovered.status("parent-1") is None
 
 
+class FakeParentResultPublisher:
+    def __init__(self, sink):
+        self._sink = sink
+
+    def publish(self, parent: str, text: str) -> None:
+        self._sink(parent, text)
+
+
 @pytest.mark.asyncio
 async def test_goal_service_notifies_parent_on_terminal_completion(tmp_path) -> None:
     store = ThreadStore()
@@ -207,7 +215,7 @@ async def test_goal_service_notifies_parent_on_terminal_completion(tmp_path) -> 
         store=store,
         scheduler=CompletingScheduler(),
         workspace=str(tmp_path),
-        result_notifier=lambda parent, text: notified.append((parent, text)),
+        result_publisher=FakeParentResultPublisher(lambda parent, text: notified.append((parent, text))),
     )
 
     await service.start("parent-1", GoalSpec(objective="ship", acceptance_condition="tests pass"))
@@ -237,7 +245,7 @@ async def test_goal_service_terminal_notification_only_once(tmp_path) -> None:
         store=store,
         scheduler=CompletingScheduler(),
         workspace=str(tmp_path),
-        result_notifier=lambda parent, text: notified.append(text),
+        result_publisher=FakeParentResultPublisher(lambda parent, text: notified.append(text)),
     )
 
     await service.start("parent-1", GoalSpec(objective="ship", acceptance_condition="done"))

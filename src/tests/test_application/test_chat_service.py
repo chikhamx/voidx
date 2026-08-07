@@ -85,8 +85,7 @@ async def test_route_chat_turn_routes_resumed_chat_session_when_thread_id_empty(
             self.calls.append(kwargs)
 
     chat = FakeChatService()
-    router = LangGraphAutonomousInputRouter(SimpleNamespace(session_id="chat-session"), None, NullAgentEventPublisher(), SimpleNamespace())
-    router.bind_turn_services(chat_service=chat, coding_service=None)
+    router = LangGraphAutonomousInputRouter(SimpleNamespace(session_id="chat-session"), None, NullAgentEventPublisher(), SimpleNamespace(), chat_service=chat, coding_service=None, loop_service=None, goal_service=None)
 
     async def fake_get_session(session_id):
         assert session_id == "chat-session"
@@ -112,8 +111,7 @@ async def test_route_chat_turn_does_not_route_coding_session(monkeypatch):
         async def run_chat_turn(self, **kwargs):
             raise AssertionError("coding session must not route to chat")
 
-    router = LangGraphAutonomousInputRouter(SimpleNamespace(session_id="coding-session"), None, NullAgentEventPublisher(), SimpleNamespace())
-    router.bind_turn_services(chat_service=FakeChatService(), coding_service=None)
+    router = LangGraphAutonomousInputRouter(SimpleNamespace(session_id="coding-session"), None, NullAgentEventPublisher(), SimpleNamespace(), chat_service=FakeChatService(), coding_service=None, loop_service=None, goal_service=None)
 
     async def fake_get_session(session_id):
         return SessionInfo(id=session_id, runtime_profile="coding")

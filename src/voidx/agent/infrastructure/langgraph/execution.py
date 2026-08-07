@@ -363,6 +363,8 @@ class LangGraphExecution:
         self._any_messages_sent = False
         self._startup_presenter = None
         self._coding_turn_runner: Callable[..., Awaitable[Any]] | None = None
+        self.loop_service = None
+        self.goal_service = None
 
         bind_settings_to_catalog(settings)
         self._tracker, self.tools = build_tool_registry(
@@ -658,6 +660,10 @@ class LangGraphExecution:
     def bind_presentation_snapshots(self, snapshots: PresentationSnapshotPort) -> None:
         self._session_runtime.presentation_snapshots = snapshots
 
+    def bind_automation_services(self, loop_service, goal_service) -> None:
+        self.loop_service = loop_service
+        self.goal_service = goal_service
+
     def bind_coding_turn_runner(
         self,
         runner: Callable[..., Awaitable[Any]],
@@ -741,7 +747,7 @@ class LangGraphExecution:
 
     async def _resume_loop_for_session(self, session: SessionInfo) -> None:
         """A resumed session takes back ownership of its loop's wakeups."""
-        loop_service = getattr(self, "loop_service", None)
+        loop_service = self.loop_service
         if loop_service is None:
             return
         try:
