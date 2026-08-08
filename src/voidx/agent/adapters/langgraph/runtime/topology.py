@@ -8,8 +8,8 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langgraph.graph import END, StateGraph
 
-from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
-from voidx.agent.infrastructure.langgraph.state import AgentState
+from voidx.agent.adapters.langgraph.runtime.convergence import is_step_hint_message
+from voidx.agent.adapters.langgraph.state import AgentState
 from voidx.llm.message_markers import is_guidance_message
 
 from voidx.agent.adapters.persistence.session_repository import SessionInfo

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from tests.tool_registry import build_registry
 from voidx.agent.domain.profile import RuntimeProfile
-from voidx.agent.infrastructure.langgraph.runtime.tool_surface import (
+from voidx.agent.adapters.langgraph.runtime.tool_surface import (
     ToolSurfaceContext,
     resolve_tool_surface,
 )

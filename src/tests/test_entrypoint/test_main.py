@@ -25,7 +25,7 @@ def test_main_does_not_import_graph_implementation() -> None:
         for alias in node.names
     }
 
-    assert not any(module.startswith("voidx.agent.infrastructure.langgraph.runtime") for module in imported_modules)
+    assert not any(module.startswith("voidx.agent.adapters.langgraph.runtime") for module in imported_modules)
     assert "LangGraphExecution" not in imported_names
 
 

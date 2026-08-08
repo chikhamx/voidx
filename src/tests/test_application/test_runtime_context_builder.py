@@ -16,7 +16,7 @@ from voidx.agent.application.runtime_context import (
     is_goal_resolution_guide_content,
     raw_semantic_messages,
 )
-from voidx.agent.infrastructure.langgraph.state import AgentState
+from voidx.agent.adapters.langgraph.state import AgentState
 from voidx.agent.domain.task.state import GoalSpec, TaskState
 from voidx.agent.domain.task.todo import TodoRunState
 from voidx.agent.domain.automation.workflow import WorkflowRoute

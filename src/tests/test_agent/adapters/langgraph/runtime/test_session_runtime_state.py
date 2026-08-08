@@ -371,7 +371,7 @@ async def test_clear_runtime_state_resets_structured_state():
 async def test_graph_session_runtime_persists_and_restores_structured_state():
     from types import SimpleNamespace
 
-    from voidx.agent.infrastructure.langgraph.runtime.session_runtime import SessionRuntime
+    from voidx.agent.adapters.langgraph.runtime.session_runtime import SessionRuntime
 
     session = await create_session()
     try:

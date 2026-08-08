@@ -16,7 +16,7 @@ from voidx.agent.application.tool_filters import (
 )
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.turn_context import TurnExecutionContext
-from voidx.agent.infrastructure.langgraph.runtime.control_protocol import (
+from voidx.agent.adapters.langgraph.runtime.control_protocol import (
     resolve_control_protocol,
 )
 

@@ -4,17 +4,17 @@ from __future__ import annotations
 
 StreamingRenderer = None
 
-from voidx.agent.infrastructure.ui_events import AssistantStreamCommitted, AssistantStreamUpdated, GuidanceCommitted, StatusFinished
+from voidx.agent.adapters.langgraph.ui_events import AssistantStreamCommitted, AssistantStreamUpdated, GuidanceCommitted, StatusFinished
 
-from voidx.agent.infrastructure.langgraph.runtime.core.context import (
+from voidx.agent.adapters.langgraph.runtime.core.context import (
     rebuild_llm_messages as build_llm_context_messages,
     replacement_messages as compacted_replacement_messages,
     rerender_task_context,
     save_main_context_frame,
 )
-from voidx.agent.infrastructure.langgraph.runtime.core.loop import LlmLoopState, handle_llm_exception
-from voidx.agent.infrastructure.langgraph.runtime.core.turn import handle_turn_control_response
-from voidx.agent.infrastructure.langgraph.runtime.core.helpers import _invalidate_tui, _merge_workflow_runs, _persona_for_workflow_runs, _task_state_for_context, _LLM_MAX_RETRIES, _LLM_TIMEOUT_MAX_RETRIES
+from voidx.agent.adapters.langgraph.runtime.core.loop import LlmLoopState, handle_llm_exception
+from voidx.agent.adapters.langgraph.runtime.core.turn import handle_turn_control_response
+from voidx.agent.adapters.langgraph.runtime.core.helpers import _invalidate_tui, _merge_workflow_runs, _persona_for_workflow_runs, _task_state_for_context, _LLM_MAX_RETRIES, _LLM_TIMEOUT_MAX_RETRIES
 from voidx.agent.domain.compaction import CompactionResult
 from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
@@ -27,29 +27,29 @@ from voidx.agent.application.prompts import (
     persona_prompt,
 )
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
-from voidx.agent.infrastructure.langgraph.state import AgentState
+from voidx.agent.adapters.langgraph.state import AgentState
 from voidx.agent.domain.task.state import TaskState, goal_label, goal_type_from_join
 from voidx.agent.domain.task.todo import TodoRunState
-from voidx.agent.infrastructure.langgraph.runtime.tool_surface import (
+from voidx.agent.adapters.langgraph.runtime.tool_surface import (
     ToolSurfaceContext,
     resolve_tool_surface,
 )
-from voidx.agent.infrastructure.langgraph.runtime.streaming import (
+from voidx.agent.adapters.langgraph.runtime.streaming import (
     extract_text,
     is_malformed_tool_call_response,
     stream_llm as _stream_llm,
 )
-from voidx.agent.infrastructure.langgraph.runtime.topology import latest_user_text, prepare_state
+from voidx.agent.adapters.langgraph.runtime.topology import latest_user_text, prepare_state
 from voidx.agent.application.workflow_utils import active_workflow_names
 from voidx.observability.request_log import log_llm_exchange
 from voidx.llm.domain.provider import resolve_protocol
 from voidx.llm.usage import estimate_context_tokens_with_tools, estimate_message_tokens, extract_token_usage
-from voidx.agent.infrastructure.langgraph.runtime.control_protocol import (
+from voidx.agent.adapters.langgraph.runtime.control_protocol import (
     ControlContext,
     resolve_control_protocol,
     strip_tool_calls_after_loop_commit,
 )
-from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_thread_execution_state
+from voidx.agent.adapters.langgraph.runtime.thread_context import current_thread_execution_state
 from voidx.llm.message_markers import GUIDANCE_MARKER
 
 
@@ -376,7 +376,7 @@ class LlmTurn:
 
                 break
             except Exception as e:
-                from voidx.agent.infrastructure.langgraph.runtime.core.helpers import _classify_llm_error
+                from voidx.agent.adapters.langgraph.runtime.core.helpers import _classify_llm_error
 
                 kind = _classify_llm_error(e)
 

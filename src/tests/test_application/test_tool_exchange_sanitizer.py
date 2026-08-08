@@ -1,6 +1,6 @@
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from voidx.agent.infrastructure.langgraph.runtime.streaming import _sanitize_messages_for_replay
+from voidx.agent.adapters.langgraph.runtime.streaming import _sanitize_messages_for_replay
 
 
 def test_streaming_replay_preserves_failed_tool_message():

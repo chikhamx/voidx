@@ -62,7 +62,7 @@ def test_resolver_keeps_unknown_and_disabled_references_in_text() -> None:
 def test_execution_resolves_references_with_current_turn_workspace(monkeypatch) -> None:
     from types import SimpleNamespace
 
-    from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+    from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 
     requested: list[str] = []
     borrowed_result = object()
@@ -80,7 +80,7 @@ def test_execution_resolves_references_with_current_turn_workspace(monkeypatch) 
         requested.append(workspace) or borrowed_api
     )
     monkeypatch.setattr(
-        "voidx.agent.infrastructure.langgraph.execution.current_thread_execution_state",
+        "voidx.agent.adapters.langgraph.execution.current_thread_execution_state",
         lambda: SimpleNamespace(workspace="/borrowed"),
     )
 

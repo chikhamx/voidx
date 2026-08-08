@@ -20,12 +20,12 @@ from voidx.agent.application.agents import (
     get_visible_agents,
 )
 from voidx.agent.application.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
-from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
-from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
-from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
-from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.langgraph.runtime.convergence import is_step_hint_message
+from voidx.agent.adapters.langgraph.runtime.runtime import current_parent_tool_call_id
+from voidx.agent.adapters.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
+from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
-from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
+from voidx.agent.adapters.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.adapters.persistence.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.config import Config, Settings
@@ -57,7 +57,7 @@ from voidx.presentation.output.dock import BottomInputDock, set_dock
 from voidx.presentation.output.events import DockEventConsumer, TurnStarted, ui_events
 from voidx.agent.domain.automation.loop import LOOP_PROFILE, LoopToolView
 from voidx.agent.domain.turn_context import TurnExecutionContext
-from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
+from voidx.agent.adapters.langgraph.runtime.thread_context import (
     ThreadExecutionState,
     _CURRENT_THREAD_EXECUTION_STATE,
 )

@@ -141,7 +141,7 @@ async def test_resolve_retries_unclaimed_instruction_after_transient_read_failur
 async def test_execution_instruction_skill_summaries_follow_replaced_api(tmp_path):
     from types import SimpleNamespace
 
-    from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+    from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 
     execution = LangGraphExecution.__new__(LangGraphExecution)
     execution._workspace = str(tmp_path)

@@ -12,10 +12,10 @@ import voidx.persistence.sqlite as store
 
 
 from voidx.agent.slash import SlashHandler
-from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.application.agent_service import AgentService
-from voidx.agent.infrastructure.langgraph.execution import _sanitize_generated_title
+from voidx.agent.adapters.langgraph.execution import _sanitize_generated_title
 from voidx.agent.application.runtime_context import InteractionMode, TaskIntent
 from voidx.agent.domain.task.state import (
     GoalResolution,

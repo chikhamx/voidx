@@ -6,7 +6,7 @@ import pytest
 
 from voidx.agent.domain.automation.loop import LOOP_PROFILE
 from voidx.agent.domain.profile import RuntimeProfile
-from voidx.agent.infrastructure.langgraph.runtime.control_protocol import (
+from voidx.agent.adapters.langgraph.runtime.control_protocol import (
     GoalProtocol,
     LoopProtocol,
     TurnToolProtocol,

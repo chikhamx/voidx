@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from langchain_core.messages import ToolMessage
 
-from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import (
+from voidx.agent.adapters.langgraph.runtime.runtime_guards import (
     GuardDecision,
     GuardGuidance,
     RuntimeGuardState,

@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from voidx.agent.infrastructure.langgraph.runtime.turn_runner import TurnRunner
+from voidx.agent.adapters.langgraph.runtime.turn_runner import TurnRunner
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.llm.usage import UsageStats
@@ -80,7 +80,7 @@ async def test_finally_block_discards_pending_guidance_quietly_with_events(monke
     host = _make_host(via_events=True)
     logged: list[dict] = []
     monkeypatch.setattr(
-        "voidx.agent.infrastructure.langgraph.runtime.turn_runner.log_tool_event",
+        "voidx.agent.adapters.langgraph.runtime.turn_runner.log_tool_event",
         lambda event, **kwargs: logged.append({"event": event, **kwargs}),
     )
     runner = TurnRunner(host)
@@ -110,7 +110,7 @@ async def test_finally_block_discards_pending_guidance_quietly_without_events_mo
     host._ui.dock.clear_guidance_preview = lambda: clear_calls.append(True)
     logged: list[dict] = []
     monkeypatch.setattr(
-        "voidx.agent.infrastructure.langgraph.runtime.turn_runner.log_tool_event",
+        "voidx.agent.adapters.langgraph.runtime.turn_runner.log_tool_event",
         lambda event, **kwargs: logged.append({"event": event, **kwargs}),
     )
     runner = TurnRunner(host)

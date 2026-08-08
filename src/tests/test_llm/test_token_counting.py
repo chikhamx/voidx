@@ -69,7 +69,7 @@ def test_count_tokens_falls_back_stably_when_model_encoding_is_unavailable(monke
 
     context_module._get_encoding.cache_clear()
 
-from voidx.agent.infrastructure.langgraph.runtime.wiring import build_compaction_service
+from voidx.agent.adapters.langgraph.runtime.wiring import build_compaction_service
 from voidx.config import Config
 from voidx.llm.compaction import (
     COMPACTION_MAX_RETRIES,

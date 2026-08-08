@@ -11,10 +11,10 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from rich.console import Console
 
 
-from voidx.agent.infrastructure.langgraph.runtime.streaming import stream_llm as _stream_llm
-from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.langgraph.runtime.streaming import stream_llm as _stream_llm
+from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
-from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
+from voidx.agent.adapters.langgraph.runtime.convergence import is_step_hint_message
 from voidx.agent.application.runtime_context import RuntimeContextBuilder
 from voidx.agent.domain.task.state import TaskState
 from voidx.agent.domain.task.todo import TodoRunState
@@ -51,7 +51,7 @@ from tests.test_agent.adapters.langgraph.runtime.stream_llm_helpers import (
 
 @pytest.mark.asyncio
 async def test_call_llm_ignores_legacy_max_steps_for_tool_binding(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -77,7 +77,7 @@ async def test_call_llm_ignores_legacy_max_steps_for_tool_binding(tmp_path, monk
 
 @pytest.mark.asyncio
 async def test_call_llm_does_not_add_main_agent_step_hint(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -109,7 +109,7 @@ async def test_call_llm_does_not_add_main_agent_step_hint(tmp_path, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_call_llm_retry_uses_transient_status_event(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     async def no_sleep(_delay: float) -> None:
         return None
@@ -187,7 +187,7 @@ class AlwaysFailsStreamingModel:
 
 @pytest.mark.asyncio
 async def test_call_llm_exhausts_retries_then_renders_assistant_error(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     async def no_sleep(_delay: float) -> None:
         return None

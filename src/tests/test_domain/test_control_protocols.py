@@ -9,13 +9,13 @@ from voidx.agent.domain.automation.goal import GOAL_PROFILE
 from voidx.agent.domain.automation.loop import LOOP_PROFILE, LoopSpec
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.turn_context import TurnExecutionContext
-from voidx.agent.infrastructure.langgraph.runtime.core.loop import LlmLoopState
-from voidx.agent.infrastructure.langgraph.runtime.control_protocol import (
+from voidx.agent.adapters.langgraph.runtime.core.loop import LlmLoopState
+from voidx.agent.adapters.langgraph.runtime.control_protocol import (
     GoalProtocol,
     LoopProtocol,
     TurnToolProtocol,
 )
-from voidx.agent.infrastructure.langgraph.runtime.turn_control import (
+from voidx.agent.adapters.langgraph.runtime.turn_control import (
     LOOP_DECISION_PROMPT,
     TurnClassification,
 )
@@ -232,7 +232,7 @@ def test_goal_protocol_blocks_evaluator_until_decision_submitted() -> None:
 
 
 def test_resolve_control_protocol_falls_back_to_turn_for_unknown_profile() -> None:
-    from voidx.agent.infrastructure.langgraph.runtime.control_protocol import (
+    from voidx.agent.adapters.langgraph.runtime.control_protocol import (
         resolve_control_protocol,
     )
 
@@ -245,7 +245,7 @@ def test_resolve_control_protocol_falls_back_to_turn_for_unknown_profile() -> No
 
 
 def _bind_thread_state(loop_controller=None):
-    from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
+    from voidx.agent.adapters.langgraph.runtime.thread_context import (
         ThreadExecutionState,
         _CURRENT_THREAD_EXECUTION_STATE,
     )
@@ -267,10 +267,10 @@ def _bind_thread_state(loop_controller=None):
 
 @pytest.mark.asyncio
 async def test_loop_decision_submitted_true_after_commit() -> None:
-    from voidx.agent.infrastructure.langgraph.runtime.control_protocol import (
+    from voidx.agent.adapters.langgraph.runtime.control_protocol import (
         loop_decision_submitted,
     )
-    from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
+    from voidx.agent.adapters.langgraph.runtime.thread_context import (
         _CURRENT_THREAD_EXECUTION_STATE,
     )
 
@@ -287,10 +287,10 @@ async def test_loop_decision_submitted_true_after_commit() -> None:
 
 
 def test_loop_decision_submitted_false_without_context_or_controller() -> None:
-    from voidx.agent.infrastructure.langgraph.runtime.control_protocol import (
+    from voidx.agent.adapters.langgraph.runtime.control_protocol import (
         loop_decision_submitted,
     )
-    from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
+    from voidx.agent.adapters.langgraph.runtime.thread_context import (
         _CURRENT_THREAD_EXECUTION_STATE,
     )
 
@@ -304,10 +304,10 @@ def test_loop_decision_submitted_false_without_context_or_controller() -> None:
 
 @pytest.mark.asyncio
 async def test_strip_tool_calls_after_loop_commit() -> None:
-    from voidx.agent.infrastructure.langgraph.runtime.control_protocol import (
+    from voidx.agent.adapters.langgraph.runtime.control_protocol import (
         strip_tool_calls_after_loop_commit,
     )
-    from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
+    from voidx.agent.adapters.langgraph.runtime.thread_context import (
         _CURRENT_THREAD_EXECUTION_STATE,
     )
 

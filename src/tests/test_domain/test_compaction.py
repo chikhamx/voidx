@@ -1,10 +1,10 @@
 from langchain_core.messages import HumanMessage
 
 from voidx.agent.domain.compaction import CompactionResult, PreflightCompactionResult
-from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import (
+from voidx.agent.adapters.langgraph.runtime.compaction_coordinator import (
     CompactionResult as CoordinatorCompactionResult,
 )
-from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import (
+from voidx.agent.adapters.langgraph.runtime.compaction_coordinator import (
     PreflightCompactionResult as CoordinatorPreflightCompactionResult,
 )
 

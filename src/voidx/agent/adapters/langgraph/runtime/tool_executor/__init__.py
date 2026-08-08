@@ -1,6 +1,6 @@
 """Tool execution component for the agent graph."""
 
-from voidx.agent.infrastructure.langgraph.runtime.todo_events import todo_updated_event
+from voidx.agent.adapters.langgraph.runtime.todo_events import todo_updated_event
 
 from .executor import ToolExecutorAdapter
 from .types import AGENT_RESULT_PREVIEW_CHARS, AGENT_RESULT_PREVIEW_LINES, ToolResultOk, _ExecutedTool

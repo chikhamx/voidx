@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voidx.agent.infrastructure.ui_events import StatusFinished, StatusUpdated
+from voidx.agent.adapters.langgraph.ui_events import StatusFinished, StatusUpdated
 
 import asyncio
 import json
@@ -14,20 +14,20 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from voidx.agent.application.agents import AgentDef, child_run_agent_def
 from voidx.agent.application.prompts import build_base_system, child_workflow_runtime, persona_prompt
-from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import (
+from voidx.agent.adapters.langgraph.runtime.runtime_guards import (
     NoProgressState,
     RuntimeGuardState,
     WallClockGuardState,
     build_failure_key,
     cycle_summary_from_tools,
 )
-from voidx.agent.infrastructure.langgraph.runtime.streaming import extract_text, stream_llm
-from voidx.agent.infrastructure.langgraph.runtime.core.helpers import LLMErrorKind, _classify_llm_error, _LLM_MAX_RETRIES, _llm_retry_delay, _llm_retry_sleep_delay, _clean_error_message
-from voidx.agent.infrastructure.langgraph.runtime.todo_events import todo_updated_event
+from voidx.agent.adapters.langgraph.runtime.streaming import extract_text, stream_llm
+from voidx.agent.adapters.langgraph.runtime.core.helpers import LLMErrorKind, _classify_llm_error, _LLM_MAX_RETRIES, _llm_retry_delay, _llm_retry_sleep_delay, _clean_error_message
+from voidx.agent.adapters.langgraph.runtime.todo_events import todo_updated_event
 from voidx.agent.application.todo_state import todo_run_state_from_result
 from voidx.agent.application.workflow_utils import active_workflow_names
-from voidx.agent.infrastructure.langgraph.runtime.tool_executor.types import _ExecutedTool
-from voidx.agent.infrastructure.langgraph.runtime.tool_executor.workflow import (
+from voidx.agent.adapters.langgraph.runtime.tool_executor.types import _ExecutedTool
+from voidx.agent.adapters.langgraph.runtime.tool_executor.workflow import (
     _state_update_from_executed_tools,
 )
 from voidx.agent.domain.task.intent import PersonaName, TaskIntent
@@ -43,11 +43,10 @@ from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.agent.application.tool_messages import sanitize_tool_message_content
 from voidx.agent.adapters.tools.result_storage import maybe_persist_tool_result
 from voidx.agent.domain.profile import RuntimeProfile
-from voidx.agent.infrastructure.langgraph.runtime.tool_surface import (
+from voidx.agent.adapters.langgraph.runtime.tool_surface import (
     ToolSurfaceContext,
     resolve_tool_surface,
 )
-from voidx.llm.adapters.langchain_model_factory import create_chat_model
 from voidx.llm.domain.provider import resolve_protocol
 from voidx.agent.application.instruction import WorkflowRuntimeContext
 from voidx.llm.usage import (
@@ -60,14 +59,16 @@ from voidx.agent.adapters.persistence.context_frame_repository import save_conte
 from voidx.agent.adapters.persistence.subagent_repository import append_subagent_event
 from voidx.tooling.application.execution import AuthorizationRuntime
 from voidx.tooling.domain.file_tracking import FileStateStore
-from voidx.tooling.adapters.lsp_post_edit import LspPostEditFormatter
-from voidx.tooling.adapters.scoped_plugin import bind_scoped_plugins
 from voidx.tooling.application.registry import ToolRegistry
 from voidx.agent.application.runtime.task_tracker import TaskTracker
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext, AgentToolRuntime
 from voidx.agent.adapters.tools.plugins import bind_agent_tool_runtime
 from voidx.agent.adapters.tools.subagent_message import MessageTool
 from voidx.agent.ports.ui import AgentUiPort, NullAgentUiPort
+
+
+create_chat_model = None
+bind_scoped_tools = None
 
 
 _SAFETY_STEP_LIMIT = 100
@@ -129,6 +130,8 @@ async def run_subagent(
     agent_run_id: str | None = None,
     agent_gateway=None,
     ui_port: AgentUiPort | None = None,
+    model_factory=None,
+    scoped_tools_binder=None,
 ) -> str:
     """Run a child agent in its own message context."""
     ui_port = ui_port or NullAgentUiPort()
@@ -157,7 +160,10 @@ async def run_subagent(
     # Child constraints are fixed: delegation/interaction tools never reach a child,
     # regardless of AgentDef.can_delegate.
     agent_tools = agent_tools.filtered_copy(set(agent_tools.ids()) - _BLOCKED_CHILD_TOOLS)
-    model = create_chat_model(api_key, model_cfg)
+    resolved_model_factory = model_factory or create_chat_model
+    if resolved_model_factory is None:
+        raise RuntimeError("model_factory is required")
+    model = resolved_model_factory(api_key, model_cfg)
     tool_defs = resolve_tool_surface(
         agent_tools,
         ToolSurfaceContext(
@@ -340,7 +346,10 @@ async def run_subagent(
 
         lsp_operations = LspOperationsService(lsp_manager)
 
-    bind_scoped_plugins(
+    resolved_scoped_tools_binder = scoped_tools_binder or bind_scoped_tools
+    if resolved_scoped_tools_binder is None:
+        raise RuntimeError("scoped_tools_binder is required")
+    resolved_scoped_tools_binder(
         agent_tools,
         authorization=AuthorizationRuntime(
             read_files=list(snapshot_grants.readable_files) if snapshot_grants is not None else list(config.sandbox_readable_files),
@@ -359,14 +368,9 @@ async def run_subagent(
             ),
         ),
         files=FileStateStore(),
-        formatter=(
-            LspPostEditFormatter(
-                lsp_operations,
-                enabled=config.lsp_format_after_edit,
-            )
-            if lsp_operations is not None
-            else None
-        ),
+        process_sandbox=None,
+        lsp_operations=lsp_operations,
+        format_after_edit_enabled=config.lsp_format_after_edit,
     )
 
     ctx = ToolContext(

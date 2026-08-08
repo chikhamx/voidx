@@ -4,8 +4,8 @@ from tests.langgraph_execution import make_langgraph_execution
 import pytest
 from langchain_core.messages import HumanMessage
 
-from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
-from voidx.agent.infrastructure.langgraph.runtime.turn_control import (
+from voidx.agent.adapters.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.langgraph.runtime.turn_control import (
     TURN_START_PROMPT,
     TURN_STOP_PROMPT,
     TURN_TOOL_DEFINITION,
@@ -16,7 +16,7 @@ from tests.test_agent.adapters.langgraph.runtime.stream_llm_helpers import FakeR
 
 
 def _make_graph(tmp_path, monkeypatch, provider="openai"):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
     graph = make_langgraph_execution(

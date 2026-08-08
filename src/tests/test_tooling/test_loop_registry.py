@@ -19,7 +19,7 @@ def test_schedule_wakeup_not_registered() -> None:
 
 
 def test_subagent_blocked_child_tools_excludes_schedule_wakeup() -> None:
-    from voidx.agent.infrastructure.langgraph.runtime.subagent import _BLOCKED_CHILD_TOOLS
+    from voidx.agent.adapters.langgraph.runtime.subagent import _BLOCKED_CHILD_TOOLS
 
     assert "schedule_wakeup" not in _BLOCKED_CHILD_TOOLS
 
@@ -55,7 +55,7 @@ def test_loop_tool_view_binds_closed_world_tools_with_stable_loop_tool() -> None
 def test_loop_tool_view_filters_real_llm_tool_definitions_via_resolver() -> None:
     from voidx.agent.domain.automation.loop import LoopToolView
     from voidx.agent.domain.profile import RuntimeProfile
-    from voidx.agent.infrastructure.langgraph.runtime.tool_surface import (
+    from voidx.agent.adapters.langgraph.runtime.tool_surface import (
         ToolSurfaceContext,
         resolve_tool_surface,
     )

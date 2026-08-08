@@ -21,12 +21,12 @@ from voidx.agent.application.agents import (
     get_visible_agents,
 )
 from voidx.agent.application.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
-from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
-from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
-from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
-from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.langgraph.runtime.convergence import is_step_hint_message
+from voidx.agent.adapters.langgraph.runtime.runtime import current_parent_tool_call_id
+from voidx.agent.adapters.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
+from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
-from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
+from voidx.agent.adapters.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.adapters.persistence.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.config import Config, Settings
@@ -140,7 +140,7 @@ def _tree_nodes(root):
 @pytest.mark.asyncio
 async def test_subagent_skill_context_matches_orchestrator(tmp_path, monkeypatch):
     from voidx.agent.application.agents import get_agent
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     captured: dict[str, list] = {}
 
@@ -205,7 +205,7 @@ async def test_subagent_skill_context_matches_orchestrator(tmp_path, monkeypatch
 
 @pytest.mark.asyncio
 async def test_subagent_inherits_parent_mcp_gateway(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     captured: dict[str, list] = {}
 
@@ -250,7 +250,7 @@ async def test_subagent_inherits_parent_mcp_gateway(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_subagent_with_mcp_gateway_copies_parent_gateway(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     captured: dict[str, list] = {}
     calls: list[dict] = []
@@ -327,7 +327,7 @@ async def test_subagent_with_mcp_gateway_copies_parent_gateway(tmp_path, monkeyp
 
 @pytest.mark.asyncio
 async def test_subagent_tool_filter_always_blocks_nested_agent_tool(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     captured: list[list[str]] = []
 

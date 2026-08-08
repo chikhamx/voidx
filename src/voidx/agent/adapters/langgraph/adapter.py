@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.domain.turn.state import TurnPhase
-from voidx.agent.infrastructure.langgraph.state_mapper import LangGraphStateMapper, LangGraphStateTarget
+from voidx.agent.adapters.langgraph.state_mapper import LangGraphStateMapper, LangGraphStateTarget
 
 
 class LangGraphTurnHost(LangGraphStateTarget, Protocol):

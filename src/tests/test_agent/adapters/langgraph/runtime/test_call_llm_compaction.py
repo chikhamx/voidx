@@ -11,16 +11,16 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from rich.console import Console
 
 
-from voidx.agent.infrastructure.langgraph.runtime.streaming import stream_llm as _stream_llm
-from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.langgraph.runtime.streaming import stream_llm as _stream_llm
+from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
-from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
+from voidx.agent.adapters.langgraph.runtime.convergence import is_step_hint_message
 from voidx.agent.application.runtime_context import RuntimeContextBuilder
 from voidx.agent.domain.task.state import TaskState
 from voidx.agent.domain.task.todo import TodoRunState
 from voidx.config import Config
 from voidx.llm.domain.model import ModelConfig
-from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import CompactionResult, PreflightCompactionResult
+from voidx.agent.adapters.langgraph.runtime.compaction_coordinator import CompactionResult, PreflightCompactionResult
 from voidx.llm.compaction import CompactionSelection, SUMMARY_TEMPLATE
 from voidx.llm.usage import estimate_context_tokens
 from voidx.llm.message_markers import is_guidance_message
@@ -47,7 +47,7 @@ from tests.test_agent.adapters.langgraph.runtime.stream_llm_helpers import (
 
 @pytest.mark.asyncio
 async def test_call_llm_resolves_protocol_for_mimo_provider(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -72,7 +72,7 @@ async def test_call_llm_resolves_protocol_for_mimo_provider(tmp_path, monkeypatc
 
 @pytest.mark.asyncio
 async def test_call_llm_injects_current_todo_runtime_context(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -129,7 +129,7 @@ async def test_call_llm_injects_current_todo_runtime_context(tmp_path, monkeypat
 
 @pytest.mark.asyncio
 async def test_call_llm_updates_usage_stats_across_turn_control_calls(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     class TurnControlUsageStreamingModel:
         def __init__(self):
@@ -201,7 +201,7 @@ async def test_call_llm_updates_usage_stats_across_turn_control_calls(tmp_path, 
 
 @pytest.mark.asyncio
 async def test_call_llm_fallback_context_estimate_includes_tool_schema(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -227,7 +227,7 @@ async def test_call_llm_fallback_context_estimate_includes_tool_schema(tmp_path,
 
 @pytest.mark.asyncio
 async def test_call_llm_persists_context_frame_for_session(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     session = await create_session(workspace=str(tmp_path))
@@ -329,7 +329,7 @@ def test_inline_compaction_guide_uses_shared_summary_template(tmp_path):
 
 @pytest.mark.asyncio
 async def test_call_llm_overflow_compaction_does_not_send_temporary_summary_message(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     graph = make_langgraph_execution(
@@ -385,7 +385,7 @@ async def test_call_llm_overflow_compaction_does_not_send_temporary_summary_mess
 
 @pytest.mark.asyncio
 async def test_call_llm_coerces_todo_state_dict_before_compaction_dump(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     graph = make_langgraph_execution(
@@ -445,7 +445,7 @@ async def test_call_llm_coerces_todo_state_dict_before_compaction_dump(tmp_path,
 
 @pytest.mark.asyncio
 async def test_call_llm_repairs_malformed_tool_call_once(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     graph = make_langgraph_execution(
@@ -479,7 +479,7 @@ async def test_call_llm_repairs_malformed_tool_call_once(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_call_llm_returns_explicit_error_when_malformed_tool_call_repair_fails(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     graph = make_langgraph_execution(
@@ -531,7 +531,7 @@ class MalformedThenRepairsAfterCompactionStreamingModel:
 
 @pytest.mark.asyncio
 async def test_call_llm_runs_preflight_compaction_before_second_malformed_retry(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     graph = make_langgraph_execution(
@@ -606,7 +606,7 @@ class AlwaysMalformedWithCompactionStreamingModel:
 
 @pytest.mark.asyncio
 async def test_call_llm_returns_explicit_error_after_malformed_compaction_retry_fails(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     graph = make_langgraph_execution(
@@ -662,8 +662,8 @@ async def test_call_llm_returns_explicit_error_after_malformed_compaction_retry_
 @pytest.mark.asyncio
 async def test_classify_llm_error_404_fail_fast(tmp_path, monkeypatch):
     """404 model_not_found → NON_RETRYABLE, should not retry."""
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
-    from voidx.agent.infrastructure.langgraph.runtime.core.helpers import _classify_llm_error, LLMErrorKind
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
+    from voidx.agent.adapters.langgraph.runtime.core.helpers import _classify_llm_error, LLMErrorKind
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -677,7 +677,7 @@ async def test_classify_llm_error_404_fail_fast(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_classify_llm_error_429_rate_limit(tmp_path, monkeypatch):
     """429 rate limit → RATE_LIMIT, should retry."""
-    import voidx.agent.infrastructure.langgraph.runtime.core.helpers as helpers
+    import voidx.agent.adapters.langgraph.runtime.core.helpers as helpers
 
     exc = RuntimeError("rate limit")
     exc.status_code = 429  # type: ignore
@@ -689,7 +689,7 @@ async def test_classify_llm_error_429_rate_limit(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_classify_llm_error_400_context_overflow(tmp_path, monkeypatch):
     """400 with context overflow → CONTEXT_OVERFLOW, should compact."""
-    import voidx.agent.infrastructure.langgraph.runtime.core.helpers as helpers
+    import voidx.agent.adapters.langgraph.runtime.core.helpers as helpers
 
     exc = RuntimeError("context_length_exceeded")
     exc.status_code = 400  # type: ignore
@@ -701,7 +701,7 @@ async def test_classify_llm_error_400_context_overflow(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_classify_llm_error_400_non_overflow(tmp_path, monkeypatch):
     """400 without overflow → NON_RETRYABLE."""
-    import voidx.agent.infrastructure.langgraph.runtime.core.helpers as helpers
+    import voidx.agent.adapters.langgraph.runtime.core.helpers as helpers
 
     exc = RuntimeError("bad request: invalid model")
     exc.status_code = 400  # type: ignore
@@ -713,7 +713,7 @@ async def test_classify_llm_error_400_non_overflow(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_classify_llm_error_503_schema(tmp_path, monkeypatch):
     """503 with schema error → NON_RETRYABLE."""
-    import voidx.agent.infrastructure.langgraph.runtime.core.helpers as helpers
+    import voidx.agent.adapters.langgraph.runtime.core.helpers as helpers
 
     exc = RuntimeError("invalid schema for function 'weather'")
     exc.status_code = 503  # type: ignore
@@ -725,7 +725,7 @@ async def test_classify_llm_error_503_schema(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_classify_llm_error_503_server_error(tmp_path, monkeypatch):
     """503 without schema error → SERVER_ERROR, should retry."""
-    import voidx.agent.infrastructure.langgraph.runtime.core.helpers as helpers
+    import voidx.agent.adapters.langgraph.runtime.core.helpers as helpers
 
     exc = RuntimeError("service temporarily unavailable")
     exc.status_code = 503  # type: ignore
@@ -737,7 +737,7 @@ async def test_classify_llm_error_503_server_error(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_classify_llm_error_connection_error(tmp_path, monkeypatch):
     """ConnectionError → NETWORK, should retry."""
-    import voidx.agent.infrastructure.langgraph.runtime.core.helpers as helpers
+    import voidx.agent.adapters.langgraph.runtime.core.helpers as helpers
 
     exc = ConnectionError("Connection refused")
 
@@ -748,7 +748,7 @@ async def test_classify_llm_error_connection_error(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_classify_llm_error_timeout(tmp_path, monkeypatch):
     """TimeoutError → TIMEOUT, should retry."""
-    import voidx.agent.infrastructure.langgraph.runtime.core.helpers as helpers
+    import voidx.agent.adapters.langgraph.runtime.core.helpers as helpers
 
     import asyncio
     exc = asyncio.TimeoutError("timed out")
@@ -760,7 +760,7 @@ async def test_classify_llm_error_timeout(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_classify_llm_error_unknown(tmp_path, monkeypatch):
     """Unknown error → UNKNOWN, should retry (conservative)."""
-    import voidx.agent.infrastructure.langgraph.runtime.core.helpers as helpers
+    import voidx.agent.adapters.langgraph.runtime.core.helpers as helpers
 
     exc = RuntimeError("something weird happened")
 
@@ -770,7 +770,7 @@ async def test_classify_llm_error_unknown(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_call_llm_non_retryable_404_fail_fast(tmp_path, monkeypatch):
     """A 404 error should fail-fast without retrying."""
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -798,7 +798,7 @@ async def test_call_llm_non_retryable_404_fail_fast(tmp_path, monkeypatch):
 
 def test_llm_retry_delay_schedule():
     """Verify the two-phase delay schedule for all 10 retry attempts."""
-    from voidx.agent.infrastructure.langgraph.runtime.core.helpers import _llm_retry_delay
+    from voidx.agent.adapters.langgraph.runtime.core.helpers import _llm_retry_delay
 
     delays = [_llm_retry_delay(i) for i in range(1, 11)]
     assert delays == [2.0, 2.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0]
@@ -806,7 +806,7 @@ def test_llm_retry_delay_schedule():
 
 def test_llm_retry_delay_fixed_phase():
     """First two retries use fixed delay regardless of attempt number."""
-    from voidx.agent.infrastructure.langgraph.runtime.core.helpers import _llm_retry_delay
+    from voidx.agent.adapters.langgraph.runtime.core.helpers import _llm_retry_delay
 
     assert _llm_retry_delay(1) == 2.0
     assert _llm_retry_delay(2) == 2.0
@@ -814,7 +814,7 @@ def test_llm_retry_delay_fixed_phase():
 
 def test_llm_retry_delay_exponential_cap():
     """Exponential phase doubles until capped at 60s."""
-    from voidx.agent.infrastructure.langgraph.runtime.core.helpers import _llm_retry_delay
+    from voidx.agent.adapters.langgraph.runtime.core.helpers import _llm_retry_delay
 
     assert _llm_retry_delay(3) == 2.0
     assert _llm_retry_delay(4) == 4.0
@@ -827,7 +827,7 @@ def test_llm_retry_delay_exponential_cap():
 
 
 def test_clean_error_message():
-    from voidx.agent.infrastructure.langgraph.runtime.core.helpers import _clean_error_message
+    from voidx.agent.adapters.langgraph.runtime.core.helpers import _clean_error_message
 
     # Test case 1: OpenAI rate limit error with dict representation
     exc1 = Exception("Error code: 402 - {'error': {'type': 'rate_limit_error', 'message': '每日额度超限: 当前 $50.813...'}}")

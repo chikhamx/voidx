@@ -13,7 +13,7 @@ and should_continue=False, producing no user-facing text.
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 
-from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
 from voidx.config import Config
 from voidx.llm.domain.model import ModelConfig
@@ -72,7 +72,7 @@ def _text_and_turn_stop_chunk(text: str) -> AIMessageChunk:
 
 
 def _make_graph(tmp_path, model, monkeypatch, provider="openai"):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     async def fail_on_retry(delay):
         pytest.fail(f"Unexpected LLM retry with delay {delay}s")
@@ -130,7 +130,7 @@ async def test_headless_repair_commit_emits_user_visible_stream(tmp_path, monkey
     in one headless repair call. The committed answer must still be emitted to
     the UI; checking only result["messages"] misses the user-visible blank turn.
     """
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     emitted = []
 

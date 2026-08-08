@@ -215,7 +215,7 @@ class TestPlanCheckpoint:
     async def test_plan_checkpoint_workflow_patch_does_not_stop_turn(self, tmp_path):
         from langchain_core.messages import ToolMessage
 
-        from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _ExecutedTool, _state_update_from_executed_tools
+        from voidx.agent.adapters.langgraph.runtime.tool_executor import _ExecutedTool, _state_update_from_executed_tools
 
         async def interact(request):
             return UserResponse(value="approved")

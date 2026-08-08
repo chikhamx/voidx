@@ -82,6 +82,35 @@ def register_agent_tool(
             registry.register_plugin(plugin)
 
 
+
+
+def bind_scoped_tools(
+    registry: ToolRegistry,
+    *,
+    authorization: Any,
+    files: Any,
+    process_sandbox: Any,
+    lsp_operations: Any,
+    format_after_edit_enabled: bool,
+) -> None:
+    from voidx.tooling.adapters.lsp_post_edit import LspPostEditFormatter
+    from voidx.tooling.adapters.scoped_plugin import bind_scoped_plugins
+
+    bind_scoped_plugins(
+        registry,
+        authorization=authorization,
+        files=files,
+        process_sandbox=process_sandbox,
+        formatter=(
+            LspPostEditFormatter(
+                lsp_operations,
+                enabled=format_after_edit_enabled,
+            )
+            if lsp_operations is not None
+            else None
+        ),
+    )
+
 def apply_mcp_tool_denials(configs: list[Any], permission: Any) -> None:
     for server in configs:
         if not isinstance(server.tools, dict):

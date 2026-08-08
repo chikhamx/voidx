@@ -67,7 +67,7 @@ def test_agent_tool_runtime_uses_subagent_transport_port():
 
 
 def test_langgraph_subagent_does_not_probe_transport_implementation():
-    path = AGENT / "infrastructure" / "langgraph" / "runtime" / "subagent.py"
+    path = AGENT / "adapters" / "langgraph" / "runtime" / "subagent.py"
     source = path.read_text(encoding="utf-8")
     assert "_gateway_run_by_id" not in source
 
@@ -84,7 +84,7 @@ def test_agent_composition_moved_to_bootstrap():
 def test_automation_services_are_not_dynamically_injected_or_probed():
     paths = [
         AGENT / "adapters" / "input_router.py",
-        AGENT / "infrastructure" / "langgraph" / "execution.py",
+        AGENT / "adapters" / "langgraph" / "execution.py",
         AGENT / "slash" / "commands" / "loop_cmd.py",
         AGENT / "slash" / "commands" / "mode.py",
     ]

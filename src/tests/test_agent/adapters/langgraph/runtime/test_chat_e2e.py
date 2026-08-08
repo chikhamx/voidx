@@ -13,8 +13,8 @@ from voidx.agent.application.chat_service import ChatService
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.prompt_policy import LoopPromptPolicy
 from voidx.agent.application.prompts import BaseSystemProfile
-from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
-from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.langgraph.adapter import LangGraphTurnEngine
+from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.adapters.persistence.memory_session import MemorySessionAdapter
 from voidx.agent.adapters.null_events import NullEventPublisher
@@ -61,7 +61,7 @@ async def test_chat_turn_runs_in_isolated_session_with_tool_view(tmp_path):
 
         class FakeGraph:
             async def astream(self, initial, _config, *, stream_mode="values"):
-                from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_thread_execution_state
+                from voidx.agent.adapters.langgraph.runtime.thread_context import current_thread_execution_state
                 state = current_thread_execution_state()
                 captured["active_view"] = state.tool_policy if state else None
                 captured["session_id"] = execution._session.id

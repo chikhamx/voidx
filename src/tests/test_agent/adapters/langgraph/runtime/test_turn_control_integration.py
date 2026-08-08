@@ -3,9 +3,9 @@
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 
-from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
-from voidx.agent.infrastructure.langgraph.runtime.turn_control import TURN_TOOL_DEFINITION
+from voidx.agent.adapters.langgraph.runtime.turn_control import TURN_TOOL_DEFINITION
 from voidx.config import Config
 from voidx.llm.domain.model import ModelConfig
 from tests.test_agent.adapters.langgraph.runtime.stream_llm_helpers import FakeRenderer
@@ -154,7 +154,7 @@ class RecordingRenderer(FakeRenderer):
 
 
 def _make_graph(tmp_path, model, monkeypatch, provider="openai", renderer_cls=FakeRenderer):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
     monkeypatch.setattr(graph_module, "StreamingRenderer", renderer_cls)
 
     graph = make_langgraph_execution(
@@ -787,7 +787,7 @@ async def test_repeated_mixed_turn_call_terminates_without_tools(tmp_path, monke
 
 
 def test_terminal_normalization_preserves_message_metadata():
-    from voidx.agent.infrastructure.langgraph.runtime.turn_control import normalize_terminal_message
+    from voidx.agent.adapters.langgraph.runtime.turn_control import normalize_terminal_message
 
     pending = AIMessage(
         content="answer",

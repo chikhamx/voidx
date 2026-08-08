@@ -34,7 +34,7 @@ def test_goal_type_compatibility_exports_are_removed():
 
 
 def test_state_update_applies_intent_resolution_patch():
-    from voidx.agent.infrastructure.langgraph.runtime.tool_executor import _ExecutedTool, _state_update_from_executed_tools
+    from voidx.agent.adapters.langgraph.runtime.tool_executor import _ExecutedTool, _state_update_from_executed_tools
 
     patch = {
         "intent": {

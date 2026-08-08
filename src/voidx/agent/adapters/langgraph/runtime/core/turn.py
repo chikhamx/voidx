@@ -5,11 +5,11 @@ from typing import Any, Literal
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
-from voidx.agent.infrastructure.langgraph.runtime.core.loop import LlmLoopState
+from voidx.agent.adapters.langgraph.runtime.core.loop import LlmLoopState
 from voidx.agent.domain.task.intent import InteractionMode
-from voidx.agent.infrastructure.langgraph.runtime.streaming import extract_text
-from voidx.agent.infrastructure.langgraph.runtime.topology import latest_user_text
-from voidx.agent.infrastructure.langgraph.runtime.turn_control import (
+from voidx.agent.adapters.langgraph.runtime.streaming import extract_text
+from voidx.agent.adapters.langgraph.runtime.topology import latest_user_text
+from voidx.agent.adapters.langgraph.runtime.turn_control import (
     NO_USER_RESPONSE_PROMPT,
     TURN_START_PROMPT,
     TURN_STOP_PROMPT,
@@ -53,7 +53,7 @@ async def handle_turn_control_response(
     loop_controller: Any | None = None,
     protocol: Any | None = None,
 ) -> TurnControlResult:
-    from voidx.agent.infrastructure.langgraph.runtime.control_protocol import (
+    from voidx.agent.adapters.langgraph.runtime.control_protocol import (
         TurnToolProtocol,
     )
 

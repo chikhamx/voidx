@@ -12,13 +12,13 @@ import voidx.persistence.sqlite as store
 
 
 from voidx.agent.slash import SlashHandler
-from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.adapters.presentation_adapter import LangGraphRuntimeStatusReader
-from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import PreflightCompactionResult
+from voidx.agent.adapters.langgraph.runtime.compaction_coordinator import PreflightCompactionResult
 from voidx.agent.application.coding_service import CODING_PROFILE, CodingService
 from voidx.agent.application.agent_service import AgentService
-from voidx.agent.infrastructure.langgraph.execution import _sanitize_generated_title
+from voidx.agent.adapters.langgraph.execution import _sanitize_generated_title
 from voidx.agent.application.runtime_context import InteractionMode, TaskIntent
 from voidx.agent.domain.task.state import (
     GoalResolution,
@@ -389,7 +389,6 @@ async def test_apply_settings_update_refreshes_live_model(monkeypatch, tmp_path)
         created_models.append((api_key, model_config.provider, model_config.model, model_config.base_url))
         return marker
 
-    monkeypatch.setattr("voidx.agent.infrastructure.langgraph.execution.create_chat_model", fake_create_chat_model)
 
     settings = await Settings.create(str(tmp_path))
     await settings.save_profile(
@@ -404,6 +403,7 @@ async def test_apply_settings_update_refreshes_live_model(monkeypatch, tmp_path)
         Config(workspace=str(tmp_path), model=ModelConfig(provider="openai", model="gpt-4.1")),
         api_key="sk-openai",
         settings=settings,
+        model_factory=fake_create_chat_model,
     )
 
     old_catalog = object()

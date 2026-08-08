@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from voidx.agent.infrastructure.ui_events import AssistantStreamCommitted, AssistantStreamUpdated, StatusFinished, StatusUpdated, WarningAppended
-from voidx.agent.infrastructure.display_policy import DEFAULT_DISPLAY_RULES, ToolDisplayPolicy
+from voidx.agent.adapters.langgraph.ui_events import AssistantStreamCommitted, AssistantStreamUpdated, StatusFinished, StatusUpdated, WarningAppended
+from voidx.agent.adapters.langgraph.display_policy import DEFAULT_DISPLAY_RULES, ToolDisplayPolicy
 
 import asyncio
 import time
@@ -11,13 +11,13 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from voidx.observability.tool_log import log_tool_event
 from voidx.agent.domain.task.intent import InteractionMode
-from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
+from voidx.agent.adapters.langgraph.runtime.runtime import current_parent_tool_call_id
 from voidx.agent.application.workflow_utils import active_workflow_names
 from voidx.agent.application.todo_state import todo_run_state_from_result
 from voidx.agent.domain.task.state import goal_label, goal_type_from_join
 from voidx.agent.application.tool_messages import sanitize_tool_message_content
 from voidx.agent.adapters.tools.result_storage import maybe_persist_tool_result
-from voidx.agent.infrastructure.langgraph.runtime.todo_events import todo_updated_event
+from voidx.agent.adapters.langgraph.runtime.todo_events import todo_updated_event
 from voidx.agent.ports.ui import UiEventTimeout
 from voidx.agent.adapters.tools.automation.loop import LoopTool
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext, AgentToolRuntime
@@ -27,8 +27,6 @@ from voidx.tooling.application.execution import (
     AuthorizationRuntime,
     CallbackInteractionPort,
 )
-from voidx.tooling.adapters.lsp_post_edit import LspPostEditFormatter
-from voidx.tooling.adapters.scoped_plugin import bind_scoped_plugins
 from voidx.tooling.domain.file_tracking import FileStateStore
 from voidx.tooling.domain.result import ToolResult
 
@@ -189,7 +187,7 @@ class ToolExecutorAdapter:
         session_id = host._session.id if host._session else "default"
         plan_mode = state.get("plan_mode", False)
         interaction_mode = state.get("interaction_mode")
-        from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_thread_execution_state
+        from voidx.agent.adapters.langgraph.runtime.thread_context import current_thread_execution_state
         thread_state = current_thread_execution_state()
         if thread_state is None:
             raise RuntimeError("tool execution requires bound TurnExecutionContext")
@@ -242,7 +240,7 @@ class ToolExecutorAdapter:
                 _make_interact_callback(host._ui, host._ui)
             ),
         )
-        bind_scoped_plugins(
+        host._scoped_tools_binder(
             host.tools,
             authorization=authorization_runtime,
             files=FileStateStore(
@@ -250,14 +248,8 @@ class ToolExecutorAdapter:
                 read_coverage=host._file_read_coverage,
             ),
             process_sandbox=getattr(permission, "process_sandbox", None),
-            formatter=(
-                LspPostEditFormatter(
-                    host._lsp_operations,
-                    enabled=host.config.lsp_format_after_edit,
-                )
-                if host._lsp_operations is not None
-                else None
-            ),
+            lsp_operations=host._lsp_operations,
+            format_after_edit_enabled=host.config.lsp_format_after_edit,
         )
 
         def make_context() -> ToolContext:
@@ -319,7 +311,7 @@ class ToolExecutorAdapter:
         async def execute_one(tc):
             tid = tc["name"]
             targs = tc.get("args", {})
-            from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_thread_execution_state
+            from voidx.agent.adapters.langgraph.runtime.thread_context import current_thread_execution_state
             state_context = current_thread_execution_state()
             tool_policy = getattr(state_context, "tool_policy", None) if state_context else None
             if tool_policy is not None:

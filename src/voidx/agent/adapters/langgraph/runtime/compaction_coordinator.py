@@ -4,7 +4,7 @@ from __future__ import annotations
 
 StreamingRenderer = None
 
-from voidx.agent.infrastructure.ui_events import StatusFinished, StatusUpdated
+from voidx.agent.adapters.langgraph.ui_events import StatusFinished, StatusUpdated
 from voidx.agent.ports.ui import NullAgentUiPort
 
 from collections.abc import Awaitable, Callable
@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from voidx.agent.domain.compaction import CompactionResult, PreflightCompactionResult
-from voidx.agent.infrastructure.langgraph.runtime.streaming import extract_text, stream_llm
+from voidx.agent.adapters.langgraph.runtime.streaming import extract_text, stream_llm
 from voidx.agent.adapters.persistence.message_rows import messages_from_rows
 from voidx.agent.application.runtime_context import raw_semantic_messages
 from voidx.llm.compaction import (

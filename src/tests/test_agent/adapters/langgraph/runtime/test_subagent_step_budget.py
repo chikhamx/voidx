@@ -21,12 +21,12 @@ from voidx.agent.application.agents import (
     get_visible_agents,
 )
 from voidx.agent.application.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
-from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
-from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
-from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
-from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.langgraph.runtime.convergence import is_step_hint_message
+from voidx.agent.adapters.langgraph.runtime.runtime import current_parent_tool_call_id
+from voidx.agent.adapters.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
+from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
-from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
+from voidx.agent.adapters.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.adapters.persistence.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.config import Config, Settings
@@ -139,7 +139,7 @@ def _tree_nodes(root):
 
 @pytest.mark.asyncio
 async def test_run_subagent_wall_clock_guard_terminates_at_boundary(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     executed_tools: list[str] = []
 
@@ -208,7 +208,7 @@ async def test_run_subagent_wall_clock_guard_terminates_at_boundary(tmp_path, mo
 
 @pytest.mark.asyncio
 async def test_run_subagent_repetitive_guard_runs_before_authorization(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     stream_calls: list[list] = []
     authorized_batches: list[list[str]] = []
@@ -276,7 +276,7 @@ async def test_run_subagent_repetitive_guard_runs_before_authorization(tmp_path,
 
 @pytest.mark.asyncio
 async def test_subagent_todo_updates_sink_with_current_tool_message(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     stream_calls: list[list] = []
     todo_states: list[object] = []
@@ -331,7 +331,7 @@ async def test_subagent_todo_updates_sink_with_current_tool_message(tmp_path, mo
 
 @pytest.mark.asyncio
 async def test_subagent_empty_todo_does_not_clear_parent_state(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     todo_states: list[object] = []
     calls = 0

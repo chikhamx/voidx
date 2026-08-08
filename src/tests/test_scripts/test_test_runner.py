@@ -669,7 +669,7 @@ def test_pytest_no_tests_ran_does_not_return_exit_2() -> None:
     result = _run_runner(
         "--backend",
         "--",
-        "src/tests/test_agent/infrastructure/langgraph/runtime/test_execute_tools_guard.py::test_nonexistent",
+        "src/tests/test_agent/adapters/langgraph/runtime/test_execute_tools_guard.py::test_nonexistent",
     )
 
     assert result.returncode == 0

@@ -1,4 +1,4 @@
-from voidx.agent.infrastructure.langgraph.runtime.control_protocol import GoalProtocol
+from voidx.agent.adapters.langgraph.runtime.control_protocol import GoalProtocol
 
 
 def test_goal_protocol_exposes_goal_control_schema() -> None:

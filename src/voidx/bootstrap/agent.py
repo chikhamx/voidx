@@ -19,8 +19,8 @@ from voidx.agent.application.runtime import AgentRuntime
 from voidx.agent.facade import AgentFacade
 from voidx.agent.adapters.input_adapter import LangGraphInputAdapter
 from voidx.agent.adapters.input_router import LangGraphAutonomousInputRouter
-from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
-from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.langgraph.adapter import LangGraphTurnEngine
+from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from voidx.agent.adapters.persistence.memory_session import MemorySessionAdapter
 from voidx.agent.adapters.null_events import NullEventPublisher
 from voidx.agent.adapters.presentation_adapter import (
@@ -103,6 +103,12 @@ def build_agent_components(
     from voidx.bootstrap.skills import build_skills_api_provider
     from voidx.update import service as update_service
     from voidx.presentation.tools import clipboard_image
+    from voidx.llm.adapters.langchain_model_factory import (
+        create_chat_model,
+        create_resolver_model,
+    )
+    from voidx.bootstrap.tooling import bind_scoped_tools, build_tool_registry
+    from voidx.bootstrap.permission import build_permission_service
 
     def model_catalog_factory(value):
         return build_model_catalog(value)
@@ -127,9 +133,14 @@ def build_agent_components(
         "web_route": integrations.web_route,
         "update_service": update_service,
         "clipboard_image": clipboard_image,
+        "model_factory": create_chat_model,
+        "resolver_model_factory": create_resolver_model,
+        "tool_registry_factory": build_tool_registry,
+        "scoped_tools_binder": bind_scoped_tools,
+        "permission_service_factory": (
+            integrations.permission_service_factory or build_permission_service
+        ),
     }
-    if integrations.permission_service_factory is not None:
-        execution_kwargs["permission_service_factory"] = integrations.permission_service_factory
     execution = LangGraphExecution(config, api_key, **execution_kwargs)
     application = ApplicationResources(
         turn_engine=LangGraphTurnEngine(execution),

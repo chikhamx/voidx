@@ -13,10 +13,10 @@ import voidx.persistence.sqlite as store
 
 
 from voidx.agent.slash import SlashHandler
-from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.application.agent_service import AgentService
-from voidx.agent.infrastructure.langgraph.execution import _sanitize_generated_title
+from voidx.agent.adapters.langgraph.execution import _sanitize_generated_title
 from voidx.agent.application.runtime_context import InteractionMode, TaskIntent
 from voidx.agent.domain.task.state import GoalResolution, IntentResolution, PlanResolution, GoalSpec, TaskState
 from voidx.agent.application.automation.goal.goal_resolver import ResolverGoal
@@ -127,7 +127,7 @@ async def test_run_turn_preadvances_workflow_from_resolver_workflow_start(tmp_pa
 
     graph.graph = FakeGraph()
     graph._interaction_mode = InteractionMode.GOAL
-    import voidx.agent.infrastructure.langgraph.runtime.turn_runner as turn_runner_mod
+    import voidx.agent.adapters.langgraph.runtime.turn_runner as turn_runner_mod
     monkeypatch.setattr(turn_runner_mod, "build_goal_resolution", _fake_build_goal_resolution)
 
     test_dock = BottomInputDock()

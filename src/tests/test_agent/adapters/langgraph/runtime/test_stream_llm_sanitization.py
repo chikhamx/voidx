@@ -10,9 +10,9 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from rich.console import Console
 
 
-from voidx.agent.infrastructure.langgraph.runtime.streaming import stream_llm as _stream_llm
-from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
-from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
+from voidx.agent.adapters.langgraph.runtime.streaming import stream_llm as _stream_llm
+from voidx.agent.adapters.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.langgraph.runtime.convergence import is_step_hint_message
 from voidx.agent.application.runtime_context import RuntimeContextBuilder
 from voidx.agent.domain.task.state import TaskState
 from voidx.agent.domain.task.todo import TodoRunState

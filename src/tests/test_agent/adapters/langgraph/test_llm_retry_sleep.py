@@ -2,8 +2,8 @@
 
 import pytest
 
-from voidx.agent.infrastructure.langgraph.runtime.core import loop as loop_module
-from voidx.agent.infrastructure.langgraph.runtime.core.helpers import LLMErrorKind
+from voidx.agent.adapters.langgraph.runtime.core import loop as loop_module
+from voidx.agent.adapters.langgraph.runtime.core.helpers import LLMErrorKind
 
 
 class _SilentUi:

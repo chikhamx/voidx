@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from voidx.agent.infrastructure.langgraph.runtime.thread_context import _state_for_context
+from voidx.agent.adapters.langgraph.runtime.thread_context import _state_for_context
 
 
 class _FakeSession:

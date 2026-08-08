@@ -8,28 +8,28 @@ Depth limit = 1: child agents cannot start further child agents.
 
 from __future__ import annotations
 
-from voidx.agent.infrastructure.ui_events import GuidanceSubmitted, PermissionToolDetail, SubagentFinished, SubagentStarted
-from voidx.agent.infrastructure.display_policy import DEFAULT_DISPLAY_RULES, ToolDisplayPolicy
+from voidx.agent.adapters.langgraph.ui_events import GuidanceSubmitted, PermissionToolDetail, SubagentFinished, SubagentStarted
+from voidx.agent.adapters.langgraph.display_policy import DEFAULT_DISPLAY_RULES, ToolDisplayPolicy
 
-from voidx.agent.infrastructure.langgraph.runtime.core.helpers import _invalidate_tui, _render_inline_compaction_guide
+from voidx.agent.adapters.langgraph.runtime.core.helpers import _invalidate_tui, _render_inline_compaction_guide
 
-from voidx.agent.infrastructure.langgraph.runtime.turn_runner import TurnRunner
+from voidx.agent.adapters.langgraph.runtime.turn_runner import TurnRunner
 from voidx.agent.application.compaction_service import CompactionService
 from voidx.agent.domain.compaction import CompactionResult, PreflightCompactionResult
-from voidx.agent.infrastructure.graph_compaction import GraphCompactionAdapter
-from voidx.agent.infrastructure.langgraph.runtime.tool_executor import ToolExecutorAdapter
+from voidx.agent.adapters.langgraph.graph_compaction import GraphCompactionAdapter
+from voidx.agent.adapters.langgraph.runtime.tool_executor import ToolExecutorAdapter
 from typing import Any, Protocol, TYPE_CHECKING
 from voidx.tooling.domain.authorization import PermissionDecision
 from voidx.tooling.domain.risk import RiskLevel
 from voidx.agent.domain.task.intent import PersonaName
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from voidx.agent.application.runtime_context import ContextCompilerCache, InteractionMode, raw_semantic_messages
-from voidx.agent.infrastructure.langgraph.state import AgentState
+from voidx.agent.adapters.langgraph.state import AgentState
 from voidx.agent.domain.task.state import TaskState, goal_type_from_join
-from voidx.agent.infrastructure.langgraph.runtime.streaming import extract_text
-from voidx.agent.infrastructure.langgraph.runtime.topology import latest_ai_message
+from voidx.agent.adapters.langgraph.runtime.streaming import extract_text
+from voidx.agent.adapters.langgraph.runtime.topology import latest_ai_message
 from voidx.llm.usage import estimate_context_tokens
-from voidx.agent.infrastructure.langgraph.runtime.core.helpers import _invalidate_tui, _render_inline_compaction_guide
+from voidx.agent.adapters.langgraph.runtime.core.helpers import _invalidate_tui, _render_inline_compaction_guide
 
 import asyncio
 import time
@@ -40,30 +40,29 @@ from langchain_core.messages import BaseMessage, HumanMessage
 
 from voidx.agent.application.agents import AgentDef
 from voidx.agent.adapters.subagent import InProcessSubagentGateway
-from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import CompactionCoordinator
-from voidx.agent.infrastructure.langgraph.runtime.convergence import generate_fallback_summary
-from voidx.agent.infrastructure.langgraph.runtime.core.helpers import (
+from voidx.agent.adapters.langgraph.runtime.compaction_coordinator import CompactionCoordinator
+from voidx.agent.adapters.langgraph.runtime.convergence import generate_fallback_summary
+from voidx.agent.adapters.langgraph.runtime.core.helpers import (
     _interaction_mode_for_persona,
     _invalidate_tui,
     _persona_for_child_workflow,
 )
-from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id as _current_parent_tool_call_id
-from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState
-from voidx.agent.infrastructure.langgraph.runtime.session_runtime import SessionRuntime
+from voidx.agent.adapters.langgraph.runtime.runtime import current_parent_tool_call_id as _current_parent_tool_call_id
+from voidx.agent.adapters.langgraph.runtime.runtime_guards import RuntimeGuardState
+from voidx.agent.adapters.langgraph.runtime.session_runtime import SessionRuntime
 from voidx.agent.ports.presentation import NullPresentationSnapshotPort, PresentationSnapshotPort
-from voidx.agent.infrastructure.langgraph.runtime.llm_turn import LlmTurn
-from voidx.agent.infrastructure.langgraph.runtime.permission_flow import PermissionFlow, _tool_call_key
-from voidx.agent.infrastructure.langgraph.runtime.session_runtime import _sanitize_generated_title
-from voidx.agent.infrastructure.langgraph.runtime.tool_executor import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
-from voidx.agent.infrastructure.langgraph.runtime.subagent import run_subagent as _run_subagent
-from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_thread_execution_state
+from voidx.agent.adapters.langgraph.runtime.llm_turn import LlmTurn
+from voidx.agent.adapters.langgraph.runtime.permission_flow import PermissionFlow, _tool_call_key
+from voidx.agent.adapters.langgraph.runtime.session_runtime import _sanitize_generated_title
+from voidx.agent.adapters.langgraph.runtime.tool_executor import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
+from voidx.agent.adapters.langgraph.runtime.subagent import run_subagent as _run_subagent
+from voidx.agent.adapters.langgraph.runtime.thread_context import current_thread_execution_state
 from voidx.agent.domain.turn_context import TurnExecutionContext
-from voidx.agent.infrastructure.langgraph.runtime.tool_executor import ToolExecutorAdapter
-from voidx.agent.infrastructure.langgraph.runtime.topology import build_graph, session_date
-from voidx.agent.infrastructure.langgraph.runtime.turn_metrics import TurnControlMetrics
-from voidx.agent.infrastructure.langgraph.runtime.turn_runner import TurnRunner
-from voidx.agent.infrastructure.langgraph.runtime.wiring import build_compaction_service
-from voidx.bootstrap.tooling import build_tool_registry, register_agent_tool
+from voidx.agent.adapters.langgraph.runtime.tool_executor import ToolExecutorAdapter
+from voidx.agent.adapters.langgraph.runtime.topology import build_graph, session_date
+from voidx.agent.adapters.langgraph.runtime.turn_metrics import TurnControlMetrics
+from voidx.agent.adapters.langgraph.runtime.turn_runner import TurnRunner
+from voidx.agent.adapters.langgraph.runtime.wiring import build_compaction_service
 from voidx.agent.application.runtime_context import (
     ContextCompilerCache,
     InteractionMode,
@@ -73,10 +72,6 @@ from voidx.agent.application.todo_state import apply_todo_state_to_host
 from voidx.tooling.application.ai_approval import AiApprovalService
 from voidx.agent.application.instruction import InstructionService
 from voidx.llm.message_markers import GUIDANCE_MARKER
-from voidx.llm.adapters.langchain_model_factory import (
-    create_chat_model,
-    create_resolver_model,
-)
 from voidx.agent.adapters.persistence.session_repository import SessionInfo
 from voidx.agent.adapters.persistence.subagent_repository import append_subagent_event
 from voidx.agent.ports.ui import AgentUiPort
@@ -160,17 +155,6 @@ class RuntimeConfigPort(Protocol):
 
     async def build_config(self, *, profile: Any) -> ExecutionConfig: ...
 
-def _in_memory_permission_service(config: PermissionConfig, *, settings=None, notifier):
-    from voidx.tooling.adapters.permission.in_memory_state import create_permission_service
-
-    return create_permission_service(
-        permission_mode=config.permission_mode.value,
-        sandbox_readable_files=list(config.sandbox_readable_files),
-        sandbox_readable_dirs=list(config.sandbox_readable_dirs),
-        sandbox_writable_files=list(config.sandbox_writable_files),
-        sandbox_writable_dirs=list(config.sandbox_writable_dirs),
-        notifier=notifier,
-    )
 
 
 class LangGraphExecution:
@@ -374,13 +358,17 @@ class LangGraphExecution:
         external_manager_factory: Callable[..., tuple[Any, Any]] | None = None,
         mcp_reference_resolver: Callable[..., Awaitable[Any]] | None = None,
         web_route: Callable[..., Awaitable[Any]] | None = None,
-        permission_service_factory: Callable[..., Any] = _in_memory_permission_service,
+        permission_service_factory: Callable[..., Any],
+        model_factory: Callable[..., Any],
+        resolver_model_factory: Callable[..., Any],
+        tool_registry_factory: Callable[..., Any],
+        scoped_tools_binder: Callable[..., None],
         update_service: Any | None = None,
         clipboard_image: Any | None = None,
     ):
         self.config = config
         self.api_key = api_key
-        self.model = create_chat_model(api_key, config.model) if api_key else None
+        self.model = model_factory(api_key, config.model) if api_key else None
         self._session = session
         self.agent_gateway = InProcessSubagentGateway()
         self._workspace = config.workspace
@@ -405,6 +393,10 @@ class LangGraphExecution:
         self._mcp_reference_resolver = mcp_reference_resolver
         self._web_route = web_route
         self._permission_service_factory = permission_service_factory
+        self._model_factory = model_factory
+        self._resolver_model_factory = resolver_model_factory
+        self._tool_registry_factory = tool_registry_factory
+        self._scoped_tools_binder = scoped_tools_binder
         if update_service is None:
             raise RuntimeError("update_service is required")
         self.update_service = update_service
@@ -412,8 +404,8 @@ class LangGraphExecution:
             raise RuntimeError("clipboard_image is required")
         self.clipboard_image = clipboard_image
         self._ai_approval = AiApprovalService(
-            model_factory=create_chat_model,
-            resolver_model_factory=create_resolver_model,
+            model_factory=model_factory,
+            resolver_model_factory=resolver_model_factory,
         )
         self._ui = ui
         self._workspace_write_lock = workspace_write_lock
@@ -423,7 +415,7 @@ class LangGraphExecution:
         self.loop_service = None
         self.goal_service = None
 
-        self._tracker, self.tools = build_tool_registry(
+        self._tracker, self.tools = self._tool_registry_factory(
             settings=settings,
             config=config,
             subagent_runner=self._subagent_runner,
@@ -597,7 +589,7 @@ class LangGraphExecution:
         self._settings = settings
         self.config = new_config
         self.api_key = profile.api_key if profile is not None else None
-        self.model = create_chat_model(self.api_key, self.config.model) if self.api_key else None
+        self.model = self._model_factory(self.api_key, self.config.model) if self.api_key else None
         if self._mcp_manager is not None:
             self._mcp_manager.set_description_model(self.model)
 
@@ -605,7 +597,7 @@ class LangGraphExecution:
             self.model_catalog = self._model_catalog_factory(settings)
         if self._skills_api_factory is not None:
             self.skills_api = self._skills_api_factory(settings)
-        self._tracker, self.tools = build_tool_registry(
+        self._tracker, self.tools = self._tool_registry_factory(
             settings=settings,
             config=self.config,
             subagent_runner=self._subagent_runner,
@@ -944,6 +936,8 @@ class LangGraphExecution:
                 "permission_snapshot": permission_snapshot,
                 "agent_run_id": agent_run_id,
                 "agent_gateway": agent_gateway,
+                "model_factory": self._model_factory,
+                "scoped_tools_binder": self._scoped_tools_binder,
             }
             if self._current_tree and self._turn_node:
                 kwargs.update({
@@ -1089,7 +1083,7 @@ class LangGraphExecution:
 
     def runtime_snapshot(self):
         from voidx.agent.domain.turn.state import TurnPhase
-        from voidx.agent.infrastructure.langgraph.state_mapper import LangGraphStateMapper
+        from voidx.agent.adapters.langgraph.state_mapper import LangGraphStateMapper
 
         return LangGraphStateMapper().runtime_from_execution(self, turn_phase=TurnPhase.RUNNING)
 
@@ -1277,7 +1271,7 @@ class LangGraphExecution:
         return "end"
 
     async def _finalize(self, state: AgentState) -> dict:
-        from voidx.agent.infrastructure.langgraph.runtime.convergence import generate_fallback_summary
+        from voidx.agent.adapters.langgraph.runtime.convergence import generate_fallback_summary
 
         messages: list = []
         if state.get("convergence_forced"):

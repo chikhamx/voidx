@@ -32,7 +32,7 @@ def test_agent_internal_modules_import_runtime_task_state_directly() -> None:
 
 def test_domain_has_no_infrastructure_dependencies() -> None:
     forbidden_prefixes = (
-        "voidx.agent.infrastructure.langgraph.runtime",
+        "voidx.agent.adapters.langgraph.runtime",
         "voidx.config",
         "voidx.memory",
         "voidx.permission",
@@ -81,13 +81,13 @@ def test_only_facade_and_engine_adapter_call_run_turn() -> None:
         "application/agent_service.py",
         "application/chat_service.py",
         "application/coding_service.py",
-        "infrastructure/langgraph/adapter.py",
+        "adapters/langgraph/adapter.py",
         "application/runtime/dispatcher.py",
         "application/automation/loop/scheduler.py",
         "application/automation/goal/runner.py",
         "application/automation/goal/goal_idle.py",
         "application/automation/loop/loop_idle.py",
-        "infrastructure/langgraph/execution.py",
+        "adapters/langgraph/execution.py",
     }
     offenders = []
     for path in AGENT_ROOT.rglob("*.py"):

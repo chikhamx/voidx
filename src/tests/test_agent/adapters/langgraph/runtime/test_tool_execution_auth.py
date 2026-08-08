@@ -20,12 +20,12 @@ from voidx.agent.application.agents import (
     get_visible_agents,
 )
 from voidx.agent.application.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
-from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
-from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
-from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
-from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.langgraph.runtime.convergence import is_step_hint_message
+from voidx.agent.adapters.langgraph.runtime.runtime import current_parent_tool_call_id
+from voidx.agent.adapters.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
+from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
-from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
+from voidx.agent.adapters.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.adapters.persistence.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.config import Config, Settings
@@ -197,7 +197,7 @@ async def test_graph_on_failure_asks_unsafe_bash_before_prompt(tmp_path):
 
 
 def test_tool_result_ok_detects_structured_failures():
-    from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+    from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 
     assert LangGraphExecution._tool_result_ok(ToolResult(output="ok", metadata={"exit_code": 0}))
     assert not LangGraphExecution._tool_result_ok(ToolResult(output="failed", metadata={"exit_code": 2}))
@@ -342,7 +342,7 @@ async def test_execute_tools_escalates_and_blocks_repeated_tool_failure(tmp_path
 
 @pytest.mark.asyncio
 async def test_tool_execution_mixin_delegates_to_component():
-    from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+    from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 
     class FakeToolExecutor:
         def __init__(self):

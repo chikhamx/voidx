@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 
-from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import (
+from voidx.agent.adapters.langgraph.runtime.runtime_guards import (
     RuntimeGuardState,
     ToolCycleSummary,
     WallClockGuardState,
@@ -433,7 +433,7 @@ def test_replace_success_clears_blocks():
 
 def test_failure_loop_aggregates_policy_blocked_calls_across_rephrased_commands():
     """Policy-blocked calls are static denials: rephrasing args must not reset the loop counter."""
-    from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import ToolFailureLoopState
+    from voidx.agent.adapters.langgraph.runtime.runtime_guards import ToolFailureLoopState
 
     guards = ToolFailureLoopState()
     blocked = ToolResult(
@@ -451,7 +451,7 @@ def test_failure_loop_aggregates_policy_blocked_calls_across_rephrased_commands(
 
 
 def test_no_progress_subagent_guidance_tells_child_to_return_findings():
-    from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import NoProgressState
+    from voidx.agent.adapters.langgraph.runtime.runtime_guards import NoProgressState
 
     state = NoProgressState(for_subagent=True)
     summary = ToolCycleSummary(tool_names=["bash"], only_tool="bash", call_count=1)

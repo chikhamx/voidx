@@ -524,7 +524,7 @@ class TestPowerShellGitAutoRoute:
 class TestBashGitHiddenFromLlm:
     def test_git_is_hidden_from_llm_but_registered_for_routing(self):
         from voidx.agent.domain.profile import RuntimeProfile
-        from voidx.agent.infrastructure.langgraph.runtime.tool_surface import (
+        from voidx.agent.adapters.langgraph.runtime.tool_surface import (
             ToolSurfaceContext,
             resolve_tool_surface,
         )

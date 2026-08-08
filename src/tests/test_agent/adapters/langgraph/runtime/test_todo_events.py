@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from voidx.agent.infrastructure.langgraph.runtime.todo_events import todo_updated_event
+from voidx.agent.adapters.langgraph.runtime.todo_events import todo_updated_event
 from voidx.tooling.domain.result import ToolResult
 from voidx.presentation.output.events.schema import TodoItemPayload, TodoUpdated
 
@@ -145,7 +145,7 @@ class TestToolExecutionTodoEmit:
     async def test_top_level_todo_tool_emits_todo_updated(self, tmp_path):
         """When the top-level tool execution runs a 'todo' tool with via_events=True,
         it should call todo_updated_event(result) and emit the result."""
-        from voidx.agent.infrastructure.langgraph.runtime import tool_executor as te_mod
+        from voidx.agent.adapters.langgraph.runtime import tool_executor as te_mod
 
         mock_result = ToolResult(
             output="done",
@@ -163,7 +163,7 @@ class TestToolExecutionTodoEmit:
         fake_events = SimpleNamespace(emit=AsyncMock(return_value=True))
         fake_ui = SimpleNamespace(via_events=lambda: True, events=fake_events)
 
-        with patch("voidx.agent.infrastructure.langgraph.runtime.tool_executor.todo_updated_event", return_value=fake_event) as mock_make:
+        with patch("voidx.agent.adapters.langgraph.runtime.tool_executor.todo_updated_event", return_value=fake_event) as mock_make:
             tid = "todo"
             tc = {"name": tid, "args": {"todos": [{"content": "task a", "status": "pending"}]}, "id": "tc1"}
 
@@ -183,11 +183,11 @@ class TestToolExecutionTodoEmit:
     @pytest.mark.asyncio
     async def test_non_todo_tool_skips_todo_event(self, tmp_path):
         """Non-todo tools should not trigger todo_updated_event."""
-        from voidx.agent.infrastructure.langgraph.runtime import tool_executor as te_mod
+        from voidx.agent.adapters.langgraph.runtime import tool_executor as te_mod
 
         fake_ui = SimpleNamespace(via_events=lambda: True)
 
-        with patch("voidx.agent.infrastructure.langgraph.runtime.tool_executor.todo_updated_event") as mock_make:
+        with patch("voidx.agent.adapters.langgraph.runtime.tool_executor.todo_updated_event") as mock_make:
             tid = "read"
             if fake_ui.via_events() and tid == "todo":
                 te_mod.todo_updated_event(ToolResult(output="x"))
@@ -198,14 +198,14 @@ class TestToolExecutionTodoEmit:
     async def test_no_emit_when_todo_updated_event_returns_none(self, tmp_path):
         """If todo_updated_event returns None (e.g. missing metadata),
         ui_events.emit should not be called."""
-        from voidx.agent.infrastructure.langgraph.runtime import tool_executor as te_mod
+        from voidx.agent.adapters.langgraph.runtime import tool_executor as te_mod
 
         mock_result = ToolResult(output="done")
 
         fake_events = SimpleNamespace(emit=AsyncMock())
         fake_ui = SimpleNamespace(via_events=lambda: True, events=fake_events)
 
-        with patch("voidx.agent.infrastructure.langgraph.runtime.tool_executor.todo_updated_event", return_value=None):
+        with patch("voidx.agent.adapters.langgraph.runtime.tool_executor.todo_updated_event", return_value=None):
             tid = "todo"
             if fake_ui.via_events() and tid == "todo":
                 todo_event = te_mod.todo_updated_event(mock_result)
@@ -222,7 +222,7 @@ class TestSubagentTodoEmit:
     def test_subagent_todo_tool_uses_emit_direct_with_agent_id(self):
         """When a subagent runs a 'todo' tool, it should call
         todo_updated_event(result, agent_id=agent_id) and emit_direct the result."""
-        from voidx.agent.infrastructure.langgraph.runtime import subagent as sub_mod
+        from voidx.agent.adapters.langgraph.runtime import subagent as sub_mod
 
         agent_id = 2
         mock_result = ToolResult(
@@ -242,7 +242,7 @@ class TestSubagentTodoEmit:
         fake_events = SimpleNamespace(emit_direct=MagicMock(return_value=True))
         fake_ui = SimpleNamespace(via_events=lambda: True, events=fake_events)
 
-        with patch("voidx.agent.infrastructure.langgraph.runtime.subagent.todo_updated_event", return_value=fake_event) as mock_make:
+        with patch("voidx.agent.adapters.langgraph.runtime.subagent.todo_updated_event", return_value=fake_event) as mock_make:
             tid = "todo"
             # Simulate the code path in subagent.py run_one (lines 286-289):
             #   if ui_port.via_events() and tid == "todo":
@@ -259,11 +259,11 @@ class TestSubagentTodoEmit:
 
     def test_subagent_non_todo_tool_skips_todo_event(self):
         """Non-todo tools in subagent should not trigger todo_updated_event."""
-        from voidx.agent.infrastructure.langgraph.runtime import subagent as sub_mod
+        from voidx.agent.adapters.langgraph.runtime import subagent as sub_mod
 
         fake_ui = SimpleNamespace(via_events=lambda: True)
 
-        with patch("voidx.agent.infrastructure.langgraph.runtime.subagent.todo_updated_event") as mock_make:
+        with patch("voidx.agent.adapters.langgraph.runtime.subagent.todo_updated_event") as mock_make:
             tid = "read"
             if fake_ui.via_events() and tid == "todo":
                 sub_mod.todo_updated_event(ToolResult(output="x"), agent_id=0)
@@ -272,14 +272,14 @@ class TestSubagentTodoEmit:
 
     def test_subagent_no_emit_direct_when_event_is_none(self):
         """If todo_updated_event returns None, emit_direct should not be called."""
-        from voidx.agent.infrastructure.langgraph.runtime import subagent as sub_mod
+        from voidx.agent.adapters.langgraph.runtime import subagent as sub_mod
 
         mock_result = ToolResult(output="done")
 
         fake_events = SimpleNamespace(emit_direct=MagicMock())
         fake_ui = SimpleNamespace(via_events=lambda: True, events=fake_events)
 
-        with patch("voidx.agent.infrastructure.langgraph.runtime.subagent.todo_updated_event", return_value=None):
+        with patch("voidx.agent.adapters.langgraph.runtime.subagent.todo_updated_event", return_value=None):
             tid = "todo"
             agent_id = 5
             if fake_ui.via_events() and tid == "todo":

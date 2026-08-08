@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from voidx.agent.infrastructure.ui_events import PermissionPromptCleared, PermissionPromptShown, PermissionToolDetail
+from voidx.agent.adapters.langgraph.ui_events import PermissionPromptCleared, PermissionPromptShown, PermissionToolDetail
 
 import asyncio
 import json

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voidx.agent.infrastructure.ui_events import PermissionPromptCleared, PermissionPromptShown, PermissionToolDetail, RefreshRequested
+from voidx.agent.adapters.langgraph.ui_events import PermissionPromptCleared, PermissionPromptShown, PermissionToolDetail, RefreshRequested
 
 import json
 from dataclasses import replace
@@ -23,7 +23,7 @@ from voidx.tooling.domain.permission import Action
 from voidx.tooling.domain.risk import ApprovalScope, RiskLevel
 from voidx.agent.domain.task.intent import PersonaName
 from voidx.agent.adapters.tools.permission_projection import project_agent_tool_call
-from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_thread_execution_state
+from voidx.agent.adapters.langgraph.runtime.thread_context import current_thread_execution_state
 
 
 def _attach_ai_approval_failures(

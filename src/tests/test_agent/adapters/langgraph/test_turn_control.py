@@ -3,7 +3,7 @@
 import pytest
 from langchain_core.messages import AIMessage
 
-from voidx.agent.infrastructure.langgraph.runtime.turn_control import (
+from voidx.agent.adapters.langgraph.runtime.turn_control import (
     FIRST_MISS_PROMPT,
     NO_USER_RESPONSE_PROMPT,
     SECOND_MISS_PROMPT,
@@ -181,8 +181,8 @@ def test_classify_turn_rejects_multiple_turn_calls_without_treating_them_as_vali
 @pytest.mark.asyncio
 async def test_invalid_turn_is_repaired_twice_before_failing():
     from types import SimpleNamespace
-    from voidx.agent.infrastructure.langgraph.runtime.core.loop import LlmLoopState
-    from voidx.agent.infrastructure.langgraph.runtime.core.turn import handle_turn_control_response
+    from voidx.agent.adapters.langgraph.runtime.core.loop import LlmLoopState
+    from voidx.agent.adapters.langgraph.runtime.core.turn import handle_turn_control_response
     from voidx.agent.domain.task.state import TaskState
 
     graph = SimpleNamespace(_turn_metrics=SimpleNamespace(increment=lambda _name: None))

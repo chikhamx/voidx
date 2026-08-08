@@ -21,12 +21,12 @@ from voidx.agent.application.agents import (
     get_visible_agents,
 )
 from voidx.agent.application.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
-from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
-from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
-from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
-from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.langgraph.runtime.convergence import is_step_hint_message
+from voidx.agent.adapters.langgraph.runtime.runtime import current_parent_tool_call_id
+from voidx.agent.adapters.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
+from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
-from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
+from voidx.agent.adapters.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.adapters.persistence.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.config import Config, Settings
@@ -144,7 +144,7 @@ def _tree_nodes(root):
 def test_run_subagent_uses_workflow_contract_instead_of_model_budget():
     import inspect
 
-    from voidx.agent.infrastructure.langgraph.runtime.subagent import run_subagent
+    from voidx.agent.adapters.langgraph.runtime.subagent import run_subagent
 
     parameters = inspect.signature(run_subagent).parameters
     assert "max_steps" not in parameters
@@ -154,7 +154,7 @@ def test_run_subagent_uses_workflow_contract_instead_of_model_budget():
 
 @pytest.mark.asyncio
 async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.execution as core_module
+    import voidx.agent.adapters.langgraph.execution as core_module
 
     graph = _graph(tmp_path)
     goal_resolution = _child_goal_resolution()
@@ -222,7 +222,7 @@ async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, mo
 
 @pytest.mark.asyncio
 async def test_subagent_runner_reports_initialization_error(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.execution as core_module
+    import voidx.agent.adapters.langgraph.execution as core_module
 
     graph = _graph(tmp_path)
     emitted: list[object] = []
@@ -254,7 +254,7 @@ async def test_subagent_runner_reports_initialization_error(tmp_path, monkeypatc
 
 @pytest.mark.asyncio
 async def test_subagent_runner_persists_lifecycle_jsonl(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.execution as core_module
+    import voidx.agent.adapters.langgraph.execution as core_module
 
     graph = _graph(tmp_path)
     graph._session = await create_session(workspace=str(tmp_path))
@@ -312,7 +312,7 @@ async def test_subagent_runner_persists_lifecycle_jsonl(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_subagent_runner_authorizes_with_child_interaction_mode(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.execution as core_module
+    import voidx.agent.adapters.langgraph.execution as core_module
 
     graph = _graph(tmp_path)
     authorize_calls: list[dict] = []
@@ -470,7 +470,7 @@ async def test_graph_authorization_prompts_for_unsafe_bash(tmp_path):
 
 @pytest.mark.asyncio
 async def test_subagent_tool_result_injects_next_step_hint_into_followup_messages(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     observed: list[list] = []
     calls = 0
@@ -513,7 +513,7 @@ async def test_subagent_tool_result_injects_next_step_hint_into_followup_message
     tool = HintTool()
     parent_tools.register(tool.id, tool, tool.description, tool.parameters_schema())
 
-    from voidx.agent.infrastructure.langgraph.runtime.subagent import run_subagent
+    from voidx.agent.adapters.langgraph.runtime.subagent import run_subagent
 
     result = await run_subagent(
         get_agent("voidx"),
@@ -540,7 +540,7 @@ async def test_subagent_tool_result_injects_next_step_hint_into_followup_message
 
 @pytest.mark.asyncio
 async def test_subagent_state_patch_is_applied_to_next_turn_context(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     observed: list[list] = []
     calls = 0
@@ -596,7 +596,7 @@ async def test_subagent_state_patch_is_applied_to_next_turn_context(tmp_path, mo
     tool = WorkflowTool()
     parent_tools.replace(tool.id, tool, tool.description, tool.parameters_schema())
 
-    from voidx.agent.infrastructure.langgraph.runtime.subagent import run_subagent
+    from voidx.agent.adapters.langgraph.runtime.subagent import run_subagent
 
     await run_subagent(
         get_agent("voidx"),
@@ -628,7 +628,7 @@ async def test_subagent_state_patch_is_applied_to_next_turn_context(tmp_path, mo
 
 @pytest.mark.asyncio
 async def test_subagent_refreshes_workflow_runtime_after_route_patch(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     observed: list[list] = []
     calls = 0
@@ -675,7 +675,7 @@ async def test_subagent_refreshes_workflow_runtime_after_route_patch(tmp_path, m
     tool = RouteTool()
     parent_tools.register(tool.id, tool, tool.description, tool.parameters_schema())
 
-    from voidx.agent.infrastructure.langgraph.runtime.subagent import run_subagent
+    from voidx.agent.adapters.langgraph.runtime.subagent import run_subagent
 
     await run_subagent(
         get_agent("voidx"),
@@ -701,7 +701,7 @@ async def test_subagent_refreshes_workflow_runtime_after_route_patch(tmp_path, m
 
 @pytest.mark.asyncio
 async def test_subagent_removes_completed_workflow_from_active_summaries(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     observed: list[list] = []
     calls = 0
@@ -763,7 +763,7 @@ async def test_subagent_removes_completed_workflow_from_active_summaries(tmp_pat
         goal="Implement the feature",
     )
 
-    from voidx.agent.infrastructure.langgraph.runtime.subagent import run_subagent
+    from voidx.agent.adapters.langgraph.runtime.subagent import run_subagent
 
     await run_subagent(
         get_agent("voidx"),
@@ -800,7 +800,7 @@ async def test_subagent_removes_completed_workflow_from_active_summaries(tmp_pat
 
 @pytest.mark.asyncio
 async def test_subagent_route_patch_counts_as_progress_for_runtime_guard(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     observed: list[list] = []
     calls = 0
@@ -857,7 +857,7 @@ async def test_subagent_route_patch_counts_as_progress_for_runtime_guard(tmp_pat
     tool = RouteTool()
     parent_tools.register(tool.id, tool, tool.description, tool.parameters_schema())
 
-    from voidx.agent.infrastructure.langgraph.runtime.subagent import run_subagent
+    from voidx.agent.adapters.langgraph.runtime.subagent import run_subagent
 
     await run_subagent(
         get_agent("voidx"),
@@ -882,7 +882,7 @@ async def test_subagent_route_patch_counts_as_progress_for_runtime_guard(tmp_pat
 
 @pytest.mark.asyncio
 async def test_subagent_applies_state_patch_before_terminal_message_result(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     observed: list[list] = []
     refreshed_routes: list[str] = []
@@ -947,7 +947,7 @@ async def test_subagent_applies_state_patch_before_terminal_message_result(tmp_p
     tool = ResultMessageTool()
     parent_tools.register(tool.id, tool, tool.description, tool.parameters_schema())
 
-    from voidx.agent.infrastructure.langgraph.runtime.subagent import run_subagent
+    from voidx.agent.adapters.langgraph.runtime.subagent import run_subagent
 
     result = await run_subagent(
         get_agent("voidx"),

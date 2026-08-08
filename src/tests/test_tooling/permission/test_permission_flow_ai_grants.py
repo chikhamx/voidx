@@ -11,7 +11,7 @@ import pytest
 
 def _graph(workspace):
     from voidx.config import Config
-    from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+    from voidx.agent.adapters.langgraph.execution import LangGraphExecution
     cfg = Config(workspace=str(workspace))
     return make_langgraph_execution(cfg, api_key="test")
 

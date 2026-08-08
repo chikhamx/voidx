@@ -58,6 +58,34 @@ def test_no_cross_feature_concrete_adapter_imports():
     assert violations == [], "cross-feature adapter dependencies:\n" + format_edges(violations)
 
 
+
+
+def _adapter_subtree(module: str) -> str | None:
+    parts = module.split(".")
+    if "adapters" not in parts:
+        return None
+    index = parts.index("adapters")
+    if index + 1 >= len(parts):
+        return ".".join(parts[: index + 1])
+    return ".".join(parts[: index + 2])
+
+
+def _same_adapter_subtree(source: str, target: str) -> bool:
+    source_subtree = _adapter_subtree(source)
+    return source_subtree is not None and source_subtree == _adapter_subtree(target)
+
+
+
+def test_same_adapter_subtree_allows_internal_helpers() -> None:
+    assert _same_adapter_subtree(
+        "voidx.agent.adapters.langgraph.execution",
+        "voidx.agent.adapters.langgraph.runtime.core.helpers._invalidate_tui",
+    )
+    assert not _same_adapter_subtree(
+        "voidx.agent.adapters.langgraph.execution",
+        "voidx.agent.application.runtime._private",
+    )
+
 def test_no_cross_layer_private_imports():
     violations: list[str] = []
     root = Path(__file__).resolve().parents[3] / "src" / "voidx"
@@ -70,7 +98,11 @@ def test_no_cross_layer_private_imports():
             if isinstance(node, ast.ImportFrom) and node.names:
                 private = [alias.name for alias in node.names if alias.name.startswith("_")]
                 for name in private:
+                    if node.level > 0 and _adapter_subtree(source) is not None:
+                        continue
                     target = f"{node.module}.{name}"
+                    if _same_adapter_subtree(source, target):
+                        continue
                     edge = type("PrivateImport", (), {"source": source, "target": target})
                     if not without_debt([edge], "private_import"):
                         continue
@@ -82,6 +114,8 @@ def test_no_cross_layer_private_imports():
                     if alias.name.rsplit(".", 1)[-1].startswith("_")
                 ]
                 for name in private:
+                    if _same_adapter_subtree(source, name):
+                        continue
                     edge = type("PrivateImport", (), {"source": source, "target": name})
                     if not without_debt([edge], "private_import"):
                         continue

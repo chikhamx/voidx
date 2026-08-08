@@ -1,6 +1,6 @@
 """Tests for turn control metrics sink."""
 
-from voidx.agent.infrastructure.langgraph.runtime.turn_metrics import TurnControlMetrics
+from voidx.agent.adapters.langgraph.runtime.turn_metrics import TurnControlMetrics
 
 
 def test_metrics_start_at_zero():

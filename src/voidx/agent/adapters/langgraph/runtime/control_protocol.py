@@ -9,8 +9,8 @@ from langchain_core.messages import AIMessage, BaseMessage
 
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.turn_context import TurnExecutionContext
-from voidx.agent.infrastructure.langgraph.runtime.core.loop import LlmLoopState
-from voidx.agent.infrastructure.langgraph.runtime.turn_control import (
+from voidx.agent.adapters.langgraph.runtime.core.loop import LlmLoopState
+from voidx.agent.adapters.langgraph.runtime.turn_control import (
     LOOP_DECISION_PROMPT,
     TURN_TOOL_DEFINITION,
     TurnClassification,
@@ -81,7 +81,7 @@ class TurnToolProtocol:
 
 def loop_decision_submitted() -> bool:
     """True when the active loop turn already has a committed iteration decision."""
-    from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
+    from voidx.agent.adapters.langgraph.runtime.thread_context import (
         current_thread_execution_state,
     )
 
@@ -152,7 +152,7 @@ class LoopProtocol:
             return False
         if loop.protocol_repairs >= _MAX_DECISION_REPAIRS:
             return False
-        from voidx.agent.infrastructure.langgraph.runtime.streaming import extract_text
+        from voidx.agent.adapters.langgraph.runtime.streaming import extract_text
 
         if self.classify(msg) is TurnClassification.REGULAR_TOOLS and not extract_text(msg).strip():
             return False
@@ -222,7 +222,7 @@ class GoalProtocol:
             return False
         if loop.protocol_repairs >= _MAX_DECISION_REPAIRS:
             return False
-        from voidx.agent.infrastructure.langgraph.runtime.streaming import extract_text
+        from voidx.agent.adapters.langgraph.runtime.streaming import extract_text
 
         if self.classify(msg) is TurnClassification.REGULAR_TOOLS and not extract_text(msg).strip():
             return False

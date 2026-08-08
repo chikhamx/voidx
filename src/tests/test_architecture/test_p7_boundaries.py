@@ -66,3 +66,16 @@ def test_agent_non_langgraph_adapters_have_final_owners() -> None:
 
     assert [path for path in expected if not (ROOT / path).is_file()] == []
     assert [path for path in legacy if (ROOT / path).exists()] == []
+
+
+def test_langgraph_adapters_have_final_owner() -> None:
+    expected = (
+        "src/voidx/agent/adapters/langgraph/__init__.py",
+        "src/voidx/agent/adapters/langgraph/execution.py",
+        "src/voidx/agent/adapters/langgraph/display_policy.py",
+        "src/voidx/agent/adapters/langgraph/graph_compaction.py",
+        "src/voidx/agent/adapters/langgraph/ui_events.py",
+    )
+
+    assert [path for path in expected if not (ROOT / path).is_file()] == []
+    assert not (ROOT / "src/voidx/agent/infrastructure").exists()

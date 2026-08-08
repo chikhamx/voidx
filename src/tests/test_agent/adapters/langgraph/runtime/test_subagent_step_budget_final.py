@@ -20,12 +20,12 @@ from voidx.agent.application.agents import (
     get_visible_agents,
 )
 from voidx.agent.application.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
-from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
-from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
-from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
-from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.langgraph.runtime.convergence import is_step_hint_message
+from voidx.agent.adapters.langgraph.runtime.runtime import current_parent_tool_call_id
+from voidx.agent.adapters.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
+from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
-from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
+from voidx.agent.adapters.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.adapters.persistence.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.config import Config, Settings
@@ -138,7 +138,7 @@ def _tree_nodes(root):
 
 @pytest.mark.asyncio
 async def test_subagent_starts_from_isolated_task_context(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     captured: dict[str, list] = {}
 
@@ -204,7 +204,7 @@ async def test_subagent_starts_from_isolated_task_context(tmp_path, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_subagent_injects_result_contract_into_task_payload(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     captured: dict[str, list] = {}
 
@@ -249,7 +249,7 @@ async def test_subagent_injects_result_contract_into_task_payload(tmp_path, monk
 
 @pytest.mark.asyncio
 async def test_subagent_adds_last_tool_step_hint_to_payload_only(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     captured: dict[str, list] = {}
     sub_messages: list = []
@@ -287,7 +287,7 @@ async def test_subagent_adds_last_tool_step_hint_to_payload_only(tmp_path, monke
 
 @pytest.mark.asyncio
 async def test_subagent_final_step_fallback_does_not_leak_hint_to_sub_messages(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     captured_calls: list[list] = []
     sub_messages: list = []
@@ -358,7 +358,7 @@ async def test_subagent_final_step_fallback_does_not_leak_hint_to_sub_messages(t
 
 @pytest.mark.asyncio
 async def test_subagent_requires_structured_contract_after_tool_work(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     captured_calls: list[list] = []
 
@@ -439,7 +439,7 @@ async def test_subagent_requires_structured_contract_after_tool_work(tmp_path, m
 @pytest.mark.asyncio
 async def test_subagent_contract_retry_exhausted_returns_contract_unsatisfied(tmp_path, monkeypatch):
     """When contract retries are exhausted, finish_reason must be contract_unsatisfied, not safety_limit."""
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     captured_calls: list[list] = []
 

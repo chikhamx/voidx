@@ -11,8 +11,8 @@ from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.tool_policy import ToolPolicy
 from voidx.agent.domain.turn_context import TurnExecutionContext
 
-from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState
-from voidx.agent.infrastructure.langgraph.runtime.topology import session_date
+from voidx.agent.adapters.langgraph.runtime.runtime_guards import RuntimeGuardState
+from voidx.agent.adapters.langgraph.runtime.topology import session_date
 from voidx.agent.application.runtime_context import ContextCompilerCache, InteractionMode
 from voidx.agent.domain.task.state import TaskState
 from voidx.agent.adapters.persistence.session_repository import SessionInfo, get_session

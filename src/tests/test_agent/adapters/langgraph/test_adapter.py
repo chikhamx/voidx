@@ -7,8 +7,8 @@ import pytest
 from langchain_core.messages import ToolMessage
 from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.domain.turn.state import TurnPhase
-from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine, _evidence_from_execution
-from voidx.agent.infrastructure.langgraph.state_mapper import LangGraphStateMapper
+from voidx.agent.adapters.langgraph.adapter import LangGraphTurnEngine, _evidence_from_execution
+from voidx.agent.adapters.langgraph.state_mapper import LangGraphStateMapper
 from voidx.agent.domain.task.state import GoalSpec, TaskState
 from voidx.agent.domain.task.intent import InteractionMode
 

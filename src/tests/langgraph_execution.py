@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.presentation_ui import make_presentation_ui
 from voidx.agent.ports.workspace_lock import NullWorkspaceWriteLock
 
@@ -25,6 +25,33 @@ def make_langgraph_execution(*args, ui=None, **kwargs) -> LangGraphExecution:
         from voidx.presentation.tools import clipboard_image
 
         kwargs["clipboard_image"] = clipboard_image
+    if "model_factory" not in kwargs or "resolver_model_factory" not in kwargs:
+        from voidx.llm.adapters.langchain_model_factory import (
+            create_chat_model,
+            create_resolver_model,
+        )
+
+        kwargs.setdefault("model_factory", create_chat_model)
+        kwargs.setdefault("resolver_model_factory", create_resolver_model)
+    if "tool_registry_factory" not in kwargs or "scoped_tools_binder" not in kwargs:
+        from voidx.bootstrap.tooling import bind_scoped_tools, build_tool_registry
+
+        kwargs.setdefault("tool_registry_factory", build_tool_registry)
+        kwargs.setdefault("scoped_tools_binder", bind_scoped_tools)
+    if "permission_service_factory" not in kwargs:
+        from voidx.tooling.adapters.permission.in_memory_state import create_permission_service
+
+        def permission_service_factory(config, *, settings=None, notifier):
+            return create_permission_service(
+                permission_mode=config.permission_mode.value,
+                sandbox_readable_files=list(config.sandbox_readable_files),
+                sandbox_readable_dirs=list(config.sandbox_readable_dirs),
+                sandbox_writable_files=list(config.sandbox_writable_files),
+                sandbox_writable_dirs=list(config.sandbox_writable_dirs),
+                notifier=notifier,
+            )
+
+        kwargs["permission_service_factory"] = permission_service_factory
 
     return LangGraphExecution(
         *args,

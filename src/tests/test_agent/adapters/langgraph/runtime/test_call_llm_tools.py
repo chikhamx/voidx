@@ -12,11 +12,11 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from rich.console import Console
 
 
-from voidx.agent.infrastructure.langgraph.runtime.streaming import stream_llm as _stream_llm
-from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.langgraph.runtime.streaming import stream_llm as _stream_llm
+from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
 from voidx.tooling.adapters.mcp import McpGatewayTool
-from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
+from voidx.agent.adapters.langgraph.runtime.convergence import is_step_hint_message
 from voidx.agent.application.runtime_context import RuntimeContextBuilder
 from voidx.agent.domain.task.state import TaskState
 from voidx.agent.domain.task.todo import TodoRunState
@@ -52,14 +52,14 @@ from tests.test_agent.adapters.langgraph.runtime.stream_llm_helpers import (
 )
 from voidx.agent.domain.automation.loop import LOOP_PROFILE
 from voidx.agent.domain.turn_context import TurnExecutionContext
-from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
+from voidx.agent.adapters.langgraph.runtime.thread_context import (
     ThreadExecutionState,
     _CURRENT_THREAD_EXECUTION_STATE,
 )
 
 @pytest.mark.asyncio
 async def test_call_llm_guidance_does_not_create_main_agent_convergence_hint(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -88,7 +88,7 @@ async def test_call_llm_guidance_does_not_create_main_agent_convergence_hint(tmp
 
 @pytest.mark.asyncio
 async def test_call_llm_guard_guidance_stays_hidden_from_ui_events(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -140,7 +140,7 @@ async def test_call_llm_guard_guidance_stays_hidden_from_ui_events(tmp_path, mon
 
 @pytest.mark.asyncio
 async def test_call_llm_user_guidance_commits_preview_without_persistent_message(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -193,7 +193,7 @@ async def test_call_llm_user_guidance_commits_preview_without_persistent_message
 
 @pytest.mark.asyncio
 async def test_call_llm_context_frame_records_no_main_agent_convergence_hint(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     session = await create_session(workspace=str(tmp_path))
@@ -261,7 +261,7 @@ async def test_finalize_uses_fallback_only_for_invalid_forced_convergence(tmp_pa
 
 @pytest.mark.asyncio
 async def test_call_llm_filters_lsp_tools_when_no_lsp_server_is_available(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -291,7 +291,7 @@ async def test_call_llm_filters_lsp_tools_when_no_lsp_server_is_available(tmp_pa
 
 @pytest.mark.asyncio
 async def test_available_tool_ids_no_longer_filter_llm_tools(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -321,7 +321,7 @@ async def test_available_tool_ids_no_longer_filter_llm_tools(tmp_path, monkeypat
 
 @pytest.mark.asyncio
 async def test_call_llm_default_profile_does_not_bind_loop_tool(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -348,7 +348,7 @@ async def test_call_llm_default_profile_does_not_bind_loop_tool(tmp_path, monkey
 
 @pytest.mark.asyncio
 async def test_call_llm_injects_loop_only_for_loop_profile(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -389,7 +389,7 @@ async def test_call_llm_injects_loop_only_for_loop_profile(tmp_path, monkeypatch
 
 @pytest.mark.asyncio
 async def test_call_llm_keeps_bound_tools_fixed_across_active_workflow_node(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -433,7 +433,7 @@ async def test_call_llm_keeps_bound_tools_fixed_across_active_workflow_node(tmp_
 
 @pytest.mark.asyncio
 async def test_orchestrator_sees_mcp_gateway(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -459,7 +459,7 @@ async def test_orchestrator_sees_mcp_gateway(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_runtime_persona_does_not_change_agent_mcp_gateway_visibility(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 
@@ -486,7 +486,7 @@ async def test_runtime_persona_does_not_change_agent_mcp_gateway_visibility(tmp_
 
 @pytest.mark.asyncio
 async def test_call_llm_keeps_lsp_tools_when_a_lsp_server_is_available(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
 

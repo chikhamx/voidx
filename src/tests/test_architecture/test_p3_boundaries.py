@@ -188,7 +188,7 @@ def test_three_plugin_factories_are_composed_only_in_bootstrap_tooling() -> None
         definitions = _function_definitions(name)
         assert len(definitions) == 1
         assert name in bootstrap
-    wiring = (PACKAGE_ROOT / "agent/infrastructure/langgraph/runtime/wiring.py").read_text(encoding="utf-8")
+    wiring = (PACKAGE_ROOT / "agent/adapters/langgraph/runtime/wiring.py").read_text(encoding="utf-8")
     assert not any(name in wiring for name in ("build_builtin_plugins", "build_integration_plugins", "build_agent_plugins"))
 
 
@@ -363,8 +363,8 @@ def test_lsp_tooling_uses_complete_operations_service() -> None:
 
 def test_lsp_post_edit_uses_operations_service_without_manager_fallback() -> None:
     post_edit = (PACKAGE_ROOT / "tooling/adapters/lsp_post_edit.py").read_text(encoding="utf-8")
-    executor = (PACKAGE_ROOT / "agent/infrastructure/langgraph/runtime/tool_executor/executor.py").read_text(encoding="utf-8")
-    subagent = (PACKAGE_ROOT / "agent/infrastructure/langgraph/runtime/subagent.py").read_text(encoding="utf-8")
+    executor = (PACKAGE_ROOT / "agent/adapters/langgraph/runtime/tool_executor/executor.py").read_text(encoding="utf-8")
+    subagent = (PACKAGE_ROOT / "agent/adapters/langgraph/runtime/subagent.py").read_text(encoding="utf-8")
     assert "getattr(" not in post_edit
     assert "formatted_range_text" not in post_edit
     assert "host._lsp_operations" in executor

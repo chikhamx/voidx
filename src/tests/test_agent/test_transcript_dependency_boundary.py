@@ -21,8 +21,8 @@ def _imports(path: Path) -> set[str]:
 def test_agent_transcript_runtime_does_not_import_presentation():
     paths = (
         ROOT / "src/voidx/agent/adapters/persistence/session_repository.py",
-        ROOT / "src/voidx/agent/infrastructure/langgraph/runtime/session_runtime.py",
-        ROOT / "src/voidx/agent/infrastructure/langgraph/execution.py",
+        ROOT / "src/voidx/agent/adapters/langgraph/runtime/session_runtime.py",
+        ROOT / "src/voidx/agent/adapters/langgraph/execution.py",
     )
     offenders = [
         path.relative_to(ROOT).as_posix()

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from voidx.agent.infrastructure.langgraph.runtime.session_runtime import SessionRuntime
+from voidx.agent.adapters.langgraph.runtime.session_runtime import SessionRuntime
 
 
 class RecordingSnapshotPort:

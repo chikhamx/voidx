@@ -4,9 +4,9 @@ import asyncio
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 
-from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
-from voidx.agent.infrastructure.langgraph.runtime.turn_control import TURN_TOOL_DEFINITION
+from voidx.agent.adapters.langgraph.runtime.turn_control import TURN_TOOL_DEFINITION
 from voidx.config import Config
 from voidx.llm.domain.model import ModelConfig
 from tests.test_agent.adapters.langgraph.runtime.stream_llm_helpers import FakeRenderer
@@ -68,7 +68,7 @@ def _mixed_chunk() -> AIMessageChunk:
 
 
 def _make_graph(tmp_path, model, monkeypatch, provider="openai"):
-    import voidx.agent.infrastructure.langgraph.runtime.llm_turn as graph_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
     async def fail_on_retry(delay):
         pytest.fail(f"Unexpected LLM retry with delay {delay}s")

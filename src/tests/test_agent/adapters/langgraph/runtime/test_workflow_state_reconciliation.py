@@ -1,9 +1,9 @@
-from voidx.agent.infrastructure.langgraph.runtime.tool_executor.workflow import (
+from voidx.agent.adapters.langgraph.runtime.tool_executor.workflow import (
     _merge_workflow_runs_for_state,
     _satisfy_workflow_without_transition,
     _state_update_from_executed_tools,
 )
-from voidx.agent.infrastructure.langgraph.runtime.tool_executor.types import _ExecutedTool
+from voidx.agent.adapters.langgraph.runtime.tool_executor.types import _ExecutedTool
 from voidx.agent.domain.task.state import ToolStatePatch
 from voidx.tooling.domain.result import ToolResult
 from voidx.agent.domain.automation.workflow import (

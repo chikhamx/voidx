@@ -134,7 +134,7 @@ def test_lsp_format_internal_produces_no_intents(tmp_path):
 
 
 def test_authorize_manage_move_external_shows_only_allow_deny_choices(tmp_path):
-    from voidx.agent.infrastructure.langgraph.runtime.permission_flow import _permission_choices
+    from voidx.agent.adapters.langgraph.runtime.permission_flow import _permission_choices
     from voidx.tooling.domain.authorization import PermissionDecision
     from voidx.tooling.domain.grants import AccessIntent
 

@@ -20,12 +20,12 @@ from voidx.agent.application.agents import (
     get_visible_agents,
 )
 from voidx.agent.application.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
-from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hint_message
-from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
-from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
-from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.langgraph.runtime.convergence import is_step_hint_message
+from voidx.agent.adapters.langgraph.runtime.runtime import current_parent_tool_call_id
+from voidx.agent.adapters.langgraph.runtime.runtime_guards import RuntimeGuardState, WallClockGuardState
+from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
-from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
+from voidx.agent.adapters.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.adapters.persistence.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.config import Config, Settings
@@ -575,7 +575,7 @@ async def test_always_approval_for_shell_is_target_scoped(tmp_path):
 
 @pytest.mark.asyncio
 async def test_ai_approval_reuses_successful_dangerous_call_without_review(tmp_path):
-    from voidx.agent.infrastructure.langgraph.execution import _tool_call_key
+    from voidx.agent.adapters.langgraph.execution import _tool_call_key
     from voidx.tooling.application.ai_approval import AiApprovalResult
     from voidx.config import PermissionMode
 
@@ -691,7 +691,7 @@ async def test_ai_approval_increments_counter_and_emits_refresh(tmp_path):
 async def test_ai_approval_notice_written_to_log_not_ui(tmp_path, monkeypatch):
     from voidx.config import PermissionMode
     from voidx.tooling.application.ai_approval import AiApprovalResult
-    import voidx.agent.infrastructure.langgraph.runtime.permission_flow as perms_mod
+    import voidx.agent.adapters.langgraph.runtime.permission_flow as perms_mod
 
     graph = _graph(tmp_path)
     graph._settings = Settings(str(tmp_path))

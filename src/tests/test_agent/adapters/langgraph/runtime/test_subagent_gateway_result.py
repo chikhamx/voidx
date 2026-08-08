@@ -4,7 +4,7 @@ from langchain_core.messages import AIMessage
 
 from voidx.agent.application.agents import AgentDef
 from voidx.agent.adapters.subagent import InProcessSubagentGateway
-from voidx.agent.infrastructure.langgraph.runtime.subagent import run_subagent
+from voidx.agent.adapters.langgraph.runtime.subagent import run_subagent
 from voidx.config import Config
 from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
 from voidx.agent.domain.task.intent import TaskIntent
@@ -68,7 +68,7 @@ def _agent_def() -> AgentDef:
 
 @pytest.mark.asyncio
 async def test_run_subagent_explicit_result_message_completes_gateway_run(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
@@ -127,7 +127,7 @@ async def test_run_subagent_explicit_result_message_completes_gateway_run(tmp_pa
 
 @pytest.mark.asyncio
 async def test_run_subagent_result_tool_call_suppresses_same_batch_followups(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
@@ -195,7 +195,7 @@ async def test_run_subagent_result_tool_call_suppresses_same_batch_followups(tmp
 
 @pytest.mark.asyncio
 async def test_run_subagent_wraps_final_text_as_result_message(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
@@ -242,7 +242,7 @@ async def test_run_subagent_wraps_final_text_as_result_message(tmp_path, monkeyp
 
 @pytest.mark.asyncio
 async def test_run_subagent_registers_message_and_blocks_parent_only_tools(tmp_path, monkeypatch):
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
     from voidx.agent.adapters.tools.subagent import AgentTool
     from voidx.agent.adapters.tools.interaction.checkpoint import PlanCheckpointTool
     from voidx.agent.adapters.tools.interaction.clarify import ClarifyTool
@@ -322,7 +322,7 @@ def test_root_tool_registry_does_not_register_message_by_default():
 def test_guard_termination_result_includes_findings_and_blocker():
     from langchain_core.messages import HumanMessage, ToolMessage
 
-    from voidx.agent.infrastructure.langgraph.runtime.subagent import _guard_termination_result
+    from voidx.agent.adapters.langgraph.runtime.subagent import _guard_termination_result
 
     messages = [
         HumanMessage(content="review the edit-window change"),
@@ -344,7 +344,7 @@ async def test_run_subagent_guard_terminated_returns_findings_fallback(tmp_path,
     guard terminates, and the parent must still receive the child's findings."""
     import json as _json
 
-    import voidx.agent.infrastructure.langgraph.runtime.subagent as subagent_module
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
     from voidx.tooling.domain.result import ToolResult
     from voidx.tooling.application.registry import ToolRegistry
 

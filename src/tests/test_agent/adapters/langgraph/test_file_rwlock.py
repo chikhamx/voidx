@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from voidx.agent.infrastructure.langgraph.runtime.tool_executor.helpers import (
+from voidx.agent.adapters.langgraph.runtime.tool_executor.helpers import (
     _FileRWLock,
     _acquire_file_locks,
     _extract_file_paths,
@@ -340,7 +340,7 @@ class TestSameFileWriteOrdering:
     @pytest.mark.asyncio
     async def test_insert_order_descending(self):
         """Two inserts on the same file: higher lineno executes first."""
-        from voidx.agent.infrastructure.langgraph.runtime.tool_executor.helpers import _sort_file_calls_by_line_descending
+        from voidx.agent.adapters.langgraph.runtime.tool_executor.helpers import _sort_file_calls_by_line_descending
 
         calls = [
             {"name": "write", "args": {"file_path": "a.py", "op": "insert", "lineno": 5, "new_string": "x"}, "id": "w1"},
@@ -353,7 +353,7 @@ class TestSameFileWriteOrdering:
     @pytest.mark.asyncio
     async def test_replace_order_descending(self):
         """Two replaces on the same file: higher start line_no executes first."""
-        from voidx.agent.infrastructure.langgraph.runtime.tool_executor.helpers import _sort_file_calls_by_line_descending
+        from voidx.agent.adapters.langgraph.runtime.tool_executor.helpers import _sort_file_calls_by_line_descending
 
         calls = [
             {"name": "replace", "args": {"file_path": "a.py", "bounds": [{"line_no": 3, "anchor": "x"}], "new_string": "X"}, "id": "r1"},
@@ -366,7 +366,7 @@ class TestSameFileWriteOrdering:
     @pytest.mark.asyncio
     async def test_mixed_insert_replace_descending(self):
         """Mixed write+replace on same file: sorted by line number descending."""
-        from voidx.agent.infrastructure.langgraph.runtime.tool_executor.helpers import _sort_file_calls_by_line_descending
+        from voidx.agent.adapters.langgraph.runtime.tool_executor.helpers import _sort_file_calls_by_line_descending
 
         calls = [
             {"name": "write", "args": {"file_path": "a.py", "op": "insert", "lineno": 2, "new_string": "x"}, "id": "w1"},
@@ -379,7 +379,7 @@ class TestSameFileWriteOrdering:
     @pytest.mark.asyncio
     async def test_different_files_keep_original_order(self):
         """Writes to different files should not be reordered."""
-        from voidx.agent.infrastructure.langgraph.runtime.tool_executor.helpers import _sort_file_calls_by_line_descending
+        from voidx.agent.adapters.langgraph.runtime.tool_executor.helpers import _sort_file_calls_by_line_descending
 
         calls = [
             {"name": "write", "args": {"file_path": "a.py", "op": "insert", "lineno": 5, "new_string": "x"}, "id": "w1"},
@@ -391,7 +391,7 @@ class TestSameFileWriteOrdering:
     @pytest.mark.asyncio
     async def test_append_treated_as_lowest_priority(self):
         """op=append has no line number; should execute last (lowest priority)."""
-        from voidx.agent.infrastructure.langgraph.runtime.tool_executor.helpers import _sort_file_calls_by_line_descending
+        from voidx.agent.adapters.langgraph.runtime.tool_executor.helpers import _sort_file_calls_by_line_descending
 
         calls = [
             {"name": "write", "args": {"file_path": "a.py", "op": "append", "new_string": "tail"}, "id": "w1"},
@@ -404,7 +404,7 @@ class TestSameFileWriteOrdering:
     @pytest.mark.asyncio
     async def test_write_full_overwrite_treated_as_lowest(self):
         """op=write (full overwrite) has no line number; executes last."""
-        from voidx.agent.infrastructure.langgraph.runtime.tool_executor.helpers import _sort_file_calls_by_line_descending
+        from voidx.agent.adapters.langgraph.runtime.tool_executor.helpers import _sort_file_calls_by_line_descending
 
         calls = [
             {"name": "write", "args": {"file_path": "a.py", "op": "write", "new_string": "full"}, "id": "w1"},
@@ -417,7 +417,7 @@ class TestSameFileWriteOrdering:
     @pytest.mark.asyncio
     async def test_replace_two_bounds_uses_min_line_no(self):
         """Two-bound replace uses the smaller line_no for sorting."""
-        from voidx.agent.infrastructure.langgraph.runtime.tool_executor.helpers import _sort_file_calls_by_line_descending
+        from voidx.agent.adapters.langgraph.runtime.tool_executor.helpers import _sort_file_calls_by_line_descending
 
         calls = [
             {"name": "replace", "args": {"file_path": "a.py", "bounds": [{"line_no": 3, "anchor": "x"}, {"line_no": 6, "anchor": "y"}], "new_string": "Z"}, "id": "r1"},
@@ -430,7 +430,7 @@ class TestSameFileWriteOrdering:
     @pytest.mark.asyncio
     async def test_reads_not_reordered(self):
         """Reads should not be reordered — they use shared read lock."""
-        from voidx.agent.infrastructure.langgraph.runtime.tool_executor.helpers import _sort_file_calls_by_line_descending
+        from voidx.agent.adapters.langgraph.runtime.tool_executor.helpers import _sort_file_calls_by_line_descending
 
         calls = [
             {"name": "read", "args": {"file_path": "a.py", "offset": 10, "limit": 5}, "id": "r1"},
@@ -482,7 +482,7 @@ class TestSameFileWriteOrdering:
                     else:
                         await lk.release_read()
 
-        from voidx.agent.infrastructure.langgraph.runtime.tool_executor.helpers import _sort_file_calls_by_line_descending
+        from voidx.agent.adapters.langgraph.runtime.tool_executor.helpers import _sort_file_calls_by_line_descending
         file_calls = [tc for tc in calls if _extract_file_paths(tc)]
         sorted_file_calls = _sort_file_calls_by_line_descending(file_calls)
 

@@ -2,11 +2,11 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from voidx.agent.infrastructure.langgraph.runtime.tool_executor.guards import _record_runtime_guard_outcomes
-from voidx.agent.infrastructure.langgraph.runtime.tool_executor.types import _ExecutedTool
+from voidx.agent.adapters.langgraph.runtime.tool_executor.guards import _record_runtime_guard_outcomes
+from voidx.agent.adapters.langgraph.runtime.tool_executor.types import _ExecutedTool
 
 
-from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import (
+from voidx.agent.adapters.langgraph.runtime.runtime_guards import (
     RuntimeGuardState,
     ToolCycleSummary,
     cycle_summary_from_tools,

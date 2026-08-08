@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import voidx.persistence.sqlite as store
 
 
-from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from voidx.agent.adapters.presentation_adapter import (
     LangGraphPresentationBinding, LangGraphPresentationIntegrations,
     LangGraphRuntimeStatusReader, LangGraphSessionLifecycle,
@@ -18,12 +18,12 @@ from voidx.agent.ports.presentation import NullAgentEventPublisher
 from voidx.agent.ports.workspace_lock import DelegatingWorkspaceWriteLock
 from voidx.agent.application.agent_service import AgentService
 from voidx.agent.application.runtime import AgentRuntime
-from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
-from voidx.agent.infrastructure.langgraph.state_mapper import LangGraphStateMapper
+from voidx.agent.adapters.langgraph.adapter import LangGraphTurnEngine
+from voidx.agent.adapters.langgraph.state_mapper import LangGraphStateMapper
 from voidx.agent.adapters.persistence.memory_session import MemorySessionAdapter
 from voidx.agent.adapters.null_events import NullEventPublisher
 from voidx.agent.domain.turn.state import TurnPhase
-from voidx.agent.infrastructure.langgraph.execution import _sanitize_generated_title
+from voidx.agent.adapters.langgraph.execution import _sanitize_generated_title
 from voidx.config import Config
 from voidx.llm.domain.model import ModelConfig
 from voidx.llm.usage import UsageStats

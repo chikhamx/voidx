@@ -6,7 +6,7 @@ from tests.langgraph_execution import make_langgraph_execution
 import pytest
 
 from voidx.agent.domain.automation.goal import GoalToolView
-from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
+from voidx.agent.adapters.langgraph.runtime.thread_context import (
     ThreadExecutionState,
     _CURRENT_THREAD_EXECUTION_STATE,
 )
@@ -14,7 +14,7 @@ from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
 
 def _graph(workspace):
     from voidx.config import Config
-    from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+    from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 
     cfg = Config(workspace=str(workspace))
     return make_langgraph_execution(cfg, api_key="test")

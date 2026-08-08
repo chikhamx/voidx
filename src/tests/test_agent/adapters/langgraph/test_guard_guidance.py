@@ -2,9 +2,9 @@
 
 from types import SimpleNamespace
 
-from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
-from voidx.agent.infrastructure.langgraph.runtime.runtime_guards import GuardGuidance
-from voidx.agent.infrastructure.langgraph.runtime.tool_executor.guards import _submit_guard_guidance
+from voidx.agent.adapters.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.langgraph.runtime.runtime_guards import GuardGuidance
+from voidx.agent.adapters.langgraph.runtime.tool_executor.guards import _submit_guard_guidance
 from voidx.presentation.output.events.schema import GuidanceSubmitted
 
 

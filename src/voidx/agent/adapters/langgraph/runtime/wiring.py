@@ -11,16 +11,6 @@ from voidx.llm.usage import UsageStats
 
 
 
-def build_tool_registry(**kwargs: Any):
-    from voidx.bootstrap.tooling import build_tool_registry as build
-
-    return build(**kwargs)
-
-
-def register_agent_tool(*args: Any, **kwargs: Any) -> None:
-    from voidx.bootstrap.tooling import register_agent_tool as register
-
-    register(*args, **kwargs)
 
 
 

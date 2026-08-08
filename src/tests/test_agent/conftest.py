@@ -29,11 +29,11 @@ def simulated_llm_retry_sleep(monkeypatch: pytest.MonkeyPatch):
         return 0.002
 
     monkeypatch.setattr(
-        "voidx.agent.infrastructure.langgraph.runtime.core.loop._llm_retry_sleep_delay",
+        "voidx.agent.adapters.langgraph.runtime.core.loop._llm_retry_sleep_delay",
         simulated_delay,
     )
     monkeypatch.setattr(
-        "voidx.agent.infrastructure.langgraph.runtime.subagent._llm_retry_sleep_delay",
+        "voidx.agent.adapters.langgraph.runtime.subagent._llm_retry_sleep_delay",
         simulated_delay,
     )
 
@@ -47,7 +47,7 @@ def call_llm_renderer_patch_compat(monkeypatch: pytest.MonkeyPatch):
             return StreamingRenderer(*args, **kwargs)
 
     monkeypatch.setattr(
-        "voidx.agent.infrastructure.langgraph.runtime.llm_turn.StreamingRenderer",
+        "voidx.agent.adapters.langgraph.runtime.llm_turn.StreamingRenderer",
         RendererProxy,
     )
 

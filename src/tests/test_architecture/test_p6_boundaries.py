@@ -288,7 +288,7 @@ def test_skills_legacy_references_and_production_fallbacks_are_gone() -> None:
     assert not (ROOT / "src/voidx/skills/references.py").exists()
 
     for relative in (
-        "src/voidx/agent/infrastructure/langgraph/execution.py",
+        "src/voidx/agent/adapters/langgraph/execution.py",
         "src/voidx/agent/application/instruction.py",
         "src/voidx/agent/slash/commands/skills.py",
         "src/voidx/presentation/tools/skill_picker.py",

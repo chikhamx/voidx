@@ -186,7 +186,7 @@ def test_production_agent_composition_requires_explicit_ui_port():
 
 
 def test_langgraph_execution_requires_explicit_ui_adapter():
-    path = ROOT / "src" / "voidx" / "agent" / "infrastructure" / "langgraph" / "execution.py"
+    path = ROOT / "src" / "voidx" / "agent" / "adapters" / "langgraph" / "execution.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
     execution = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "LangGraphExecution")
     constructor = next(node for node in execution.body if isinstance(node, ast.FunctionDef) and node.name == "__init__")
@@ -216,7 +216,7 @@ def test_agent_service_has_only_four_port_dependencies():
 
 
 def test_langgraph_execution_does_not_own_frontend_or_gateway_session():
-    path = ROOT / "src" / "voidx" / "agent" / "infrastructure" / "langgraph" / "execution.py"
+    path = ROOT / "src" / "voidx" / "agent" / "adapters" / "langgraph" / "execution.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
     forbidden = {
         node.attr
@@ -236,7 +236,7 @@ def test_langgraph_execution_does_not_own_frontend_or_gateway_session():
 
 
 def test_tool_execution_does_not_read_gateway_private_state():
-    root = ROOT / "src" / "voidx" / "agent" / "infrastructure" / "langgraph" / "runtime"
+    root = ROOT / "src" / "voidx" / "agent" / "adapters" / "langgraph" / "runtime"
     source = "\n".join(path.read_text(encoding="utf-8") for path in root.rglob("*.py"))
     assert 'getattr(host, "_gateway_session"' not in source
     assert 'getattr(gateway_session, "_run_manager"' not in source

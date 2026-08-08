@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 
 from voidx.agent.domain.turn_context import TurnExecutionContext
-from voidx.agent.infrastructure.langgraph.runtime.thread_context import bind_thread_execution_context
+from voidx.agent.adapters.langgraph.runtime.thread_context import bind_thread_execution_context
 from voidx.agent.domain.task.intent import TaskIntent
 from voidx.agent.domain.task.state import GoalSpec, TaskState
 from voidx.agent.domain.automation.workflow import WorkflowRunState, WorkflowRunStatus
@@ -25,7 +25,7 @@ class _FakeHost:
 
     @property
     def _task_state(self) -> TaskState:
-        from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_thread_execution_state
+        from voidx.agent.adapters.langgraph.runtime.thread_context import current_thread_execution_state
 
         state = current_thread_execution_state()
         if state is not None:
@@ -34,7 +34,7 @@ class _FakeHost:
 
     @_task_state.setter
     def _task_state(self, value: TaskState) -> None:
-        from voidx.agent.infrastructure.langgraph.runtime.thread_context import current_thread_execution_state
+        from voidx.agent.adapters.langgraph.runtime.thread_context import current_thread_execution_state
 
         state = current_thread_execution_state()
         if state is not None:

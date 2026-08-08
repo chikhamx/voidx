@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voidx.agent.infrastructure.ui_events import GuidanceCommitted, InputSet, StatusFinished, StatusUpdated, TodoCleared, TodoCommitted, TurnCancelled, TurnCompleted, TurnFailed, TurnStarted
+from voidx.agent.adapters.langgraph.ui_events import GuidanceCommitted, InputSet, StatusFinished, StatusUpdated, TodoCleared, TodoCommitted, TurnCancelled, TurnCompleted, TurnFailed, TurnStarted
 
 import asyncio
 import json
@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.errors import GraphRecursionError
 
-from voidx.agent.infrastructure.langgraph.runtime.convergence import generate_fallback_summary
+from voidx.agent.adapters.langgraph.runtime.convergence import generate_fallback_summary
 
 from voidx.agent.application.attachments import build_user_message_payload, serialize_message_content
 from voidx.agent.adapters.persistence.message_rows import messages_from_rows_incremental
@@ -21,11 +21,11 @@ from voidx.agent.application.runtime_context import TaskIntent
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.domain.turn_metadata import turn_metadata_from_context
 from voidx.agent.domain.task.intent import InteractionMode
-from voidx.agent.infrastructure.langgraph.runtime.thread_context import (
+from voidx.agent.adapters.langgraph.runtime.thread_context import (
     bind_thread_execution_context,
     current_thread_execution_state,
 )
-from voidx.agent.infrastructure.langgraph.state import AgentState
+from voidx.agent.adapters.langgraph.state import AgentState
 from voidx.agent.domain.task.state import (
     GoalResolution,
     IntentResolution,

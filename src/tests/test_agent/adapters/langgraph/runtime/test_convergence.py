@@ -4,7 +4,7 @@ from pathlib import Path
 
 from langchain_core.messages import HumanMessage, ToolMessage
 
-from voidx.agent.infrastructure.langgraph.runtime.convergence import (
+from voidx.agent.adapters.langgraph.runtime.convergence import (
     generate_fallback_summary,
     is_step_hint_message,
 )

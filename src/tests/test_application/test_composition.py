@@ -5,7 +5,7 @@ from voidx.agent.application.coding_service import CodingService
 from voidx.agent.application.runtime import AgentRuntime
 from voidx.bootstrap.agent import AgentResources, build_agent_components
 from voidx.agent.facade import AgentFacade
-from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
+from voidx.agent.adapters.langgraph.adapter import LangGraphTurnEngine
 from voidx.agent.adapters.persistence.memory_session import MemorySessionAdapter
 from voidx.agent.adapters.null_events import NullEventPublisher
 from voidx.agent.ports.presentation import NullAgentEventPublisher

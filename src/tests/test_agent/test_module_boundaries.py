@@ -119,7 +119,7 @@ def test_external_modules_do_not_import_agent_graph():
         for path in _python_files_recursive(f"src/voidx/{root}"):
             rel = path.relative_to(ROOT).as_posix()
             imports = _imported_modules(rel)
-            if any(module == "voidx.agent.infrastructure.langgraph.runtime" or module.startswith("voidx.agent.infrastructure.langgraph.runtime.") for module in imports):
+            if any(module == "voidx.agent.adapters.langgraph.runtime" or module.startswith("voidx.agent.adapters.langgraph.runtime.") for module in imports):
                 offenders.append(rel)
 
     assert offenders == []
@@ -157,7 +157,7 @@ def test_agent_production_entrypoints_do_not_import_legacy_graph():
         path
         for path in entrypoints
         if any(
-            module == "voidx.agent.infrastructure.langgraph.runtime" or module.startswith("voidx.agent.infrastructure.langgraph.runtime.")
+            module == "voidx.agent.adapters.langgraph.runtime" or module.startswith("voidx.agent.adapters.langgraph.runtime.")
             for module in _imported_modules(path)
         )
     ]
@@ -177,7 +177,7 @@ def test_run_loop_lives_in_application_without_legacy_alias():
     assert "class AgentService" in source
     assert "GraphRunLoopMixin" not in source
     assert not any(
-        module == "voidx.agent.infrastructure.langgraph.runtime" or module.startswith("voidx.agent.infrastructure.langgraph.runtime.")
+        module == "voidx.agent.adapters.langgraph.runtime" or module.startswith("voidx.agent.adapters.langgraph.runtime.")
         for module in _imported_modules("src/voidx/agent/application/agent_service.py")
     )
 
