@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import voidx.llm.providers.base as base
 from voidx.llm.providers.base import ProviderSpec
 from voidx.llm.providers.common import nested_reasoning
 
 
-base.register(ProviderSpec(
+SPEC = ProviderSpec(
     name="xunfei-coding-plan",
     protocol="openai",
     default_base_url="https://maas-coding-api.cn-huabei-1.xf-yun.com/v2",
@@ -16,4 +15,4 @@ base.register(ProviderSpec(
         "astron-code-latest",
     ),
     reasoning=nested_reasoning,
-))
+)

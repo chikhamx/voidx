@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from voidx.llm.domain.model import ModelConfig
 from voidx.llm.domain.model import ReasoningEffort
-import voidx.llm.providers.base as base
 from voidx.llm.providers.base import PROTOCOL_DEEPSEEK, ProviderSpec
 from voidx.llm.providers.common import map_effort, resolve_effort, thinking_toggle
 
@@ -34,7 +33,7 @@ def _temperature_override(config: ModelConfig) -> float | None:
     return 1.0
 
 
-base.register(ProviderSpec(
+SPEC = ProviderSpec(
     name="kimi",
     protocol=PROTOCOL_DEEPSEEK,
     default_base_url="https://api.kimi.com/coding/v1",
@@ -49,4 +48,4 @@ base.register(ProviderSpec(
     ),
     reasoning=_reasoning,
     temperature_override=_temperature_override,
-))
+)

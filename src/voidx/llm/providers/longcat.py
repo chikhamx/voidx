@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import voidx.llm.providers.base as base
 from voidx.llm.providers.base import PROTOCOL_DEEPSEEK, ProviderSpec
 from voidx.llm.providers.common import thinking_toggle
 
-base.register(ProviderSpec(
+SPEC = ProviderSpec(
     name="longcat",
     protocol=PROTOCOL_DEEPSEEK,
     default_base_url="https://api.longcat.chat/openai/v1",
@@ -15,4 +14,4 @@ base.register(ProviderSpec(
         "LongCat-2.0",
     ),
     reasoning=thinking_toggle,
-))
+)

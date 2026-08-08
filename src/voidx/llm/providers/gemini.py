@@ -6,7 +6,6 @@ import subprocess
 import sys
 
 from voidx.llm.domain.model import ModelConfig
-import voidx.llm.providers.base as base
 from voidx.llm.providers.base import ProviderSpec
 from voidx.llm.domain.model import ReasoningEffort
 from voidx.llm.providers.common import GEMINI_THINKING_BUDGETS, map_effort, resolve_effort
@@ -115,7 +114,7 @@ def ensure_gemini_dep() -> None:
     )
 
 
-base.register(ProviderSpec(
+SPEC = ProviderSpec(
     name="gemini",
     protocol="gemini",
     context_limit=1_000_000,
@@ -125,4 +124,4 @@ base.register(ProviderSpec(
         "gemini-2.0-flash",
     ),
     reasoning=gemini_reasoning,
-))
+)

@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import voidx.llm.providers.base as base
 from voidx.llm.providers.base import PROTOCOL_DEEPSEEK, ProviderSpec
 from voidx.llm.providers.common import zhipu_reasoning
 
 
 
 
-base.register(ProviderSpec(
+SPEC = ProviderSpec(
     name="zhipu",
     protocol=PROTOCOL_DEEPSEEK,
     default_base_url="https://open.bigmodel.cn/api/paas/v4",
@@ -21,4 +20,4 @@ base.register(ProviderSpec(
         "glm-4.7-flash",
     ),
     reasoning=zhipu_reasoning,
-))
+)

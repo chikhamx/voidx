@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from voidx.llm.domain.model import ModelConfig
 from voidx.llm.domain.model import ReasoningEffort
-import voidx.llm.providers.base as base
 from voidx.llm.providers.base import PROTOCOL_DEEPSEEK, ProviderSpec
 from voidx.llm.providers.common import ANTHROPIC_BUDGETS, resolve_effort
 
@@ -30,7 +29,7 @@ def _reasoning(config: ModelConfig) -> dict:
     return {"extra_body": {"enable_thinking": True, "thinking_budget": budget}}
 
 
-base.register(ProviderSpec(
+SPEC = ProviderSpec(
     name="qwen",
     protocol=PROTOCOL_DEEPSEEK,
     default_base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -43,4 +42,4 @@ base.register(ProviderSpec(
         "qwen-turbo",
     ),
     reasoning=_reasoning,
-))
+)

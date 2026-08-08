@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import voidx.llm.providers.base as base
 from voidx.llm.providers.base import PROTOCOL_DEEPSEEK, ProviderSpec
 from voidx.llm.providers.common import zhipu_reasoning
 
 
-base.register(ProviderSpec(
+SPEC = ProviderSpec(
     name="typex",
     protocol=PROTOCOL_DEEPSEEK,
     default_base_url="https://newapi.typex-test.cn/v1",
@@ -16,4 +15,4 @@ base.register(ProviderSpec(
         "zai-org/GLM-5-FP8",
     ),
     reasoning=zhipu_reasoning,
-))
+)

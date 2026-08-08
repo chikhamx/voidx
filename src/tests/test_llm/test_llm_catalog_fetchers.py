@@ -4,8 +4,8 @@ Covers:
   - OpenAI-compatible fetcher (used by 12 providers)
   - Anthropic fetcher
   - Gemini fetcher
-  - Fallback to STATIC_MODELS when no API key or fetcher fails
-  - All 14 providers have fetchers registered
+  - Fallback to explicit provider static models when fetching fails
+  - All built-in providers have explicit catalog entries
 """
 
 from __future__ import annotations
@@ -14,6 +14,12 @@ import httpx
 import pytest
 
 from voidx.llm import catalog
+from voidx.llm.providers.catalog import PROVIDER_SPECS
+
+
+def _static(provider: str) -> list[str]:
+    spec = next(item for item in PROVIDER_SPECS if item.name == provider)
+    return list(spec.static_models)
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
@@ -140,15 +146,15 @@ async def test_fetched_models_are_sorted_latest_first(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_openai_compatible_fetcher_no_key_falls_back(monkeypatch):
-    """Without an API key, fetcher returns STATIC_MODELS."""
+    """Without an API key, fetcher returns the provider spec fallback."""
     monkeypatch.setattr(catalog, "_settings", FakeSettings(keys={}))
     models = await catalog.list_models("deepseek")
-    assert models == catalog.STATIC_MODELS["deepseek"]
+    assert models == _static("deepseek")
 
 
 @pytest.mark.asyncio
 async def test_openai_compatible_fetcher_http_error_falls_back(monkeypatch):
-    """On HTTP error, fetcher returns STATIC_MODELS."""
+    """On HTTP error, fetcher returns the provider spec fallback."""
     monkeypatch.setattr(catalog, "_settings", FakeSettings(keys={"deepseek": "sk-test"}))
 
     def handler(method, url, headers, params):
@@ -156,7 +162,7 @@ async def test_openai_compatible_fetcher_http_error_falls_back(monkeypatch):
 
     _mock_httpx(monkeypatch, handler)
     models = await catalog.list_models("deepseek")
-    assert models == catalog.STATIC_MODELS["deepseek"]
+    assert models == _static("deepseek")
 
 
 # ── Anthropic fetcher ──────────────────────────────────────────────────────
@@ -186,7 +192,7 @@ async def test_anthropic_fetcher_parses_models(monkeypatch):
 async def test_anthropic_fetcher_no_key_falls_back(monkeypatch):
     monkeypatch.setattr(catalog, "_settings", FakeSettings(keys={}))
     models = await catalog.list_models("anthropic")
-    assert models == catalog.STATIC_MODELS["anthropic"]
+    assert models == _static("anthropic")
 
 
 # ── Gemini fetcher ─────────────────────────────────────────────────────────
@@ -218,7 +224,7 @@ async def test_gemini_fetcher_parses_models(monkeypatch):
 async def test_gemini_fetcher_no_key_falls_back(monkeypatch):
     monkeypatch.setattr(catalog, "_settings", FakeSettings(keys={}))
     models = await catalog.list_models("gemini")
-    assert models == catalog.STATIC_MODELS["gemini"]
+    assert models == _static("gemini")
 
 
 @pytest.mark.asyncio
@@ -283,7 +289,7 @@ async def test_configured_custom_provider_falls_back_to_local_models(monkeypatch
         protocol="gemini",
     )
 
-    assert models == ["models/gemini-3.1-pro-high"] + catalog.STATIC_MODELS["gemini"]
+    assert models == ["models/gemini-3.1-pro-high"] + _static("gemini")
 
 
 @pytest.mark.asyncio
@@ -301,30 +307,25 @@ async def test_configured_custom_provider_falls_back_to_protocol_static_models(m
         protocol="gemini",
     )
 
-    assert models == catalog.STATIC_MODELS["gemini"]
+    assert models == _static("gemini")
 
 
-# ── registration coverage ─────────────────────────────────────────────────
+# ── explicit catalog coverage ─────────────────────────────────────────────
 
 
-def test_all_builtin_providers_have_fetchers():
-    """Every built-in provider should have a fetcher registered."""
-    expected = {
+def test_all_builtin_providers_have_static_catalog_entries():
+    names = {spec.name for spec in PROVIDER_SPECS}
+    assert names == {
         "anthropic", "openai", "openrouter",
         "deepseek", "mimo", "mimo-token-plan",
         "qwen", "zhipu", "kimi", "doubao",
         "typex", "minimax", "longcat",
         "xunfei-coding-plan", "gemini",
     }
-    registered = set(catalog._fetchers.keys())
-    missing = expected - registered
-    assert not missing, f"Providers without fetchers: {missing}"
 
 
 def test_gemini_has_static_fallback():
-    """Gemini must have a STATIC_MODELS entry for fallback."""
-    assert "gemini" in catalog.STATIC_MODELS
-    assert len(catalog.STATIC_MODELS["gemini"]) > 0
+    assert _static("gemini")
 
 
 @pytest.mark.asyncio

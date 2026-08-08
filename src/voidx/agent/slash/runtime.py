@@ -5,15 +5,17 @@ from __future__ import annotations
 import asyncio
 import sys
 
-def _builtin_providers() -> list[str]:
-    from voidx.llm.providers import all_specs
+def _builtin_providers(provider_specs=None) -> list[str]:
+    if provider_specs is None:
+        from voidx.llm.providers.catalog import PROVIDER_SPECS
 
-    return [spec.name for spec in all_specs()]
+        provider_specs = PROVIDER_SPECS
+    return [spec.name for spec in provider_specs]
 
 
-async def get_providers(settings=None) -> list[str]:
-    """Return registered providers merged with custom settings providers."""
-    base = _builtin_providers()
+async def get_providers(settings=None, *, provider_specs=None) -> list[str]:
+    """Return built-in providers merged with custom settings providers."""
+    base = _builtin_providers(provider_specs)
     if settings:
         for profile in await settings.list_profiles():
             if profile.provider not in base:

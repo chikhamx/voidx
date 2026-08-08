@@ -22,7 +22,6 @@ from langchain_core.messages import AIMessageChunk
 from langchain_core.outputs import ChatGenerationChunk
 
 from voidx.llm.domain.model import ModelConfig
-import voidx.llm.providers.base as base
 from voidx.llm.providers.base import PROTOCOL_DEEPSEEK, ProviderSpec
 from voidx.llm.domain.model import ReasoningEffort
 from voidx.llm.providers.common import map_effort, preserve_reasoning_delta, resolve_effort
@@ -118,7 +117,31 @@ class DeepSeekChatOpenAI(ChatOpenAI):
         module).  Unknown providers with the deepseek protocol fall back
         to the DeepSeek format.
         """
-        spec = base.get(config.provider)
+        if config.provider == "deepseek":
+            spec = SPEC
+        else:
+            from voidx.llm.providers.doubao import SPEC as doubao_spec
+            from voidx.llm.providers.kimi import SPEC as kimi_spec
+            from voidx.llm.providers.longcat import SPEC as longcat_spec
+            from voidx.llm.providers.mimo import SPECS as mimo_specs
+            from voidx.llm.providers.minimax import SPEC as minimax_spec
+            from voidx.llm.providers.qwen import SPEC as qwen_spec
+            from voidx.llm.providers.typex import SPEC as typex_spec
+            from voidx.llm.providers.xunfei import SPEC as xunfei_spec
+            from voidx.llm.providers.zhipu import SPEC as zhipu_spec
+
+            specs = (
+                doubao_spec,
+                kimi_spec,
+                longcat_spec,
+                *mimo_specs,
+                minimax_spec,
+                qwen_spec,
+                typex_spec,
+                xunfei_spec,
+                zhipu_spec,
+            )
+            spec = {item.name: item for item in specs}.get(config.provider)
         if spec is not None and spec.reasoning is not None:
             return spec.reasoning(config)
         return _reasoning(config)
@@ -142,7 +165,7 @@ def _temperature_override(config: ModelConfig) -> float | None:
     return config.temperature
 
 
-base.register(ProviderSpec(
+SPEC = ProviderSpec(
     name="deepseek",
     protocol=PROTOCOL_DEEPSEEK,
     default_base_url="https://api.deepseek.com/v1",
@@ -153,4 +176,4 @@ base.register(ProviderSpec(
     ),
     reasoning=_reasoning,
     temperature_override=_temperature_override,
-))
+)

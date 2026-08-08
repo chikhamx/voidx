@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from voidx.llm.providers import all_specs
+from voidx.llm.providers.catalog import PROVIDER_SPECS
 
 from .snapshot import assert_snapshot
 
@@ -10,7 +10,7 @@ def test_provider_catalog_contract() -> None:
     from voidx.llm.domain.model import ReasoningEffort
 
     providers = []
-    for spec in all_specs():
+    for spec in PROVIDER_SPECS:
         model = spec.static_models[0] if spec.static_models else "contract-model"
         matrix = []
         for effort in ReasoningEffort:

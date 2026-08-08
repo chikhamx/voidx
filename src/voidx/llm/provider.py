@@ -21,7 +21,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
 
 from voidx.llm.domain.model import ModelConfig
-from voidx.llm.providers import get
+from voidx.llm.providers.catalog import PROVIDER_SPECS
 from voidx.llm.providers.base import PROTOCOL_DEEPSEEK
 from voidx.llm.providers.anthropic import anthropic_reasoning as _anthropic_reasoning_kwargs
 from voidx.llm.providers.deepseek import DeepSeekChatOpenAI
@@ -46,7 +46,7 @@ from voidx.llm.providers.openai import (
 def resolve_protocol(config: ModelConfig) -> str:
     if config.protocol:
         return config.protocol
-    spec = get(config.provider)
+    spec = next((item for item in PROVIDER_SPECS if item.name == config.provider), None)
     return spec.protocol if spec is not None else "openai"
 
 
@@ -55,7 +55,7 @@ def _normalize_base_url(url: str) -> str:
 
 
 def _resolve_base_url(config: ModelConfig, protocol: str) -> str:
-    spec = get(config.provider)
+    spec = next((item for item in PROVIDER_SPECS if item.name == config.provider), None)
     stale_openai_base_url = (
         spec is not None
         and spec.protocol != "openai"
@@ -72,7 +72,7 @@ def _resolve_base_url(config: ModelConfig, protocol: str) -> str:
 
 
 def _reasoning_kwargs(config: ModelConfig, protocol: str) -> dict:
-    spec = get(config.provider)
+    spec = next((item for item in PROVIDER_SPECS if item.name == config.provider), None)
     if spec is not None:
         return spec.reasoning(config) if spec.reasoning is not None else {}
     if protocol == "anthropic":
@@ -178,7 +178,7 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
     # Resolve temperature: delegate to provider spec when it defines a
     # temperature_override hook (e.g. deepseek-reasoner → None, kimi → 1.0,
     # openai reasoning models → 1.0).  Fall back to config.temperature.
-    spec = get(config.provider)
+    spec = next((item for item in PROVIDER_SPECS if item.name == config.provider), None)
     if spec is not None and spec.temperature_override is not None:
         temp = spec.temperature_override(config)
     else:
@@ -264,7 +264,7 @@ def get_context_limit(provider: str, protocol: str = "", context_window: int | N
     """Return context-window limit for *provider*.  Falls back to *protocol* for unknown providers."""
     if context_window is not None and context_window > 0:
         return context_window
-    spec = get(provider)
+    spec = next((item for item in PROVIDER_SPECS if item.name == provider), None)
     if spec is not None and spec.context_limit:
         return spec.context_limit
     return 200_000

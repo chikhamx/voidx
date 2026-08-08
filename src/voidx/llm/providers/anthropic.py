@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from voidx.llm.domain.model import ModelConfig
-import voidx.llm.providers.base as base
 from voidx.llm.providers.base import ProviderSpec
 from voidx.llm.domain.model import ReasoningEffort
 from voidx.llm.providers.common import ANTHROPIC_BUDGETS, map_effort, resolve_effort
@@ -45,7 +44,7 @@ def anthropic_reasoning(config: ModelConfig) -> dict:
     return {"thinking": {"type": "enabled", "budget_tokens": budget}}
 
 
-base.register(ProviderSpec(
+SPEC = ProviderSpec(
     name="anthropic",
     protocol="anthropic",
     default_base_url="https://api.anthropic.com",
@@ -57,4 +56,4 @@ base.register(ProviderSpec(
         "claude-haiku-4-5",
     ),
     reasoning=anthropic_reasoning,
-))
+)

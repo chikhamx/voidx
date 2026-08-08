@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from voidx.llm.domain.model import ModelConfig
 from voidx.llm.domain.model import ReasoningEffort
-import voidx.llm.providers.base as base
 from voidx.llm.providers.base import PROTOCOL_DEEPSEEK, ProviderSpec
 from voidx.llm.providers.common import resolve_effort
 
@@ -28,7 +27,7 @@ def _reasoning(config: ModelConfig) -> dict:
     return {"extra_body": {"thinking": {"type": thinking_type}}}
 
 
-base.register(ProviderSpec(
+SPEC = ProviderSpec(
     name="doubao",
     protocol=PROTOCOL_DEEPSEEK,
     default_base_url="https://ark.cn-beijing.volces.com/api/v3",
@@ -39,4 +38,4 @@ base.register(ProviderSpec(
         "doubao-seed-1.6-flash",
     ),
     reasoning=_reasoning,
-))
+)

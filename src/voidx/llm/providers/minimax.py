@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from voidx.llm.domain.model import ModelConfig
 from voidx.llm.domain.model import ReasoningEffort
-import voidx.llm.providers.base as base
 from voidx.llm.providers.base import PROTOCOL_DEEPSEEK, ProviderSpec
 from voidx.llm.providers.common import resolve_effort
 
@@ -17,7 +16,7 @@ def _reasoning(config: ModelConfig) -> dict:
     return {"extra_body": {"thinking": {"type": "enabled"}, "reasoning_split": True}}
 
 
-base.register(ProviderSpec(
+SPEC = ProviderSpec(
     name="minimax",
     protocol=PROTOCOL_DEEPSEEK,
     default_base_url="https://api.minimax.io/v1",
@@ -30,4 +29,4 @@ base.register(ProviderSpec(
         "MiniMax-M2.5-highspeed",
     ),
     reasoning=_reasoning,
-))
+)

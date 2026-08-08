@@ -1,7 +1,7 @@
 """Model catalog — typed abstraction over provider model discovery.
 
-Each provider registers a fetcher (async callable returning model names).
-Providers without fetchers fall back to STATIC_MODELS.
+Built-in provider fetchers are selected from explicit provider specifications.
+Providers without dynamic results fall back to their declared static models.
 
 Per-provider metadata (static models, default base URLs, protocols) comes
 from the :mod:`voidx.llm.providers` registry; this module keeps the fetch
@@ -23,18 +23,21 @@ from collections.abc import Awaitable, Callable
 
 import httpx
 
-from voidx.llm.providers import all_specs, get
+from voidx.llm.providers.base import ProviderSpec
+from voidx.llm.providers.catalog import PROVIDER_SPECS
 from voidx.llm.providers.gemini import strip_gemini_version_suffix
 from voidx.logging.tool_log import log_tool_event
 
 
-# ── static fallbacks (derived from the provider registry) ─────────────────
+# ── static fallbacks ─────────────────────────────────────────────────────
 
-STATIC_MODELS: dict[str, list[str]] = {
-    spec.name: list(spec.static_models)
-    for spec in all_specs()
-    if spec.static_models
-}
+def _provider_spec(provider: str, provider_specs: tuple[ProviderSpec, ...] = PROVIDER_SPECS) -> ProviderSpec | None:
+    return next((spec for spec in provider_specs if spec.name == provider), None)
+
+def _static_models(provider: str, provider_specs: tuple[ProviderSpec, ...] = PROVIDER_SPECS) -> list[str]:
+    spec = _provider_spec(provider, provider_specs)
+    return list(spec.static_models) if spec is not None else []
+
 
 _VERSION_TOKEN_RE = re.compile(r"\d+")
 
@@ -70,7 +73,7 @@ def register_fetcher(provider: str, fetcher: Callable[[], Awaitable[list[str]]])
 OPENROUTER_API = "https://openrouter.ai/api/v1/models"
 
 
-async def _fetch_openrouter_models() -> list[str]:
+async def _fetch_openrouter_models(*, provider_specs: tuple[ProviderSpec, ...] = PROVIDER_SPECS) -> list[str]:
     """Fetch models from OpenRouter's public /models endpoint. Free models first,
     filtered to chat/language models only, limited to a manageable count."""
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -79,7 +82,7 @@ async def _fetch_openrouter_models() -> list[str]:
             resp.raise_for_status()
             data = resp.json()
         except Exception:
-            return STATIC_MODELS.get("openrouter", [])
+            return _static_models("openrouter", provider_specs)
 
     _skip_keywords = (
         "embed", "moderation", "image", "vision", "audio",
@@ -143,7 +146,10 @@ _SKIP_KEYWORDS = (
 )
 
 
-async def _resolve_base_url(provider: str) -> str:
+async def _resolve_base_url(
+    provider: str,
+    provider_specs: tuple[ProviderSpec, ...] = PROVIDER_SPECS,
+) -> str:
     """Resolve base URL: user-configured (from settings) or built-in default."""
     if _settings is not None:
         try:
@@ -152,7 +158,7 @@ async def _resolve_base_url(provider: str) -> str:
                 return url.rstrip("/")
         except Exception as exc:
             log_tool_event("llm_resolve_base_url", tool_name="catalog", message=str(exc))
-    spec = get(provider)
+    spec = _provider_spec(provider, provider_specs)
     if spec is not None:
         return spec.default_base_url.rstrip("/")
     return ""
@@ -174,21 +180,22 @@ async def _fetch_openai_compatible_models(
     *,
     api_key: str | None = None,
     base_url: str | None = None,
+    provider_specs: tuple[ProviderSpec, ...] = PROVIDER_SPECS,
 ) -> list[str]:
     """Fetch models from an OpenAI-compatible /models endpoint.
 
     Used by every openai/deepseek-protocol provider except OpenRouter.
-    Falls back to STATIC_MODELS on any error or missing API key.
+    Falls back to the provider spec on any error or missing API key.
     """
     if api_key is None:
         api_key = await _resolve_api_key(provider)
     if not api_key:
-        return STATIC_MODELS.get(provider, [])
+        return _static_models(provider, provider_specs)
 
     if base_url is None:
-        base_url = await _resolve_base_url(provider)
+        base_url = await _resolve_base_url(provider, provider_specs)
     if not base_url:
-        return STATIC_MODELS.get(provider, [])
+        return _static_models(provider, provider_specs)
     base_url = base_url.rstrip("/")
 
     url = f"{base_url}/models"
@@ -202,7 +209,7 @@ async def _fetch_openai_compatible_models(
         except Exception as exc:
             log_tool_event("catalog_fetch_failed", tool_name="catalog",
                            message=f"Failed to fetch models for {provider}: {exc}")
-            return STATIC_MODELS.get(provider, [])
+            return _static_models(provider, provider_specs)
 
     models: list[str] = []
     seen: set[str] = set()
@@ -218,7 +225,7 @@ async def _fetch_openai_compatible_models(
             models.append(model_id)
 
     if not models:
-        return STATIC_MODELS.get(provider, [])
+        return _static_models(provider, provider_specs)
     return _sort_models_latest_first(models)[:100]
 
 
@@ -233,15 +240,16 @@ async def _fetch_anthropic_models(
     *,
     api_key: str | None = None,
     base_url: str | None = None,
+    provider_specs: tuple[ProviderSpec, ...] = PROVIDER_SPECS,
 ) -> list[str]:
     """Fetch models from Anthropic's /v1/models endpoint."""
     if api_key is None:
         api_key = await _resolve_api_key(provider)
     if not api_key:
-        return STATIC_MODELS.get(provider, [])
+        return _static_models(provider, provider_specs)
 
     if base_url is None:
-        base_url = await _resolve_base_url(provider)
+        base_url = await _resolve_base_url(provider, provider_specs)
     base_url = (base_url or _ANTHROPIC_BASE_URL).rstrip("/")
     url = f"{base_url}/v1/models"
     headers = {
@@ -257,7 +265,7 @@ async def _fetch_anthropic_models(
         except Exception as exc:
             log_tool_event("catalog_fetch_failed", tool_name="catalog",
                            message=f"Failed to fetch models for {provider}: {exc}")
-            return STATIC_MODELS.get(provider, [])
+            return _static_models(provider, provider_specs)
 
     models: list[str] = []
     seen: set[str] = set()
@@ -270,7 +278,7 @@ async def _fetch_anthropic_models(
             models.append(model_id)
 
     if not models:
-        return STATIC_MODELS.get(provider, [])
+        return _static_models(provider, provider_specs)
     return _sort_models_latest_first(models)
 
 
@@ -285,6 +293,7 @@ async def _fetch_gemini_models(
     *,
     api_key: str | None = None,
     base_url: str | None = None,
+    provider_specs: tuple[ProviderSpec, ...] = PROVIDER_SPECS,
 ) -> list[str]:
     """Fetch models from Gemini's /v1beta/models endpoint.
 
@@ -294,10 +303,10 @@ async def _fetch_gemini_models(
     if api_key is None:
         api_key = await _resolve_api_key(provider)
     if not api_key:
-        return STATIC_MODELS.get(provider, [])
+        return _static_models(provider, provider_specs)
 
     if base_url is None:
-        base_url = await _resolve_base_url(provider)
+        base_url = await _resolve_base_url(provider, provider_specs)
     base_url = base_url or _GEMINI_BASE_URL
     base_url = strip_gemini_version_suffix(base_url)
     url = f"{base_url}/v1beta/models"
@@ -312,7 +321,7 @@ async def _fetch_gemini_models(
         except Exception as exc:
             log_tool_event("catalog_fetch_failed", tool_name="catalog",
                            message=f"Failed to fetch models for {provider}: {exc}")
-            return STATIC_MODELS.get(provider, [])
+            return _static_models(provider, provider_specs)
 
     models: list[str] = []
     seen: set[str] = set()
@@ -329,21 +338,8 @@ async def _fetch_gemini_models(
             models.append(model_id)
 
     if not models:
-        return STATIC_MODELS.get(provider, [])
+        return _static_models(provider, provider_specs)
     return _sort_models_latest_first(models)
-
-
-# ── register all built-in fetchers ────────────────────────────────────────
-
-for _spec in all_specs():
-    if _spec.name == "openrouter":
-        register_fetcher("openrouter", _fetch_openrouter_models)
-    elif _spec.protocol == "anthropic":
-        register_fetcher(_spec.name, _fetch_anthropic_models)
-    elif _spec.protocol == "gemini":
-        register_fetcher(_spec.name, _fetch_gemini_models)
-    else:
-        register_fetcher(_spec.name, lambda p=_spec.name: _fetch_openai_compatible_models(p))
 
 
 async def _merge_custom(provider: str, base: list[str]) -> list[str]:
@@ -362,23 +358,20 @@ async def _merge_custom(provider: str, base: list[str]) -> list[str]:
     return _sort_models_latest_first(result)
 
 
-def _registered_static_models(provider: str) -> list[str]:
-    spec = get(provider)
-    if spec is not None and spec.static_models:
-        return list(spec.static_models)
-    return STATIC_MODELS.get(provider, [])
-
-
-def _static_fallback_models(provider: str, protocol: str | None = None) -> list[str]:
-    models = _registered_static_models(provider)
+def _static_fallback_models(
+    provider: str,
+    protocol: str | None = None,
+    provider_specs: tuple[ProviderSpec, ...] = PROVIDER_SPECS,
+) -> list[str]:
+    models = _static_models(provider, provider_specs)
     if models or not protocol:
         return _sort_models_latest_first(models)
-    return _sort_models_latest_first(_registered_static_models(protocol))
+    return _sort_models_latest_first(_static_models(protocol, provider_specs))
 
 
-async def list_fallback_models(provider: str, protocol: str | None = None) -> list[str]:
+async def list_fallback_models(provider: str, protocol: str | None = None, *, provider_specs: tuple[ProviderSpec, ...] = PROVIDER_SPECS) -> list[str]:
     """Return local custom models plus static fallback models for *provider*."""
-    return await _merge_custom(provider, _static_fallback_models(provider, protocol))
+    return await _merge_custom(provider, _static_fallback_models(provider, protocol, provider_specs))
 
 
 async def _fetch_models_for_config(
@@ -388,7 +381,7 @@ async def _fetch_models_for_config(
     base_url: str | None,
     protocol: str | None,
 ) -> list[str]:
-    spec = get(provider)
+    spec = _provider_spec(provider)
     resolved_protocol = protocol or (spec.protocol if spec is not None else "openai")
     if resolved_protocol == "anthropic":
         return await _fetch_anthropic_models(
@@ -411,14 +404,24 @@ async def _fetch_models_for_config(
 
 # ── public API ─────────────────────────────────────────────────────────────
 
-async def list_models(provider: str) -> list[str]:
+async def list_models(provider: str, *, provider_specs: tuple[ProviderSpec, ...] = PROVIDER_SPECS) -> list[str]:
     """Return available model names for a provider.
 
     If a dynamic fetcher is registered, it's called first. On failure or if
-    no fetcher exists, falls back to STATIC_MODELS.
+    no fetcher exists, falls back to the explicit provider spec.
     Custom models from settings are merged in front of the result.
     """
     fetcher = _fetchers.get(provider)
+    spec = _provider_spec(provider, provider_specs)
+    if fetcher is None and spec is not None:
+        if spec.name == "openrouter":
+            fetcher = lambda: _fetch_openrouter_models(provider_specs=provider_specs)
+        elif spec.protocol == "anthropic":
+            fetcher = lambda: _fetch_anthropic_models(provider, provider_specs=provider_specs)
+        elif spec.protocol == "gemini":
+            fetcher = lambda: _fetch_gemini_models(provider, provider_specs=provider_specs)
+        else:
+            fetcher = lambda: _fetch_openai_compatible_models(provider, provider_specs=provider_specs)
     if fetcher is not None:
         try:
             models = await fetcher()
@@ -428,7 +431,7 @@ async def list_models(provider: str) -> list[str]:
             log_tool_event("catalog_fetch_failed", tool_name="catalog", message=f"Failed to fetch models for {provider}: {exc}")
         except Exception as exc:
             log_tool_event("catalog_fetch_unexpected", tool_name="catalog", message=f"Unexpected error fetching models for {provider}: {exc}")
-    return await list_fallback_models(provider)
+    return await list_fallback_models(provider, provider_specs=provider_specs)
 
 
 async def list_models_for_config(
