@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from voidx.config.defaults import DEFAULT_MODEL
 from voidx.presentation.protocol.v2.methods import MethodParamsError
 
 
@@ -20,7 +19,8 @@ class SettingsMethods:
         return await self._desktop_settings_snapshot(settings)
 
     async def _method_settings_update(self, params: dict) -> dict:
-        from voidx.config.enums import CodeIde, PermissionMode, ReasoningEffort
+        from voidx.config.enums import PermissionMode
+        from voidx.platform.code_ide import CodeIde
         from voidx.config.models import AiApprovalConfig, Profile
 
         patch = params.get("patch", {})
@@ -99,7 +99,11 @@ class SettingsMethods:
             if any(k in model_patch for k in ("provider", "model", "base_url", "protocol")):
                 current_profile = await settings.resolve_profile()
                 default_provider = current_profile.provider if current_profile else "anthropic"
-                default_model = current_profile.model if current_profile else DEFAULT_MODEL
+                default_model = (
+                    current_profile.model
+                    if current_profile
+                    else settings.default_model
+                )
                 provider = model_patch.get("provider") or default_provider
                 model_name = model_patch.get("model") or default_model
                 profile_name = f"{provider}/{model_name}"
@@ -128,11 +132,11 @@ class SettingsMethods:
 
         # reasoning / context
         if "reasoning_effort" in model_patch if model_patch else {}:
-            valid_effort = {item.value for item in ReasoningEffort}
             effort = str(model_patch["reasoning_effort"] or "")
-            if effort and effort not in valid_effort:
-                raise MethodParamsError(f"invalid reasoning_effort: {effort}")
-            settings._set_setting("reasoning_effort", effort or None)
+            try:
+                settings.set_reasoning_effort(effort or None)
+            except ValueError as exc:
+                raise MethodParamsError(f"invalid reasoning_effort: {effort}") from exc
 
         if "context_window" in (model_patch or {}):
             ctx = model_patch["context_window"]
@@ -202,7 +206,11 @@ class SettingsMethods:
         profiles = await settings.list_profiles()
         model = {
             "provider": profile.provider if profile else "anthropic",
-            "model": profile.model if profile else DEFAULT_MODEL,
+            "model": (
+                profile.model
+                if profile
+                else settings.default_model
+            ),
             "base_url": profile.base_url if profile else None,
             "protocol": profile.protocol if profile else None,
             "reasoning_effort": settings._effective_data().get("reasoning_effort") or "xhigh",

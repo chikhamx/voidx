@@ -18,7 +18,8 @@ from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hin
 from voidx.agent.application.runtime_context import RuntimeContextBuilder
 from voidx.agent.domain.task.state import TaskState
 from voidx.agent.domain.task.todo import TodoRunState
-from voidx.config import Config, ModelConfig
+from voidx.config import Config
+from voidx.llm.domain.model import ModelConfig
 from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import CompactionResult, PreflightCompactionResult
 from voidx.llm.compaction import CompactionSelection, SUMMARY_TEMPLATE
 from voidx.llm.usage import estimate_context_tokens

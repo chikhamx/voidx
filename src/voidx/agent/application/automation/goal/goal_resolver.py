@@ -22,7 +22,7 @@ from voidx.agent.domain.task.state import (
     goal_type_from_join,
 )
 from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
-from voidx.config import ModelConfig, RetryConfig
+from voidx.config import RetryConfig
 from voidx.llm.service import create_resolver_model
 from voidx.llm.structured import ainvoke_structured, resolve_structured_output_method
 from voidx.llm.usage import (
@@ -99,7 +99,7 @@ async def resolve_goal_for_turn(
     log_diagnostic: bool = True,
     retry_config: RetryConfig | None = None,
     usage_stats: UsageStats | None = None,
-    model_config: ModelConfig | None = None,
+    model_config: Any | None = None,
 ) -> GoalResolution:
     del interaction_mode
     fallback = GoalResolution(

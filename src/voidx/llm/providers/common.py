@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from langchain_core.messages import AIMessageChunk
 
-from voidx.config import ModelConfig, ReasoningEffort
+from voidx.llm.domain.model import ModelConfig, ReasoningEffort
 
 REASONING_EFFORT_ORDER: tuple[ReasoningEffort, ...] = tuple(ReasoningEffort)
 

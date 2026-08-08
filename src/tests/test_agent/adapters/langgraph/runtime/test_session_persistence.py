@@ -29,7 +29,8 @@ from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.infrastructure.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.infrastructure.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
-from voidx.config import Config, Settings, UserProfile
+from voidx.config import Config, Settings
+from voidx.agent.domain.user_profile import UserProfile
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.llm.compaction import CompactionSelection
 from voidx.agent.application.instruction import InstructionService, WorkflowRuntimeContext

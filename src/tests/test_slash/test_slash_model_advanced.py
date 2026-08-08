@@ -10,15 +10,10 @@ from voidx.agent.slash import SlashHandler
 from tests.test_slash.context import command_context
 from voidx.agent.slash.runtime import _select_from_list
 from voidx.agent.domain.task.state import GoalSpec, TaskState
-from voidx.config import (
-    CodeIde,
-    Config,
-    McpServerConfig,
-    ModelConfig,
-    PermissionMode,
-    Settings,
-    UserProfile,
-)
+from voidx.config import Config, McpServerConfig, PermissionMode, Settings
+from voidx.platform.code_ide import CodeIde
+from voidx.llm.domain.model import ModelConfig
+from voidx.agent.domain.user_profile import UserProfile
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
 from voidx.llm.catalog import STATIC_MODELS
 from voidx.llm.usage import UsageStats

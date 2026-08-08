@@ -21,10 +21,10 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import AIMessageChunk
 from langchain_core.outputs import ChatGenerationChunk
 
-from voidx.config import ModelConfig
+from voidx.llm.domain.model import ModelConfig
 import voidx.llm.providers.base as base
 from voidx.llm.providers.base import PROTOCOL_DEEPSEEK, ProviderSpec
-from voidx.config.enums import ReasoningEffort
+from voidx.llm.domain.model import ReasoningEffort
 from voidx.llm.providers.common import map_effort, preserve_reasoning_delta, resolve_effort
 
 # DeepSeek thinking models accept none/high/max (via resolve + exit clamp).

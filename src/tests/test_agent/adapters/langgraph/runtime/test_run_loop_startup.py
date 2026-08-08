@@ -27,7 +27,8 @@ from voidx.agent.domain.task.state import (
     PlanResolution,
     TaskState,
 )
-from voidx.config import Config, ModelConfig
+from voidx.config import Config
+from voidx.llm.domain.model import ModelConfig
 from voidx.llm.usage import UsageStats
 from voidx.agent.adapters.persistence.runtime_state_repository import RuntimeStateSnapshot, save_runtime_state
 from voidx.agent.adapters.persistence.session_repository import MessageRow, create_session, get_session, load_messages, save_message, update_title

@@ -6,8 +6,8 @@ from .snapshot import assert_snapshot
 
 
 def test_provider_catalog_contract() -> None:
-    from voidx.config import ModelConfig
-    from voidx.config.enums import ReasoningEffort
+    from voidx.llm.domain.model import ModelConfig
+    from voidx.llm.domain.model import ReasoningEffort
 
     providers = []
     for spec in all_specs():

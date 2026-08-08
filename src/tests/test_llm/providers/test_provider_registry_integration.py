@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from voidx.agent.slash import runtime
-from voidx.config import ModelConfig
+from voidx.llm.domain.model import ModelConfig
 from voidx.llm import catalog, provider, service
 from voidx.llm.providers import base
 from voidx.llm.providers.base import ProviderSpec

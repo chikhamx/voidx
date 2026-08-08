@@ -10,7 +10,8 @@ from voidx.agent.infrastructure.langgraph.runtime.turn_control import (
     TURN_STOP_PROMPT,
     TURN_TOOL_DEFINITION,
 )
-from voidx.config import Config, ModelConfig
+from voidx.config import Config
+from voidx.llm.domain.model import ModelConfig
 from tests.test_agent.adapters.langgraph.runtime.stream_llm_helpers import FakeRenderer, FakeStreamingModel
 
 

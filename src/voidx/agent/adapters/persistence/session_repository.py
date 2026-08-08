@@ -12,7 +12,7 @@ import uuid
 
 from pydantic import BaseModel, Field
 
-from voidx.config.defaults import DEFAULT_MODEL
+from voidx.llm.domain.model import DEFAULT_MODEL
 from voidx.llm.message_status import message_status
 from voidx.persistence.jsonl import append_session_record, drop_session_lock, read_session_records, session_dir
 from voidx.persistence.sqlite import _execute_commit, _fetch_all, _fetch_one, _now, _write_transaction

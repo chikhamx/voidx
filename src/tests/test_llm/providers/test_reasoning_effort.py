@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from voidx.config import ModelConfig, ReasoningEffort
+from voidx.llm.domain.model import ModelConfig, ReasoningEffort
 from voidx.llm.providers.common import (
     map_effort,
     nested_reasoning,

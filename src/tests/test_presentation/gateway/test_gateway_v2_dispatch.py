@@ -217,7 +217,13 @@ async def test_commands_run_validates_open_ui_fill_and_dangerous_commands():
     assert hasattr(dangerous_result, "error")
     assert dangerous_result.error.message == "confirmation required"
 @pytest.mark.asyncio
-async def test_settings_get_returns_desktop_settings_snapshot(tmp_path):
+async def test_settings_get_returns_desktop_settings_snapshot(tmp_path, monkeypatch):
+    from voidx.config.settings import Settings
+
+    async def unexpected_build_config(*args, **kwargs):
+        raise AssertionError("default model fallback must not build full config")
+
+    monkeypatch.setattr(Settings, "build_config", unexpected_build_config)
     dock = BottomInputDock()
     session = GatewaySession(lambda: dock.tree, thread_id="t1", workspace=str(tmp_path))
 

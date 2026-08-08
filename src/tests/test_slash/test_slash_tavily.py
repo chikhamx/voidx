@@ -10,14 +10,10 @@ from voidx.agent.slash import SlashHandler
 from tests.test_slash.context import command_context
 from voidx.agent.slash.runtime import _select_from_list
 from voidx.agent.domain.task.state import GoalSpec, TaskState
-from voidx.config import (
-    CodeIde,
-    Config,
-    McpServerConfig,
-    ModelConfig,
-    Settings,
-    UserProfile,
-)
+from voidx.config import Config, McpServerConfig, Settings
+from voidx.platform.code_ide import CodeIde
+from voidx.llm.domain.model import ModelConfig
+from voidx.agent.domain.user_profile import UserProfile
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
 from voidx.llm.catalog import STATIC_MODELS
 from voidx.llm.usage import UsageStats
@@ -148,7 +144,7 @@ async def test_tavily_delete_removes_key_from_mcp_server_env_and_routes(tmp_path
         env={"TAVILY_API_KEY": "tvly-old", "OTHER": "1"},
         tools=["tavily_search", "tavily_extract"],
     ))
-    from voidx.config import WebToolRoute
+    from voidx.tooling.domain.web import WebToolRoute
     settings.set_web_tool_route("search", WebToolRoute(backend="mcp", server="tavily", tool="tavily_search"))
     settings.set_web_tool_route("fetch", WebToolRoute(backend="mcp", server="tavily", tool="tavily_extract"))
     graph = command_context(settings=settings, app=None)

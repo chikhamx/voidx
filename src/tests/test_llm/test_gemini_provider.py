@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from langchain_core.messages import AIMessageChunk
 
-from voidx.config import ModelConfig
+from voidx.llm.domain.model import ModelConfig
 from voidx.llm.provider import (
     create_chat_model,
     create_resolver_model,

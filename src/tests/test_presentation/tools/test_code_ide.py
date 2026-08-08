@@ -2,7 +2,7 @@ import sys
 from pathlib import Path, PurePosixPath
 
 
-from voidx.config import CodeIde
+from voidx.platform.code_ide import CodeIde
 from voidx.presentation.tools.code_ide import IdeCandidate, build_open_command, choose_ide, normalize_ide
 
 

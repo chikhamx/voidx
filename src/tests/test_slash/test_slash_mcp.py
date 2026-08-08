@@ -8,7 +8,8 @@ import pytest
 
 from voidx.agent.slash import SlashHandler
 from tests.test_slash.context import command_context
-from voidx.config import McpServerConfig, Settings, WebToolRoute
+from voidx.config import McpServerConfig, Settings
+from voidx.tooling.domain.web import WebToolRoute
 from voidx.mcp.schema import McpToolDef
 from voidx.presentation.commands import filter_commands
 

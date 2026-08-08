@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 
 
-from voidx.config import Settings, WebToolRoute
+from voidx.config import Settings
+from voidx.tooling.domain.web import WebToolRoute
 from voidx.mcp.schema import McpCallResult
 from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 from voidx.tooling.builtin.web.content import WEB_TOOL_CACHE

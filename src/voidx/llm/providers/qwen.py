@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from voidx.config import ModelConfig
-from voidx.config.enums import ReasoningEffort
+from voidx.llm.domain.model import ModelConfig
+from voidx.llm.domain.model import ReasoningEffort
 import voidx.llm.providers.base as base
 from voidx.llm.providers.base import PROTOCOL_DEEPSEEK, ProviderSpec
 from voidx.llm.providers.common import ANTHROPIC_BUDGETS, resolve_effort

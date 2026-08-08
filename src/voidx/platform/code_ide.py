@@ -11,6 +11,24 @@ from pathlib import Path
 
 from typing import Any
 
+from enum import Enum
+
+
+class CodeIde(str, Enum):
+    """Preferred app for opening files from the review panel."""
+
+    AUTO = "auto"
+    TRAE = "trae"
+    CURSOR = "cursor"
+    CODE = "code"
+    WINDSURF = "windsurf"
+    ZED = "zed"
+    SUBLIME = "sublime"
+    JETBRAINS = "jetbrains"
+    GHOSTTY = "ghostty"
+    SYSTEM = "system"
+
+
 
 @dataclass(frozen=True)
 class IdeCandidate:

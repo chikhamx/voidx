@@ -16,7 +16,8 @@ from voidx.agent.application.prompts import BaseSystemPrompt, WorkflowRuntimePro
 from voidx.agent.domain.prompt_contracts import ContextSection
 from voidx.agent.domain.task.state import GoalSpec
 from voidx.agent.domain.task.todo import TodoRunState
-from voidx.config import Config, UserProfile
+from voidx.config import Config
+from voidx.agent.domain.user_profile import UserProfile
 from voidx.agent.domain.task.intent import InteractionMode, TaskIntent
 from voidx.agent.domain.task.todo import TodoStatus
 from voidx.mcp.context import has_mcp_tool_context, strip_mcp_tool_context

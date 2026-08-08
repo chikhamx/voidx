@@ -31,7 +31,8 @@ def test_main_does_not_import_graph_implementation() -> None:
 
 @pytest.mark.asyncio
 async def test_run_chat_builds_agent_through_composition(monkeypatch, tmp_path) -> None:
-    from voidx.config import Config, ModelConfig
+    from voidx.config import Config
+    from voidx.llm.domain.model import ModelConfig
     from voidx.main import _run_chat
 
     captured = SimpleNamespace(build_kwargs=None, run_kwargs=None)

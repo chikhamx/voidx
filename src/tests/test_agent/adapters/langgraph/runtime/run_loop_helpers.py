@@ -24,7 +24,8 @@ from voidx.agent.infrastructure.memory_session import MemorySessionAdapter
 from voidx.agent.infrastructure.null_events import NullEventPublisher
 from voidx.agent.domain.turn.state import TurnPhase
 from voidx.agent.infrastructure.langgraph.execution import _sanitize_generated_title
-from voidx.config import Config, ModelConfig
+from voidx.config import Config
+from voidx.llm.domain.model import ModelConfig
 from voidx.llm.usage import UsageStats
 from voidx.agent.domain.task.intent import InteractionMode
 from voidx.agent.domain.task.state import TaskState

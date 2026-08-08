@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 import time
-from voidx.config import CodeIde
+from voidx.platform.code_ide import CodeIde
 from voidx.selfupdate import UpgradeResult
 from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 

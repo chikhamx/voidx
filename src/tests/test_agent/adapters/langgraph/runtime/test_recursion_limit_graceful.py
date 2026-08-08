@@ -13,7 +13,8 @@ from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import PreflightCompactionResult
-from voidx.config import Config, ModelConfig
+from voidx.config import Config
+from voidx.llm.domain.model import ModelConfig
 
 
 @pytest.mark.asyncio

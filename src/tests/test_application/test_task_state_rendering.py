@@ -20,7 +20,8 @@ from voidx.agent.infrastructure.langgraph.state import AgentState
 from voidx.agent.domain.task.state import GoalSpec, TaskState
 from voidx.agent.domain.task.todo import TodoRunState
 from voidx.agent.domain.automation.workflow import WorkflowRoute
-from voidx.config import Config, UserProfile
+from voidx.config import Config
+from voidx.agent.domain.user_profile import UserProfile
 from voidx.skills.context import (
     SKILL_TOOL_CONTEXT_MARKER,
     SKILL_TOOL_CONTEXT_STRIPPED_MARKER,

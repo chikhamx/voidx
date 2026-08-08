@@ -4,7 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from voidx.config import Config, ModelConfig, Profile
+from voidx.config import Config, Profile
+from voidx.llm.domain.model import ModelConfig
 from voidx.main import _run_chat
 
 

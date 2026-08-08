@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from voidx.agent.slash.runtime import _select_from_list
-from voidx.config import UserProfile
+from voidx.agent.domain.user_profile import UserProfile
 from voidx.agent.slash.helpers import _normalize_language, _normalize_tone
 
 

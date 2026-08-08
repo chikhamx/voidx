@@ -6,7 +6,7 @@ from functools import lru_cache
 
 import tiktoken
 
-from voidx.config.defaults import DEFAULT_MODEL
+from voidx.llm.domain.model import DEFAULT_MODEL
 
 
 @lru_cache(maxsize=64)

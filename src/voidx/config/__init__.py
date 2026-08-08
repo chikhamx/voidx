@@ -1,20 +1,13 @@
 """Configuration system — typed, JSON-backed, no .env restrictions."""
 
-from voidx.config.enums import (
-    CodeIde,
-    PermissionMode,
-    ReasoningEffort,
-)
+from voidx.config.enums import PermissionMode
 from voidx.config.models import (
     AgentConfig,
     AiApprovalConfig,
     Config,
     McpServerConfig,
-    ModelConfig,
     Profile,
     RetryConfig,
-    UserProfile,
-    WebToolRoute,
 )
 from voidx.config.settings import SETTINGS_FILE, SKILLS_STATE_FILE, Settings
 
@@ -23,15 +16,10 @@ __all__ = [
     "SKILLS_STATE_FILE",
     "AgentConfig",
     "AiApprovalConfig",
-    "CodeIde",
     "Config",
     "McpServerConfig",
-    "ModelConfig",
     "PermissionMode",
-    "ReasoningEffort",
     "Profile",
     "RetryConfig",
     "Settings",
-    "UserProfile",
-    "WebToolRoute",
 ]

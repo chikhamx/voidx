@@ -20,7 +20,8 @@ from voidx.agent.infrastructure.langgraph.runtime.convergence import is_step_hin
 from voidx.agent.application.runtime_context import RuntimeContextBuilder
 from voidx.agent.domain.task.state import TaskState
 from voidx.agent.domain.task.todo import TodoRunState
-from voidx.config import Config, ModelConfig
+from voidx.config import Config
+from voidx.llm.domain.model import ModelConfig
 from voidx.llm.compaction import CompactionSelection
 from voidx.llm.message_markers import is_guidance_message
 from voidx.agent.adapters.persistence.context_frame_repository import load_context_frames

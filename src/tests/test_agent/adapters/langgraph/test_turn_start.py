@@ -18,7 +18,8 @@ import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
-from voidx.config import Config, ModelConfig
+from voidx.config import Config
+from voidx.llm.domain.model import ModelConfig
 from tests.test_agent.adapters.langgraph.runtime.stream_llm_helpers import FakeRenderer
 from tests.test_agent.adapters.langgraph.runtime.test_turn_control_integration import (
     ScriptedStreamingModel,

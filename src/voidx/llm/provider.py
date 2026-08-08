@@ -20,7 +20,7 @@ import os
 from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
 
-from voidx.config import ModelConfig
+from voidx.llm.domain.model import ModelConfig
 from voidx.llm.providers import get
 from voidx.llm.providers.base import PROTOCOL_DEEPSEEK
 from voidx.llm.providers.anthropic import anthropic_reasoning as _anthropic_reasoning_kwargs

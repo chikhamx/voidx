@@ -1,7 +1,7 @@
 """Slash /ide commands."""
 from __future__ import annotations
 
-from voidx.config import CodeIde
+from voidx.platform.code_ide import CodeIde
 from voidx.platform.code_ide import code_ide_status, detect_code_ides, normalize_ide
 from voidx.agent.slash.helpers import _ide_label
 

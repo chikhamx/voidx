@@ -7,7 +7,8 @@ import shlex
 import sys
 from collections.abc import Mapping
 from voidx.agent.slash.runtime import _select_from_list
-from voidx.config import McpServerConfig, WebToolRoute
+from voidx.config import McpServerConfig
+from voidx.tooling.domain.web import WebToolRoute
 from voidx.agent.slash.helpers import _parse_env_pairs
 
 

@@ -11,8 +11,10 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Literal
 
-from voidx.config.defaults import DEFAULT_MODEL, DEFAULT_PROVIDER
-from voidx.config.models import Config, ModelConfig, Profile, UserProfile
+from voidx.llm.domain.model import DEFAULT_MODEL, DEFAULT_PROVIDER
+from voidx.config.models import Config, Profile
+from voidx.llm.domain.model import ModelConfig
+from voidx.agent.domain.user_profile import UserProfile
 from voidx.config.ports import ModelProfileStore
 from voidx.config.settings_agent import SettingsAgentMixin
 from voidx.config.settings_api_keys import SettingsApiKeyMixin
@@ -418,6 +420,17 @@ class Settings(
         if changed:
             self._save()
         return path
+
+    @property
+    def default_model(self) -> str:
+        return DEFAULT_MODEL
+
+    def set_reasoning_effort(self, value: str | None) -> None:
+        if not value:
+            self._set_setting("reasoning_effort", None)
+            return
+        effort = ModelConfig(reasoning_effort=value).reasoning_effort.value
+        self._set_setting("reasoning_effort", effort)
 
     # ── build config for graph ───────────────────────────────────────────
 

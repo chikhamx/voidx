@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from voidx.config.models import WebToolRoute
+from voidx.tooling.domain.web import WebToolRoute
 
 
 class SettingsWebMixin:

@@ -4,22 +4,27 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from voidx.agent.domain.user_profile import UserProfile
+from voidx.config.enums import PermissionMode
+from voidx.llm.domain.model import ModelConfig
+from voidx.mcp.domain.config import McpServerConfig
+from voidx.platform.retry_config import RetryConfig
+from voidx.tooling.domain.web import WebToolRoute
+
 
 class AiApprovalConfig(BaseModel):
     profile_name: str = ""
     timeout_seconds: float = Field(default=12.0, ge=1.0, le=60.0, allow_inf_nan=False)
 
-from voidx.config.defaults import DEFAULT_MODEL, DEFAULT_PROVIDER
-from voidx.config.enums import PermissionMode, ReasoningEffort
-from voidx.mcp.domain.config import McpServerConfig
-from voidx.platform.retry_config import RetryConfig
 
 class Profile(BaseModel):
-    """A named LLM configuration.  Name is ``provider/model`` (e.g. ``mimo/mimo-v2.5-pro``)."""
+    """A named LLM configuration. Name is ``provider/model``."""
+
     name: str
     api_key: str = ""
     base_url: str | None = None
     protocol: str | None = None
+
     @property
     def provider(self) -> str:
         return self.name.split("/", 1)[0] if "/" in self.name else self.name
@@ -29,40 +34,11 @@ class Profile(BaseModel):
         return self.name.split("/", 1)[1] if "/" in self.name else self.name
 
 
-class ModelConfig(BaseModel):
-    provider: str = DEFAULT_PROVIDER
-    model: str = DEFAULT_MODEL
-    base_url: str | None = None
-    protocol: str | None = None  # "openai" | "anthropic" | "gemini" | None (auto-detect)
-    temperature: float = Field(default=0.3, ge=0.0, le=2.0)
-    max_tokens: int = Field(default=8192, ge=1, le=128000)
-    reasoning_effort: ReasoningEffort = Field(
-        default=ReasoningEffort.XHIGH,
-        description="Reasoning intensity: none, low, medium, high, xhigh, max",
-    )
-    context_window: int | None = Field(
-        default=None,
-        ge=1,
-        description="Override context window size in tokens. None = auto-detect by provider.",
-    )
-
-
 class AgentConfig(BaseModel):
     name: str
     description: str = ""
     model: ModelConfig | None = None
     tools: set[str] | None = None
-
-
-class WebToolRoute(BaseModel):
-    backend: str = "legacy"  # "legacy" | "mcp"
-    server: str = ""
-    tool: str = ""
-
-
-class UserProfile(BaseModel):
-    language: str = ""
-    tone: str = ""
 
 
 class Config(BaseModel):
@@ -106,8 +82,3 @@ class Config(BaseModel):
         default=True,
         description="Log goal-resolver diagnostic events to llm_requests.jsonl.",
     )
-
-class SkillSelectionConfig(BaseModel):
-    enabled: set[str] = Field(default_factory=set)
-    disabled: set[str] = Field(default_factory=set)
-    auto: set[str] = Field(default_factory=set)

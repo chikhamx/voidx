@@ -596,7 +596,8 @@ class TestDataDirInjection:
     def test_build_permission_service_includes_data_dir(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.setenv("USERPROFILE", str(tmp_path))
-        from voidx.config import Config, ModelConfig
+        from voidx.config import Config
+        from voidx.llm.domain.model import ModelConfig
         from voidx.bootstrap.permission import build_permission_service
         from voidx.persistence.sqlite import DATA_DIR
 
@@ -611,7 +612,8 @@ class TestDataDirInjection:
     def test_build_permission_service_preserves_user_extra_paths(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.setenv("USERPROFILE", str(tmp_path))
-        from voidx.config import Config, ModelConfig
+        from voidx.config import Config
+        from voidx.llm.domain.model import ModelConfig
         from voidx.bootstrap.permission import build_permission_service
 
         user_extra = str(tmp_path / "custom")
@@ -626,7 +628,8 @@ class TestDataDirInjection:
     def test_execution_policy_from_config_includes_data_dir(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.setenv("USERPROFILE", str(tmp_path))
-        from voidx.config import Config, ModelConfig
+        from voidx.config import Config
+        from voidx.llm.domain.model import ModelConfig
         from voidx.agent.application.runtime_context import ExecutionPolicy
         from voidx.persistence.sqlite import DATA_DIR
 

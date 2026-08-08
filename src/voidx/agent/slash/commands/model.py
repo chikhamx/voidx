@@ -372,7 +372,7 @@ class ModelCommandsMixin:
         await self._pick_or_act("Switch", target, _do_switch)
 
     async def _model_reasoning(self, effort: str) -> None:
-        from voidx.config.enums import ReasoningEffort
+        from voidx.llm.domain.model import ReasoningEffort
 
         valid = tuple(item.value for item in ReasoningEffort)
 

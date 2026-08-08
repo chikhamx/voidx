@@ -4,15 +4,10 @@ import sys
 from pathlib import Path
 
 
-from voidx.config import (
-    CodeIde,
-    McpServerConfig,
-    PermissionMode,
-    Profile,
-    Settings,
-    UserProfile,
-    WebToolRoute,
-)
+from voidx.config import McpServerConfig, PermissionMode, Profile, Settings
+from voidx.platform.code_ide import CodeIde
+from voidx.agent.domain.user_profile import UserProfile
+from voidx.tooling.domain.web import WebToolRoute
 import voidx.persistence.sqlite as store
 from voidx.config.adapters.profile_repository import delete_model_profile_async
 

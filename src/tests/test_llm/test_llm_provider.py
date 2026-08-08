@@ -7,7 +7,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
-from voidx.config import ModelConfig
+from voidx.llm.domain.model import ModelConfig
 from voidx.llm.provider import (
     DeepSeekChatOpenAI,
     create_chat_model,

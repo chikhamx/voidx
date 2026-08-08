@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from voidx.config.enums import CodeIde
+from voidx.platform.code_ide import CodeIde
 
 
 class SettingsCodeIdeMixin:

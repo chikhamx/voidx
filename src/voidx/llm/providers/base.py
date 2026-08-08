@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from voidx.config import ModelConfig
+from voidx.llm.domain.model import ModelConfig
 
 # Protocol shared by China-domestic OpenAI-compatible providers.
 PROTOCOL_DEEPSEEK = "deepseek"

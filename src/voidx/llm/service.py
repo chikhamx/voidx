@@ -5,7 +5,7 @@ from __future__ import annotations
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessageChunk
 
-from voidx.config import ModelConfig
+from voidx.llm.domain.model import ModelConfig
 from voidx.llm import provider
 
 
