@@ -3689,11 +3689,11 @@
     "remove_by": "P6"
   },
   {
-    "source": "voidx.llm.catalog",
+    "source": "voidx.llm.adapters.http_model_discovery",
     "target": "voidx.logging.tool_log",
     "rule": "top_level_dependency",
-    "reason": "existing pre-refactor dependency",
-    "remove_by": "P6"
+    "reason": "logging migration is deferred to P7",
+    "remove_by": "P7"
   },
   {
     "source": "voidx.llm.context",

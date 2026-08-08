@@ -68,9 +68,6 @@ async def _run_chat(
     ws_path = str(Path(workspace).resolve())
     settings = await build_settings(ws_path)
 
-    # Bind settings to catalog early so list_models() merges custom models
-    from voidx.llm.catalog import bind_settings
-    bind_settings(settings)
 
     profile = await settings.resolve_profile()
     cfg = await settings.build_config(profile=profile)

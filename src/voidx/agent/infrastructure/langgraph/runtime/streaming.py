@@ -61,7 +61,7 @@ async def stream_llm(
     ui_port: AgentUiPort | None = None,
 ) -> AIMessage:
     """Stream LLM response, render live, return merged AIMessage."""
-    from voidx.llm.service import extract_thinking
+    from voidx.llm.thinking import extract_thinking
 
     ui_port = ui_port or NullAgentUiPort()
     chunks: list[AIMessageChunk] = []

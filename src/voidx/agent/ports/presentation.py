@@ -55,6 +55,7 @@ class RuntimePresentationStatus:
     reasoning_effort: str = "xhigh"
     protocol: str = ""
     context_window: int | None = None
+    context_limit: int = 200_000
     mcp_config_path: str = ""
     code_ide: str = "trae"
     latest_action: str = ""

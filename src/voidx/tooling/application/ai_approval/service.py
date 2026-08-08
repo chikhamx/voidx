@@ -64,12 +64,17 @@ def is_ai_approval_candidate(decision) -> bool:
 class AiApprovalService:
     """Stateless, fail-closed reviewer for approvable permission decisions."""
 
+    def __init__(self, model_factory=None, resolver_model_factory=None) -> None:
+        self._model_factory = model_factory
+        self._resolver_model_factory = resolver_model_factory
+
     async def review(self, decisions, settings) -> AiApprovalResult:
         if settings is None:
             return AiApprovalResult(reason="unavailable")
         skipped_reasons: dict[str, str] = {}
         try:
-            from voidx.llm.service import create_chat_model, create_resolver_model
+            if self._model_factory is None or self._resolver_model_factory is None:
+                return AiApprovalResult(reason="unavailable")
 
             config = settings.get_ai_approval_config()
             profiles = await settings.list_profiles()
@@ -126,8 +131,8 @@ class AiApprovalService:
                 base_url=profile.base_url,
                 protocol=profile.protocol,
             )
-            model = create_chat_model(profile.api_key, model_config)
-            resolver = create_resolver_model(model, model_config)
+            model = self._model_factory(profile.api_key, model_config)
+            resolver = self._resolver_model_factory(model, model_config)
             from voidx.llm.structured import ainvoke_structured
             if not callable(getattr(resolver, "with_structured_output", None)):
                 return AiApprovalResult(reason="unavailable", skipped_reasons=skipped_reasons)

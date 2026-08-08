@@ -28,15 +28,20 @@ def test_build_agent_components_wires_presentation_neutral_runtime(monkeypatch):
         can_submit_guidance=lambda: False,
         submit_guidance=lambda *_args, **_kwargs: False,
     )
-    monkeypatch.setattr(
-        "voidx.bootstrap.agent.LangGraphExecution",
-        lambda config, api_key, *, session, settings, ui, workspace_write_lock, external_manager_factory, mcp_reference_resolver, web_route: execution,
-    )
+    injected = {}
+
+    def fake_execution(config, api_key, **kwargs):
+        injected.update(kwargs)
+        return execution
+
+    monkeypatch.setattr("voidx.bootstrap.agent.LangGraphExecution", fake_execution)
 
     components = build_agent_components(SimpleNamespace(workspace=""), "key", ui=runtime_ui_port)
 
     assert isinstance(components, AgentResources)
     assert components.execution is execution
+    assert injected["model_catalog"] is not None
+    assert callable(injected["model_catalog_factory"])
     assert isinstance(components.service, AgentService)
     assert not hasattr(components.service, "_execution")
     assert isinstance(components.service._autonomous_router._events, NullAgentEventPublisher)

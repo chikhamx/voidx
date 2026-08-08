@@ -180,3 +180,71 @@ def test_bootstrap_explicitly_composes_provider_specs() -> None:
     }
     assert "voidx.llm.providers.catalog" in imported_modules
     assert "PROVIDER_SPECS" in source
+
+
+def test_llm_catalog_has_no_process_global_binding_or_legacy_module() -> None:
+    assert not (ROOT / "src/voidx/llm/catalog.py").exists()
+
+    for relative in (
+        "src/voidx/llm/application/model_catalog.py",
+        "src/voidx/llm/adapters/http_model_discovery.py",
+    ):
+        source = (ROOT / relative).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        names = {
+            target.id
+            for node in tree.body
+            if isinstance(node, (ast.Assign, ast.AnnAssign))
+            for target in (
+                node.targets if isinstance(node, ast.Assign) else [node.target]
+            )
+            if isinstance(target, ast.Name)
+        }
+        functions = {
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        assert names.isdisjoint({"_settings", "_fetchers"})
+        assert functions.isdisjoint({"bind_settings", "register_fetcher"})
+
+
+def test_llm_application_does_not_import_adapters_or_config() -> None:
+    offenders: list[str] = []
+    for path in (ROOT / "src/voidx/llm/application").glob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom) or not node.module:
+                continue
+            if node.module.startswith((
+                "voidx.llm.adapters",
+                "voidx.config",
+                "voidx.logging",
+            )):
+                offenders.append(f"{path.name}:{node.lineno}:{node.module}")
+    assert offenders == []
+
+
+def test_llm_provider_factory_is_owned_by_adapter() -> None:
+    assert not (ROOT / "src/voidx/llm/provider.py").exists()
+    assert not (ROOT / "src/voidx/llm/service.py").exists()
+
+    adapter = ROOT / "src/voidx/llm/adapters/langchain_model_factory.py"
+    assert adapter.exists()
+    adapter_source = adapter.read_text(encoding="utf-8")
+    assert "langchain_anthropic" in adapter_source
+    assert "langchain_core" in adapter_source
+
+    offenders: list[str] = []
+    for layer in ("domain", "application"):
+        for path in (ROOT / f"src/voidx/llm/{layer}").glob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                module = ""
+                if isinstance(node, ast.ImportFrom):
+                    module = node.module or ""
+                elif isinstance(node, ast.Import):
+                    module = ",".join(alias.name for alias in node.names)
+                if module.startswith(("langchain", "voidx.llm.adapters")):
+                    offenders.append(f"{path.name}:{node.lineno}:{module}")
+    assert offenders == []

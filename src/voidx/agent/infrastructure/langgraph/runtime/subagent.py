@@ -48,7 +48,8 @@ from voidx.agent.infrastructure.langgraph.runtime.tool_surface import (
     resolve_tool_surface,
 )
 from voidx.config import Config
-from voidx.llm.service import create_chat_model, resolve_protocol
+from voidx.llm.adapters.langchain_model_factory import create_chat_model
+from voidx.llm.domain.provider import resolve_protocol
 from voidx.agent.application.instruction import WorkflowRuntimeContext
 from voidx.llm.usage import (
     UsageStats,

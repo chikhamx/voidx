@@ -56,6 +56,10 @@ def command_context(**overrides: Any) -> SimpleNamespace:
         setattr(context, name, value)
     for name, value in overrides.items():
         setattr(context, name, value)
+    if not hasattr(context, "model_catalog"):
+        from voidx.bootstrap.providers import build_model_catalog
+
+        context.model_catalog = build_model_catalog(context.settings)
     if not hasattr(context, "can_submit_guidance"):
         context.can_submit_guidance = lambda: hasattr(context, "submit_guidance")
     return context

@@ -21,12 +21,13 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
 
 from voidx.llm.domain.model import ModelConfig
+from voidx.llm.domain.provider import find_provider_spec, resolve_protocol
 from voidx.llm.providers.catalog import PROVIDER_SPECS
 from voidx.llm.providers.base import PROTOCOL_DEEPSEEK
 from voidx.llm.providers.anthropic import anthropic_reasoning as _anthropic_reasoning_kwargs
 from voidx.llm.providers.deepseek import DeepSeekChatOpenAI
 from voidx.llm.providers.gemini import (
-    _is_gemini3_plus,
+    is_gemini3_plus,
     ensure_gemini_dep as _ensure_gemini_dep,
     gemini_reasoning as _gemini_reasoning_kwargs,
     strip_gemini_version_suffix as _strip_gemini_version_suffix,
@@ -40,14 +41,6 @@ from voidx.llm.providers.openai import (
 )
 
 
-# ── protocol resolution ───────────────────────────────────────────────────
-
-
-def resolve_protocol(config: ModelConfig) -> str:
-    if config.protocol:
-        return config.protocol
-    spec = next((item for item in PROVIDER_SPECS if item.name == config.provider), None)
-    return spec.protocol if spec is not None else "openai"
 
 
 def _normalize_base_url(url: str) -> str:
@@ -55,7 +48,7 @@ def _normalize_base_url(url: str) -> str:
 
 
 def _resolve_base_url(config: ModelConfig, protocol: str) -> str:
-    spec = next((item for item in PROVIDER_SPECS if item.name == config.provider), None)
+    spec = find_provider_spec(config.provider)
     stale_openai_base_url = (
         spec is not None
         and spec.protocol != "openai"
@@ -250,21 +243,3 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
         return ChatGoogleGenerativeAI(**kwargs)
 
     raise ValueError(f"Unknown protocol: {protocol}")
-
-
-# ── thinking extraction ───────────────────────────────────────────────────
-# Moved to voidx.llm.thinking; re-exported here for import compatibility.
-
-from voidx.llm.thinking import extract_thinking  # noqa: E402,F401
-
-
-# ── context limits ────────────────────────────────────────────────────────
-
-def get_context_limit(provider: str, protocol: str = "", context_window: int | None = None) -> int:
-    """Return context-window limit for *provider*.  Falls back to *protocol* for unknown providers."""
-    if context_window is not None and context_window > 0:
-        return context_window
-    spec = next((item for item in PROVIDER_SPECS if item.name == provider), None)
-    if spec is not None and spec.context_limit:
-        return spec.context_limit
-    return 200_000

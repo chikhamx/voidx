@@ -15,7 +15,7 @@ from voidx.platform.code_ide import CodeIde
 from voidx.llm.domain.model import ModelConfig
 from voidx.agent.domain.user_profile import UserProfile
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
-from voidx.llm.catalog import STATIC_MODELS
+from voidx.llm.providers.catalog import PROVIDER_SPECS
 from voidx.llm.usage import UsageStats
 from voidx.config.adapters.profile_repository import ModelProfileRow, save_model_profile_async
 from voidx.config.adapters.profile_repository import delete_model_profile_async
@@ -161,7 +161,7 @@ async def test_model_test_creates_model_with_config_defaults(tmp_path, monkeypat
             captured["reasoning_effort"] = cfg.reasoning_effort
             return object()
 
-        monkeypatch.setattr("voidx.llm.provider.create_chat_model", fake_create_chat_model)
+        monkeypatch.setattr("voidx.llm.adapters.langchain_model_factory.create_chat_model", fake_create_chat_model)
         handler = SlashHandler(graph)
 
         async def fake_test_connection(_model):
@@ -230,8 +230,7 @@ async def test_model_new_prompts_connection_details_before_fetching_models(tmp_p
         )
         return ["fetched-gemini-model"]
 
-    monkeypatch.setattr("voidx.llm.catalog.list_models_for_config", fake_list_models_for_config)
-    monkeypatch.setattr("voidx.llm.service.create_chat_model", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr("voidx.llm.adapters.langchain_model_factory.create_chat_model", lambda *_args, **_kwargs: object())
 
     app = SequenceChoiceApp()
     graph = command_context(
@@ -240,6 +239,9 @@ async def test_model_new_prompts_connection_details_before_fetching_models(tmp_p
         app=app,
         session=None,
         usage_stats=None,
+        model_catalog=SimpleNamespace(
+            list_models_for_config=fake_list_models_for_config,
+        ),
     )
     handler = SlashHandler(graph)
 
@@ -296,7 +298,7 @@ async def test_model_switch_defaults_to_local_scope(tmp_path, monkeypatch):
         app=None,
         usage_stats=None,
     )
-    monkeypatch.setattr("voidx.llm.provider.create_chat_model", lambda *_args: object())
+    monkeypatch.setattr("voidx.llm.adapters.langchain_model_factory.create_chat_model", lambda *_args: object())
 
     try:
         await SlashHandler(graph).dispatch(f"/model switch {profile_name}")
@@ -328,7 +330,7 @@ async def test_model_switch_global_scope_updates_global_and_local(tmp_path, monk
         app=None,
         usage_stats=None,
     )
-    monkeypatch.setattr("voidx.llm.provider.create_chat_model", lambda *_args: object())
+    monkeypatch.setattr("voidx.llm.adapters.langchain_model_factory.create_chat_model", lambda *_args: object())
 
     try:
         await SlashHandler(graph).dispatch(f"/model switch {profile_name} --global")
@@ -344,7 +346,7 @@ async def test_model_switch_global_scope_updates_global_and_local(tmp_path, monk
 def test_model_provider_list_matches_catalog():
     from voidx.agent.slash.runtime import PROVIDERS
 
-    assert set(STATIC_MODELS).issubset(PROVIDERS)
+    assert {spec.name for spec in PROVIDER_SPECS}.issubset(PROVIDERS)
 
 
 def test_slash_handler_fallback_ui_is_agent_owned():
@@ -747,7 +749,7 @@ async def test_model_switch_profile_updates_session_db(tmp_path, monkeypatch):
         app=None,
         usage_stats=None,
     )
-    monkeypatch.setattr("voidx.llm.provider.create_chat_model", lambda *_a, **_k: object())
+    monkeypatch.setattr("voidx.llm.adapters.langchain_model_factory.create_chat_model", lambda *_a, **_k: object())
 
     captured: list[tuple[str, str, str]] = []
 
@@ -782,7 +784,7 @@ async def test_switch_model_spec_does_not_show_startup(tmp_path, monkeypatch):
         app=None,
         usage_stats=None,
     )
-    monkeypatch.setattr("voidx.llm.provider.create_chat_model", lambda *_a, **_k: object())
+    monkeypatch.setattr("voidx.llm.adapters.langchain_model_factory.create_chat_model", lambda *_a, **_k: object())
 
     startup_calls: list[dict] = []
 

@@ -406,6 +406,17 @@ async def test_apply_settings_update_refreshes_live_model(monkeypatch, tmp_path)
         settings=settings,
     )
 
+    old_catalog = object()
+    rebuilt_catalog = object()
+    rebuilt_with = []
+    graph.model_catalog = old_catalog
+
+    def rebuild_catalog(value):
+        rebuilt_with.append(value)
+        return rebuilt_catalog
+
+    graph._model_catalog_factory = rebuild_catalog
+
     frontend = SimpleNamespace(
         status=SimpleNamespace(
             provider="openai",
@@ -434,6 +445,9 @@ async def test_apply_settings_update_refreshes_live_model(monkeypatch, tmp_path)
     assert frontend.status.provider == "deepseek"
     assert frontend.status.model == "deepseek-v4-pro"
 
+    assert rebuilt_with == [settings]
+    assert graph.model_catalog is rebuilt_catalog
+    assert old_catalog is not graph.model_catalog
 
 
 @pytest.mark.asyncio

@@ -22,7 +22,7 @@ from voidx.llm.compaction import (
     SUMMARY_TEMPLATE,
     CompactionService,
 )
-from voidx.llm.service import resolve_protocol
+from voidx.llm.domain.provider import resolve_protocol
 from voidx.logging.tool_log import log_tool_event
 from voidx.llm.usage import estimate_context_tokens, estimate_message_tokens, extract_token_usage
 from voidx.agent.adapters.persistence.context_frame_repository import save_context_frame_from_messages

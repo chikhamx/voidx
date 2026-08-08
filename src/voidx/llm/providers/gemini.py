@@ -50,7 +50,7 @@ def _normalize_gemini_model_name(model: str) -> str:
     return name
 
 
-def _is_gemini3_plus(model: str) -> bool:
+def is_gemini3_plus(model: str) -> bool:
     """Whether a Gemini model uses thinking_level (3+) vs thinking_budget (2.5)."""
     name = _normalize_gemini_model_name(model)
     return any(name.startswith(p) for p in _GEMINI3_PREFIXES)
@@ -61,7 +61,7 @@ def gemini_reasoning(config: ModelConfig) -> dict:
     if effort is ReasoningEffort.NONE:
         return {}
     kwargs: dict = {"include_thoughts": True}
-    if _is_gemini3_plus(config.model):
+    if is_gemini3_plus(config.model):
         # Custom providers may not hit the gemini model table, so clamp here.
         level = map_effort(effort, _GEMINI_THINKING_LEVELS)
         kwargs["thinking_level"] = level.value

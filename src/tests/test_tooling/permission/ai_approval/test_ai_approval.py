@@ -451,8 +451,7 @@ async def test_ai_approval_service_without_settings_is_unavailable():
 @pytest.mark.asyncio
 async def test_ai_approval_service_reports_timeout(monkeypatch):
     import asyncio
-    import sys
-    from types import ModuleType, SimpleNamespace
+    from types import SimpleNamespace
 
     from voidx.config import Profile
     from voidx.tooling.application.ai_approval import AiApprovalService
@@ -475,17 +474,15 @@ async def test_ai_approval_service_reports_timeout(monkeypatch):
         async def list_profiles(self):
             return [profile]
 
-    fake_llm_service = ModuleType("voidx.llm.service")
-    fake_llm_service.create_chat_model = lambda *_args, **_kwargs: object()
-    fake_llm_service.create_resolver_model = lambda *_args, **_kwargs: FakeResolver()
-    monkeypatch.setitem(sys.modules, "voidx.llm.service", fake_llm_service)
+    model_factory = lambda *_args, **_kwargs: object()
+    resolver_model_factory = lambda *_args, **_kwargs: FakeResolver()
     decision = SimpleNamespace(
         action="ask",
         risk=RiskAssessment.extreme(tool_name="bash", pattern="python build.py"),
         tool_call={"name": "bash", "args": {"command": "python build.py"}, "id": "call_1"},
     )
 
-    result = await AiApprovalService().review([decision], FakeSettings())
+    result = await AiApprovalService(model_factory, resolver_model_factory).review([decision], FakeSettings())
 
     assert result.reason == "timeout"
     assert result.allowed_ids == frozenset()
@@ -493,8 +490,7 @@ async def test_ai_approval_service_reports_timeout(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ai_approval_service_tracks_candidates_skipped_before_review(monkeypatch):
-    import sys
-    from types import ModuleType, SimpleNamespace
+    from types import SimpleNamespace
 
     from voidx.config import Profile
     from voidx.tooling.application.ai_approval import AiApprovalService
@@ -517,10 +513,8 @@ async def test_ai_approval_service_tracks_candidates_skipped_before_review(monke
         async def list_profiles(self):
             return [profile]
 
-    fake_llm_service = ModuleType("voidx.llm.service")
-    fake_llm_service.create_chat_model = lambda *_args, **_kwargs: object()
-    fake_llm_service.create_resolver_model = lambda *_args, **_kwargs: FakeResolver()
-    monkeypatch.setitem(sys.modules, "voidx.llm.service", fake_llm_service)
+    model_factory = lambda *_args, **_kwargs: object()
+    resolver_model_factory = lambda *_args, **_kwargs: FakeResolver()
     risk = RiskAssessment.dangerous(tool_name="tool", pattern="operation")
     decisions = [
         SimpleNamespace(
@@ -535,7 +529,7 @@ async def test_ai_approval_service_tracks_candidates_skipped_before_review(monke
         ),
     ]
 
-    result = await AiApprovalService().review(decisions, FakeSettings())
+    result = await AiApprovalService(model_factory, resolver_model_factory).review(decisions, FakeSettings())
 
     assert result.reason == "reviewed"
     assert result.reviewed_ids == frozenset({"call_bash"})
@@ -544,8 +538,7 @@ async def test_ai_approval_service_tracks_candidates_skipped_before_review(monke
 
 @pytest.mark.asyncio
 async def test_ai_approval_service_marks_oversized_batch_as_skipped(monkeypatch):
-    import sys
-    from types import ModuleType, SimpleNamespace
+    from types import SimpleNamespace
 
     from voidx.config import Profile
     from voidx.tooling.application.ai_approval import AiApprovalService
@@ -568,10 +561,8 @@ async def test_ai_approval_service_marks_oversized_batch_as_skipped(monkeypatch)
         async def list_profiles(self):
             return [profile]
 
-    fake_llm_service = ModuleType("voidx.llm.service")
-    fake_llm_service.create_chat_model = lambda *_args, **_kwargs: object()
-    fake_llm_service.create_resolver_model = lambda *_args, **_kwargs: FakeResolver()
-    monkeypatch.setitem(sys.modules, "voidx.llm.service", fake_llm_service)
+    model_factory = lambda *_args, **_kwargs: object()
+    resolver_model_factory = lambda *_args, **_kwargs: FakeResolver()
     risk = RiskAssessment.dangerous(tool_name="bash", pattern="large command")
     decisions = [
         SimpleNamespace(
@@ -586,7 +577,7 @@ async def test_ai_approval_service_marks_oversized_batch_as_skipped(monkeypatch)
         for index in range(4)
     ]
 
-    result = await AiApprovalService().review(decisions, FakeSettings())
+    result = await AiApprovalService(model_factory, resolver_model_factory).review(decisions, FakeSettings())
 
     assert result.reason == "skipped"
     assert result.allowed_ids == frozenset()
@@ -599,8 +590,7 @@ async def test_ai_approval_service_marks_oversized_batch_as_skipped(monkeypatch)
 @pytest.mark.asyncio
 async def test_ai_approval_service_never_sends_shell_secret_in_pattern_or_args(monkeypatch):
     import json
-    import sys
-    from types import ModuleType, SimpleNamespace
+    from types import SimpleNamespace
 
     from voidx.config import Profile
     from voidx.tooling.application.ai_approval import AiApprovalService
@@ -629,10 +619,8 @@ async def test_ai_approval_service_never_sends_shell_secret_in_pattern_or_args(m
         async def resolve_profile(self):
             return profile
 
-    fake_llm_service = ModuleType("voidx.llm.service")
-    fake_llm_service.create_chat_model = lambda *_args, **_kwargs: object()
-    fake_llm_service.create_resolver_model = lambda *_args, **_kwargs: FakeResolver()
-    monkeypatch.setitem(sys.modules, "voidx.llm.service", fake_llm_service)
+    model_factory = lambda *_args, **_kwargs: object()
+    resolver_model_factory = lambda *_args, **_kwargs: FakeResolver()
     command = "curl -H 'Authorization: Bearer shell-secret' https://example.com"
     decision = SimpleNamespace(
         action="ask",
@@ -645,7 +633,7 @@ async def test_ai_approval_service_never_sends_shell_secret_in_pattern_or_args(m
         tool_call={"name": "bash", "args": {"command": command}, "id": "call_1"},
     )
 
-    result = await AiApprovalService().review([decision], FakeSettings())
+    result = await AiApprovalService(model_factory, resolver_model_factory).review([decision], FakeSettings())
     encoded = json.dumps(captured, sort_keys=True)
 
     assert result.reason == "reviewed"
@@ -682,8 +670,7 @@ def test_permission_service_ai_approval_counter():
 
 @pytest.mark.asyncio
 async def test_ai_approval_service_falls_back_to_json_mode_on_unparseable_response(monkeypatch):
-    import sys
-    from types import ModuleType, SimpleNamespace
+    from types import SimpleNamespace
 
     from voidx.config import Profile
     from voidx.tooling.application.ai_approval import AiApprovalService
@@ -719,10 +706,8 @@ async def test_ai_approval_service_falls_back_to_json_mode_on_unparseable_respon
         async def list_profiles(self):
             return [profile]
 
-    fake_llm_service = ModuleType("voidx.llm.service")
-    fake_llm_service.create_chat_model = lambda *_args, **_kwargs: object()
-    fake_llm_service.create_resolver_model = lambda *_args, **_kwargs: resolver
-    monkeypatch.setitem(sys.modules, "voidx.llm.service", fake_llm_service)
+    model_factory = lambda *_args, **_kwargs: object()
+    resolver_model_factory = lambda *_args, **_kwargs: resolver
 
     decision = SimpleNamespace(
         action="ask",
@@ -730,7 +715,7 @@ async def test_ai_approval_service_falls_back_to_json_mode_on_unparseable_respon
         tool_call={"name": "bash", "args": {"command": "rm -rf /tmp/test"}, "id": "call_1"},
     )
 
-    result = await AiApprovalService().review([decision], FakeSettings())
+    result = await AiApprovalService(model_factory, resolver_model_factory).review([decision], FakeSettings())
 
     assert result.reason == "reviewed"
     assert result.allowed_ids == frozenset({"call_1"})

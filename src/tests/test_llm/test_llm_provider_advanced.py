@@ -7,7 +7,10 @@ from langchain_core.messages import AIMessageChunk
 from langchain_openai import ChatOpenAI
 
 from voidx.llm.domain.model import ModelConfig
-from voidx.llm.provider import DeepSeekChatOpenAI, create_chat_model, extract_thinking, resolve_protocol
+from voidx.llm.providers.deepseek import DeepSeekChatOpenAI
+from voidx.llm.adapters.langchain_model_factory import create_chat_model
+from voidx.llm.thinking import extract_thinking
+from voidx.llm.domain.provider import resolve_protocol
 
 
 PROVIDER_DEFAULTS = {

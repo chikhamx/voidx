@@ -23,7 +23,6 @@ from voidx.agent.domain.task.state import (
 )
 from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 from voidx.config import RetryConfig
-from voidx.llm.service import create_resolver_model
 from voidx.llm.structured import ainvoke_structured, resolve_structured_output_method
 from voidx.llm.usage import (
     TokenUsage,
@@ -100,6 +99,7 @@ async def resolve_goal_for_turn(
     retry_config: RetryConfig | None = None,
     usage_stats: UsageStats | None = None,
     model_config: Any | None = None,
+    resolver_model_factory: Any | None = None,
 ) -> GoalResolution:
     del interaction_mode
     fallback = GoalResolution(
@@ -116,9 +116,12 @@ async def resolve_goal_for_turn(
         _log_goal_resolver_decision(normalized, user_text, task_state, fallback_reason, fallback_error_type, fallback_error, enabled=log_diagnostic)
         return normalized
 
+    if model_config is not None and resolver_model_factory is None:
+        raise RuntimeError("resolver model factory is required with model_config")
+
     resolver_model = (
-        create_resolver_model(model, model_config)
-        if model_config is not None
+        resolver_model_factory(model, model_config)
+        if resolver_model_factory is not None and model_config is not None
         else model
     )
     structured = getattr(resolver_model, "with_structured_output", None)

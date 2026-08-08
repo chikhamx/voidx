@@ -8,14 +8,10 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Too
 from langchain_openai import ChatOpenAI
 
 from voidx.llm.domain.model import ModelConfig
-from voidx.llm.provider import (
-    DeepSeekChatOpenAI,
-    create_chat_model,
-    create_resolver_model,
-    extract_thinking,
-    get_context_limit,
-    resolve_protocol,
-)
+from voidx.llm.providers.deepseek import DeepSeekChatOpenAI
+from voidx.llm.adapters.langchain_model_factory import create_chat_model, create_resolver_model
+from voidx.llm.thinking import extract_thinking
+from voidx.llm.domain.provider import get_context_limit, resolve_protocol
 
 
 PROVIDER_DEFAULTS = {

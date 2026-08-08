@@ -9,15 +9,13 @@ from unittest.mock import MagicMock, patch
 from langchain_core.messages import AIMessageChunk
 
 from voidx.llm.domain.model import ModelConfig
-from voidx.llm.provider import (
-    create_chat_model,
-    create_resolver_model,
-    extract_thinking,
-    get_context_limit,
-    resolve_protocol,
-    _gemini_reasoning_kwargs,
-    _is_gemini3_plus,
+from voidx.llm.providers.gemini import (
+    is_gemini3_plus,
+    gemini_reasoning as _gemini_reasoning_kwargs,
 )
+from voidx.llm.adapters.langchain_model_factory import create_chat_model, create_resolver_model
+from voidx.llm.thinking import extract_thinking
+from voidx.llm.domain.provider import get_context_limit, resolve_protocol
 
 
 # ── protocol resolution ──────────────────────────────────────────────────
@@ -32,19 +30,19 @@ def test_resolve_protocol_gemini_explicit_protocol():
     assert resolve_protocol(config) == "gemini"
 
 
-# ── _is_gemini3_plus ────────────────────────────────────────────────────
+# ── is_gemini3_plus ────────────────────────────────────────────────────
 
 
-def test_is_gemini3_plus_identifies_3x_models():
-    assert _is_gemini3_plus("gemini-3-pro") is True
-    assert _is_gemini3_plus("gemini-3-flash") is True
-    assert _is_gemini3_plus("gemini-4-pro") is True
+def testis_gemini3_plus_identifies_3x_models():
+    assert is_gemini3_plus("gemini-3-pro") is True
+    assert is_gemini3_plus("gemini-3-flash") is True
+    assert is_gemini3_plus("gemini-4-pro") is True
 
 
-def test_is_gemini3_plus_rejects_2x_models():
-    assert _is_gemini3_plus("gemini-2.5-pro") is False
-    assert _is_gemini3_plus("gemini-2.5-flash") is False
-    assert _is_gemini3_plus("gemini-2.0-flash") is False
+def testis_gemini3_plus_rejects_2x_models():
+    assert is_gemini3_plus("gemini-2.5-pro") is False
+    assert is_gemini3_plus("gemini-2.5-flash") is False
+    assert is_gemini3_plus("gemini-2.0-flash") is False
 
 
 # ── reasoning kwargs: Gemini 2.5 (thinking_budget) ──────────────────────
@@ -127,9 +125,9 @@ def test_gemini_reasoning_kwargs_custom_provider_xhigh_maps_to_high():
     assert kwargs == {"include_thoughts": True, "thinking_level": "high"}
 
 
-def test_is_gemini3_plus_normalizes_models_prefix():
-    assert _is_gemini3_plus("models/gemini-3.5-flash") is True
-    assert _is_gemini3_plus("google/gemini-3.5-flash") is True
+def testis_gemini3_plus_normalizes_models_prefix():
+    assert is_gemini3_plus("models/gemini-3.5-flash") is True
+    assert is_gemini3_plus("google/gemini-3.5-flash") is True
 
 
 def test_create_chat_model_custom_gemini_provider_accepts_xhigh():
@@ -237,14 +235,14 @@ def test_get_context_limit_override_zero_falls_back():
 
 def test_create_chat_model_gemini():
     """create_chat_model with gemini protocol returns ChatGoogleGenerativeAI."""
-    from voidx.llm.provider import create_chat_model
+    from voidx.llm.adapters.langchain_model_factory import create_chat_model
 
     mock_cls = MagicMock()
     mock_instance = MagicMock()
     mock_cls.return_value = mock_instance
 
     with patch.dict("sys.modules", {"langchain_google_genai": MagicMock(ChatGoogleGenerativeAI=mock_cls)}):
-        with patch("voidx.llm.provider.resolve_protocol", return_value="gemini"):
+        with patch("voidx.llm.adapters.langchain_model_factory.resolve_protocol", return_value="gemini"):
             model = create_chat_model(
                 "test-api-key",
                 ModelConfig(provider="gemini", model="gemini-2.5-flash"),
@@ -258,13 +256,13 @@ def test_create_chat_model_gemini():
 
 def test_create_chat_model_gemini_strips_v1beta_suffix_from_base_url():
     """base_url ending with /v1beta must be stripped — google-genai SDK appends it."""
-    from voidx.llm.provider import create_chat_model
+    from voidx.llm.adapters.langchain_model_factory import create_chat_model
 
     mock_cls = MagicMock()
     mock_cls.return_value = MagicMock()
 
     with patch.dict("sys.modules", {"langchain_google_genai": MagicMock(ChatGoogleGenerativeAI=mock_cls)}):
-        with patch("voidx.llm.provider.resolve_protocol", return_value="gemini"):
+        with patch("voidx.llm.adapters.langchain_model_factory.resolve_protocol", return_value="gemini"):
             create_chat_model(
                 "test-api-key",
                 ModelConfig(
@@ -279,14 +277,14 @@ def test_create_chat_model_gemini_strips_v1beta_suffix_from_base_url():
 
 def test_create_chat_model_gemini_with_reasoning():
     """Gemini model with reasoning_effort should include thinking kwargs."""
-    from voidx.llm.provider import create_chat_model
+    from voidx.llm.adapters.langchain_model_factory import create_chat_model
 
     mock_cls = MagicMock()
     mock_instance = MagicMock()
     mock_cls.return_value = mock_instance
 
     with patch.dict("sys.modules", {"langchain_google_genai": MagicMock(ChatGoogleGenerativeAI=mock_cls)}):
-        with patch("voidx.llm.provider.resolve_protocol", return_value="gemini"):
+        with patch("voidx.llm.adapters.langchain_model_factory.resolve_protocol", return_value="gemini"):
             model = create_chat_model(
                 "test-api-key",
                 ModelConfig(provider="gemini", model="gemini-2.5-flash", reasoning_effort="high"),
@@ -299,10 +297,10 @@ def test_create_chat_model_gemini_with_reasoning():
 def test_create_chat_model_gemini_import_error():
     """When _ensure_gemini_dep fails (auto-install exhausted), create_chat_model
     should raise ImportError with install hint."""
-    from voidx.llm.provider import create_chat_model
+    from voidx.llm.adapters.langchain_model_factory import create_chat_model
 
-    with patch("voidx.llm.provider.resolve_protocol", return_value="gemini"):
-        with patch("voidx.llm.provider._ensure_gemini_dep", side_effect=ImportError(
+    with patch("voidx.llm.adapters.langchain_model_factory.resolve_protocol", return_value="gemini"):
+        with patch("voidx.llm.adapters.langchain_model_factory._ensure_gemini_dep", side_effect=ImportError(
             "langchain-google-genai is required for Gemini protocol. "
             "Install with: pip install voidx[gemini]"
         )):
@@ -322,7 +320,7 @@ def test_create_chat_model_gemini_import_error():
 
 def test_ensure_gemini_dep_already_installed():
     """When langchain_google_genai is already importable, no subprocess call."""
-    from voidx.llm.provider import _ensure_gemini_dep
+    from voidx.llm.providers.gemini import ensure_gemini_dep as _ensure_gemini_dep
 
     mock_cls = MagicMock()
     with patch.dict("sys.modules", {"langchain_google_genai": MagicMock(ChatGoogleGenerativeAI=mock_cls)}):
@@ -333,7 +331,7 @@ def test_ensure_gemini_dep_already_installed():
 
 def test_ensure_gemini_dep_auto_install_success():
     """When import fails initially, pip install runs and import succeeds on retry."""
-    from voidx.llm.provider import _ensure_gemini_dep
+    from voidx.llm.providers.gemini import ensure_gemini_dep as _ensure_gemini_dep
 
     mock_cls = MagicMock()
     original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
@@ -359,7 +357,7 @@ def test_ensure_gemini_dep_auto_install_success():
 
 def test_ensure_gemini_dep_retry_then_fail():
     """When pip install fails 3 times, ImportError is raised with install hint."""
-    from voidx.llm.provider import _ensure_gemini_dep
+    from voidx.llm.providers.gemini import ensure_gemini_dep as _ensure_gemini_dep
 
     original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
 
@@ -385,7 +383,7 @@ def test_ensure_gemini_dep_retry_then_fail():
 
 def test_ensure_gemini_dep_timeout_retries_then_fail():
     """When pip install times out 3 times, ImportError is raised with timeout hint."""
-    from voidx.llm.provider import _ensure_gemini_dep
+    from voidx.llm.providers.gemini import ensure_gemini_dep as _ensure_gemini_dep
     import subprocess
 
     original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__

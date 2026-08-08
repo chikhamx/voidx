@@ -44,6 +44,7 @@ class LangGraphRuntimeStatusReader:
             reasoning_effort=reasoning.value if reasoning is not None else "xhigh",
             protocol=model_config.protocol or "",
             context_window=model_config.context_window,
+            context_limit=host.usage_stats.context_limit,
             mcp_config_path=str(settings.path) if settings is not None else "",
             code_ide=(settings.get_code_ide().value if settings is not None and callable(getattr(settings, "get_code_ide", None)) else "trae"),
             latest_action=getattr(wall_clock, "latest_action", ""),

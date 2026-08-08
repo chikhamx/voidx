@@ -20,7 +20,6 @@ from voidx.agent.ports.presentation import (
 )
 from voidx.agent.ports.ui import AgentUiPort
 from voidx.agent.ports.workspace_lock import WorkspaceWriteLockBinder
-from voidx.llm.service import get_context_limit
 from voidx.presentation.commands import COMMANDS
 from voidx.presentation.output.events import CompositeEventConsumer, DockEventConsumer
 from voidx.presentation.output.types import McpServerStatus, UiStatus
@@ -146,11 +145,7 @@ class TerminalRunLoop:
             model=initial_status.model,
             workspace=initial_status.workspace,
             session_title=title,
-            context_limit=get_context_limit(
-                initial_status.provider,
-                initial_status.protocol,
-                initial_status.context_window,
-            ),
+            context_limit=initial_status.context_limit,
             reasoning_effort=initial_status.reasoning_effort,
             permission_label=lambda: self._status_reader.runtime_status().permission_label,
             usage_stats=self._frontend_binding.usage_stats(),

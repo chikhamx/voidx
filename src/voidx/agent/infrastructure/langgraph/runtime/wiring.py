@@ -7,16 +7,10 @@ from typing import Any
 
 from voidx.config import Config, Settings
 from voidx.llm.compaction import CompactionService
-from voidx.llm.service import get_context_limit
+from voidx.llm.domain.provider import get_context_limit
 from voidx.llm.usage import UsageStats
 
 
-def bind_settings_to_catalog(settings: Settings | None) -> None:
-    if settings is None:
-        return
-    from voidx.llm.catalog import bind_settings
-
-    bind_settings(settings)
 
 
 def build_tool_registry(**kwargs: Any):

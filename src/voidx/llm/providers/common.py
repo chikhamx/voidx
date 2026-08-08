@@ -1,7 +1,7 @@
 """Shared helpers for provider reasoning/streaming implementations.
 
 Provider modules import from here (never from each other or from
-``voidx.llm.provider``) to keep the dependency direction one-way.
+``voidx.llm.adapters.langchain_model_factory``) to keep the dependency direction one-way.
 """
 
 from __future__ import annotations

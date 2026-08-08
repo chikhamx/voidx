@@ -62,10 +62,7 @@ from voidx.agent.infrastructure.langgraph.runtime.tool_executor import ToolExecu
 from voidx.agent.infrastructure.langgraph.runtime.topology import build_graph, session_date
 from voidx.agent.infrastructure.langgraph.runtime.turn_metrics import TurnControlMetrics
 from voidx.agent.infrastructure.langgraph.runtime.turn_runner import TurnRunner
-from voidx.agent.infrastructure.langgraph.runtime.wiring import (
-    bind_settings_to_catalog,
-    build_compaction_service,
-)
+from voidx.agent.infrastructure.langgraph.runtime.wiring import build_compaction_service
 from voidx.bootstrap.tooling import build_tool_registry, register_agent_tool
 from voidx.agent.application.runtime_context import (
     ContextCompilerCache,
@@ -77,7 +74,10 @@ from voidx.config import Config, Settings
 from voidx.tooling.application.ai_approval import AiApprovalService
 from voidx.agent.application.instruction import InstructionService
 from voidx.llm.message_markers import GUIDANCE_MARKER
-from voidx.llm.service import create_chat_model
+from voidx.llm.adapters.langchain_model_factory import (
+    create_chat_model,
+    create_resolver_model,
+)
 from voidx.agent.adapters.persistence.session_repository import SessionInfo
 from voidx.agent.adapters.persistence.subagent_repository import append_subagent_event
 from voidx.agent.ports.ui import AgentUiPort
@@ -338,6 +338,8 @@ class LangGraphExecution:
         api_key: str | None,
         session: SessionInfo | None = None,
         settings: Settings | None = None,
+        model_catalog: Any | None = None,
+        model_catalog_factory: Callable[[Any | None], Any] | None = None,
         *,
         ui: AgentUiPort,
         workspace_write_lock: WorkspaceWriteLockPort,
@@ -354,10 +356,23 @@ class LangGraphExecution:
         self.agent_gateway = InProcessSubagentGateway()
         self._workspace = config.workspace
         self._settings = settings
+        self._model_catalog_factory = model_catalog_factory
+        if model_catalog is None:
+            from voidx.llm.application.model_catalog import ModelCatalog
+            from voidx.llm.providers.catalog import PROVIDER_SPECS
+
+            model_catalog = ModelCatalog(
+                provider_specs=PROVIDER_SPECS,
+                settings=settings,
+            )
+        self.model_catalog = model_catalog
         self._mcp_reference_resolver = mcp_reference_resolver
         self._web_route = web_route
         self._permission_service_factory = permission_service_factory
-        self._ai_approval = AiApprovalService()
+        self._ai_approval = AiApprovalService(
+            model_factory=create_chat_model,
+            resolver_model_factory=create_resolver_model,
+        )
         self._ui = ui
         self._workspace_write_lock = workspace_write_lock
         self._any_messages_sent = False
@@ -366,7 +381,6 @@ class LangGraphExecution:
         self.loop_service = None
         self.goal_service = None
 
-        bind_settings_to_catalog(settings)
         self._tracker, self.tools = build_tool_registry(
             settings=settings,
             config=config,
@@ -533,7 +547,8 @@ class LangGraphExecution:
         if self._mcp_manager is not None:
             self._mcp_manager.set_description_model(self.model)
 
-        bind_settings_to_catalog(settings)
+        if self._model_catalog_factory is not None:
+            self.model_catalog = self._model_catalog_factory(settings)
         self._tracker, self.tools = build_tool_registry(
             settings=settings,
             config=self.config,

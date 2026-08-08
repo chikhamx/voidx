@@ -34,7 +34,7 @@ class ModelCommandsMixin:
     async def _model_new(self) -> None:
         """Interactive model configuration — create or update a named profile."""
         from voidx.config import Profile
-        from voidx.llm.service import create_chat_model
+        from voidx.llm.adapters.langchain_model_factory import create_chat_model
 
         self.host.ui.print("[bold]Configure LLM[/bold]")
 
@@ -95,13 +95,9 @@ class ModelCommandsMixin:
             api_key = current_key
 
         # Step 3: choose model from fetched list or enter manually
-        from voidx.llm.catalog import (
-            list_fallback_models,
-            list_models_for_config,
-        )
         try:
             known = await asyncio.wait_for(
-                list_models_for_config(
+                self.host.model_catalog.list_models_for_config(
                     new_provider,
                     api_key=api_key,
                     base_url=base_url,
@@ -110,7 +106,9 @@ class ModelCommandsMixin:
                 timeout=15.0,
             )
         except asyncio.TimeoutError:
-            known = await list_fallback_models(new_provider, protocol=protocol)
+            known = await self.host.model_catalog.list_fallback_models(
+                new_provider, protocol=protocol
+            )
             self.host.ui.warn("Model list fetch timed out; using saved/static model list.")
         model_choices = known + ["Other (enter manually)"]
         self.host.ui.print()
@@ -202,7 +200,6 @@ class ModelCommandsMixin:
         return key[:4] + "****" + key[-4:]
 
     async def _list_models(self) -> None:
-        from voidx.llm.catalog import list_models
 
         current = f"{self.host.config.model.provider}/{self.host.config.model.model}"
         self.host.ui.print(f"[bold]Current:[/bold] [cyan]{current}[/cyan]\n")
@@ -210,7 +207,9 @@ class ModelCommandsMixin:
         for provider in await get_providers(self.host.settings):
             self.host.ui.print(f"  [bold]{provider}[/bold] ", end="")
             try:
-                models = await asyncio.wait_for(list_models(provider), timeout=15.0)
+                models = await asyncio.wait_for(
+                    self.host.model_catalog.list_models(provider), timeout=15.0
+                )
             except asyncio.TimeoutError:
                 models = []
                 self.host.ui.print("[dim](fetch timed out)[/dim]")
@@ -276,7 +275,7 @@ class ModelCommandsMixin:
 
     async def _model_test(self, target: str) -> None:
         async def _do_test(profile_name: str) -> None:
-            from voidx.llm.service import create_chat_model
+            from voidx.llm.adapters.langchain_model_factory import create_chat_model
             settings = self.host.settings
             if settings is None:
                 self.host.ui.error("No Settings reference.")
@@ -324,7 +323,7 @@ class ModelCommandsMixin:
 
     async def _model_switch(self, target: str) -> None:
         from voidx.config import Profile
-        from voidx.llm.service import create_chat_model
+        from voidx.llm.adapters.langchain_model_factory import create_chat_model
         from voidx.agent.adapters.persistence.session_repository import update_session_model
 
         target, scope = self._model_switch_scope(target)
@@ -398,7 +397,7 @@ class ModelCommandsMixin:
         self._sync_context_limit()
 
         if self.host.api_key:
-            from voidx.llm.service import create_chat_model
+            from voidx.llm.adapters.langchain_model_factory import create_chat_model
             self.host.model = create_chat_model(self.host.api_key, self.host.config.model)
 
         self.host.ui.print(f"Reasoning effort: [cyan]{new_effort.value}[/cyan] [green]✓[/green]")
@@ -456,7 +455,7 @@ class ModelCommandsMixin:
         return " ".join(filtered), scope
 
     def _sync_context_limit(self) -> None:
-        from voidx.llm.service import get_context_limit
+        from voidx.llm.domain.provider import get_context_limit
 
         limit = get_context_limit(self.host.config.model.provider, self.host.config.model.protocol or "", self.host.config.model.context_window)
         stats = self.host.usage_stats

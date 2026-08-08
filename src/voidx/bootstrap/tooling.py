@@ -95,7 +95,7 @@ def build_external_managers(
     model: Any | None = None,
     model_config: Any | None = None,
 ) -> tuple[Any, Any]:
-    from voidx.llm.service import create_resolver_model
+    from voidx.llm.adapters.langchain_model_factory import create_resolver_model
     from voidx.lsp.adapters.client import create_lsp_client
     from voidx.lsp.application.manager import LspManager
     from voidx.lsp.application.service import LspOperationsService

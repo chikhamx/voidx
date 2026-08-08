@@ -15,7 +15,6 @@ from voidx.platform.code_ide import CodeIde
 from voidx.llm.domain.model import ModelConfig
 from voidx.agent.domain.user_profile import UserProfile
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
-from voidx.llm.catalog import STATIC_MODELS
 from voidx.llm.usage import UsageStats
 from voidx.config.adapters.profile_repository import ModelProfileRow, save_model_profile_async
 from voidx.config.adapters.profile_repository import delete_model_profile_async

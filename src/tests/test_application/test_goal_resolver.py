@@ -716,3 +716,37 @@ async def test_goal_resolver_uses_json_mode_for_deepseek_with_qwen_reasoning():
     )
 
     assert FakeQwenModel._structured_method == "json_mode"
+
+
+@pytest.mark.asyncio
+async def test_goal_resolver_requires_factory_for_model_config() -> None:
+    with pytest.raises(RuntimeError, match="resolver model factory"):
+        await resolve_goal_for_turn(
+            model=object(),
+            model_config=object(),
+            user_text="test",
+            interaction_mode="auto",
+            task_state=TaskState(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_goal_resolver_uses_injected_factory_for_model_config() -> None:
+    wrapped = object()
+    calls = []
+
+    def factory(model, config):
+        calls.append((model, config))
+        return wrapped
+
+    result = await resolve_goal_for_turn(
+        model=object(),
+        model_config="config",
+        resolver_model_factory=factory,
+        user_text="test",
+        interaction_mode="auto",
+        task_state=TaskState(),
+    )
+
+    assert calls and calls[0][1] == "config"
+    assert result.intent.type.value == "general"

@@ -99,11 +99,18 @@ def build_agent_components(
         event_publisher_factory=event_publisher_factory,
     )
     workspace_write_lock = DelegatingWorkspaceWriteLock()
+    from voidx.bootstrap.providers import build_model_catalog
+
+    def model_catalog_factory(value):
+        return build_model_catalog(value)
+
     execution_kwargs = {
         "session": session,
         "ui": ui,
         "workspace_write_lock": workspace_write_lock,
         "settings": settings,
+        "model_catalog": model_catalog_factory(settings),
+        "model_catalog_factory": model_catalog_factory,
         "external_manager_factory": integrations.external_manager_factory,
         "mcp_reference_resolver": integrations.mcp_reference_resolver,
         "web_route": integrations.web_route,
