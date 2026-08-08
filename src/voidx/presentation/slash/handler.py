@@ -32,6 +32,7 @@ from voidx.presentation.slash.commands import (
     UpgradeCommandsMixin,
     McpCommandsMixin,
     LoopCmdCommandsMixin,
+    CompactModelCommandsMixin,
 )
 
 
@@ -49,6 +50,7 @@ class SlashHandler(
     UpgradeCommandsMixin,
     McpCommandsMixin,
     LoopCmdCommandsMixin,
+    CompactModelCommandsMixin,
 ):
     def __init__(
         self,

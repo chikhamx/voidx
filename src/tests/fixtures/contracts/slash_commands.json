@@ -43,6 +43,12 @@
   },
   {
     "arg": "args",
+    "desc": "Configure the compaction summary model",
+    "method": "_compact_model",
+    "name": "/compact-model"
+  },
+  {
+    "arg": "args",
     "desc": "Toggle verbose step/tool output",
     "method": "_debug",
     "name": "/debug"

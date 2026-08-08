@@ -75,6 +75,7 @@ export type Directory = string;
 export type MessageCount = number;
 export type ModelName = string;
 export type ModelProvider = string;
+export type RuntimeProfile = string;
 export type Status1 = "idle" | "running" | "waiting_for_user" | "waiting_for_write_lock" | "cancelling" | "failed";
 export type ThreadId1 = string;
 export type Title1 = string;
@@ -229,14 +230,13 @@ export interface ThreadInfo {
   message_count?: MessageCount;
   model_name?: ModelName;
   model_provider?: ModelProvider;
+  runtime_profile?: RuntimeProfile;
   status?: Status1;
   thread_id: ThreadId1;
   title?: Title1;
   updated_at?: UpdatedAt;
   workspace?: Workspace;
-  runtime_profile?: string;
   [k: string]: unknown;
-
 }
 export interface WorkspaceWriteLock {
   [k: string]: unknown;

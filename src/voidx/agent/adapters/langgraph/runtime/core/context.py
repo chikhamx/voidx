@@ -84,9 +84,10 @@ def replacement_messages(
     *,
     compaction_happened: bool,
     state_messages: list[BaseMessage],
+    pending_message_delta: list[BaseMessage] | None = None,
 ) -> list[BaseMessage]:
     if not compaction_happened:
-        return [assistant_msg]
+        return [*(pending_message_delta or []), assistant_msg]
     return [
         RemoveMessage(id=REMOVE_ALL_MESSAGES),
         *state_messages,

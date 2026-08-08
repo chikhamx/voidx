@@ -139,6 +139,31 @@ class StatusFinished(UiEventBase):
     remove: bool = True
 
 
+
+
+class ContextPressureUpdated(UiEventBase):
+    kind: Literal["context_pressure.updated"] = "context_pressure.updated"
+    pressure_id: str
+    level: Literal["soft", "hard"]
+    action: Literal["converge_hint"] = "converge_hint"
+    outcome: Literal["hint_injected", "hint_present", "hint_upgraded"]
+    reason: str
+    can_compact: bool = False
+    turn_count: int
+    pre_tokens: int
+    soft_threshold: int
+    hard_threshold: int
+
+
+class ContextPressureFinished(UiEventBase):
+    kind: Literal["context_pressure.finished"] = "context_pressure.finished"
+    pressure_id: str
+    level: Literal["soft", "hard"]
+    outcome: Literal["turn_converged", "compacted", "model_overflow_failed"]
+    detail: str = ""
+    ok: bool = True
+
+
 class AssistantStreamStarted(UiEventBase):
     kind: Literal["assistant_stream.started"] = "assistant_stream.started"
     stream_id: str = "default"
@@ -380,6 +405,8 @@ UiEvent: TypeAlias = (
     | DiffAppended
     | StatusUpdated
     | StatusFinished
+    | ContextPressureUpdated
+    | ContextPressureFinished
     | AssistantStreamStarted
     | AssistantStreamUpdated
     | AssistantStreamCommitted

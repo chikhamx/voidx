@@ -1156,10 +1156,11 @@ class LangGraphExecution:
         preflight: bool = False,
     ) -> tuple[list | None, str | None]:
         coordinator = _compaction_component_for(self)
+        custom_compaction_agent = self.__dict__.get("_run_compaction_agent")
         service = CompactionService(
             GraphCompactionAdapter(
                 coordinator,
-                run_compaction_agent=self._run_compaction_agent,
+                run_compaction_agent=custom_compaction_agent,
                 persist_compaction=self._persist_compaction,
             )
         )
@@ -1186,7 +1187,7 @@ class LangGraphExecution:
             force=force,
             reason=reason,
             ask=ask,
-            run_compaction_agent=self._run_compaction_agent,
+            run_compaction_agent=self.__dict__.get("_run_compaction_agent"),
             persist_compaction=self._persist_compaction,
         )
         if result is not None:
@@ -1203,7 +1204,7 @@ class LangGraphExecution:
     async def _compact_session_history(self: Any, *, force: bool = True) -> bool:
         result = await _compaction_component_for(self).compact_session_history(
             force=force,
-            run_compaction_agent=self._run_compaction_agent,
+            run_compaction_agent=self.__dict__.get("_run_compaction_agent"),
             persist_compaction=self._persist_compaction,
         )
         if result:

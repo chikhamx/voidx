@@ -46,6 +46,8 @@ from voidx.presentation.output.events.schema import (
     StartupShown,
     StatusFinished,
     StatusUpdated,
+    ContextPressureFinished,
+    ContextPressureUpdated,
     SubagentFinished,
     SubagentStarted,
     SubagentStepStarted,
@@ -229,6 +231,20 @@ class DockEventConsumer:
                     detail=e.detail,
                     ok=e.ok,
                     remove=e.remove,
+                )
+            case ContextPressureUpdated() as e:
+                return self._dock.set_status(
+                    e.pressure_id,
+                    f"Context pressure: converging current turn ({e.level})",
+                    e.reason,
+                    stage="working",
+                )
+            case ContextPressureFinished() as e:
+                return self._dock.finish_status(
+                    e.pressure_id,
+                    detail=e.detail,
+                    ok=e.ok,
+                    remove=True,
                 )
             case AssistantStreamStarted() as e:
                 if e.agent_id >= 0:

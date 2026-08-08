@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from voidx.agent.domain.user_profile import UserProfile
 from voidx.config.enums import PermissionMode
-from voidx.llm.domain.model import ModelConfig
+from voidx.llm.domain.model import ModelConfig, ReasoningEffort
 from voidx.mcp.domain.config import McpServerConfig
 from voidx.platform.retry_config import RetryConfig
 from voidx.tooling.domain.web import WebToolRoute
@@ -15,6 +15,19 @@ from voidx.tooling.domain.web import WebToolRoute
 class AiApprovalConfig(BaseModel):
     profile_name: str = ""
     timeout_seconds: float = Field(default=12.0, ge=1.0, le=60.0, allow_inf_nan=False)
+
+
+
+
+class CompactionConfig(BaseModel):
+    profile_name: str = ""
+    reasoning_effort: ReasoningEffort | None = None
+    timeout_seconds: float = Field(
+        default=60.0,
+        ge=1.0,
+        le=300.0,
+        allow_inf_nan=False,
+    )
 
 
 class Profile(BaseModel):

@@ -4,7 +4,14 @@ from __future__ import annotations
 
 StreamingRenderer = None
 
-from voidx.agent.domain.ui_events import AssistantStreamCommitted, AssistantStreamUpdated, GuidanceCommitted, StatusFinished
+from voidx.agent.domain.ui_events import (
+    AssistantStreamCommitted,
+    AssistantStreamUpdated,
+    ContextPressureFinished,
+    ContextPressureUpdated,
+    GuidanceCommitted,
+    StatusFinished,
+)
 
 from voidx.agent.adapters.langgraph.runtime.core.context import (
     rebuild_llm_messages as build_llm_context_messages,
@@ -50,7 +57,17 @@ from voidx.agent.adapters.langgraph.runtime.control_protocol import (
     strip_tool_calls_after_loop_commit,
 )
 from voidx.agent.adapters.langgraph.runtime.thread_context import current_thread_execution_state
-from voidx.llm.message_markers import GUIDANCE_MARKER
+from voidx.agent.adapters.langgraph.runtime.context_pressure import (
+    current_context_pressure,
+    evaluate_context_pressure,
+    hard_pressure_decision,
+    upsert_context_pressure_hint,
+)
+from voidx.agent.application.runtime_context import raw_semantic_messages
+from voidx.llm.message_markers import (
+    CONTEXT_PRESSURE_MARKER,
+    GUIDANCE_MARKER,
+)
 
 
 MALFORMED_TOOL_CALL_REPAIR_INSTRUCTION = (
@@ -135,6 +152,7 @@ class LlmTurn:
                 )
         state_messages = list(state["messages"])
         compaction_happened = False
+        pending_pressure_delta: list[BaseMessage] = []
         raw_todo_state = (
             state["todo_state"]
             if "todo_state" in state
@@ -188,6 +206,7 @@ class LlmTurn:
                 assistant_msg,
                 compaction_happened=compaction_happened,
                 state_messages=state_messages,
+                pending_message_delta=pending_pressure_delta,
             )
 
         def _rerender_task_context(messages: list[BaseMessage], new_turn_state: str, task_state: TaskState | None = None) -> list[BaseMessage]:
@@ -242,6 +261,36 @@ class LlmTurn:
             context_tokens=estimate_llm_context_tokens(llm_messages),
         )
         host._usage_stats.update_context(loop.context_tokens)
+        pressure_decision = evaluate_context_pressure(
+            raw_semantic_messages(state_messages),
+            loop.context_tokens,
+            compaction_service=host._compaction,
+        )
+        active_pressure = current_context_pressure(state_messages, pressure_decision.turn_id)
+        if pressure_decision.should_inject:
+            pressure_update = upsert_context_pressure_hint(state_messages, pressure_decision)
+            state_messages = pressure_update.state_messages
+            pending_pressure_delta = pressure_update.message_delta
+            active_pressure = current_context_pressure(state_messages, pressure_decision.turn_id)
+            if pressure_update.message_delta:
+                llm_messages, convergence_messages, convergence_forced = rebuild_llm_messages(
+                    state_messages,
+                    allow_inline_compaction=getattr(host.config, "inline_compaction_enabled", False),
+                )
+                loop.context_tokens = estimate_llm_context_tokens(llm_messages)
+                host._usage_stats.update_context(loop.context_tokens)
+            if pressure_update.outcome in {"hint_injected", "hint_upgraded"} and host._ui.via_events():
+                await host._ui.events.emit(ContextPressureUpdated(
+                    pressure_id=pressure_update.pressure_id,
+                    level=pressure_decision.pressure_level,
+                    outcome=pressure_update.outcome,
+                    reason=pressure_decision.reason,
+                    can_compact=pressure_decision.can_compact,
+                    turn_count=pressure_decision.turn_count,
+                    pre_tokens=pressure_decision.pre_tokens,
+                    soft_threshold=pressure_decision.soft_threshold,
+                    hard_threshold=pressure_decision.hard_threshold,
+                ))
         if host._compaction.is_overflow({"total": loop.context_tokens}):
             result, _preflight_result = await host._preflight_compact_if_needed(
                 state_messages,
@@ -254,6 +303,12 @@ class LlmTurn:
                     await apply_compaction_result(result)
                 )
                 loop.context_tokens = context_tokens
+                if active_pressure is not None and host._ui.via_events():
+                    await host._ui.events.emit(ContextPressureFinished(
+                        pressure_id=active_pressure[0],
+                        level=active_pressure[1],
+                        outcome="compacted",
+                    ))
 
         await save_context_frame(llm_messages, loop.context_tokens, convergence_messages, convergence_forced)
         max_retries = _LLM_MAX_RETRIES
@@ -400,6 +455,12 @@ class LlmTurn:
                             await apply_compaction_result(result)
                         )
                         loop.context_tokens = context_tokens
+                        if active_pressure is not None and host._ui.via_events():
+                            await host._ui.events.emit(ContextPressureFinished(
+                                pressure_id=active_pressure[0],
+                                level=active_pressure[1],
+                                outcome="compacted",
+                            ))
                         await save_context_frame(
                             llm_messages,
                             loop.context_tokens,
@@ -407,11 +468,52 @@ class LlmTurn:
                             convergence_forced,
                         )
                         continue
+                    hard_update = upsert_context_pressure_hint(
+                        state_messages,
+                        hard_pressure_decision(pressure_decision),
+                    )
+                    state_messages = hard_update.state_messages
+                    if hard_update.message_delta:
+                        pending_pressure_delta = hard_update.message_delta
+                    active_pressure = current_context_pressure(
+                        state_messages,
+                        pressure_decision.turn_id,
+                    )
+                    llm_messages, convergence_messages, convergence_forced = rebuild_llm_messages(
+                        state_messages,
+                        allow_inline_compaction=False,
+                    )
+                    loop.context_tokens = estimate_llm_context_tokens(llm_messages)
+                    host._usage_stats.update_context(loop.context_tokens)
+                    if hard_update.outcome in {"hint_injected", "hint_upgraded"} and host._ui.via_events():
+                        await host._ui.events.emit(ContextPressureUpdated(
+                            pressure_id=hard_update.pressure_id,
+                            level="hard",
+                            outcome=hard_update.outcome,
+                            reason="hard_threshold",
+                            can_compact=False,
+                            turn_count=pressure_decision.turn_count,
+                            pre_tokens=loop.context_tokens,
+                            soft_threshold=pressure_decision.soft_threshold,
+                            hard_threshold=pressure_decision.hard_threshold,
+                        ))
                 if retry_result.action == "retry":
                     continue
                 if retry_result.action == "fail":
+                    if kind == "overflow" and host._ui.via_events():
+                        failure_pressure = active_pressure or (
+                            f"voidx:context-pressure:{pressure_decision.turn_id}",
+                            "hard",
+                        )
+                        await host._ui.events.emit(ContextPressureFinished(
+                            pressure_id=failure_pressure[0],
+                            level="hard",
+                            outcome="model_overflow_failed",
+                            detail=str(e),
+                            ok=False,
+                        ))
                     return {
-                        "messages": [],
+                        "messages": list(pending_pressure_delta),
                         "step_count": step,
                         "should_continue": False,
                     }
@@ -426,6 +528,12 @@ class LlmTurn:
                     await host._ui.events.emit(AssistantStreamCommitted())
                 else:
                     host._ui.ui.print(final_text)
+        if active_pressure is not None and not final_msg.tool_calls and host._ui.via_events():
+            await host._ui.events.emit(ContextPressureFinished(
+                pressure_id=active_pressure[0],
+                level=active_pressure[1],
+                outcome="turn_converged",
+            ))
         return {
             "messages": replacement_messages(final_msg),
             "step_count": step + 1,

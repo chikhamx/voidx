@@ -12,8 +12,8 @@ class GraphCompactionAdapter:
         self,
         coordinator,
         *,
-        run_compaction_agent: Callable[[list, str | None], Awaitable[str | None]],
-        persist_compaction: Callable[[list], Awaitable[None]],
+        run_compaction_agent: Callable[[list, str | None], Awaitable[str | None]] | None = None,
+        persist_compaction: Callable[[list], Awaitable[None]] | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._run_compaction_agent = run_compaction_agent

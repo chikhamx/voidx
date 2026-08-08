@@ -219,3 +219,31 @@ def fallback_summary(messages: list) -> str:
     ])
     lines.extend(bullets(file_parts, empty="(none)"))
     return "\n".join(lines)
+
+
+FALLBACK_MERGED_SUMMARY_MAX_CHARS = 24_000
+
+
+def fallback_summary_with_previous(
+    messages: list,
+    previous_summary: str | None,
+) -> str:
+    """Merge newly extracted history with the anchored previous summary."""
+    extracted = fallback_summary(messages)
+    previous = (previous_summary or "").strip()
+    if not previous:
+        return extracted
+    new_section = "## Newly Compacted History\n" + extracted
+    separator_budget = 2
+    previous_budget = max(
+        0,
+        FALLBACK_MERGED_SUMMARY_MAX_CHARS - len(new_section) - separator_budget,
+    )
+    previous_section = join_with_char_budget(
+        ["## Earlier Anchored History\n" + previous],
+        previous_budget,
+    )
+    return join_with_char_budget(
+        [previous_section, new_section],
+        FALLBACK_MERGED_SUMMARY_MAX_CHARS,
+    )[:FALLBACK_MERGED_SUMMARY_MAX_CHARS]

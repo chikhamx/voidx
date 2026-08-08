@@ -51,6 +51,7 @@
   "workspace_only_keys": [
     "ai_approval",
     "ask_compact",
+    "compaction",
     "lsp",
     "permission_mode",
     "persistent_readable_dirs",

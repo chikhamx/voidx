@@ -19,6 +19,7 @@ from voidx.config.ports import ModelProfileStore
 from voidx.config.settings_agent import SettingsAgentMixin
 from voidx.config.settings_api_keys import SettingsApiKeyMixin
 from voidx.config.settings_code_ide import SettingsCodeIdeMixin
+from voidx.config.settings_compaction import SettingsCompactionMixin
 from voidx.config.settings_custom import SettingsCustomProviderMixin
 from voidx.config.settings_lsp import SettingsLspMixin
 from voidx.config.settings_mcp import SettingsMcpMixin
@@ -57,6 +58,7 @@ WORKSPACE_ONLY_KEYS = frozenset({
     "persistent_writable_files",
     "persistent_writable_dirs",
     "ask_compact",
+    "compaction",
     "skills",
     "lsp",
 })
@@ -80,6 +82,7 @@ class Settings(
     SettingsPermissionMixin,
     SettingsRetryMixin,
     SettingsCodeIdeMixin,
+    SettingsCompactionMixin,
     SettingsCustomProviderMixin,
 ):
     """Persistent settings backed by ``.voidx/settings.json`` in the workspace directory."""

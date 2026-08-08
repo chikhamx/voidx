@@ -37,6 +37,7 @@ from voidx.llm.compaction.fallback_summary import (
     extract_next_step_mentions,
     extract_path_mentions,
     fallback_summary,
+    fallback_summary_with_previous,
     join_with_char_budget,
     message_text,
     truncate_line,
@@ -51,6 +52,7 @@ from voidx.llm.compaction.service import (
     CompactionService,
     Turn,
 )
+from voidx.llm.compaction.summary_input import compaction_summary_messages
 from voidx.llm.message_markers import STEP_HINT_MARKER
 from voidx.llm.usage import estimate_context_tokens
 
@@ -76,12 +78,14 @@ __all__ = [
     "TOOL_OUTPUT_MAX_CHARS",
     "Turn",
     "bullets",
+    "compaction_summary_messages",
     "dedupe",
     "estimate_context_tokens",
     "extract_constraint_mentions",
     "extract_next_step_mentions",
     "extract_path_mentions",
     "fallback_summary",
+    "fallback_summary_with_previous",
     "join_with_char_budget",
     "message_text",
     "prune_ai_tool_call_args",

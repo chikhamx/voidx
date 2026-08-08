@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+
 StreamingRenderer = None
 
 from voidx.agent.domain.ui_events import StatusFinished, StatusUpdated
 from voidx.agent.ports.ui import NullAgentUiPort
 
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import Any, TYPE_CHECKING
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
@@ -21,7 +24,10 @@ from voidx.llm.compaction import (
     COMPACTION_REQUEST,
     SUMMARY_TEMPLATE,
     CompactionService,
+    compaction_summary_messages,
+    fallback_summary_with_previous,
 )
+from voidx.llm.domain.model import ModelConfig, ReasoningEffort
 from voidx.llm.domain.provider import resolve_protocol
 from voidx.observability.tool_log import log_tool_event
 from voidx.llm.usage import estimate_context_tokens, estimate_message_tokens, extract_token_usage
@@ -34,6 +40,24 @@ COMPACTION_REQUEST_HEADROOM = 2_000
 IN_TURN_SUMMARY_PREFIX = "## Long Summary\n"
 
 
+@dataclass(frozen=True)
+class ResolvedCompactionModel:
+    model: Any
+    model_config: ModelConfig
+    model_source: str
+    profile_name: str
+    reasoning_source: str
+    effective_reasoning_effort: ReasoningEffort
+    is_exact_main_instance: bool
+
+
+
+
+@dataclass(frozen=True)
+class _DefaultCompactionConfig:
+    profile_name: str = ""
+    reasoning_effort: ReasoningEffort | None = None
+    timeout_seconds: float = 60.0
 
 
 class CompactionCoordinator:
@@ -42,6 +66,99 @@ class CompactionCoordinator:
     def __init__(self, host: Any) -> None:
         self.host = host
 
+
+
+    def _compaction_config(self) -> Any:
+        settings = getattr(self.host, "_settings", None)
+        getter = getattr(settings, "get_compaction_config", None)
+        if callable(getter):
+            try:
+                config = getter()
+                if (
+                    isinstance(getattr(config, "profile_name", None), str)
+                    and hasattr(config, "reasoning_effort")
+                    and isinstance(getattr(config, "timeout_seconds", None), (int, float))
+                ):
+                    return config
+            except Exception as exc:
+                log_tool_event("compaction_settings_failed", message=str(exc))
+        return _DefaultCompactionConfig()
+    async def resolve_compaction_models(self) -> list[ResolvedCompactionModel]:
+        host = self.host
+        main_config = host.config.model
+        settings = getattr(host, "_settings", None)
+        compaction_config = self._compaction_config()
+        profile_name = compaction_config.profile_name
+        reasoning_override = compaction_config.reasoning_effort
+        effective_reasoning = reasoning_override or main_config.reasoning_effort
+        reasoning_source = "compaction" if reasoning_override is not None else "main"
+
+        primary: ResolvedCompactionModel | None = None
+        if profile_name and settings is not None:
+            try:
+                profile = await settings.resolve_profile(profile_name)
+                if profile is not None and profile.api_key:
+                    model_config = ModelConfig(
+                        provider=profile.provider,
+                        model=profile.model,
+                        base_url=profile.base_url,
+                        protocol=profile.protocol,
+                        reasoning_effort=effective_reasoning,
+                    )
+                    model = host._model_factory(profile.api_key, model_config)
+                    primary = ResolvedCompactionModel(
+                        model=model,
+                        model_config=model_config,
+                        model_source="profile",
+                        profile_name=profile_name,
+                        reasoning_source=reasoning_source,
+                        effective_reasoning_effort=effective_reasoning,
+                        is_exact_main_instance=False,
+                    )
+                else:
+                    log_tool_event("compaction_profile_unavailable", message=f"Compaction profile unavailable: {profile_name}")
+            except Exception as exc:
+                log_tool_event("compaction_profile_resolution_failed", message=f"{profile_name}: {exc}")
+
+        if primary is None and reasoning_override is not None and getattr(host, "api_key", None):
+            try:
+                model_config = main_config.model_copy(update={"reasoning_effort": reasoning_override})
+                model = host._model_factory(host.api_key, model_config)
+                primary = ResolvedCompactionModel(
+                    model=model,
+                    model_config=model_config,
+                    model_source="main",
+                    profile_name="",
+                    reasoning_source="compaction",
+                    effective_reasoning_effort=reasoning_override,
+                    is_exact_main_instance=False,
+                )
+            except Exception as exc:
+                log_tool_event("compaction_model_resolution_failed", message=str(exc))
+
+        if primary is None and host.model is not None:
+            primary = ResolvedCompactionModel(
+                model=host.model,
+                model_config=main_config,
+                model_source="main",
+                profile_name="",
+                reasoning_source="main",
+                effective_reasoning_effort=main_config.reasoning_effort,
+                is_exact_main_instance=True,
+            )
+
+        stages = [primary] if primary is not None else []
+        if primary is not None and not primary.is_exact_main_instance and host.model is not None:
+            stages.append(ResolvedCompactionModel(
+                model=host.model,
+                model_config=main_config,
+                model_source="main",
+                profile_name="",
+                reasoning_source="main",
+                effective_reasoning_effort=main_config.reasoning_effort,
+                is_exact_main_instance=True,
+            ))
+        return stages
     async def maybe_compact(
         self,
         messages: list,
@@ -116,7 +233,9 @@ class CompactionCoordinator:
     ) -> CompactionResult | None:
         """Compact without mutating the caller's message list."""
         host = self.host
-        run_agent = run_compaction_agent or self.run_compaction_agent
+        run_agent = run_compaction_agent
+        if run_agent is None and "run_compaction_agent" in self.__dict__:
+            run_agent = self.__dict__["run_compaction_agent"]
         persist = persist_compaction or self.persist_compaction
         total_tokens = estimate_context_tokens(messages, host.config.model.model)
         tokens = {"total": total_tokens, "input": total_tokens, "output": 0, "reasoning": 0}
@@ -166,6 +285,7 @@ class CompactionCoordinator:
         else:
             selection = host._compaction.select_details(semantic_messages)
         head_msgs, tail_id = selection.head, selection.tail_id
+        summary_head = compaction_summary_messages(head_msgs)
         semantic_tail = semantic_messages[selection.keep_from:]
 
         if not selection.should_compact:
@@ -194,38 +314,73 @@ class CompactionCoordinator:
         last_error: Exception | None = None
         returned_no_summary = False
 
-        self._active_compaction_source_messages = list(messages)
-        for attempt in range(1, COMPACTION_MAX_RETRIES + 2):
-            try:
-                if host._ui.via_events():
-                    retry_label = f" (attempt {attempt})" if attempt > 1 else ""
-                    await host._ui.events.emit(StatusUpdated(
-                        status_id="compaction",
-                        label="Compacting",
-                        detail=f"summarizing {len(head_msgs)} old messages{retry_label}",
-                        stage="compacting",
-                        display="record_only",
-                    ))
-                summary = await run_agent(head_msgs, previous_summary)
-                if summary:
-                    break
-                returned_no_summary = True
-                last_error = None
-            except Exception as e:
-                last_error = e
-                returned_no_summary = False
-                if attempt <= COMPACTION_MAX_RETRIES:
+        resolved_stages: list[ResolvedCompactionModel] = []
+        if run_agent is None:
+            resolved_stages = await self.resolve_compaction_models()
+        stages: list[tuple[str, ResolvedCompactionModel | None]] = (
+            [("custom", None)] if run_agent is not None else [
+                ("summary" if index == 0 else "main_fallback", resolved)
+                for index, resolved in enumerate(resolved_stages)
+            ]
+        )
+        timeout_seconds = self._compaction_config().timeout_seconds
+        used_stage = ""
+        used_resolved: ResolvedCompactionModel | None = None
+        used_attempt = 0
+        summary_timed_out = False
+
+        for stage_name, resolved in stages:
+            for attempt in range(1, COMPACTION_MAX_RETRIES + 2):
+                try:
                     if host._ui.via_events():
+                        retry_label = f" (attempt {attempt})" if attempt > 1 else ""
                         await host._ui.events.emit(StatusUpdated(
                             status_id="compaction",
-                            label="Compaction agent failed",
-                            detail=f"{e}; retrying ({attempt}/{COMPACTION_MAX_RETRIES})",
+                            label="Compacting",
+                            detail=f"summarizing {len(summary_head)} old messages{retry_label}",
                             stage="compacting",
                             display="record_only",
                         ))
-                    else:
-                        host._ui.ui.print(f"[dim]Compaction agent failed ({e}) — retrying ({attempt}/{COMPACTION_MAX_RETRIES})[/dim]")
-        self._active_compaction_source_messages = None
+                    invocation = (
+                        run_agent(summary_head, previous_summary)
+                        if run_agent is not None
+                        else self._run_compaction_attempt(
+                            summary_head,
+                            previous_summary,
+                            resolved,
+                            stage=stage_name,
+                            attempt=attempt,
+                            timeout_seconds=timeout_seconds,
+                        )
+                    )
+                    summary = await asyncio.wait_for(invocation, timeout=timeout_seconds)
+                    used_stage = stage_name
+                    used_resolved = resolved
+                    used_attempt = attempt
+                    if summary:
+                        break
+                    returned_no_summary = True
+                    last_error = None
+                except Exception as e:
+                    used_stage = stage_name
+                    used_resolved = resolved
+                    used_attempt = attempt
+                    summary_timed_out = isinstance(e, TimeoutError)
+                    last_error = e
+                    returned_no_summary = False
+                    if attempt <= COMPACTION_MAX_RETRIES:
+                        if host._ui.via_events():
+                            await host._ui.events.emit(StatusUpdated(
+                                status_id="compaction",
+                                label="Compaction agent failed",
+                                detail=f"{e}; retrying ({attempt}/{COMPACTION_MAX_RETRIES})",
+                                stage="compacting",
+                                display="record_only",
+                            ))
+                        else:
+                            host._ui.ui.print(f"[dim]Compaction agent failed ({e}) — retrying ({attempt}/{COMPACTION_MAX_RETRIES})[/dim]")
+            if summary:
+                break
 
         if not summary:
             if last_error:
@@ -245,7 +400,7 @@ class CompactionCoordinator:
             else:
                 err_msg = f" ({failure_detail})"
                 host._ui.ui.print(f"[dim]Compaction agent failed{err_msg} — using extracted summary[/dim]")
-            fallback = CompactionService.fallback_summary(head_msgs)
+            fallback = fallback_summary_with_previous(summary_head, previous_summary)
             host._pending_summary = fallback
             host._compaction_summary = fallback
             host._compaction.compaction_count += 1
@@ -257,7 +412,19 @@ class CompactionCoordinator:
                 include_summary_message=include_summary_message,
             )
             metadata = _finish_compaction_metadata(
-                base_metadata,
+                {
+                    **base_metadata,
+                    **_summary_attempt_metadata(
+                        used_resolved,
+                        stage=used_stage,
+                        attempt=used_attempt,
+                        timeout_seconds=timeout_seconds,
+                        fallback_used=used_stage == "main_fallback",
+                        input_count=len(summary_head),
+                        removed_count=len(head_msgs),
+                        timed_out=summary_timed_out,
+                    ),
+                },
                 live_messages=live_messages,
                 model=host.config.model.model,
                 fallback=True,
@@ -310,7 +477,19 @@ class CompactionCoordinator:
             include_summary_message=include_summary_message,
         )
         metadata = _finish_compaction_metadata(
-            base_metadata,
+            {
+                **base_metadata,
+                **_summary_attempt_metadata(
+                    used_resolved,
+                    stage=used_stage,
+                    attempt=used_attempt,
+                    timeout_seconds=timeout_seconds,
+                    fallback_used=used_stage == "main_fallback",
+                    input_count=len(summary_head),
+                    removed_count=len(head_msgs),
+                    timed_out=summary_timed_out,
+                ),
+            },
             live_messages=live_messages,
             model=host.config.model.model,
             fallback=False,
@@ -391,15 +570,59 @@ class CompactionCoordinator:
         )
         return bool(head)
 
+    async def _run_compaction_attempt(
+        self,
+        head_messages: list,
+        previous_summary: str | None,
+        resolved: ResolvedCompactionModel,
+        *,
+        stage: str,
+        attempt: int,
+        timeout_seconds: float,
+    ) -> str | None:
+        return await self.run_compaction_agent(
+            head_messages,
+            previous_summary,
+            resolved=resolved,
+            attempt_metadata={
+                "summary_stage": stage,
+                "summary_attempt": attempt,
+                "summary_timeout_seconds": timeout_seconds,
+                "summary_model_source": resolved.model_source,
+                "summary_profile_name": resolved.profile_name,
+                "summary_reasoning_effort": resolved.effective_reasoning_effort.value,
+                "summary_reasoning_source": resolved.reasoning_source,
+            },
+        )
+
     async def run_compaction_agent(
         self,
         head_messages: list,
         previous_summary: str | None,
+        *,
+        resolved: ResolvedCompactionModel | None = None,
+        attempt_metadata: dict[str, object] | None = None,
     ) -> str | None:
         """Run the compaction behavior to generate a structured summary."""
         host = self.host
-        if host.model is None:
-            return None
+        if resolved is None:
+            if host.model is None:
+                return None
+            resolved = ResolvedCompactionModel(
+                model=host.model,
+                model_config=host.config.model,
+                model_source="main",
+                profile_name="",
+                reasoning_source="main",
+                effective_reasoning_effort=getattr(
+                    host.config.model,
+                    "reasoning_effort",
+                    ReasoningEffort.XHIGH,
+                ),
+                is_exact_main_instance=True,
+            )
+        model = resolved.model
+        model_config = resolved.model_config
 
         ui_factories = host._ui if hasattr(host._ui, "streaming_renderer") else NullAgentUiPort()
         renderer_factory = StreamingRenderer or ui_factories.streaming_renderer
@@ -411,31 +634,8 @@ class CompactionCoordinator:
         )
 
         request_message = HumanMessage(content=_compaction_request_text(previous_summary))
-        source_messages = (
-            getattr(self, "_active_compaction_source_messages", None)
-            or getattr(host, "_current_messages", None)
-            or []
-        )
-        pruned_chars = 0
-        input_mode = "fallback"
-        messages: list[BaseMessage]
-
-        if source_messages:
-            candidate = list(source_messages)
-            pruned_chars = host._compaction.prune(candidate)
-            candidate_messages = [*candidate, request_message]
-            candidate_tokens = estimate_context_tokens(candidate_messages, host.config.model.model)
-            if candidate_tokens <= host._compaction.context_limit:
-                messages = candidate_messages
-                context_tokens = candidate_tokens
-                input_mode = "main_context"
-            else:
-                messages = [*head_messages, request_message]
-                context_tokens = estimate_context_tokens(messages, host.config.model.model)
-        else:
-            messages = [*head_messages, request_message]
-            context_tokens = estimate_context_tokens(messages, host.config.model.model)
-
+        messages: list[BaseMessage] = [*head_messages, request_message]
+        context_tokens = estimate_context_tokens(messages, model_config.model)
         if context_tokens > host._compaction.context_limit:
             budget = max(
                 0,
@@ -446,15 +646,14 @@ class CompactionCoordinator:
             head_messages = host._compaction.truncate_head_to_budget(
                 head_messages,
                 budget=budget,
-                model=host.config.model.model,
+                model=model_config.model,
             )
             if not head_messages:
                 raise ValueError("compaction input exceeds context budget")
             messages = [*head_messages, request_message]
-            context_tokens = estimate_context_tokens(messages, host.config.model.model)
+            context_tokens = estimate_context_tokens(messages, model_config.model)
             if context_tokens > host._compaction.context_limit:
                 raise ValueError("compaction input exceeds context budget")
-            input_mode = "fallback"
 
         host._usage_stats.update_context(context_tokens)
         if host._session is not None:
@@ -462,26 +661,27 @@ class CompactionCoordinator:
                 session_id=host._session.id,
                 frame_kind="compaction",
                 agent_persona="compaction-behavior",
-                provider=host.config.model.provider,
-                model=host.config.model.model,
+                provider=model_config.provider,
+                model=model_config.model,
                 messages=messages,
                 token_estimate=context_tokens,
                 metadata={
                     "head_message_count": len(head_messages),
                     "has_previous_summary": previous_summary is not None,
-                    "input_mode": input_mode,
-                    "source_message_count": len(source_messages),
-                    "pruned_chars": pruned_chars,
+                    "input_mode": "removed_history_only",
+                    "source_message_count": len(head_messages),
+                    "summary_input_scope": "removed_history_only",
+                    **(attempt_metadata or {}),
                 },
             )
-        assistant_msg = await stream_llm(host.model, messages, renderer, resolve_protocol(host.config.model), ui_port=host._ui)
+        assistant_msg = await stream_llm(model, messages, renderer, resolve_protocol(model_config), ui_port=host._ui)
         host._usage_stats.record_call(
             extract_token_usage(assistant_msg),
             fallback_input_tokens=context_tokens,
-            fallback_output_tokens=estimate_message_tokens(assistant_msg, host.config.model.model),
+            fallback_output_tokens=estimate_message_tokens(assistant_msg, model_config.model),
             messages=messages,
-            model=host.config.model.model,
-            cache_key=f"{host.config.model.provider}/{host.config.model.model}",
+            model=model_config.model,
+            cache_key=f"{model_config.provider}/{model_config.model}",
         )
         text = extract_text(assistant_msg)
         if text:
@@ -536,6 +736,48 @@ def _compaction_metadata(
         "current_user_preserved": _latest_user_preserved(semantic_messages, semantic_tail),
         "tail_anchor_id": tail_id or "",
         "inline_compaction_enabled": bool(getattr(host.config, "inline_compaction_enabled", False)),
+    }
+
+
+
+
+def _summary_attempt_metadata(
+    resolved: ResolvedCompactionModel | None,
+    *,
+    stage: str,
+    attempt: int,
+    timeout_seconds: float,
+    fallback_used: bool,
+    input_count: int,
+    removed_count: int,
+    timed_out: bool,
+) -> dict[str, object]:
+    if resolved is None:
+        return {
+            "summary_stage": stage,
+            "summary_attempt": attempt,
+            "summary_timeout_seconds": timeout_seconds,
+            "summary_fallback_used": fallback_used,
+            "summary_timed_out": timed_out,
+            "summary_input_message_count": input_count,
+            "summary_removed_message_count": removed_count,
+            "summary_input_scope": "removed_history_only",
+        }
+    return {
+        "summary_model_provider": resolved.model_config.provider,
+        "summary_model_name": resolved.model_config.model,
+        "summary_model_source": resolved.model_source,
+        "summary_profile_name": resolved.profile_name,
+        "summary_reasoning_effort": resolved.effective_reasoning_effort.value,
+        "summary_reasoning_source": resolved.reasoning_source,
+        "summary_timeout_seconds": timeout_seconds,
+        "summary_stage": stage,
+        "summary_attempt": attempt,
+        "summary_fallback_used": fallback_used,
+        "summary_timed_out": timed_out,
+        "summary_input_message_count": input_count,
+        "summary_removed_message_count": removed_count,
+        "summary_input_scope": "removed_history_only",
     }
 
 

@@ -43,6 +43,8 @@ from voidx.presentation.output.events.schema import (
     StartupShown,
     StatusFinished,
     StatusUpdated,
+    ContextPressureFinished,
+    ContextPressureUpdated,
     SubagentFinished,
     SubagentStarted,
     SubagentStepStarted,
@@ -316,6 +318,28 @@ class UiEventItemAdapter:
             },
         )
 
+
+    def _on_context_pressure_updated(self, event: ContextPressureUpdated) -> JsonRpcNotification:
+        item_id = self._status_items.get(event.pressure_id)
+        lifecycle = "delta" if item_id is not None else "started"
+        if item_id is None:
+            item_id = _uid()
+            self._status_items[event.pressure_id] = item_id
+        return self._item_notification(
+            item_id,
+            "status",
+            lifecycle,
+            event.model_dump(mode="json"),
+        )
+
+    def _on_context_pressure_finished(self, event: ContextPressureFinished) -> JsonRpcNotification:
+        item_id = self._status_items.get(event.pressure_id, _uid())
+        return self._item_notification(
+            item_id,
+            "status",
+            "completed",
+            event.model_dump(mode="json"),
+        )
     # ── subagent ─────────────────────────────────────────────────────────
 
     def _on_subagent_started(self, event: SubagentStarted) -> JsonRpcNotification:
@@ -564,6 +588,8 @@ _HANDLERS: dict[type, Callable[[UiEventItemAdapter, UiEvent], JsonRpcNotificatio
     # status
     StatusUpdated: UiEventItemAdapter._on_status_updated,
     StatusFinished: UiEventItemAdapter._on_status_finished,
+    ContextPressureUpdated: UiEventItemAdapter._on_context_pressure_updated,
+    ContextPressureFinished: UiEventItemAdapter._on_context_pressure_finished,
     # subagent
     SubagentStarted: UiEventItemAdapter._on_subagent_started,
     SubagentStepStarted: UiEventItemAdapter._on_subagent_step_started,

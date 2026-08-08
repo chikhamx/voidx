@@ -173,6 +173,8 @@ class PreferencesSlashPort(Protocol):
     ui: object
     prompt_ui: PromptUi | None
     user_config: UserConfigView
+    model_config: object
+    reasoning_effort_type: object
     language_labels: object
     permission_ops: PermissionOps
     preference_settings: ModelSettingsOps

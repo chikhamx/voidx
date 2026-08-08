@@ -13,6 +13,7 @@ from voidx.presentation.slash.commands.skills import SkillsCommandsMixin
 from voidx.presentation.slash.commands.upgrade import UpgradeCommandsMixin
 from voidx.presentation.slash.commands.mcp import McpCommandsMixin
 from voidx.presentation.slash.commands.loop_cmd import LoopCmdCommandsMixin
+from voidx.presentation.slash.commands.compact_model import CompactModelCommandsMixin
 
 __all__ = [
     "ModeCommandsMixin",
@@ -28,4 +29,5 @@ __all__ = [
     "UpgradeCommandsMixin",
     "McpCommandsMixin",
     "LoopCmdCommandsMixin",
+    "CompactModelCommandsMixin",
 ]

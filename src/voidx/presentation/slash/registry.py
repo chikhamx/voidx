@@ -25,6 +25,7 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand("/clear", "Start a new session with empty context", "_clear", "none"),
     SlashCommand("/code-ide", "Choose app for opening changed files", "_code_ide", "args"),
     SlashCommand("/compact", "Manually trigger context compaction", "_cmd_compact", "none"),
+    SlashCommand("/compact-model", "Configure the compaction summary model", "_compact_model", "args"),
     SlashCommand("/debug", "Toggle verbose step/tool output", "_debug", "args"),
     SlashCommand("/deny", "Deny a tool for this session", "_cmd_deny", "args"),
     SlashCommand("/diff", "Show git working tree diff with syntax highlighting", "_show_diff", "none"),

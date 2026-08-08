@@ -1,5 +1,7 @@
 # 压缩总结独立模型与 reasoning 配置
 
+> **Status: Done** — Archived on 2026-08-09.
+
 ## 状态
 
 设计已确认，待实现。

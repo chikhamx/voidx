@@ -87,9 +87,7 @@ class TestCompactionRetry:
         assert persisted == ["head"]
 
     @pytest.mark.asyncio
-    async def test_run_compaction_agent_uses_main_context_request_and_extracts_text(self, monkeypatch):
-        """The real compaction path should summarize from the compiled main
-        context plus a trailing structured request."""
+    async def test_run_compaction_agent_uses_removed_head_and_extracts_text(self, monkeypatch):
         from types import SimpleNamespace
         from unittest.mock import MagicMock
 
@@ -115,19 +113,11 @@ class TestCompactionRetry:
             fake_save_context_frame_from_messages,
         )
 
-        class FakeInstruction:
-            async def workflow_context_for(self, text, **kwargs):
-                captured["workflow_text"] = text
-                captured["workflow_kwargs"] = kwargs
-                return SimpleNamespace(
-                    instructions=["compaction workflow"],
-                    active=["compaction"],
-                    content="## Workflow Context\ncompaction workflow",
-                )
-
         main_context = [
             SystemMessage(content="compiled main system prompt"),
-            HumanMessage(content="## Workflow Context\nmain workflow context"),
+            HumanMessage(content="tail sentinel", id="tail"),
+        ]
+        head = [
             HumanMessage(content="Fix the compaction fallback", id="1"),
             AIMessage(content="I will update compaction."),
         ]
@@ -136,7 +126,6 @@ class TestCompactionRetry:
             _debug=False,
             _session=SimpleNamespace(id="session-1"),
             _usage_stats=MagicMock(),
-            _instruction=FakeInstruction(),
             _current_messages=main_context,
             config=SimpleNamespace(
                 model=SimpleNamespace(
@@ -150,7 +139,7 @@ class TestCompactionRetry:
         )
 
         result = await CompactionCoordinator(host).run_compaction_agent(
-            [HumanMessage(content="Fix the compaction fallback", id="1")],
+            head,
             "## Goal\n- previous",
         )
 
@@ -159,17 +148,14 @@ class TestCompactionRetry:
         assert captured["protocol"] == "openai"
         assert captured["renderer"]._headless is True
         assert captured["renderer"]._stream_to_dock is False
-        assert isinstance(captured["messages"][0], SystemMessage)
-        assert captured["messages"][0].content == "compiled main system prompt"
-        assert captured["messages"][:-1] is not main_context
-        assert [m.content for m in captured["messages"][:-1]] == [m.content for m in main_context]
+        assert [m.content for m in captured["messages"][:-1]] == [m.content for m in head]
+        assert "compiled main system prompt" not in [m.content for m in captured["messages"]]
+        assert "tail sentinel" not in [m.content for m in captured["messages"]]
         assert isinstance(captured["messages"][-1], HumanMessage)
         assert "Output exactly the Markdown structure" in captured["messages"][-1].content
         assert "<previous-summary>\n## Goal\n- previous\n</previous-summary>" in captured["messages"][-1].content
-        assert "compaction workflow" not in "\n".join(str(m.content) for m in captured["messages"])
-        assert "workflow_kwargs" not in captured
         assert captured["context_frame"]["agent_persona"] == "compaction-behavior"
-        assert captured["context_frame"]["metadata"]["input_mode"] == "main_context"
+        assert captured["context_frame"]["metadata"]["input_mode"] == "removed_history_only"
 
     @pytest.mark.asyncio
     async def test_run_compaction_agent_falls_back_and_truncates_when_main_context_exceeds_budget(self, monkeypatch):
@@ -180,7 +166,7 @@ class TestCompactionRetry:
         from voidx.agent.adapters.langgraph.runtime.compaction_coordinator import CompactionCoordinator
 
         captured = {}
-        estimate_results = iter([200_000, 200_000, 1_000])
+        estimate_results = iter([200_000, 1_000])
 
         async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
             captured["messages"] = messages
@@ -233,8 +219,8 @@ class TestCompactionRetry:
         assert result == "## Goal\n- summarized"
         truncate.assert_called_once()
         assert [message.content for message in captured["messages"][:-1]] == ["newer user"]
-        assert captured["context_frame"]["metadata"]["input_mode"] == "fallback"
-        assert captured["context_frame"]["metadata"]["source_message_count"] == 4
+        assert captured["context_frame"]["metadata"]["input_mode"] == "removed_history_only"
+        assert captured["context_frame"]["metadata"]["source_message_count"] == 1
 
     @pytest.mark.asyncio
     async def test_compact_for_live_state_returns_result_without_mutating_messages(self):

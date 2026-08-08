@@ -81,6 +81,9 @@ class _PreferenceSettingsOps:
     def set_code_ide(self, value): return self._execution.settings.set_code_ide(value)
     async def list_profiles(self): return await self._execution.settings.list_profiles()
     def set_ai_approval_profile(self, value): return self._execution.settings.set_ai_approval_profile(value)
+    def get_compaction_config(self): return self._execution.settings.get_compaction_config()
+    def set_compaction_config(self, value): return self._execution.settings.set_compaction_config(value)
+    async def resolve_profile(self, name): return await self._execution.settings.resolve_profile(name)
     def set_permission_mode(self, value): return self._execution.settings.set_permission_mode(value)
     def get_user_profile(self): return self._execution.settings.get_user_profile()
     def set_user_language(self, value): return self._execution.settings.set_user_language(value)
@@ -285,6 +288,10 @@ class PreferencesSlashAdapter:
     def prompt_ui(self): return _PromptUi(self._execution) if self._execution.presentation_ui._interaction_frontend is not None else None
     @property
     def user_config(self): return _UserConfigView(self._execution)
+    @property
+    def model_config(self): return self._execution.config.model
+    @property
+    def reasoning_effort_type(self): return self._execution.reasoning_effort_type
     @property
     def language_labels(self): return self._execution.language_labels
     @property
