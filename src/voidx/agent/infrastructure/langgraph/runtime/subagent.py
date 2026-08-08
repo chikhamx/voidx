@@ -8,7 +8,7 @@ import asyncio
 import json
 import re
 import time
-from typing import Any
+from typing import Any, Protocol
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -47,7 +47,6 @@ from voidx.agent.infrastructure.langgraph.runtime.tool_surface import (
     ToolSurfaceContext,
     resolve_tool_surface,
 )
-from voidx.config import Config
 from voidx.llm.adapters.langchain_model_factory import create_chat_model
 from voidx.llm.domain.provider import resolve_protocol
 from voidx.agent.application.instruction import WorkflowRuntimeContext
@@ -89,11 +88,25 @@ def _child_workflow_mode(route: WorkflowRoute | None) -> str:
 def _workflow_summary_name(summary: str) -> str:
     return summary.split(" ", 1)[0].strip().lower()
 
+
+class SubagentConfig(Protocol):
+    model: Any
+    workspace: str
+    user_profile: Any
+    lsp_format_after_edit: bool
+    sandbox_readable_files: list[str]
+    sandbox_readable_dirs: list[str]
+    sandbox_writable_files: list[str]
+    sandbox_writable_dirs: list[str]
+
+    def model_copy(self, *, deep: bool = False) -> "SubagentConfig": ...
+
+
 async def run_subagent(
     agent_def: AgentDef,
     task_description: str,
     api_key: str | None,
-    config: Config,
+    config: SubagentConfig,
     tracker: TaskTracker | None = None,
     runtime_persona: str | None = None,
     *,

@@ -2,7 +2,27 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
+
 from voidx.agent.slash.runtime import _select_from_list, get_providers
+
+
+@dataclass(frozen=True, slots=True)
+class _ProfileInput:
+    """Minimal profile payload accepted by the settings host."""
+
+    name: str
+    api_key: str = ""
+    base_url: str | None = None
+    protocol: str | None = None
+
+    @property
+    def provider(self) -> str:
+        return self.name.split("/", 1)[0] if "/" in self.name else self.name
+
+    @property
+    def model(self) -> str:
+        return self.name.split("/", 1)[1] if "/" in self.name else self.name
 
 
 class ModelCommandsMixin:
@@ -33,7 +53,6 @@ class ModelCommandsMixin:
 
     async def _model_new(self) -> None:
         """Interactive model configuration — create or update a named profile."""
-        from voidx.config import Profile
         from voidx.llm.adapters.langchain_model_factory import create_chat_model
 
         self.host.ui.print("[bold]Configure LLM[/bold]")
@@ -152,7 +171,7 @@ class ModelCommandsMixin:
 
         # Step 5: save profile (key = provider/model) and activate
         profile_key = f"{new_provider}/{new_model}"
-        profile = Profile(
+        profile = _ProfileInput(
             name=profile_key,
             api_key=api_key,
             base_url=base_url,
@@ -322,7 +341,6 @@ class ModelCommandsMixin:
         await self._pick_or_act("Delete", target, _do_delete)
 
     async def _model_switch(self, target: str) -> None:
-        from voidx.config import Profile
         from voidx.llm.adapters.langchain_model_factory import create_chat_model
         from voidx.agent.adapters.persistence.session_repository import update_session_model
 
@@ -349,7 +367,7 @@ class ModelCommandsMixin:
                 if not new_key:
                     self.host.ui.error(f"No API key found for '{new_provider}'. Use /model new.")
                     return
-                profile = Profile(
+                profile = _ProfileInput(
                     name=f"{new_provider}/{new_model}",
                     api_key=new_key,
                     base_url=await settings.resolve_base_url(new_provider),

@@ -29,6 +29,12 @@ class SettingsPermissionMixin:
     def set_ai_approval_config(self, config: AiApprovalConfig) -> Path:
         return self._set_setting("ai_approval", config.model_dump(mode="json"))
 
+    def set_ai_approval_profile(self, profile_name: str) -> Path:
+        current = self.get_ai_approval_config()
+        return self.set_ai_approval_config(
+            current.model_copy(update={"profile_name": profile_name})
+        )
+
     def get_permission_mode(self) -> PermissionMode:
         raw = self._effective_data().get("permission_mode", PermissionMode.SAFE.value)
         try:

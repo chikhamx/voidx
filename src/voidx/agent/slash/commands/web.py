@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from voidx.config import McpServerConfig
+from voidx.mcp.domain.config import McpServerConfig
 from voidx.tooling.domain.web import WebToolRoute
 
 
@@ -81,8 +81,6 @@ class WebCommandsMixin:
             self.host.ui.print("[dim]Usage: /bocha [set|delete|show][/dim]")
 
     async def _sync_tavily_mcp_config(self, api_key: str) -> None:
-        from voidx.config import McpServerConfig
-        from voidx.tooling.domain.web import WebToolRoute
 
         settings = self.host.settings
         if settings is None:

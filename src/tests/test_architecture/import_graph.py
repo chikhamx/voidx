@@ -120,8 +120,7 @@ def _walk_imports(
                                 type_checking,
                             )
                         )
-        elif isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
-            call = statement.value
+        for call in (node for node in ast.walk(statement) if isinstance(node, ast.Call)):
             function = call.func
             is_import_module = (
                 isinstance(function, ast.Attribute)
@@ -137,7 +136,7 @@ def _walk_imports(
                         ImportRef(
                             source,
                             target,
-                            statement.lineno,
+                            call.lineno,
                             type_checking,
                             dynamic=True,
                         )

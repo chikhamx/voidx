@@ -508,3 +508,18 @@ async def test_settings_concurrent_saves_merge_different_keys(tmp_path):
     data = json.loads((workspace / ".voidx" / "settings.json").read_text(encoding="utf-8"))
     assert data["lsp"]["format_after_edit"] is False
     assert data["ask_compact"] is True
+
+
+def test_set_ai_approval_profile_preserves_timeout(tmp_path):
+    from voidx.config import AiApprovalConfig
+
+    settings = Settings(str(tmp_path))
+    settings.set_ai_approval_config(
+        AiApprovalConfig(profile_name="old", timeout_seconds=27.5)
+    )
+
+    settings.set_ai_approval_profile("new")
+
+    config = settings.get_ai_approval_config()
+    assert config.profile_name == "new"
+    assert config.timeout_seconds == 27.5

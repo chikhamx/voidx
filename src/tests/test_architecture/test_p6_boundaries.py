@@ -11,6 +11,8 @@ from voidx.platform.code_ide import CodeIde
 from voidx.skills.domain.selection import SkillSelectionConfig
 from voidx.tooling.domain.web import WebToolRoute
 
+from .import_graph import _walk_imports, format_edges, import_edges, top_level
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -299,3 +301,27 @@ def test_skills_legacy_references_and_production_fallbacks_are_gone() -> None:
         assert "SkillService(" not in source, relative
         assert "SkillRegistry(" not in source, relative
         assert "SkillService.for_workspace(" not in source, relative
+
+
+def test_feature_packages_do_not_import_config() -> None:
+    features = {"agent", "tooling", "llm", "mcp", "lsp", "skills"}
+    violations = [
+        edge
+        for edge in import_edges()
+        if top_level(edge.source) in features and top_level(edge.target) == "config"
+    ]
+    assert violations == [], "feature packages import config:\n" + format_edges(violations)
+
+
+def test_import_graph_detects_nested_literal_dynamic_imports() -> None:
+    statements = ast.parse(
+        'assigned = importlib.import_module("voidx.config")\n'
+        'def load():\n    return __import__("voidx.config.models")\n'
+    ).body
+
+    refs = _walk_imports("voidx.agent.sample", statements, source_is_package=False)
+
+    assert {(ref.target, ref.dynamic) for ref in refs} == {
+        ("voidx.config", True),
+        ("voidx.config.models", True),
+    }

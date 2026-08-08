@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
-
-from voidx.config import Config, Settings
+from typing import Any, Protocol
 from voidx.llm.compaction import CompactionService
 from voidx.llm.domain.provider import get_context_limit
 from voidx.llm.usage import UsageStats
@@ -26,7 +24,13 @@ def register_agent_tool(*args: Any, **kwargs: Any) -> None:
 
 
 
-def build_compaction_service(config: Config) -> tuple[UsageStats, CompactionService]:
+class CompactionConfig(Protocol):
+    model: Any
+    compaction_soft_ratio: float
+    compaction_post_target_ratio: float
+
+
+def build_compaction_service(config: CompactionConfig) -> tuple[UsageStats, CompactionService]:
     context_limit = get_context_limit(config.model.provider, config.model.protocol or "", config.model.context_window)
     return (
         UsageStats(context_limit=context_limit),

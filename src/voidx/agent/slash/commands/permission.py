@@ -1,11 +1,11 @@
 """Slash /permission commands."""
 from __future__ import annotations
 
+from voidx.tooling.domain.permission import PermissionMode
 
 
 class PermissionCommandsMixin:
     async def _permission_mode(self, arg: str) -> None:
-        from voidx.config import AiApprovalConfig, PermissionMode
 
         parts = arg.strip().split(None, 1)
         raw = parts[0].lower().replace("-", "_") if parts else ""
@@ -66,11 +66,7 @@ class PermissionCommandsMixin:
         if settings is not None:
             settings.set_permission_mode(preset)
             if selected_profile is not None:
-                current = settings.get_ai_approval_config()
-                settings.set_ai_approval_config(AiApprovalConfig(
-                    profile_name=selected_profile,
-                    timeout_seconds=current.timeout_seconds,
-                ))
+                settings.set_ai_approval_profile(selected_profile)
         suffix = f" using {selected_profile or 'current main profile'}" if selected_profile is not None else ""
         self.host.ui.print(f"[dim]Permission mode set to [cyan]{labels[preset.value]}[/cyan]{suffix}[/dim]")
 

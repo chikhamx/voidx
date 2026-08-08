@@ -18,7 +18,7 @@ from voidx.agent.application.compaction_service import CompactionService
 from voidx.agent.domain.compaction import CompactionResult, PreflightCompactionResult
 from voidx.agent.infrastructure.graph_compaction import GraphCompactionAdapter
 from voidx.agent.infrastructure.langgraph.runtime.tool_executor import ToolExecutorAdapter
-from typing import Any, TYPE_CHECKING
+from typing import Any, Protocol, TYPE_CHECKING
 from voidx.tooling.domain.authorization import PermissionDecision
 from voidx.tooling.domain.risk import RiskLevel
 from voidx.agent.domain.task.intent import PersonaName
@@ -70,7 +70,6 @@ from voidx.agent.application.runtime_context import (
 )
 from voidx.agent.domain.task.state import GoalResolution, TaskState, goal_type_from_join
 from voidx.agent.application.todo_state import apply_todo_state_to_host
-from voidx.config import Config, Settings
 from voidx.tooling.application.ai_approval import AiApprovalService
 from voidx.agent.application.instruction import InstructionService
 from voidx.llm.message_markers import GUIDANCE_MARKER
@@ -135,7 +134,33 @@ def _tool_executor_for(execution: Any) -> ToolExecutorAdapter:
 
 
 
-def _in_memory_permission_service(config: Config, *, settings=None, notifier):
+
+
+class PermissionConfig(Protocol):
+    permission_mode: Any
+    sandbox_readable_files: list[str]
+    sandbox_readable_dirs: list[str]
+    sandbox_writable_files: list[str]
+    sandbox_writable_dirs: list[str]
+
+
+class ExecutionConfig(PermissionConfig, Protocol):
+    model: Any
+    workspace: str
+    user_profile: Any
+    lsp_format_after_edit: bool
+    compaction_soft_ratio: float
+    compaction_post_target_ratio: float
+
+    def model_copy(self, *, deep: bool = False) -> "ExecutionConfig": ...
+
+
+class RuntimeConfigPort(Protocol):
+    async def resolve_profile(self) -> Any: ...
+
+    async def build_config(self, *, profile: Any) -> ExecutionConfig: ...
+
+def _in_memory_permission_service(config: PermissionConfig, *, settings=None, notifier):
     from voidx.tooling.adapters.permission.in_memory_state import create_permission_service
 
     return create_permission_service(
@@ -333,10 +358,10 @@ class LangGraphExecution:
 
     def __init__(
         self,
-        config: Config,
+        config: ExecutionConfig,
         api_key: str | None,
         session: SessionInfo | None = None,
-        settings: Settings | None = None,
+        settings: RuntimeConfigPort | None = None,
         model_catalog: Any | None = None,
         model_catalog_factory: Callable[[Any | None], Any] | None = None,
         skills_api: Any | None = None,
@@ -479,7 +504,7 @@ class LangGraphExecution:
     def runtime_guards(self):
         return self._runtime_guards
 
-    async def apply_settings_update(self, settings: Settings) -> None:
+    async def apply_settings_update(self, settings: RuntimeConfigPort) -> None:
         await self._apply_settings_update(settings)
 
     @property
@@ -523,7 +548,7 @@ class LangGraphExecution:
         return self._session
 
     @property
-    def settings(self) -> Settings | None:
+    def settings(self) -> RuntimeConfigPort | None:
         return self._settings
 
     @property
@@ -555,7 +580,7 @@ class LangGraphExecution:
     def usage_stats(self):
         return self._usage_stats
 
-    async def _apply_settings_update(self, settings: Settings) -> None:
+    async def _apply_settings_update(self, settings: RuntimeConfigPort) -> None:
         profile = await settings.resolve_profile()
         new_config = await settings.build_config(profile=profile)
         new_config.workspace = self._workspace

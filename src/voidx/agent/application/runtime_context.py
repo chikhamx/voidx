@@ -7,7 +7,7 @@ from datetime import datetime
 import hashlib
 import json
 import platform
-from typing import Any, Iterable
+from typing import Any, Iterable, Protocol
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from pydantic import BaseModel, ConfigDict, Field
@@ -16,7 +16,6 @@ from voidx.agent.application.prompts import BaseSystemPrompt, WorkflowRuntimePro
 from voidx.agent.domain.prompt_contracts import ContextSection
 from voidx.agent.domain.task.state import GoalSpec
 from voidx.agent.domain.task.todo import TodoRunState
-from voidx.config import Config
 from voidx.agent.domain.user_profile import UserProfile
 from voidx.agent.domain.task.intent import InteractionMode, TaskIntent
 from voidx.agent.domain.task.todo import TodoStatus
@@ -54,28 +53,30 @@ class ContextCompilerCache:
     row_messages: dict[int, RowMessageCacheEntry] = dataclass_field(default_factory=dict)
 
 
+class PermissionModePolicy(Protocol):
+    value: str
+
+    @property
+    def sandbox_mode(self) -> str: ...
+
+    @property
+    def approval_policy(self) -> str: ...
+
+
+class ExecutionPolicyConfig(Protocol):
+    permission_mode: PermissionModePolicy
+    sandbox_writable_files: list[str]
+    sandbox_writable_dirs: list[str]
+
+
 class ExecutionPolicy(BaseModel):
     permission_mode: str
+    sandbox_mode: str = "workspace-write"
+    approval_policy: str = "untrusted"
     extra_write_paths: list[str] = Field(default_factory=list)
 
-    @property
-    def sandbox_mode(self) -> str:
-        from voidx.config import PermissionMode
-        try:
-            return PermissionMode(self.permission_mode).sandbox_mode
-        except ValueError:
-            return "workspace-write"
-
-    @property
-    def approval_policy(self) -> str:
-        from voidx.config import PermissionMode
-        try:
-            return PermissionMode(self.permission_mode).approval_policy
-        except ValueError:
-            return "untrusted"
-
     @classmethod
-    def from_config(cls, config: Config) -> "ExecutionPolicy":
+    def from_config(cls, config: ExecutionPolicyConfig) -> "ExecutionPolicy":
         from voidx.platform.paths import voidx_home
 
         extra = [
@@ -87,6 +88,8 @@ class ExecutionPolicy(BaseModel):
             extra.append(data_dir)
         return cls(
             permission_mode=config.permission_mode.value,
+            sandbox_mode=config.permission_mode.sandbox_mode,
+            approval_policy=config.permission_mode.approval_policy,
             extra_write_paths=extra,
         )
 

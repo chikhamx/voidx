@@ -22,7 +22,7 @@ from voidx.agent.domain.task.state import (
     goal_type_from_join,
 )
 from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
-from voidx.config import RetryConfig
+from voidx.platform.retry_config import RetryConfig
 from voidx.llm.structured import ainvoke_structured, resolve_structured_output_method
 from voidx.llm.usage import (
     TokenUsage,

@@ -7,7 +7,7 @@ from voidx.agent.infrastructure.ui_events import PermissionPromptCleared, Permis
 import json
 from dataclasses import replace
 from typing import Any
-from voidx.config import PermissionMode
+from voidx.tooling.domain.permission import PermissionMode
 from voidx.logging.tool_log import log_tool_event
 from voidx.tooling.application.ai_approval import is_ai_approval_candidate
 from voidx.tooling.application.permission_service import (
