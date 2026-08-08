@@ -6,7 +6,7 @@ import asyncio
 import logging
 
 from voidx.agent.adapters.persistence.session_repository import MessageRow, save_message
-from voidx.persistence.sqlite import now as memory_now
+from voidx.persistence.sqlite import now as memorynow
 
 
 class AsyncParentResultPublisher:
@@ -23,7 +23,7 @@ class AsyncParentResultPublisher:
                     role="assistant",
                     content=text,
                     content_format="text",
-                    created_at=memory_now(),
+                    created_at=memorynow(),
                 )
             )
         except Exception:

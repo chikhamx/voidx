@@ -40,7 +40,7 @@ class LineDriftMap:
     span_steps: list[list[DiffSpan]]
 
 
-def _line_drift_maps_from_raw(raw: list[dict] | None) -> list[LineDriftMap]:
+def line_drift_maps_from_raw(raw: list[dict] | None) -> list[LineDriftMap]:
     if not raw:
         return []
     maps: list[LineDriftMap] = []
@@ -61,7 +61,7 @@ def _line_drift_maps_from_raw(raw: list[dict] | None) -> list[LineDriftMap]:
     return maps
 
 
-def _line_drift_maps_to_raw(maps: list[LineDriftMap]) -> list[dict]:
+def line_drift_maps_to_raw(maps: list[LineDriftMap]) -> list[dict]:
     raw: list[dict] = []
     for m in maps:
         raw.append({
@@ -70,10 +70,12 @@ def _line_drift_maps_to_raw(maps: list[LineDriftMap]) -> list[dict]:
             "span_steps": [[asdict(s) for s in step] for step in m.span_steps],
         })
     return raw
+
+
 def file_fingerprint(resolved: Path) -> FileFingerprint:
     stat = resolved.stat()
     return FileFingerprint(mtime_ns=stat.st_mtime_ns, size=stat.st_size)
-def _diff_spans_from_file_diff(file_diff: FileDiff) -> list[DiffSpan]:
+def diff_spans_from_file_diff(file_diff: FileDiff) -> list[DiffSpan]:
     """Extract precise DiffSpans covering only removed/replaced lines.
 
     Unlike using hunk.old_start + hunk.old_count (which includes context
@@ -158,7 +160,7 @@ def remap_old_range(start: int, end: int, spans: list[DiffSpan]) -> list[dict]:
     return [item for item in ranges if item["start_line"] > 0 and item["end_line"] >= item["start_line"]]
 
 
-def _line_numbers_to_ranges(line_numbers: list[int]) -> list[tuple[int, int]]:
+def line_numbers_to_ranges(line_numbers: list[int]) -> list[tuple[int, int]]:
     values = sorted(set(line_numbers))
     if not values:
         return []

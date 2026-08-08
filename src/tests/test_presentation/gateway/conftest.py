@@ -33,15 +33,17 @@ def _tree_nodes(root):
 @pytest.fixture(autouse=True)
 def configured_settings_factory(monkeypatch):
     from voidx.bootstrap.application import build_settings
+    from voidx.agent.adapters.persistence.session_adapter import SessionRepositoryAdapter
     from voidx.presentation.gateway.session.core import GatewaySession
 
     original_init = GatewaySession.__init__
 
-    def test_init(self, *args, settings_factory=None, **kwargs):
+    def test_init(self, *args, settings_factory=None, session_repository=None, **kwargs):
         return original_init(
             self,
             *args,
             settings_factory=settings_factory or build_settings,
+            session_repository=session_repository or SessionRepositoryAdapter(),
             **kwargs,
         )
 

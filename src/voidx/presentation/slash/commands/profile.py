@@ -22,14 +22,14 @@ class ProfileCommandsMixin:
         self._apply_tone(value)
 
     async def _lang_interactive(self) -> None:
-        language_labels = self.host.language_labels
+        language_labels = self.preferences_port.language_labels
 
         items: list[str] = []
         values: list[str] = []
         for _key, (name, tag) in language_labels.items():
             items.append(f"{name} [{tag}]")
             values.append(tag)
-        if self.host.app is None:
+        if self.preferences_port.prompt_ui is None:
             await self._lang_headless(values)
             return
         selected = await self._pick_or_reset(
@@ -44,14 +44,14 @@ class ProfileCommandsMixin:
             self._apply_language(selected)
 
     async def _tone_interactive(self) -> None:
-        tone_labels = self.host.tone_labels
+        tone_labels = self.preferences_port.tone_labels
 
         items: list[str] = []
         values: list[str] = []
         for value, (name, description, _instruction) in tone_labels.items():
             items.append(f"{name} - {description}")
             values.append(value)
-        if self.host.app is None:
+        if self.preferences_port.prompt_ui is None:
             await self._tone_headless(values)
             return
         selected = await self._pick_or_reset(
@@ -75,14 +75,14 @@ class ProfileCommandsMixin:
         reset_label: str,
     ) -> str | None:
         items = [*option_items, other_label, reset_label]
-        idx = await _select_from_list(self.host.app, title, items)
+        idx = await _select_from_list(self.preferences_port.prompt_ui, title, items)
         if idx is None or idx < 0 or idx >= len(items):
-            self.host.ui.print("[dim]Cancelled.[/dim]")
+            self.preferences_port.ui.print("[dim]Cancelled.[/dim]")
             return None
         if idx == len(values):
             result = await self._prompt(prompt_label)
             if result is None or not result.strip():
-                self.host.ui.print("[dim]Cancelled.[/dim]")
+                self.preferences_port.ui.print("[dim]Cancelled.[/dim]")
                 return None
             return result.strip()
         if idx == len(values) + 1:
@@ -90,25 +90,25 @@ class ProfileCommandsMixin:
         return values[idx]
 
     async def _lang_headless(self, values: list[str]) -> None:
-        self.host.ui.print(f"Language: [cyan]{self._current_language_label()}[/cyan]")
-        self.host.ui.print(f"[dim]Available: {', '.join(values)}[/dim]")
+        self.preferences_port.ui.print(f"Language: [cyan]{self._current_language_label()}[/cyan]")
+        self.preferences_port.ui.print(f"[dim]Available: {', '.join(values)}[/dim]")
         value = await self._prompt("Language code (or 'auto' to reset)", default="")
         if value is None or not value.strip():
-            self.host.ui.print("[dim]Cancelled.[/dim]")
+            self.preferences_port.ui.print("[dim]Cancelled.[/dim]")
             return
         self._apply_language(value)
 
     async def _tone_headless(self, values: list[str]) -> None:
-        self.host.ui.print(f"Tone: [cyan]{self._current_tone_label()}[/cyan]")
-        self.host.ui.print(f"[dim]Available: {', '.join(values)}[/dim]")
+        self.preferences_port.ui.print(f"Tone: [cyan]{self._current_tone_label()}[/cyan]")
+        self.preferences_port.ui.print(f"[dim]Available: {', '.join(values)}[/dim]")
         value = await self._prompt("Tone (or 'default' to reset)", default="")
         if value is None or not value.strip():
-            self.host.ui.print("[dim]Cancelled.[/dim]")
+            self.preferences_port.ui.print("[dim]Cancelled.[/dim]")
             return
         self._apply_tone(value)
 
     def _apply_language(self, value: str) -> None:
-        settings = self.host.settings
+        settings = self.preferences_port.preference_settings
         if settings is not None:
             settings.set_user_language(value)
             profile = settings.get_user_profile()
@@ -116,10 +116,10 @@ class ProfileCommandsMixin:
             profile = self._current_user_profile()
             profile.language = _normalize_language(value)
         self._set_current_user_profile(profile)
-        self.host.ui.print(f"Language: [cyan]{profile.language or 'auto-detect'}[/cyan] [green]✓[/green]")
+        self.preferences_port.ui.print(f"Language: [cyan]{profile.language or 'auto-detect'}[/cyan] [green]✓[/green]")
 
     def _apply_tone(self, value: str) -> None:
-        settings = self.host.settings
+        settings = self.preferences_port.preference_settings
         if settings is not None:
             settings.set_user_tone(value)
             profile = settings.get_user_profile()
@@ -127,16 +127,16 @@ class ProfileCommandsMixin:
             profile = self._current_user_profile()
             profile.tone = _normalize_tone(value)
         self._set_current_user_profile(profile)
-        self.host.ui.print(f"Tone: [cyan]{profile.tone or 'default'}[/cyan] [green]✓[/green]")
+        self.preferences_port.ui.print(f"Tone: [cyan]{profile.tone or 'default'}[/cyan] [green]✓[/green]")
 
     def _current_user_profile(self) -> UserProfile:
-        profile = getattr(self.host.config, "user_profile", None)
+        profile = self.preferences_port.user_config.user_profile
         if isinstance(profile, UserProfile):
             return profile.model_copy()
         return UserProfile()
 
     def _set_current_user_profile(self, profile: UserProfile) -> None:
-        self.host.config.user_profile = profile
+        self.preferences_port.user_config.user_profile = profile
 
     def _current_language_label(self) -> str:
         profile = self._current_user_profile()

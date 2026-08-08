@@ -112,6 +112,12 @@ def _check_release_metadata() -> int:
     init_match = re.search(r'__version__\s*=\s*"([^"]+)"', init_text)
     project_version = init_match.group(1) if init_match else ""
     if not project_version:
+        version_match = re.search(
+            r'VERSION\s*=\s*"([^"]+)"',
+            (ROOT / "src" / "voidx" / "platform" / "version.py").read_text(),
+        )
+        project_version = version_match.group(1) if version_match else ""
+    if not project_version:
         errors.append("src/voidx/__init__.py is missing __version__.")
 
 

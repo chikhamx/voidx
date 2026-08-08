@@ -69,7 +69,7 @@ class UiEventBus:
         await self._queue.put(_QueuedEvent(self._with_current_thread_id(event)))
         return True
 
-    def emit_nowait(self, event: UiEvent) -> bool:
+    def emitnowait(self, event: UiEvent) -> bool:
         if not self.is_running or self._queue is None:
             return False
         self._queue.put_nowait(_QueuedEvent(self._with_current_thread_id(event)))

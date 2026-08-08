@@ -92,7 +92,7 @@ def check_sandbox_bash(
                 write_targets.append(target)
 
     # ── destructive commands (rm/cp/mv/…) ─────────────────────────────
-    words = _shell_words(stripped)
+    words = shell_words(stripped)
     prog = _program(words).lower() if words else ""
     segment_targets = _extract_segment_targets(words, workspace)
     write_targets.extend(segment_targets)
@@ -127,7 +127,7 @@ def check_sandbox_bash(
     return None
 
 
-def _shell_words(command: str) -> list[str]:
+def shell_words(command: str) -> list[str]:
     try:
         lexer = shlex.shlex(command, posix=False, punctuation_chars=True)
         lexer.whitespace_split = True
@@ -242,13 +242,13 @@ def _is_git_push_outside(
     """
     if prog != "git" or len(words) < 2:
         return False
-    subcommand = _git_subcommand(_program_args(words))
+    subcommand = git_subcommand(_program_args(words))
     return subcommand == "push"
 
 
 
 
-def _git_subcommand(args: list[str]) -> str:
+def git_subcommand(args: list[str]) -> str:
     index = 0
     while index < len(args):
         word = args[index]

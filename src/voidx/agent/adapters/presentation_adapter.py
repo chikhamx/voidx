@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from voidx.agent.application.workflow_utils import active_workflow_names
+from voidx.agent.domain.workflow_utils import active_workflow_names
 from voidx.agent.domain.task.state import goal_label
 from voidx.agent.ports.input import InputFrontend, InputFrontendBinder
 from voidx.agent.ports.presentation import RuntimePresentationStatus, SessionPresentationStatus

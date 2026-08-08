@@ -24,7 +24,7 @@ goal 评估轮由 `GoalEvaluator.run_phase` 发起（`src/voidx/agent/applicatio
 
 ### 实际行为
 
-`TurnExecutionContext` 的 `session_id` 为空字符串 `""` 时，`bind_thread_execution_context` 调用 `_state_for_context(host, "")`（`src/voidx/agent/infrastructure/langgraph/runtime/thread_context.py`）：
+`TurnExecutionContext` 的 `session_id` 为空字符串 `""` 时，`bind_thread_execution_context` 调用 `_state_for_context(host, "")`（`src/voidx/agent/adapters/langgraph/runtime/thread_context.py`）：
 
 ```python
 state = await _state_for_context(host, session_id)
@@ -59,8 +59,8 @@ state = await _state_for_context(host, session_id)
 | 文件 | 改动 |
 |---|---|
 | `src/voidx/agent/domain/turn_context.py` | `TurnExecutionContext` 新增字段 `detached: bool = False` |
-| `src/voidx/agent/infrastructure/langgraph/runtime/thread_context.py` | `_state_for_context` 增加 `detached` 参数，为真时直接返回空状态（`session=None`、无消息缓存）；`bind_thread_execution_context` 从 `turn_context` 读取该标记 |
-| `src/voidx/agent/infrastructure/langgraph/runtime/turn_runner.py` | detached 轮跳过三处宿主依赖：创建临时 session、用户消息持久化 + runtime snapshot、turn 结束后的消息持久化与标题更新 |
+| `src/voidx/agent/adapters/langgraph/runtime/thread_context.py` | `_state_for_context` 增加 `detached` 参数，为真时直接返回空状态（`session=None`、无消息缓存）；`bind_thread_execution_context` 从 `turn_context` 读取该标记 |
+| `src/voidx/agent/adapters/langgraph/runtime/turn_runner.py` | detached 轮跳过三处宿主依赖：创建临时 session、用户消息持久化 + runtime snapshot、turn 结束后的消息持久化与标题更新 |
 | `src/voidx/agent/application/automation/goal/evaluator.py` | 评估轮上下文设置 `detached=True` |
 
 ### 兼容性

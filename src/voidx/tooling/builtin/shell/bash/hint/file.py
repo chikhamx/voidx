@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import re
 
-from voidx.tooling.builtin.shell.bash.core import RouteHint, _HEREDOC_MAX_CONTENT, _shell_words
+from voidx.tooling.builtin.shell.bash.core import RouteHint, HEREDOC_MAX_CONTENT, shell_words
 
 _RE_HEAD_DIGITS = re.compile(r"^-\d+$")
 
 
-def _hint_read(words: list[str]) -> RouteHint | None:
+def hint_read(words: list[str]) -> RouteHint | None:
     prog = words[0].lower()
     args = words[1:]
     if any(a.startswith("-") and a not in ("-n",) and not _RE_HEAD_DIGITS.match(a) for a in args):
@@ -94,7 +94,7 @@ def _hint_tail(args: list[str]) -> RouteHint | None:
     )
 
 
-def _hint_write_echo(stripped: str, words: list[str]) -> RouteHint | None:
+def hint_write_echo(stripped: str, words: list[str]) -> RouteHint | None:
     redirect_idx = None
     is_append = False
     for i, w in enumerate(words):
@@ -146,8 +146,8 @@ def _hint_write_echo(stripped: str, words: list[str]) -> RouteHint | None:
 _RE_HEREDOC_MARKER = re.compile(r"<<\s*['\"]?(\w+)['\"]?")
 
 
-def _hint_write_heredoc(stripped: str) -> RouteHint | None:
-    words = _shell_words(stripped)
+def hint_write_heredoc(stripped: str) -> RouteHint | None:
+    words = shell_words(stripped)
     path = None
     is_append = False
     for i, word in enumerate(words):
@@ -175,7 +175,7 @@ def _hint_write_heredoc(stripped: str) -> RouteHint | None:
         return None
     content = stripped[content_start + 1:content_end].rstrip("\n")
 
-    if len(content) > _HEREDOC_MAX_CONTENT:
+    if len(content) > HEREDOC_MAX_CONTENT:
         return None
     if '"' in content:
         return None
@@ -191,7 +191,7 @@ def _hint_write_heredoc(stripped: str) -> RouteHint | None:
     )
 
 
-def _hint_find(words: list[str]) -> RouteHint | None:
+def hint_find(words: list[str]) -> RouteHint | None:
     if len(words) < 4:
         return None
     args = words[1:]

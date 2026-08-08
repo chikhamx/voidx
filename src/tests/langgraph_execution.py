@@ -39,9 +39,19 @@ def make_langgraph_execution(*args, ui=None, **kwargs) -> LangGraphExecution:
         kwargs.setdefault("tool_registry_factory", build_tool_registry)
         kwargs.setdefault("scoped_tools_binder", bind_scoped_tools)
     if "slash_handler_factory" not in kwargs:
+        from voidx.agent.adapters.persistence import session_cleanup
+        from voidx.agent.adapters.persistence.session_adapter import SessionRepositoryAdapter
+        from voidx.bootstrap.slash import build_slash_handler
         from voidx.presentation.slash import SlashHandler
 
-        kwargs["slash_handler_factory"] = SlashHandler
+        def slash_handler_factory(host):
+            return build_slash_handler(
+                host,
+                session_repository=SessionRepositoryAdapter(),
+                session_cleanup=session_cleanup,
+            )
+
+        kwargs["slash_handler_factory"] = slash_handler_factory
     if "reasoning_effort_type" not in kwargs or "context_limit_resolver" not in kwargs:
         from voidx.llm.domain.model import ReasoningEffort
         from voidx.llm.domain.provider import get_context_limit

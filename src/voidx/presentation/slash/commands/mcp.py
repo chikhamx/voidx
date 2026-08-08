@@ -39,21 +39,21 @@ class McpCommandsMixin:
         elif action == "manual" or action.startswith("manual "):
             await self._mcp_set_auto(target, auto=False)
         elif action:
-            self.host.ui.error("Usage: /mcp [new|list|test|del|restart|tools|disable|enable|auto|manual]")
+            self.integrations_port.ui.error("Usage: /mcp [new|list|test|del|restart|tools|disable|enable|auto|manual]")
         else:
             await self._mcp_list()
 
     async def _mcp_new(self) -> None:
-        settings = self.host.settings
+        settings = self.integrations_port.integration_settings
         if settings is None:
-            self.host.ui.error("No settings file available.")
+            self.integrations_port.ui.error("No settings file available.")
             return
 
-        self.host.ui.print("[bold]Configure MCP server[/bold]")
+        self.integrations_port.ui.print("[bold]Configure MCP server[/bold]")
         choices = ["voidx-web (built-in)", "Tavily MCP", "URL (SSE / Streamable HTTP)", "Custom command"]
-        idx = await _select_from_list(self.host.app, "MCP server type", choices)
+        idx = await _select_from_list(self.integrations_port.prompt_ui, "MCP server type", choices)
         if idx is None:
-            self.host.ui.print("[dim]Cancelled.[/dim]")
+            self.integrations_port.ui.print("[dim]Cancelled.[/dim]")
             return
 
         web_routes: Mapping[str, WebToolRoute] = {}
@@ -84,8 +84,8 @@ class McpCommandsMixin:
 
         ok, tools, err = await self._test_mcp_config(server)
         if not ok:
-            self.host.ui.error(f"MCP connection failed: {err}")
-            self.host.ui.print("[dim]Configuration not saved. Check the command and try again.[/dim]")
+            self.integrations_port.ui.error(f"MCP connection failed: {err}")
+            self.integrations_port.ui.print("[dim]Configuration not saved. Check the command and try again.[/dim]")
             return
 
         tool_names = [tool.name for tool in tools]
@@ -96,29 +96,29 @@ class McpCommandsMixin:
         for kind, route in web_routes.items():
             settings.set_web_tool_route(kind, route)
 
-        manager = self.host.mcp_manager
+        manager = self.integrations_port.mcp_ops
         if manager is not None:
             try:
                 await asyncio.wait_for(manager.restart_all(), timeout=30.0)
             except asyncio.TimeoutError:
-                self.host.ui.warn("MCP restart timed out; servers may still be connecting in the background.")
+                self.integrations_port.ui.warn("MCP restart timed out; servers may still be connecting in the background.")
 
-        self.host.ui.print(
+        self.integrations_port.ui.print(
             f"  [cyan]{server.name}[/cyan] [green]✓ configured[/green]"
             f" · {len(tool_names)} tool{'s' if len(tool_names) != 1 else ''}"
         )
         if web_routes:
-            self.host.ui.print("[dim]websearch/webfetch now use this MCP server[/dim]")
-        self.host.ui.print(f"[dim]Saved to {path}[/dim]")
+            self.integrations_port.ui.print("[dim]websearch/webfetch now use this MCP server[/dim]")
+        self.integrations_port.ui.print(f"[dim]Saved to {path}[/dim]")
 
     async def _mcp_builtin_web_config(self) -> McpServerConfig | None:
         name = await self._prompt("Server name", default="voidx-web")
         if name is None:
-            self.host.ui.print("[dim]Cancelled.[/dim]")
+            self.integrations_port.ui.print("[dim]Cancelled.[/dim]")
             return None
         name = name.strip() or "voidx-web"
         env = {}
-        tavily_key = self.host.settings.get_tavily_api_key() if self.host.settings else None
+        tavily_key = self.integrations_port.integration_settings.get_tavily_api_key() if self.integrations_port.integration_settings else None
         if tavily_key:
             env["TAVILY_API_KEY"] = tavily_key
         return McpServerConfig(
@@ -132,23 +132,23 @@ class McpCommandsMixin:
     async def _mcp_tavily_config(self) -> McpServerConfig | None:
         name = await self._prompt("Server name", default="tavily")
         if name is None:
-            self.host.ui.print("[dim]Cancelled.[/dim]")
+            self.integrations_port.ui.print("[dim]Cancelled.[/dim]")
             return None
         name = name.strip() or "tavily"
 
         env = {}
         env_key = os.environ.get("TAVILY_API_KEY")
-        tavily_key = self.host.settings.get_tavily_api_key() if self.host.settings else None
+        tavily_key = self.integrations_port.integration_settings.get_tavily_api_key() if self.integrations_port.integration_settings else None
         if not env_key and tavily_key:
             env["TAVILY_API_KEY"] = tavily_key
         elif not env_key:
             tavily_key = await self._prompt("Tavily API key", secret=True)
             if tavily_key is None:
-                self.host.ui.print("[dim]Cancelled.[/dim]")
+                self.integrations_port.ui.print("[dim]Cancelled.[/dim]")
                 return None
             tavily_key = tavily_key.strip()
             if not tavily_key:
-                self.host.ui.error("Tavily API key is required.")
+                self.integrations_port.ui.error("Tavily API key is required.")
                 return None
             env["TAVILY_API_KEY"] = tavily_key
 
@@ -163,35 +163,35 @@ class McpCommandsMixin:
     async def _mcp_custom_config(self) -> McpServerConfig | None:
         name = await self._prompt("Server name")
         if name is None:
-            self.host.ui.print("[dim]Cancelled.[/dim]")
+            self.integrations_port.ui.print("[dim]Cancelled.[/dim]")
             return None
         name = name.strip()
         if not name:
-            self.host.ui.error("Server name is required.")
+            self.integrations_port.ui.error("Server name is required.")
             return None
 
         command = await self._prompt("Command")
         if command is None:
-            self.host.ui.print("[dim]Cancelled.[/dim]")
+            self.integrations_port.ui.print("[dim]Cancelled.[/dim]")
             return None
         command = command.strip()
         if not command:
-            self.host.ui.error("Command is required.")
+            self.integrations_port.ui.error("Command is required.")
             return None
 
         args_text = await self._prompt("Args (shell-style, optional)", default="")
         if args_text is None:
-            self.host.ui.print("[dim]Cancelled.[/dim]")
+            self.integrations_port.ui.print("[dim]Cancelled.[/dim]")
             return None
         try:
             args = shlex.split(args_text)
         except ValueError as exc:
-            self.host.ui.error(f"Invalid args: {exc}")
+            self.integrations_port.ui.error(f"Invalid args: {exc}")
             return None
 
         env_text = await self._prompt("Env VAR=value,VAR2=value2 (optional)", default="")
         if env_text is None:
-            self.host.ui.print("[dim]Cancelled.[/dim]")
+            self.integrations_port.ui.print("[dim]Cancelled.[/dim]")
             return None
         env = _parse_env_pairs(env_text)
         return McpServerConfig(name=name, command=command, args=args, env=env)
@@ -199,140 +199,140 @@ class McpCommandsMixin:
     async def _mcp_url_config(self) -> McpServerConfig | None:
         name = await self._prompt("Server name")
         if name is None:
-            self.host.ui.print("[dim]Cancelled.[/dim]")
+            self.integrations_port.ui.print("[dim]Cancelled.[/dim]")
             return None
         name = name.strip()
         if not name:
-            self.host.ui.error("Server name is required.")
+            self.integrations_port.ui.error("Server name is required.")
             return None
 
         transport_choices = ["SSE (legacy)", "Streamable HTTP (MCP 2024-11-05)"]
-        t_idx = await _select_from_list(self.host.app, "Transport type", transport_choices)
+        t_idx = await _select_from_list(self.integrations_port.prompt_ui, "Transport type", transport_choices)
         if t_idx is None:
-            self.host.ui.print("[dim]Cancelled.[/dim]")
+            self.integrations_port.ui.print("[dim]Cancelled.[/dim]")
             return None
         transport = "sse" if t_idx == 0 else "streamable-http"
 
         url_hint = "https://mcp.example.com/sse" if transport == "sse" else "http://127.0.0.1:52222/mcp/"
         url = await self._prompt(f"URL (e.g. {url_hint})")
         if url is None:
-            self.host.ui.print("[dim]Cancelled.[/dim]")
+            self.integrations_port.ui.print("[dim]Cancelled.[/dim]")
             return None
         url = url.strip()
         if not url:
-            self.host.ui.error("URL is required.")
+            self.integrations_port.ui.error("URL is required.")
             return None
         if not url.startswith(("http://", "https://")):
-            self.host.ui.error("URL must start with http:// or https://")
+            self.integrations_port.ui.error("URL must start with http:// or https://")
             return None
 
         env_text = await self._prompt("Env VAR=value,VAR2=value2 (optional)", default="")
         if env_text is None:
-            self.host.ui.print("[dim]Cancelled.[/dim]")
+            self.integrations_port.ui.print("[dim]Cancelled.[/dim]")
             return None
         env = _parse_env_pairs(env_text)
         return McpServerConfig(name=name, url=url, transport=transport, env=env)
 
     async def _mcp_list(self) -> None:
-        settings = self.host.settings
+        settings = self.integrations_port.integration_settings
         if settings is None:
-            self.host.ui.print("[dim]No settings file available.[/dim]")
+            self.integrations_port.ui.print("[dim]No settings file available.[/dim]")
             return
 
-        manager = self.host.mcp_manager
+        manager = self.integrations_port.mcp_ops
         statuses = manager.statuses() if manager is not None and manager.started else []
-        self.host.ui.print("[bold]MCP servers:[/bold]")
-        self.host.ui.print(f"[dim]{settings.path}[/dim]")
+        self.integrations_port.ui.print("[bold]MCP servers:[/bold]")
+        self.integrations_port.ui.print(f"[dim]{settings.path}[/dim]")
         if statuses:
             for status in statuses:
                 self._print_mcp_status(status)
         else:
             servers = settings.list_mcp_servers()
             if not servers:
-                self.host.ui.print("[dim]No MCP servers configured. Use /mcp new.[/dim]")
+                self.integrations_port.ui.print("[dim]No MCP servers configured. Use /mcp new.[/dim]")
                 return
             for server in servers:
                 state = "[dim]disabled[/dim]" if server.disabled else "[green]configured[/green]"
                 tools = f"{server.tool_count} tool{'s' if server.tool_count != 1 else ''}"
-                self.host.ui.print(f"  [cyan]{server.name}[/cyan] · {state} · [dim]{tools}[/dim]")
+                self.integrations_port.ui.print(f"  [cyan]{server.name}[/cyan] · {state} · [dim]{tools}[/dim]")
 
         search = settings.get_web_tool_route("search")
         fetch = settings.get_web_tool_route("fetch")
         if search.backend == "mcp" or fetch.backend == "mcp":
-            self.host.ui.print()
-            self.host.ui.print("[bold]Web routing:[/bold]")
-            self.host.ui.print(f"  search · {search.backend} {search.server}/{search.tool}".rstrip("/"))
-            self.host.ui.print(f"  fetch  · {fetch.backend} {fetch.server}/{fetch.tool}".rstrip("/"))
-        self.host.ui.print("[dim]Usage: /mcp new|list|test|del|restart|tools|disable|enable|auto|manual[/dim]")
+            self.integrations_port.ui.print()
+            self.integrations_port.ui.print("[bold]Web routing:[/bold]")
+            self.integrations_port.ui.print(f"  search · {search.backend} {search.server}/{search.tool}".rstrip("/"))
+            self.integrations_port.ui.print(f"  fetch  · {fetch.backend} {fetch.server}/{fetch.tool}".rstrip("/"))
+        self.integrations_port.ui.print("[dim]Usage: /mcp new|list|test|del|restart|tools|disable|enable|auto|manual[/dim]")
 
     async def _mcp_test(self, target: str) -> None:
         async def _do_test(name: str) -> None:
-            server = self.host.settings.get_mcp_server(name) if self.host.settings else None
+            server = self.integrations_port.integration_settings.get_mcp_server(name) if self.integrations_port.integration_settings else None
             if server is None:
-                self.host.ui.error(f"MCP server not found: {name}")
+                self.integrations_port.ui.error(f"MCP server not found: {name}")
                 return
             ok, tools, err = await self._test_mcp_config(server)
             if ok:
                 names = ", ".join(tool.name for tool in tools) or "no tools"
-                self.host.ui.print(f"[green]✓ {name} — connected[/green] [dim]{names}[/dim]")
+                self.integrations_port.ui.print(f"[green]✓ {name} — connected[/green] [dim]{names}[/dim]")
             else:
-                self.host.ui.print(f"[red]✗ {name} — {err}[/red]")
+                self.integrations_port.ui.print(f"[red]✗ {name} — {err}[/red]")
 
         await self._pick_mcp_server("Test", target, _do_test)
 
     async def _mcp_del(self, target: str) -> None:
         async def _do_delete(name: str) -> None:
-            if self.host.settings is None:
-                self.host.ui.error("No settings file available.")
+            if self.integrations_port.integration_settings is None:
+                self.integrations_port.ui.error("No settings file available.")
                 return
-            path = self.host.settings.delete_mcp_server(name)
-            manager = self.host.mcp_manager
+            path = self.integrations_port.integration_settings.delete_mcp_server(name)
+            manager = self.integrations_port.mcp_ops
             if manager is not None:
                 try:
                     await asyncio.wait_for(manager.restart_all(), timeout=30.0)
                 except asyncio.TimeoutError:
-                    self.host.ui.warn("MCP restart timed out after deletion; servers may still be reconnecting.")
-            self.host.ui.print(f"[dim]'{name}' removed.[/dim]")
-            self.host.ui.print(f"[dim]Cleaned {path}[/dim]")
+                    self.integrations_port.ui.warn("MCP restart timed out after deletion; servers may still be reconnecting.")
+            self.integrations_port.ui.print(f"[dim]'{name}' removed.[/dim]")
+            self.integrations_port.ui.print(f"[dim]Cleaned {path}[/dim]")
 
         await self._pick_mcp_server("Delete", target, _do_delete)
 
     async def _mcp_restart(self, target: str) -> None:
         _ = target
-        manager = self.host.mcp_manager
+        manager = self.integrations_port.mcp_ops
         if manager is None:
-            self.host.ui.error("No MCP manager available.")
+            self.integrations_port.ui.error("No MCP manager available.")
             return
         try:
             await asyncio.wait_for(manager.restart_all(), timeout=30.0)
         except asyncio.TimeoutError:
-            self.host.ui.warn("MCP restart timed out; servers may still be connecting in the background.")
+            self.integrations_port.ui.warn("MCP restart timed out; servers may still be connecting in the background.")
             return
-        self.host.ui.print("[green]✓ MCP servers restarted[/green]")
+        self.integrations_port.ui.print("[green]✓ MCP servers restarted[/green]")
 
     async def _mcp_set_disabled(self, target: str, *, disabled: bool) -> None:
         action = "Disable" if disabled else "Enable"
 
         async def _do_set(name: str) -> None:
-            if self.host.settings is None:
-                self.host.ui.error("No settings file available.")
+            if self.integrations_port.integration_settings is None:
+                self.integrations_port.ui.error("No settings file available.")
                 return
             try:
-                path = self.host.settings.set_mcp_server_disabled(name, disabled)
+                path = self.integrations_port.integration_settings.set_mcp_server_disabled(name, disabled)
             except KeyError:
-                self.host.ui.error(f"MCP server not found: {name}")
+                self.integrations_port.ui.error(f"MCP server not found: {name}")
                 return
-            manager = self.host.mcp_manager
+            manager = self.integrations_port.mcp_ops
             if manager is not None:
                 try:
                     await asyncio.wait_for(manager.restart_all(), timeout=30.0)
                 except asyncio.TimeoutError:
-                    self.host.ui.warn("MCP restart timed out; servers may still be reconnecting.")
+                    self.integrations_port.ui.warn("MCP restart timed out; servers may still be reconnecting.")
             state = "disabled" if disabled else "enabled"
-            self.host.ui.print(f"[green]✓ {name} {state}[/green]")
+            self.integrations_port.ui.print(f"[green]✓ {name} {state}[/green]")
             if disabled:
-                self.host.ui.print("[dim]Web routes pointing to this server were cleared.[/dim]")
-            self.host.ui.print(f"[dim]Saved to {path}[/dim]")
+                self.integrations_port.ui.print("[dim]Web routes pointing to this server were cleared.[/dim]")
+            self.integrations_port.ui.print(f"[dim]Saved to {path}[/dim]")
 
         await self._pick_mcp_server(action, target, _do_set)
 
@@ -340,62 +340,62 @@ class McpCommandsMixin:
         action = "Auto-discovery" if auto else "Manual-only"
 
         async def _do_set(name: str) -> None:
-            if self.host.settings is None:
-                self.host.ui.error("No settings file available.")
+            if self.integrations_port.integration_settings is None:
+                self.integrations_port.ui.error("No settings file available.")
                 return
             try:
-                path = self.host.settings.set_mcp_server_auto(name, auto)
+                path = self.integrations_port.integration_settings.set_mcp_server_auto(name, auto)
             except KeyError:
-                self.host.ui.error(f"MCP server not found: {name}")
+                self.integrations_port.ui.error(f"MCP server not found: {name}")
                 return
             mode = "auto-discovery" if auto else "manual-only"
-            self.host.ui.print(f"[green]✓ {name} set to {mode}[/green]")
-            self.host.ui.print(f"[dim]Saved to {path}[/dim]")
+            self.integrations_port.ui.print(f"[green]✓ {name} set to {mode}[/green]")
+            self.integrations_port.ui.print(f"[dim]Saved to {path}[/dim]")
             if auto:
-                self.host.ui.print("[dim]Restart the session for the system prompt to include this server.[/dim]")
+                self.integrations_port.ui.print("[dim]Restart the session for the system prompt to include this server.[/dim]")
 
         await self._pick_mcp_server(action, target, _do_set)
 
     async def _mcp_tools(self, target: str) -> None:
         async def _do_tools(name: str) -> None:
-            manager = self.host.mcp_manager
+            manager = self.integrations_port.mcp_ops
             if manager is None:
-                self.host.ui.error("No MCP manager available.")
+                self.integrations_port.ui.error("No MCP manager available.")
                 return
             try:
                 tools = await asyncio.wait_for(
                     manager.list_tools_for_server(name), timeout=15.0,
                 )
             except asyncio.TimeoutError:
-                self.host.ui.error(f"Listing tools for {name} timed out.")
+                self.integrations_port.ui.error(f"Listing tools for {name} timed out.")
                 return
             except Exception as exc:
-                self.host.ui.error(f"Could not list tools for {name}: {exc}")
+                self.integrations_port.ui.error(f"Could not list tools for {name}: {exc}")
                 return
-            self.host.ui.print(f"[bold]{name} tools:[/bold]")
+            self.integrations_port.ui.print(f"[bold]{name} tools:[/bold]")
             if not tools:
-                self.host.ui.print("[dim]No tools.[/dim]")
+                self.integrations_port.ui.print("[dim]No tools.[/dim]")
                 return
             for tool in tools:
-                self.host.ui.print(f"  [cyan]{tool.name}[/cyan] — {tool.description or '(no description)'}")
+                self.integrations_port.ui.print(f"  [cyan]{tool.name}[/cyan] — {tool.description or '(no description)'}")
 
         await self._pick_mcp_server("Tools", target, _do_tools)
 
     async def _pick_mcp_server(self, action: str, target: str, callback) -> None:
-        if self.host.settings is None:
-            self.host.ui.error("No settings file available.")
+        if self.integrations_port.integration_settings is None:
+            self.integrations_port.ui.error("No settings file available.")
             return
         if target:
             await callback(target)
             return
-        names = [server.name for server in self.host.settings.list_mcp_servers()]
+        names = [server.name for server in self.integrations_port.integration_settings.list_mcp_servers()]
         if not names:
-            self.host.ui.print("[yellow]No MCP servers configured. Use /mcp new first.[/yellow]")
+            self.integrations_port.ui.print("[yellow]No MCP servers configured. Use /mcp new first.[/yellow]")
             return
-        self.host.ui.print(f"[bold]{action}[/bold] — select MCP server:")
-        idx = await _select_from_list(self.host.app, action, names)
+        self.integrations_port.ui.print(f"[bold]{action}[/bold] — select MCP server:")
+        idx = await _select_from_list(self.integrations_port.prompt_ui, action, names)
         if idx is None:
-            self.host.ui.print("[dim]Cancelled.[/dim]")
+            self.integrations_port.ui.print("[dim]Cancelled.[/dim]")
             return
         await callback(names[idx])
 
@@ -432,5 +432,5 @@ class McpCommandsMixin:
             state = "[yellow]disconnected[/yellow]"
         tools = f"{status.tool_count} tool{'s' if status.tool_count != 1 else ''}" if status.tool_count else ""
         err = f" · [dim]{status.error_message}[/dim]" if status.error_message else ""
-        self.host.ui.print(f"  [cyan]{status.name}[/cyan] · {state}{f' · {tools}' if tools else ''}{err}")
+        self.integrations_port.ui.print(f"  [cyan]{status.name}[/cyan] · {state}{f' · {tools}' if tools else ''}{err}")
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from voidx.agent.domain.thread import TERMINAL_LIFECYCLES
-from voidx.agent.adapters.persistence.thread_repository import ThreadStateConflict, ThreadStore
+from voidx.agent.ports.persistence import ThreadStateConflict, ThreadStore
 
 
 @dataclass(frozen=True)

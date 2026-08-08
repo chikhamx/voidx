@@ -19,14 +19,14 @@ class LspCommandsMixin:
         elif action == "servers":
             self._lsp_servers()
         else:
-            self.host.ui.error("Usage: /lsp [status|doctor|restart|servers]")
+            self.integrations_port.ui.error("Usage: /lsp [status|doctor|restart|servers]")
 
     def _lsp_status(self) -> None:
-        manager = self.host.lsp_manager
+        manager = self.integrations_port.lsp_ops
         if manager is None:
-            self.host.ui.error("No LSP manager available.")
+            self.integrations_port.ui.error("No LSP manager available.")
             return
-        self.host.ui.print("[bold]LSP status:[/bold]")
+        self.integrations_port.ui.print("[bold]LSP status:[/bold]")
         for status in manager.statuses():
             label = {
                 "initializing": "[dim]initializing[/dim]",
@@ -37,75 +37,75 @@ class LspCommandsMixin:
             }.get(status.status, status.status)
             detail = f" · pid {status.pid}" if status.pid else ""
             docs = f" · {status.open_documents} doc{'s' if status.open_documents != 1 else ''}"
-            self.host.ui.print(f"  [cyan]{status.language}[/cyan] · {label}{detail}{docs}")
+            self.integrations_port.ui.print(f"  [cyan]{status.language}[/cyan] · {label}{detail}{docs}")
             if status.error_message:
-                self.host.ui.print(f"    [red]{status.error_message}[/red]")
-        self.host.ui.print("[dim]Usage: /lsp status|doctor|restart|servers[/dim]")
+                self.integrations_port.ui.print(f"    [red]{status.error_message}[/red]")
+        self.integrations_port.ui.print("[dim]Usage: /lsp status|doctor|restart|servers[/dim]")
 
     def _lsp_doctor(self) -> None:
-        manager = self.host.lsp_manager
+        manager = self.integrations_port.lsp_ops
         if manager is None:
-            self.host.ui.error("No LSP manager available.")
+            self.integrations_port.ui.error("No LSP manager available.")
             return
         if getattr(manager, "initializing", False) or not getattr(manager, "initialized", True):
-            self.host.ui.print("[dim]LSP servers are still initializing.[/dim]")
+            self.integrations_port.ui.print("[dim]LSP servers are still initializing.[/dim]")
             return
-        self.host.ui.print("[bold]LSP doctor:[/bold]")
+        self.integrations_port.ui.print("[bold]LSP doctor:[/bold]")
         missing = 0
         disabled = 0
         auto_detected = 0
         for check in manager.doctor():
             if not check.enabled:
                 disabled += 1
-                self.host.ui.print(f"  [cyan]{check.language}[/cyan] · [dim]disabled[/dim] · {check.command}")
+                self.integrations_port.ui.print(f"  [cyan]{check.language}[/cyan] · [dim]disabled[/dim] · {check.command}")
                 continue
             source = f" [dim]({check.detected_source})[/dim]" if check.detected_source else ""
             if check.available:
                 if check.detected_source:
                     auto_detected += 1
-                self.host.ui.print(
+                self.integrations_port.ui.print(
                     f"  [cyan]{check.language}[/cyan] · [green]ok[/green] · "
                     f"{check.command} [dim]({check.resolved_path})[/dim]{source}"
                 )
                 continue
             missing += 1
-            self.host.ui.print(f"  [cyan]{check.language}[/cyan] · [red]missing[/red] · {check.command}")
+            self.integrations_port.ui.print(f"  [cyan]{check.language}[/cyan] · [red]missing[/red] · {check.command}")
             if check.install_hint:
-                self.host.ui.print(f"    [dim]{check.install_hint}[/dim]")
+                self.integrations_port.ui.print(f"    [dim]{check.install_hint}[/dim]")
         if missing:
-            self.host.ui.print(f"[yellow]{missing} LSP server{'s' if missing != 1 else ''} missing.[/yellow]")
+            self.integrations_port.ui.print(f"[yellow]{missing} LSP server{'s' if missing != 1 else ''} missing.[/yellow]")
         elif disabled:
-            self.host.ui.print("[dim]No missing enabled LSP servers.[/dim]")
+            self.integrations_port.ui.print("[dim]No missing enabled LSP servers.[/dim]")
         else:
             msg = "All enabled LSP servers are available."
             if auto_detected:
                 msg += f" ({auto_detected} auto-detected)"
-            self.host.ui.print(f"[green]{msg}[/green]")
+            self.integrations_port.ui.print(f"[green]{msg}[/green]")
 
     async def _lsp_restart(self, language: str | None) -> None:
-        manager = self.host.lsp_manager
+        manager = self.integrations_port.lsp_ops
         if manager is None:
-            self.host.ui.error("No LSP manager available.")
+            self.integrations_port.ui.error("No LSP manager available.")
             return
         await manager.restart(language)
         target = language or "all servers"
-        self.host.ui.print(f"[green]✓ restarted {target}[/green]")
+        self.integrations_port.ui.print(f"[green]✓ restarted {target}[/green]")
 
     def _lsp_servers(self) -> None:
-        manager = self.host.lsp_manager
-        workspace = self.host.workspace
-        self.host.ui.print("[bold]LSP servers:[/bold]")
-        self.host.ui.print(f"[dim]{lsp_config_path(workspace)}[/dim]")
+        manager = self.integrations_port.lsp_ops
+        workspace = self.integrations_port.workspace
+        self.integrations_port.ui.print("[bold]LSP servers:[/bold]")
+        self.integrations_port.ui.print(f"[dim]{lsp_config_path(workspace)}[/dim]")
         if manager is None:
-            self.host.ui.error("No LSP manager available.")
+            self.integrations_port.ui.error("No LSP manager available.")
             return
         if getattr(manager, "initializing", False) or not getattr(manager, "initialized", True):
-            self.host.ui.print("[dim]LSP servers are still initializing.[/dim]")
+            self.integrations_port.ui.print("[dim]LSP servers are still initializing.[/dim]")
             return
         for config in manager.servers.values():
             state = "[green]enabled[/green]" if config.enabled else "[dim]disabled[/dim]"
             exts = ", ".join(config.extensions) or "no extensions"
             command = " ".join([config.command, *config.args]).strip()
-            self.host.ui.print(f"  [cyan]{config.language}[/cyan] · {state} · [dim]{exts}[/dim]")
-            self.host.ui.print(f"    {command}")
+            self.integrations_port.ui.print(f"  [cyan]{config.language}[/cyan] · {state} · [dim]{exts}[/dim]")
+            self.integrations_port.ui.print(f"    {command}")
 

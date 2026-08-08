@@ -20,7 +20,7 @@ from pathlib import Path
 import httpx
 
 from voidx.observability.request_log import log_llm_diagnostic
-from voidx.mcp.auto import render_available_mcp_servers
+from voidx.agent.ports.instructions import AvailableServersRenderer, render_available_servers
 from voidx.observability.tool_log import log_tool_event
 from voidx.platform.paths import voidx_home
 from voidx.agent.application.automation.workflow.service import WorkflowService
@@ -53,10 +53,12 @@ class InstructionService:
         settings=None,
         *,
         skill_summaries_provider=None,
+        available_servers_renderer: AvailableServersRenderer = render_available_servers,
     ) -> None:
         self._workspace = Path(workspace).resolve()
         self._settings = settings
         self._skill_summaries_provider = skill_summaries_provider
+        self._available_servers_renderer = available_servers_renderer
         self._global_dir = voidx_home()
         self._claude_dir = Path.home() / ".claude"
 
@@ -126,13 +128,13 @@ class InstructionService:
             instructions.append(available_skills)
         if self._mcp_description_provider is not None:
             descriptions = self._mcp_description_provider() or {}
-            available_mcp_servers = render_available_mcp_servers(
+            available_mcp_servers = self._available_servers_renderer(
                 self._settings,
-                descriptions=descriptions,
+                descriptions,
             )
         else:
             if self._available_mcp_servers is None:
-                self._available_mcp_servers = render_available_mcp_servers(self._settings)
+                self._available_mcp_servers = self._available_servers_renderer(self._settings, None)
             available_mcp_servers = self._available_mcp_servers
         if available_mcp_servers:
             instructions.append(available_mcp_servers)

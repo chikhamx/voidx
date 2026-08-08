@@ -54,7 +54,7 @@ def render_startup_lines(
 ) -> list[str]:
     """Build Rich-markup startup banner lines."""
 
-    from voidx import __version__
+    from voidx.platform.version import VERSION
     import os
 
     folder_name = os.path.basename(workspace) or workspace
@@ -71,7 +71,7 @@ def render_startup_lines(
         ("hint", "Panels: ↑↓ select · Enter accept · Esc close"),
     ]
 
-    title = f"voidx v{__version__}"
+    title = f"voidx v{VERSION}"
     logo = _cat_logo()
     logo_plain = [plain for plain, _ in logo]
     width = _banner_width(console_width, title, logo_plain, [line for _, line in info])

@@ -174,7 +174,7 @@ class DockNodeMixin(
         if tool_name in ("bash", "powershell"):
             command = str(raw_args.get("command") or "")
             if command:
-                body_lines = _bash_markdown_lines(command, self._markdown_width())
+                body_lines = bash_markdown_lines(command, self._markdown_width())
         header = _tool_header(tool_name, label, args, raw_args)
         parent = parent or self.ensure_agent()
         tool_body = header
@@ -337,7 +337,7 @@ class DockNodeMixin(
 
 
 
-def _bash_markdown_lines(command: str, width: int) -> list[str]:
+def bash_markdown_lines(command: str, width: int) -> list[str]:
     command = command.rstrip("\n")
     if not command:
         return []

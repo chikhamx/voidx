@@ -179,7 +179,7 @@ def check_sandbox_powershell(
     return None
 
 
-def _sandbox_denial(command: str, ctx: ToolContext) -> str | None:
+def sandbox_denial(command: str, ctx: ToolContext) -> str | None:
     """Entry point for tool.py — routes by sandbox_mode."""
     if ctx.sandbox_mode == "danger-full-access":
         return None

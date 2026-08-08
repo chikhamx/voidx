@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from voidx.platform.paths import voidx_workspace_dir
-import voidx.persistence.sqlite as store
+from voidx.platform.paths import voidx_home, voidx_workspace_dir
 
 def persist_named_tool_result(
     content: str,
@@ -36,4 +35,4 @@ def _tool_results_root(workspace: str | None = None) -> Path:
             return voidx_workspace_dir(workspace) / "tool-results"
         except OSError:
             pass
-    return store.DATA_DIR / "tool-results"
+    return voidx_home() / "tool-results"

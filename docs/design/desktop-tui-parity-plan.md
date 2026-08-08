@@ -21,7 +21,7 @@ audience: human+llm
 | 3 | 键盘中断语义（Ctrl+C 取消并恢复草稿、双击退出、Ctrl+D） | `tui/voidx_cli/app.py:538-599` | 仅停止按钮；前端仅一处 metaKey 判断（`main.ts:703`） |
 | 4 | 状态栏信息密度（上下文用量/上限、缓存命中率、总 token、工作流/目标段） | `tui/voidx_cli/render_status.py` | 仅模型/权限/推理/running（`services/state.ts:100-165`） |
 | 5 | 忙碌活动详情（耗时、token、最新动作、压缩/重试详情） | `tui/voidx_cli/render_activity.py:41-190` | 仅 "running" 文字 + 工具 spinner |
-| 6 | 斜杠命令清单同步（后端注入、Tab 补全） | `app.py:473-477` + 后端 `src/voidx/ui/commands.py` | `frontend/src/ui/slash.ts` 硬编码 37 条，已漂移 |
+| 6 | 斜杠命令清单同步（后端注入、Tab 补全） | `app.py:473-477` + 后端 `src/voidx/presentation/commands.py` | `frontend/src/ui/slash.ts` 硬编码 37 条，已漂移 |
 | 7 | 通知行（notice.set / 错误红行） | `tui/voidx_cli/render_frame.py:544-553` | `notice.set`、`refresh.requested`、`reset.requested` 被直接忽略（`main.ts:407-414`） |
 | 8 | 密钥输入掩码 | `tui/voidx_cli/text_prompt_mixin.py` + `render_input.py:18-21` | 明文 textarea（`dialog.ts:226-228`） |
 | 9 | guidance 忙碌回显 | `app.py:478-534` | 忙碌提交后本地不追加（`main.ts:560-574`），待验证后端是否补发 |

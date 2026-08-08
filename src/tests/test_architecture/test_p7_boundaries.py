@@ -34,7 +34,7 @@ def test_p7_architecture_debt_is_removed() -> None:
     debt_path = ROOT / "src/tests/fixtures/architecture/current_edges.json"
     debt = json.loads(debt_path.read_text(encoding="utf-8"))
 
-    assert [edge for edge in debt if edge.get("remove_by") == "P7"] == []
+    assert debt == []
 
 
 def test_agent_non_langgraph_adapters_have_final_owners() -> None:
@@ -72,9 +72,9 @@ def test_langgraph_adapters_have_final_owner() -> None:
     expected = (
         "src/voidx/agent/adapters/langgraph/__init__.py",
         "src/voidx/agent/adapters/langgraph/execution.py",
-        "src/voidx/agent/adapters/langgraph/display_policy.py",
+        "src/voidx/agent/domain/display_policy.py",
         "src/voidx/agent/adapters/langgraph/graph_compaction.py",
-        "src/voidx/agent/adapters/langgraph/ui_events.py",
+        "src/voidx/agent/domain/ui_events.py",
     )
 
     assert [path for path in expected if not (ROOT / path).is_file()] == []

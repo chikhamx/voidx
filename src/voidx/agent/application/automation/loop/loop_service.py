@@ -19,8 +19,7 @@ from voidx.agent.domain.thread import (
     LifecycleState,
     RuntimeDecision,
 )
-from voidx.agent.adapters.persistence.session_repository import ensure_session
-from voidx.agent.adapters.persistence.thread_repository import ThreadStore
+from voidx.agent.ports.persistence import ThreadStore
 from voidx.agent.ports.presentation import AgentEventPublisher, NullAgentEventPublisher
 
 
@@ -101,7 +100,7 @@ class LoopService(AutonomousServiceBase[LoopSpec, LoopScheduler]):
         if spec is None:
             return None
         loop_session_id = spec.loop_session_id(parent)
-        await ensure_session(loop_session_id, self._workspace, profile="loop")
+        await self._store.ensure_session(loop_session_id, self._workspace, profile="loop")
         if loaded.thread.session_id != loop_session_id:
             await self._store.rebind_thread_session(loop_thread_id, loop_session_id)
         self._active_specs[parent] = spec
@@ -126,7 +125,7 @@ class LoopService(AutonomousServiceBase[LoopSpec, LoopScheduler]):
 
     async def _activate(self, parent: str, spec: LoopSpec, display_text: str) -> LoopStatus:
         loop_session_id = spec.loop_session_id(parent)
-        await ensure_session(loop_session_id, self._workspace, profile="loop")
+        await self._store.ensure_session(loop_session_id, self._workspace, profile="loop")
         loop_thread_id = spec.loop_thread_id(parent)
         await self._ensure_thread(parent, loop_thread_id, spec, session_id=loop_session_id)
         self._active_specs[parent] = spec

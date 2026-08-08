@@ -17,7 +17,7 @@ from voidx.agent.application.automation.loop.controller import LoopAttemptContro
 from voidx.agent.application.runtime.contracts import TurnRequest
 from voidx.agent.application.runtime.dispatcher import DispatchResult, RuntimeDispatcher
 from voidx.agent.application.runtime.pump import WakeupPumpMixin
-from voidx.agent.adapters.persistence.thread_repository import ThreadStore
+from voidx.agent.ports.persistence import ThreadStore
 from voidx.agent.ports.presentation import AgentEventPublisher, NullAgentEventPublisher
 
 LOOP_WAITING_STATUS_ID = "loop:waiting"

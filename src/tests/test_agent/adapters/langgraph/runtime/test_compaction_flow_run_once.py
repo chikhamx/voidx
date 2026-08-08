@@ -345,7 +345,7 @@ async def test_compaction_drops_removed_row_cache_entries(tmp_path):
 
 @pytest.mark.asyncio
 async def test_slash_compact_runs_manual_session_compaction(tmp_path):
-    from voidx.presentation.slash import SlashHandler
+    from voidx.bootstrap.slash import build_slash_handler
 
     session = await create_session(workspace=str(tmp_path))
     try:
@@ -366,7 +366,7 @@ async def test_slash_compact_runs_manual_session_compaction(tmp_path):
 
         graph._run_compaction_agent = summarize
 
-        handled = await SlashHandler(graph).dispatch("/compact")
+        handled = await build_slash_handler(graph).dispatch("/compact")
 
         rows = await load_messages(session.id)
         assert handled is True

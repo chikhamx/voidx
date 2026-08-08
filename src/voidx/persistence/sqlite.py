@@ -29,7 +29,7 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-_now = now
+now = now
 
 
 def _get_db() -> sqlite3.Connection:
@@ -416,7 +416,7 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
 
 
 
-async def _execute_commit(sql: str, params: tuple = ()) -> sqlite3.Cursor:
+async def execute_commit(sql: str, params: tuple = ()) -> sqlite3.Cursor:
     def _run():
         conn = _get_db()
         with _write_lock:
@@ -430,7 +430,7 @@ async def _execute_commit(sql: str, params: tuple = ()) -> sqlite3.Cursor:
     return await asyncio.to_thread(lambda: _run_with_locked_retry(_run))
 
 
-async def _fetch_all(sql: str, params: tuple = ()) -> list[sqlite3.Row]:
+async def fetch_all(sql: str, params: tuple = ()) -> list[sqlite3.Row]:
     def _run():
         conn = _get_db()
         with _write_lock:
@@ -438,7 +438,7 @@ async def _fetch_all(sql: str, params: tuple = ()) -> list[sqlite3.Row]:
     return await asyncio.to_thread(lambda: _run_with_locked_retry(_run))
 
 
-async def _fetch_one(sql: str, params: tuple = ()) -> sqlite3.Row | None:
+async def fetch_one(sql: str, params: tuple = ()) -> sqlite3.Row | None:
     def _run():
         conn = _get_db()
         with _write_lock:
@@ -446,7 +446,7 @@ async def _fetch_one(sql: str, params: tuple = ()) -> sqlite3.Row | None:
     return await asyncio.to_thread(lambda: _run_with_locked_retry(_run))
 
 
-async def _write_transaction(callback: Callable[[sqlite3.Connection], T]) -> T:
+async def write_transaction(callback: Callable[[sqlite3.Connection], T]) -> T:
     def _run() -> T:
         conn = _get_db()
         with _write_lock:

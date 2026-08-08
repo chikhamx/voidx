@@ -2,16 +2,10 @@
 
 from __future__ import annotations
 
-from voidx.agent.domain.prompt_policy import CodingPromptPolicy
-from voidx.agent.domain.profile import RuntimeProfile
-from voidx.agent.domain.turn_context import TurnExecutionContext
-from voidx.agent.domain.thread import AgentThread
 from voidx.agent.application.runtime.contracts import TurnRequest, TurnResult
-
-
-CODING_PROFILE = RuntimeProfile(
-    profile_id="coding", revision=1, name="Coding", prompt_policy=CodingPromptPolicy()
-)
+from voidx.agent.domain.profile import CODING_PROFILE
+from voidx.agent.domain.thread import AgentThread
+from voidx.agent.domain.turn_context import TurnExecutionContext
 
 
 class CodingService:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voidx.agent.adapters.langgraph.ui_events import StatusFinished, StatusUpdated
+from voidx.agent.domain.ui_events import StatusFinished, StatusUpdated
 
 import asyncio
 import json
@@ -25,7 +25,7 @@ from voidx.agent.adapters.langgraph.runtime.streaming import extract_text, strea
 from voidx.agent.adapters.langgraph.runtime.core.helpers import LLMErrorKind, _classify_llm_error, _LLM_MAX_RETRIES, _llm_retry_delay, _llm_retry_sleep_delay, _clean_error_message
 from voidx.agent.adapters.langgraph.runtime.todo_events import todo_updated_event
 from voidx.agent.application.todo_state import todo_run_state_from_result
-from voidx.agent.application.workflow_utils import active_workflow_names
+from voidx.agent.domain.workflow_utils import active_workflow_names
 from voidx.agent.adapters.langgraph.runtime.tool_executor.types import _ExecutedTool
 from voidx.agent.adapters.langgraph.runtime.tool_executor.workflow import (
     _state_update_from_executed_tools,

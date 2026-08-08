@@ -8,19 +8,19 @@ from voidx.presentation.slash.helpers import _ide_label
 
 class IdeCommandsMixin:
     async def _code_ide(self, args: str) -> None:
-        settings = self.host.settings
+        settings = self.preferences_port.preference_settings
         if settings is None:
-            self.host.ui.error("No settings file available.")
+            self.preferences_port.ui.error("No settings file available.")
             return
 
         value = args.strip().lower()
         if value == "status":
-            self.host.ui.print(code_ide_status(settings))
+            self.preferences_port.ui.print(code_ide_status(settings))
             return
 
         valid = {item.value for item in CodeIde}
         if not value:
-            app = self.host.app
+            app = self.preferences_port.prompt_ui
             if app is not None:
                 detected = detect_code_ides()
                 detected_ids = {item.id for item in detected}
@@ -37,16 +37,16 @@ class IdeCommandsMixin:
                 if selected:
                     value = selected
             if not value:
-                self.host.ui.print(code_ide_status(settings))
-                self.host.ui.print("Usage: /code-ide [auto|trae|cursor|code|windsurf|zed|sublime|jetbrains|ghostty|system|status]")
+                self.preferences_port.ui.print(code_ide_status(settings))
+                self.preferences_port.ui.print("Usage: /code-ide [auto|trae|cursor|code|windsurf|zed|sublime|jetbrains|ghostty|system|status]")
                 return
 
         value = normalize_ide(value)
         if value not in valid:
-            self.host.ui.error(f"Invalid code IDE: {value}. Use: {', '.join(sorted(valid))}")
+            self.preferences_port.ui.error(f"Invalid code IDE: {value}. Use: {', '.join(sorted(valid))}")
             return
 
         path = settings.set_code_ide(CodeIde(value))
-        self.host.ui.print(f"[dim]Code IDE set to [cyan]{value}[/cyan]. Saved to {path}[/dim]")
-        self.host.ui.print(code_ide_status(settings))
+        self.preferences_port.ui.print(f"[dim]Code IDE set to [cyan]{value}[/cyan]. Saved to {path}[/dim]")
+        self.preferences_port.ui.print(code_ide_status(settings))
 

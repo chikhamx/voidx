@@ -578,14 +578,14 @@ def test_is_safe_bash_preserves_windows_backslash_path():
     """
     from voidx.tooling.policy.permission.rules import (
         is_safe_bash,
-        _shell_words,
+        shell_words,
     )
 
     # A read-only command with a Windows path should be safe
     assert is_safe_bash("cat C:\\Users\\foo\\app.py") is True
 
     # The path must be preserved in the parsed words
-    words = _shell_words("cat C:\\Users\\foo\\app.py")
+    words = shell_words("cat C:\\Users\\foo\\app.py")
     assert words is not None
     assert "C:\\Users\\foo\\app.py" in words
 

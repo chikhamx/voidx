@@ -19,10 +19,10 @@ from voidx.agent.domain.thread import (
     apply_lifecycle_decision,
 )
 from voidx.persistence.sqlite import (
-    _fetch_all,
-    _fetch_one,
-    _now,
-    _write_transaction,
+    fetch_all,
+    fetch_one,
+    now,
+    write_transaction,
     fetch_all_on,
     fetch_one_on,
     open_isolated_db,
@@ -30,8 +30,7 @@ from voidx.persistence.sqlite import (
 )
 
 
-class ThreadStateConflict(RuntimeError):
-    """Raised when an optimistic state_version update loses the race."""
+from voidx.agent.ports.persistence import ThreadStateConflict
 
 
 @dataclass(frozen=True)
@@ -58,17 +57,34 @@ class ThreadStore:
     def _write(self, tx: Any) -> Any:
         if self._conn is not None:
             return write_transaction_on(self._conn, tx)
-        return _write_transaction(tx)
+        return write_transaction(tx)
 
     def _one(self, sql: str, params: tuple = ()) -> Any:
         if self._conn is not None:
             return fetch_one_on(self._conn, sql, params)
-        return _fetch_one(sql, params)
+        return fetch_one(sql, params)
 
     def _all(self, sql: str, params: tuple = ()) -> Any:
         if self._conn is not None:
             return fetch_all_on(self._conn, sql, params)
-        return _fetch_all(sql, params)
+        return fetch_all(sql, params)
+
+    async def ensure_session(
+        self,
+        session_id: str,
+        workspace: str,
+        *,
+        profile: str = "coding",
+        title: str = "Loop session",
+    ) -> None:
+        from voidx.agent.adapters.persistence.session_repository import ensure_session
+
+        await ensure_session(
+            session_id,
+            workspace,
+            profile=profile,
+            title=title,
+        )
     async def create_thread(
         self,
         thread: AgentThread,
@@ -85,7 +101,7 @@ class ThreadStore:
         scope = resource_scope or {}
 
         def _tx(conn):
-            now = _now()
+            timestamp = now()
             conn.execute(
                 """INSERT INTO agent_threads (
                        id, parent_thread_id, session_id, workspace, profile_id,
@@ -101,15 +117,15 @@ class ThreadStore:
                     profile.revision,
                     _json_profile(profile),
                     _json(scope),
-                    now,
-                    now,
+                    timestamp,
+                    timestamp,
                 ),
             )
             conn.execute(
                 """INSERT INTO agent_thread_state (
                        thread_id, state_json, state_version, updated_at
                    ) VALUES (?, ?, 0, ?)""",
-                (thread.thread_id, _json_model(thread_state), now),
+                (thread.thread_id, _json_model(thread_state), timestamp),
             )
             return LoadedThread(thread, profile, thread_state, 0, scope)
 
@@ -144,10 +160,10 @@ class ThreadStore:
 
     async def rebind_thread_session(self, thread_id: str, session_id: str) -> None:
         def _tx(conn):
-            now = _now()
+            timestamp = now()
             conn.execute(
                 "UPDATE agent_threads SET session_id = ?, updated_at = ? WHERE id = ?",
-                (session_id, now, thread_id),
+                (session_id, timestamp, thread_id),
             )
 
         await self._write(_tx)
@@ -160,16 +176,16 @@ class ThreadStore:
         expected_state_version: int,
     ) -> LoadedThread:
         def _tx(conn):
-            now = _now()
+            timestamp = now()
             cur = conn.execute(
                 """UPDATE agent_thread_state
                    SET state_json = ?, state_version = state_version + 1, updated_at = ?
                    WHERE thread_id = ? AND state_version = ?""",
-                (_json_model(state), now, thread_id, expected_state_version),
+                (_json_model(state), timestamp, thread_id, expected_state_version),
             )
             if cur.rowcount != 1:
                 raise ThreadStateConflict("thread state_version conflict")
-            conn.execute("UPDATE agent_threads SET updated_at = ? WHERE id = ?", (now, thread_id))
+            conn.execute("UPDATE agent_threads SET updated_at = ? WHERE id = ?", (timestamp, thread_id))
             return _loaded_from_conn(conn, thread_id)
 
         return await self._write(_tx)
@@ -195,7 +211,7 @@ class ThreadStore:
                     and not existing["side_effect_started"]
                     and float(existing["lease_expires_at"]) <= time.time()
                 ):
-                    now = _now()
+                    timestamp = now()
                     next_token = int(existing["fencing_token"]) + 1
                     conn.execute(
                         """UPDATE runtime_turn_attempts
@@ -209,7 +225,7 @@ class ThreadStore:
                             lease_owner,
                             next_token,
                             time.time() + lease_seconds,
-                            now,
+                            timestamp,
                             existing["id"],
                             existing["fencing_token"],
                             time.time(),
@@ -223,7 +239,7 @@ class ThreadStore:
             loaded = _loaded_from_conn(conn, thread_id)
             if loaded.state_version != expected_state_version:
                 raise ThreadStateConflict("thread state_version conflict")
-            now = _now()
+            timestamp = now()
             attempt_id = _uid("attempt")
             fencing_token = 1
             conn.execute(
@@ -244,7 +260,7 @@ class ThreadStore:
                     lease_owner,
                     fencing_token,
                     time.time() + lease_seconds,
-                    now,
+                    timestamp,
                 ),
             )
             running = loaded.state.model_copy(update={"lifecycle": LifecycleState.RUNNING})
@@ -252,7 +268,7 @@ class ThreadStore:
                 """UPDATE agent_thread_state
                    SET state_json = ?, state_version = state_version + 1, updated_at = ?
                    WHERE thread_id = ? AND state_version = ?""",
-                (_json_model(running), now, thread_id, expected_state_version),
+                (_json_model(running), timestamp, thread_id, expected_state_version),
             )
             return ThreadAttempt(
                 attempt_id=attempt_id,
@@ -283,7 +299,7 @@ class ThreadStore:
                      AND lease_expires_at > ?""",
                 (
                     time.time() + lease_seconds,
-                    _now(),
+                    now(),
                     attempt_id,
                     lease_owner,
                     fencing_token,
@@ -302,13 +318,13 @@ class ThreadStore:
         fencing_token: int,
     ) -> ThreadAttempt | None:
         def _tx(conn):
-            now = _now()
+            timestamp = now()
             cur = conn.execute(
                 """UPDATE runtime_turn_attempts
                    SET side_effect_started = 1, updated_at = ?
                    WHERE id = ? AND side_effect_started = 0 AND status = 'prepared'
                      AND lease_owner = ? AND fencing_token = ? AND lease_expires_at > ?""",
-                (now, attempt_id, lease_owner, fencing_token, time.time()),
+                (timestamp, attempt_id, lease_owner, fencing_token, time.time()),
             )
             row = conn.execute("SELECT * FROM runtime_turn_attempts WHERE id = ?", (attempt_id,)).fetchone()
             if row is None:
@@ -326,7 +342,7 @@ class ThreadStore:
         lease_owner: str,
         fencing_token: int,
     ) -> CommitResult:
-        commit_now = time.time()
+        commitnow = time.time()
 
         def _tx(conn):
             attempt = conn.execute(
@@ -347,7 +363,7 @@ class ThreadStore:
             if (
                 attempt["lease_owner"] != lease_owner
                 or int(attempt["fencing_token"]) != int(fencing_token)
-                or float(attempt["lease_expires_at"]) <= commit_now
+                or float(attempt["lease_expires_at"]) <= commitnow
             ):
                 raise ThreadStateConflict("attempt lease conflict")
             thread_id = attempt["thread_id"]
@@ -380,17 +396,17 @@ class ThreadStore:
                     "context": context,
                 }
             )
-            now = _now()
+            timestamp = now()
             next_version = expected_state_version + 1
             conn.execute(
                 """UPDATE agent_thread_state
                    SET state_json = ?, state_version = ?, updated_at = ?
                    WHERE thread_id = ? AND state_version = ?""",
-                (_json_model(next_state), next_version, now, thread_id, expected_state_version),
+                (_json_model(next_state), next_version, timestamp, thread_id, expected_state_version),
             )
             conn.execute(
                 "UPDATE runtime_turn_attempts SET status = 'committed', updated_at = ? WHERE id = ?",
-                (now, attempt_id),
+                (timestamp, attempt_id),
             )
             outbox_id = None
             if decision.outcome == "continue":
@@ -418,7 +434,7 @@ class ThreadStore:
                         _json(wakeup_payload),
                         next_version,
                         time.time() + float(decision.next_delay_seconds or 0),
-                        now,
+                        timestamp,
                     ),
                 )
                 row = conn.execute(
@@ -447,7 +463,7 @@ class ThreadStore:
             loaded = _loaded_from_conn(conn, thread_id)
             if loaded.state_version != expected_state_version:
                 raise ThreadStateConflict("thread state_version conflict")
-            now = _now()
+            timestamp = now()
             outbox_id = _uid(kind)
             conn.execute(
                 """INSERT INTO runtime_outbox (
@@ -461,7 +477,7 @@ class ThreadStore:
                     _json(payload),
                     expected_state_version,
                     time.time() + delay_seconds,
-                    now,
+                    timestamp,
                 ),
             )
             return RuntimeOutboxItem(
@@ -563,7 +579,7 @@ class ThreadStore:
                 """UPDATE runtime_outbox
                    SET delivered_at = COALESCE(delivered_at, ?)
                    WHERE delivered_at IS NULL AND thread_id LIKE ?""",
-                (_now(), f"{prefix}%"),
+                (now(), f"{prefix}%"),
             )
             return cur.rowcount
 
@@ -577,7 +593,7 @@ class ThreadStore:
                 """UPDATE runtime_outbox
                    SET delivered_at = COALESCE(delivered_at, ?)
                    WHERE thread_id = ? AND delivered_at IS NULL""",
-                (_now(), thread_id),
+                (now(), thread_id),
             )
             return cur.rowcount
 
@@ -604,7 +620,7 @@ class ThreadStore:
                 raise KeyError(attempt_id)
             conn.execute(
                 "UPDATE runtime_outbox SET delivered_at = COALESCE(delivered_at, ?) WHERE id = ?",
-                (_now(), attempt["source_outbox_id"]),
+                (now(), attempt["source_outbox_id"]),
             )
 
         await self._write(_tx)
@@ -652,12 +668,12 @@ class ThreadStore:
             state = loaded.state.model_copy(
                 update={"lifecycle": LifecycleState.NEEDS_USER, "lifecycle_decision": decision}
             )
-            now = _now()
+            timestamp = now()
             conn.execute(
                 """UPDATE agent_thread_state
                    SET state_json = ?, state_version = state_version + 1, updated_at = ?
                    WHERE thread_id = ? AND state_version = ?""",
-                (_json_model(state), now, loaded.thread.thread_id, loaded.state_version),
+                (_json_model(state), timestamp, loaded.thread.thread_id, loaded.state_version),
             )
             return _loaded_from_conn(conn, loaded.thread.thread_id)
 
@@ -667,7 +683,7 @@ class ThreadStore:
         def _tx(conn):
             conn.execute(
                 "UPDATE runtime_outbox SET delivered_at = COALESCE(delivered_at, ?) WHERE id = ?",
-                (_now(), outbox_id),
+                (now(), outbox_id),
             )
 
         await self._write(_tx)

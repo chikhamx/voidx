@@ -42,7 +42,7 @@ class PersonaName(str, Enum):
     REVIEW = "review"
 
 
-def _contains_any(text: str, hints: tuple[str, ...]) -> bool:
+def contains_any(text: str, hints: tuple[str, ...]) -> bool:
     return any(_contains_hint(text, hint) for hint in hints)
 
 

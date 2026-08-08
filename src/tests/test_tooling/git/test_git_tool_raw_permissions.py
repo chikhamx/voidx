@@ -175,16 +175,16 @@ def test_git_is_read_only_public_api():
 # --- Bash hint ---
 
 def test_bash_hint_git_status():
-    from voidx.tooling.builtin.shell.bash.hint.git import _hint_git
-    hint = _hint_git("git status --porcelain", ["git", "status", "--porcelain"])
+    from voidx.tooling.builtin.shell.bash.hint.git import hint_git
+    hint = hint_git("git status --porcelain", ["git", "status", "--porcelain"])
     assert hint is not None
     assert hint.tool_id == "git"
     assert "status" in hint.llm_hint
 
 
-def test_bash_hint_git_push_now_hintable():
-    from voidx.tooling.builtin.shell.bash.hint.git import _hint_git
-    hint = _hint_git("git push", ["git", "push"])
+def test_bash_hint_git_pushnow_hintable():
+    from voidx.tooling.builtin.shell.bash.hint.git import hint_git
+    hint = hint_git("git push", ["git", "push"])
     assert hint is not None
     assert hint.tool_id == "git"
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from voidx.agent.application.coding_service import CODING_PROFILE
+from voidx.agent.domain.profile import CODING_PROFILE
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.ports.presentation import GatewayThreadRegistry, GuidancePort, RuntimeStatusReader
 from voidx.presentation.protocol import UiCancelCommand, UiSubmitCommand, parse_ui_command

@@ -7,6 +7,7 @@ import inspect
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
+from voidx.agent.ports.persistence import SessionRepository
 from voidx.presentation.gateway.adapter import UiEventItemAdapter
 from voidx.presentation.gateway.diff_review import DiffReviewSession
 from voidx.presentation.gateway.run_manager import ThreadRunManager
@@ -75,6 +76,7 @@ class GatewaySession(
         settings_factory: Callable[[str], Awaitable[object]] | None = None,
         skills_api_factory: SkillsApiFactory | None = None,
         skills_api_provider: Callable[[str], object] | None = None,
+        session_repository: SessionRepository | None = None,
     ) -> None:
         self._tree_provider = tree_providers
         self._session_id = session_id or thread_id
@@ -93,6 +95,7 @@ class GatewaySession(
         self._settings_factory = settings_factory
         self._skills_api_factory = skills_api_factory
         self._skills_api_provider = skills_api_provider
+        self._session_repository = session_repository
         self._seq = 0
         self._thread_id_provider: Callable[[], str] | None = None
         self._persisted_sync_task: asyncio.Task[None] | None = None
@@ -310,11 +313,12 @@ class GatewaySession(
     async def ensure_active_thread(self) -> str:
         if self._active_thread_id:
             return self._active_thread_id
-        from voidx.agent.adapters.persistence.session_repository import create_session
+        if self._session_repository is None:
+            raise RuntimeError("session_repository is required")
 
         runtime_state = self._runtime_state_provider() if self._runtime_state_provider else {}
         runtime_profile = str(runtime_state.get("runtime_profile") or "coding")
-        info = await create_session(
+        info = await self._session_repository.create_session(
             workspace=self._workspace or ".",
             provider=str(runtime_state.get("provider") or "anthropic"),
             model=str(runtime_state.get("model") or ""),
@@ -332,9 +336,10 @@ class GatewaySession(
     async def sync_persisted_threads(self) -> bool:
         from pathlib import Path
 
-        from voidx.agent.adapters.persistence.session_repository import SessionInfo, list_sessions
+        if self._session_repository is None:
+            return False
 
-        def from_session(info: SessionInfo) -> ThreadInfo:
+        def from_session(info: object) -> ThreadInfo:
             return ThreadInfo(
                 thread_id=info.id,
                 title=info.title,
@@ -350,7 +355,7 @@ class GatewaySession(
             )
 
         changed = False
-        for info in await list_sessions(limit=200):
+        for info in await self._session_repository.list_sessions(limit=200):
             if info.id in self._threads:
                 existing = self._threads[info.id]
                 updated = from_session(info).model_copy(

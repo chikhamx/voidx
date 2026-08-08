@@ -10,7 +10,7 @@ from voidx.agent.domain.turn_metadata import TurnMetadata
 from voidx.agent.domain.task.todo import TodoStatus
 
 
-from voidx.agent.adapters.langgraph.display_policy import ToolDisplayMode
+from voidx.agent.domain.display_policy import ToolDisplayMode
 
 
 class UiEventBase(BaseModel):

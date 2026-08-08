@@ -1,3 +1,3 @@
 """Presentation public export of agent display policy."""
 
-from voidx.agent.adapters.langgraph.display_policy import *
+from voidx.agent.domain.display_policy import *

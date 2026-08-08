@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 import voidx.persistence.sqlite as store
 from voidx.persistence.jsonl import append_session_record, read_session_records
-from voidx.persistence.sqlite import _execute_commit, _fetch_one, _now, _write_transaction
+from voidx.persistence.sqlite import execute_commit, fetch_one, now, write_transaction
 from voidx.agent.domain.task.intent import InteractionMode, TaskIntent
 from voidx.agent.domain.task.state import GoalSpec, TaskState
 from voidx.agent.domain.automation.workflow import WorkflowRoute
@@ -31,7 +31,7 @@ class MessageRuntimeSnapshot(BaseModel):
     current_goal: GoalSpec | None = None
     workflow_route: WorkflowRoute | None = None
     workflow_runs: dict[str, WorkflowRunState] = Field(default_factory=dict)
-    created_at: str = Field(default_factory=_now)
+    created_at: str = Field(default_factory=now)
 
 
 async def save_runtime_state(session_id: str, snapshot: RuntimeStateSnapshot) -> None:
@@ -62,7 +62,7 @@ async def save_session_runtime_state(
     compaction_summary: str = "",
     session_time: str = "",
 ) -> None:
-    await _execute_commit(
+    await execute_commit(
         """INSERT INTO session_runtime_state (
                session_id, interaction_mode, current_intent, previous_intent,
                current_goal_json, workflow_route_json, workflow_runs_json,
@@ -92,13 +92,13 @@ async def save_session_runtime_state(
             _dump_todo_state(task_state.todo_state),
             compaction_summary,
             session_time,
-            _now(),
+            now(),
         ),
     )
 
 
 async def load_interaction_mode(session_id: str) -> InteractionMode:
-    row = await _fetch_one(
+    row = await fetch_one(
         "SELECT interaction_mode FROM session_runtime_state WHERE session_id = ?",
         (session_id,),
     )
@@ -113,7 +113,7 @@ async def load_task_state(session_id: str) -> TaskState:
 
 
 async def load_task_state_with_session_time(session_id: str) -> tuple[TaskState, str]:
-    row = await _fetch_one(
+    row = await fetch_one(
         "SELECT * FROM session_runtime_state WHERE session_id = ?",
         (session_id,),
     )
@@ -133,7 +133,7 @@ async def load_task_state_with_session_time(session_id: str) -> tuple[TaskState,
 
 
 async def load_compaction_summary(session_id: str) -> str:
-    row = await _fetch_one(
+    row = await fetch_one(
         "SELECT compaction_summary FROM session_runtime_state WHERE session_id = ?",
         (session_id,),
     )
@@ -228,7 +228,7 @@ def _load_todo_state(raw: str) -> TodoRunState | None:
 
 
 async def save_message_runtime_snapshot(snapshot: MessageRuntimeSnapshot) -> None:
-    await _execute_commit(
+    await execute_commit(
         """INSERT INTO session_runtime_state (
                session_id, interaction_mode, current_intent,
                current_goal_json, workflow_route_json, workflow_runs_json,
@@ -313,7 +313,7 @@ def _message_runtime_snapshot_from_record(record: dict) -> MessageRuntimeSnapsho
             current_goal=_load_goal(str(record.get("current_goal") or "")),
             workflow_route=_load_workflow_route(str(record.get("workflow_route") or "")),
             workflow_runs=_load_workflow_runs(str(record.get("workflow_runs") or "")),
-            created_at=str(record.get("created_at") or _now()),
+            created_at=str(record.get("created_at") or now()),
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -340,4 +340,4 @@ async def clear_runtime_state(session_id: str) -> None:
     def _run(conn):
         conn.execute("DELETE FROM session_runtime_state WHERE session_id = ?", (session_id,))
 
-    await _write_transaction(_run)
+    await write_transaction(_run)

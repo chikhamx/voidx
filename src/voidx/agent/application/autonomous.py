@@ -17,7 +17,7 @@ from voidx.agent.domain.automation.goal import GoalSpec
 from voidx.agent.domain.automation.loop import LoopSpec
 from voidx.agent.domain.thread import TERMINAL_LIFECYCLES, LifecycleState, RuntimeDecision
 from voidx.agent.application.runtime.dispatcher import DispatchResult
-from voidx.agent.adapters.persistence.thread_repository import ThreadStateConflict, ThreadStore
+from voidx.agent.ports.persistence import ThreadStateConflict, ThreadStore
 
 SpecT = TypeVar("SpecT")
 SchedulerT = TypeVar("SchedulerT")

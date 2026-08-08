@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Protocol
+
+from langchain_core.language_models import BaseChatModel
 
 from voidx.agent.adapters.persistence.parent_result_publisher import AsyncParentResultPublisher
+from voidx.agent.adapters.persistence.session_repository import create_session
 from voidx.agent.adapters.persistence.thread_repository import ThreadStore
 from voidx.agent.application.agent_service import AgentService
 from voidx.agent.application.automation.goal.evaluator import GoalEvaluator
@@ -21,6 +24,7 @@ from voidx.agent.adapters.input_adapter import LangGraphInputAdapter
 from voidx.agent.adapters.input_router import LangGraphAutonomousInputRouter
 from voidx.agent.adapters.langgraph.adapter import LangGraphTurnEngine
 from voidx.agent.adapters.langgraph.execution import LangGraphExecution
+from voidx.agent.adapters.mcp.references import McpReferenceMessage
 from voidx.agent.adapters.persistence.memory_session import MemorySessionAdapter
 from voidx.agent.adapters.null_events import NullEventPublisher
 from voidx.agent.adapters.presentation_adapter import (
@@ -32,6 +36,10 @@ from voidx.agent.adapters.presentation_adapter import (
 from voidx.agent.ports.presentation import AgentEventPublisher, NullAgentEventPublisher
 from voidx.agent.ports.ui import AgentUiPort
 from voidx.agent.ports.workspace_lock import DelegatingWorkspaceWriteLock
+from voidx.config import Config, Settings
+from voidx.llm.domain.model import ModelConfig
+from voidx.lsp.application.manager import LspManager
+from voidx.mcp.application.manager import McpManager
 from voidx.presentation.adapters.persistence.transcript_adapter import TranscriptSnapshotAdapter
 from voidx.presentation.output.console import VoidConsole
 from voidx.presentation.output.dock import BottomInputDock
@@ -41,13 +49,71 @@ from voidx.presentation.runtime_port import PresentationUiAdapter
 from voidx.presentation.session import session_tracker
 from voidx.presentation.terminal.events import UiAgentEventPublisher
 from voidx.presentation.terminal.run_loop import TerminalRunLoop
+from voidx.tooling.application.permission_service import PermissionService
+from voidx.tooling.application.registry import ToolRegistry
+from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
+from voidx.tooling.domain.result import ToolResult
 
 if TYPE_CHECKING:
     from voidx.agent.adapters.persistence.session_repository import SessionInfo
-    from voidx.config import Config, Settings
 
 
-AgentEventPublisherFactory = Callable[[Any], AgentEventPublisher]
+class AgentEventPublisherFactory(Protocol):
+    def __call__(self, execution: LangGraphExecution) -> AgentEventPublisher: ...
+
+
+class ExternalManagerFactory(Protocol):
+    def __call__(
+        self,
+        *,
+        settings: Settings | None,
+        tools: ToolRegistry,
+        permission: PermissionService,
+        workspace: str,
+        model: BaseChatModel | None = None,
+        model_config: ModelConfig | None = None,
+    ) -> tuple[McpManager, LspManager]: ...
+
+
+class McpReferenceResolver(Protocol):
+    async def __call__(
+        self,
+        user_text: str,
+        *,
+        settings: Settings,
+        manager: McpManager,
+    ) -> McpReferenceMessage: ...
+
+
+class WebRoute(Protocol):
+    async def __call__(
+        self,
+        *,
+        kind: str,
+        settings: Settings,
+        ctx: ToolContext,
+        arguments: dict[str, object],
+        title: str,
+        caller: McpManager | None = None,
+    ) -> ToolResult | None: ...
+
+
+class PermissionNotifier(Protocol):
+    def __call__(self, message: str) -> object: ...
+
+
+class PermissionServiceFactory(Protocol):
+    def __call__(
+        self,
+        config: Config,
+        *,
+        settings: Settings | None = None,
+        notifier: PermissionNotifier,
+    ) -> PermissionService: ...
+
+
+class ParentResultPublisherFactory(Protocol):
+    def __call__(self) -> AsyncParentResultPublisher: ...
 
 
 @dataclass(frozen=True)
@@ -59,17 +125,17 @@ class ApplicationResources:
 
 @dataclass(frozen=True)
 class IntegrationResources:
-    external_manager_factory: Callable[..., tuple[Any, Any]] | None = None
-    mcp_reference_resolver: Callable[..., Any] | None = None
-    web_route: Callable[..., Any] | None = None
-    permission_service_factory: Callable[..., Any] | None = None
+    external_manager_factory: ExternalManagerFactory | None = None
+    mcp_reference_resolver: McpReferenceResolver | None = None
+    web_route: WebRoute | None = None
+    permission_service_factory: PermissionServiceFactory | None = None
     event_publisher_factory: AgentEventPublisherFactory | None = None
-    parent_result_publisher_factory: Callable[[], AsyncParentResultPublisher] = AsyncParentResultPublisher
+    parent_result_publisher_factory: ParentResultPublisherFactory = AsyncParentResultPublisher
 
 
 @dataclass(frozen=True)
 class AgentResources:
-    execution: Any
+    execution: LangGraphExecution
     service: AgentService
     workspace_write_lock: DelegatingWorkspaceWriteLock | None = None
     input_frontend_binder: LangGraphInputAdapter | None = None
@@ -85,12 +151,16 @@ def build_agent_components(
     settings: Settings | None = None,
     ui: AgentUiPort,
     event_publisher_factory: AgentEventPublisherFactory | None = None,
-    external_manager_factory: Callable[..., tuple[Any, Any]] | None = None,
-    mcp_reference_resolver: Callable[..., Any] | None = None,
-    web_route: Callable[..., Any] | None = None,
-    permission_service_factory: Callable[..., Any] | None = None,
+    external_manager_factory: ExternalManagerFactory | None = None,
+    mcp_reference_resolver: McpReferenceResolver | None = None,
+    web_route: WebRoute | None = None,
+    permission_service_factory: PermissionServiceFactory | None = None,
 ) -> AgentResources:
     """Build presentation-neutral agent services and infrastructure."""
+    if config is None:
+        raise ValueError("config is required")
+    if ui is None:
+        raise ValueError("ui is required")
     integrations = IntegrationResources(
         external_manager_factory=external_manager_factory,
         mcp_reference_resolver=mcp_reference_resolver,
@@ -113,6 +183,10 @@ def build_agent_components(
     from voidx.llm.domain.model import ReasoningEffort
     from voidx.llm.domain.provider import get_context_limit
     from voidx.llm.providers.catalog import PROVIDER_SPECS
+    from voidx.agent.adapters.mcp.instructions import render_available_servers
+    from voidx.agent.adapters.persistence.session_adapter import SessionRepositoryAdapter
+    from voidx.bootstrap.slash import build_slash_handler
+    from voidx.agent.adapters.persistence import session_cleanup
     from voidx.agent.application.prompts import language_labels
     from voidx.agent.application.runtime_context import tone_labels
 
@@ -141,9 +215,14 @@ def build_agent_components(
         "clipboard_image": clipboard_image,
         "model_factory": create_chat_model,
         "resolver_model_factory": create_resolver_model,
+        "available_servers_renderer": render_available_servers,
         "tool_registry_factory": build_tool_registry,
         "scoped_tools_binder": bind_scoped_tools,
-        "slash_handler_factory": SlashHandler,
+        "slash_handler_factory": lambda host: build_slash_handler(
+            host,
+            session_repository=SessionRepositoryAdapter(),
+            session_cleanup=session_cleanup,
+        ),
         "reasoning_effort_type": ReasoningEffort,
         "context_limit_resolver": get_context_limit,
         "provider_specs": PROVIDER_SPECS,
@@ -193,7 +272,7 @@ def build_agent_components(
             result_publisher=integrations.parent_result_publisher_factory(),
         )
     execution.bind_automation_services(loop_service, goal_service)
-    chat_service = ChatService(runtime)
+    chat_service = ChatService(runtime, session_creator=create_session)
     coding_service = CodingService(runtime)
     input_adapter = LangGraphInputAdapter(execution)
     router = LangGraphAutonomousInputRouter(
@@ -224,6 +303,7 @@ def build_agent_app(
     settings: Settings | None = None,
 ) -> AgentFacade:
     """Build the agent and its concrete terminal/web presentation."""
+    from voidx.agent.adapters.persistence.session_adapter import SessionRepositoryAdapter
     from voidx.bootstrap.permission import build_permission_service
     from voidx.bootstrap.tooling import build_external_managers, resolve_mcp_references
     from voidx.tooling.adapters.web_mcp import call_mcp_web_tool
@@ -237,7 +317,7 @@ def build_agent_app(
         session=session,
         settings=settings,
         ui=presentation_ui,
-        event_publisher_factory=lambda execution: UiAgentEventPublisher(execution.ui),
+        event_publisher_factory=lambda execution: UiAgentEventPublisher(presentation_ui),
         external_manager_factory=build_external_managers,
         mcp_reference_resolver=resolve_mcp_references,
         web_route=call_mcp_web_tool,
@@ -267,6 +347,7 @@ def build_agent_app(
         settings_factory=build_settings,
         skills_api_factory=workspace_skills_api_factory,
         skills_api_provider=skills_api_provider,
+        session_repository=SessionRepositoryAdapter(),
     )
     return AgentFacade(run_loop=run_loop)
 
@@ -275,7 +356,12 @@ __all__ = [
     "AgentEventPublisherFactory",
     "AgentResources",
     "ApplicationResources",
+    "ExternalManagerFactory",
     "IntegrationResources",
+    "McpReferenceResolver",
+    "ParentResultPublisherFactory",
+    "PermissionServiceFactory",
+    "WebRoute",
     "build_agent_app",
     "build_agent_components",
 ]

@@ -10,7 +10,7 @@ class UpgradeCommandsMixin:
         if action == "check":
             await self._upgrade_check()
         elif action == "now":
-            await self._upgrade_now()
+            await self._upgradenow()
         elif action == "on":
             self._upgrade_set_enabled(True)
         elif action == "off":
@@ -18,58 +18,58 @@ class UpgradeCommandsMixin:
         elif action == "status":
             self._upgrade_status()
         else:
-            self.host.ui.error("Usage: /upgrade [check|now|on|off|status]")
+            self.preferences_port.ui.error("Usage: /upgrade [check|now|on|off|status]")
 
     async def _upgrade_check(self) -> None:
-        result = await self.host.update_service.check_for_update()
-        settings = self.host.settings
+        result = await self.preferences_port.update_ops.check_for_update()
+        settings = self.preferences_port.preference_settings
         mark_update_check = getattr(settings, "mark_update_check", None)
         if callable(mark_update_check):
             mark_update_check(result.latest_version)
         if result.error:
-            self.host.ui.error(result.message)
+            self.preferences_port.ui.error(result.message)
             return
-        self.host.ui.print(result.message)
+        self.preferences_port.ui.print(result.message)
         if result.update_available:
-            self.host.ui.print(f"[dim]{self.host.update_service.upgrade_hint()}[/dim]")
+            self.preferences_port.ui.print(f"[dim]{self.preferences_port.update_ops.upgrade_hint()}[/dim]")
 
-    async def _upgrade_now(self) -> None:
+    async def _upgradenow(self) -> None:
         target = self._cached_upgrade_target()
         if target is not None:
-            self.host.ui.print(f"[dim]Upgrading to voidx {target}...[/dim]")
-            result = await self.host.update_service.perform_upgrade(target)
+            self.preferences_port.ui.print(f"[dim]Upgrading to voidx {target}...[/dim]")
+            result = await self.preferences_port.update_ops.perform_upgrade(target)
         else:
-            self.host.ui.print("[dim]Checking for updates...[/dim]")
-            result = await self.host.update_service.perform_upgrade()
+            self.preferences_port.ui.print("[dim]Checking for updates...[/dim]")
+            result = await self.preferences_port.update_ops.perform_upgrade()
         if result.ok:
-            self.host.ui.print(_format_upgrade_success(result))
+            self.preferences_port.ui.print(_format_upgrade_success(result))
         else:
-            self.host.ui.error(result.message)
+            self.preferences_port.ui.error(result.message)
 
     def _upgrade_set_enabled(self, enabled: bool) -> None:
-        settings = self.host.settings
+        settings = self.preferences_port.preference_settings
         if settings is None:
-            self.host.ui.error("No settings file available.")
+            self.preferences_port.ui.error("No settings file available.")
             return
         path = settings.set_update_check_enabled(enabled)
         state = "enabled" if enabled else "disabled"
-        self.host.ui.print(f"[dim]Startup update checks {state}. Saved to {path}[/dim]")
+        self.preferences_port.ui.print(f"[dim]Startup update checks {state}. Saved to {path}[/dim]")
 
     def _upgrade_status(self) -> None:
-        settings = self.host.settings
+        settings = self.preferences_port.preference_settings
         if settings is None:
-            self.host.ui.error("No settings file available.")
+            self.preferences_port.ui.error("No settings file available.")
             return
         enabled = "on" if settings.get_update_check_enabled() else "off"
         checked_at = _format_timestamp(settings.get_update_check_last_checked_at())
         latest = settings.get_update_check_latest_version() or "unknown"
-        self.host.ui.print("[bold]Upgrade checks:[/bold]")
-        self.host.ui.print(f"  enabled: [cyan]{enabled}[/cyan]")
-        self.host.ui.print(f"  last checked: [cyan]{checked_at}[/cyan]")
-        self.host.ui.print(f"  latest seen: [cyan]{latest}[/cyan]")
+        self.preferences_port.ui.print("[bold]Upgrade checks:[/bold]")
+        self.preferences_port.ui.print(f"  enabled: [cyan]{enabled}[/cyan]")
+        self.preferences_port.ui.print(f"  last checked: [cyan]{checked_at}[/cyan]")
+        self.preferences_port.ui.print(f"  latest seen: [cyan]{latest}[/cyan]")
 
     def _cached_upgrade_target(self) -> str | None:
-        settings = self.host.settings
+        settings = self.preferences_port.preference_settings
         if settings is None:
             return None
         update_check_due = getattr(settings, "update_check_due", None)
@@ -77,7 +77,7 @@ class UpgradeCommandsMixin:
             return None
         get_latest = getattr(settings, "get_update_check_latest_version", None)
         latest = get_latest() if callable(get_latest) else None
-        if isinstance(latest, str) and self.host.update_service.is_newer(latest):
+        if isinstance(latest, str) and self.preferences_port.update_ops.is_newer(latest):
             return latest
         return None
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voidx.agent.adapters.langgraph.ui_events import TodoItemPayload, TodoUpdated
+from voidx.agent.domain.ui_events import TodoItemPayload, TodoUpdated
 
 from voidx.agent.application.todo_state import todo_run_state_from_result
 

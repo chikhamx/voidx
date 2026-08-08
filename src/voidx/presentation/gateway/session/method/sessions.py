@@ -9,21 +9,22 @@ class SessionMethods:
     """Session/command-related JSON-RPC handlers, mixed into GatewaySession."""
 
     async def _method_session_create(self, params: dict) -> dict:
-        from voidx.agent.adapters.persistence.session_repository import create_session, validate_runtime_profile
+        repository = self._session_repository
+        if repository is None:
+            raise RuntimeError("session_repository is required")
         title = params.get("title", "New session")
         directory = str(params.get("directory", "") or "")
         workspace = directory or self._workspace or "."
         profile = str(params.get("profile", "") or "coding")
         try:
-            validate_runtime_profile(profile)
+            info = await repository.create_session(
+                workspace=workspace,
+                title=title,
+                directory=directory,
+                profile=profile,
+            )
         except ValueError as exc:
             raise MethodParamsError(f"unknown profile: {profile}") from exc
-        info = await create_session(
-            workspace=workspace,
-            title=title,
-            directory=directory,
-            profile=profile,
-        )
         await self.register_thread(
             info.id,
             title=info.title,
@@ -44,10 +45,12 @@ class SessionMethods:
         }
 
     async def _method_session_fork(self, params: dict) -> dict:
-        from voidx.agent.adapters.persistence.session_repository import fork_session
+        repository = self._session_repository
+        if repository is None:
+            raise RuntimeError("session_repository is required")
         thread_id = params.get("thread_id", "")
         title = params.get("title")
-        info = await fork_session(thread_id, title=title)
+        info = await repository.fork_session(thread_id, title=title)
         if info is None:
             raise MethodParamsError(f"thread not found: {thread_id}")
         await self.register_thread(
@@ -67,17 +70,21 @@ class SessionMethods:
         }
 
     async def _method_session_delete(self, params: dict) -> dict:
-        from voidx.agent.adapters.persistence.session_repository import delete_session
+        repository = self._session_repository
+        if repository is None:
+            raise RuntimeError("session_repository is required")
         thread_id = params.get("thread_id", "")
-        await delete_session(thread_id)
+        await repository.delete_session(thread_id)
         await self.unregister_thread(thread_id)
         return {"ok": True}
 
     async def _method_session_rename(self, params: dict) -> dict:
-        from voidx.agent.adapters.persistence.session_repository import update_title
+        repository = self._session_repository
+        if repository is None:
+            raise RuntimeError("session_repository is required")
         thread_id = params.get("thread_id", "")
         title = params.get("title", "")
-        await update_title(thread_id, title)
+        await repository.update_title(thread_id, title)
         info = self._threads.get(thread_id)
         if info is not None:
             self._threads[thread_id] = info.model_copy(update={"title": title})

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from voidx.agent.adapters.langgraph.ui_events import FileChangeAppended, StatusFinished, ToolFinished, ToolResultAppended, ToolStarted
-from voidx.agent.adapters.langgraph.display_policy import ToolDisplayMode, ToolDisplayPolicy
+from voidx.agent.domain.ui_events import FileChangeAppended, StatusFinished, ToolFinished, ToolResultAppended, ToolStarted
+from voidx.agent.domain.display_policy import ToolDisplayMode, ToolDisplayPolicy
 
 from voidx.tooling.domain.diff import diff_stat
 from voidx.observability.tool_log import log_tool_event

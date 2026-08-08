@@ -3,6 +3,7 @@ import pytest
 from voidx.config import PermissionMode
 from voidx.tooling.policy.permission.presets import resolve_mode_decision
 from voidx.tooling.domain.risk import ApprovalScope, RiskAssessment, RiskTag
+from voidx.llm.structured import ainvoke_structured
 
 
 def test_ai_approval_mode_sandbox_and_policy():
@@ -429,14 +430,14 @@ def test_ai_approval_system_prompt_guides_common_shell_review():
 def test_ai_approval_classifies_provider_transport_errors():
     import httpx
 
-    from voidx.tooling.application.ai_approval import _classify_ai_approval_failure
+    from voidx.tooling.application.ai_approval import classify_ai_approval_failure
 
     class APITimeoutError(Exception):
         pass
 
-    assert _classify_ai_approval_failure(APITimeoutError()) == "timeout"
-    assert _classify_ai_approval_failure(httpx.ConnectError("offline")) == "connection_error"
-    assert _classify_ai_approval_failure(RuntimeError("bad response")) == "error"
+    assert classify_ai_approval_failure(APITimeoutError()) == "timeout"
+    assert classify_ai_approval_failure(httpx.ConnectError("offline")) == "connection_error"
+    assert classify_ai_approval_failure(RuntimeError("bad response")) == "error"
 
 
 @pytest.mark.asyncio
@@ -482,7 +483,7 @@ async def test_ai_approval_service_reports_timeout(monkeypatch):
         tool_call={"name": "bash", "args": {"command": "python build.py"}, "id": "call_1"},
     )
 
-    result = await AiApprovalService(model_factory, resolver_model_factory).review([decision], FakeSettings())
+    result = await AiApprovalService(model_factory, resolver_model_factory, ainvoke_structured).review([decision], FakeSettings())
 
     assert result.reason == "timeout"
     assert result.allowed_ids == frozenset()
@@ -529,7 +530,7 @@ async def test_ai_approval_service_tracks_candidates_skipped_before_review(monke
         ),
     ]
 
-    result = await AiApprovalService(model_factory, resolver_model_factory).review(decisions, FakeSettings())
+    result = await AiApprovalService(model_factory, resolver_model_factory, ainvoke_structured).review(decisions, FakeSettings())
 
     assert result.reason == "reviewed"
     assert result.reviewed_ids == frozenset({"call_bash"})
@@ -577,7 +578,7 @@ async def test_ai_approval_service_marks_oversized_batch_as_skipped(monkeypatch)
         for index in range(4)
     ]
 
-    result = await AiApprovalService(model_factory, resolver_model_factory).review(decisions, FakeSettings())
+    result = await AiApprovalService(model_factory, resolver_model_factory, ainvoke_structured).review(decisions, FakeSettings())
 
     assert result.reason == "skipped"
     assert result.allowed_ids == frozenset()
@@ -633,7 +634,7 @@ async def test_ai_approval_service_never_sends_shell_secret_in_pattern_or_args(m
         tool_call={"name": "bash", "args": {"command": command}, "id": "call_1"},
     )
 
-    result = await AiApprovalService(model_factory, resolver_model_factory).review([decision], FakeSettings())
+    result = await AiApprovalService(model_factory, resolver_model_factory, ainvoke_structured).review([decision], FakeSettings())
     encoded = json.dumps(captured, sort_keys=True)
 
     assert result.reason == "reviewed"
@@ -715,7 +716,7 @@ async def test_ai_approval_service_falls_back_to_json_mode_on_unparseable_respon
         tool_call={"name": "bash", "args": {"command": "rm -rf /tmp/test"}, "id": "call_1"},
     )
 
-    result = await AiApprovalService(model_factory, resolver_model_factory).review([decision], FakeSettings())
+    result = await AiApprovalService(model_factory, resolver_model_factory, ainvoke_structured).review([decision], FakeSettings())
 
     assert result.reason == "reviewed"
     assert result.allowed_ids == frozenset({"call_1"})

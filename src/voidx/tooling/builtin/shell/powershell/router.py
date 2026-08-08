@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from voidx.tooling.builtin.shell.powershell.core import (
     _has_shell_expansion,
-    _shell_words,
+    shell_words,
     _strip_cd_prefix,
 )
-from voidx.tooling.builtin.shell.powershell.hint.file import _hint_get_content, _hint_out_file
-from voidx.tooling.builtin.shell.powershell.hint.search import _hint_get_child_item, _hint_select_string
+from voidx.tooling.builtin.shell.powershell.hint.file import hint_get_content, hint_out_file
+from voidx.tooling.builtin.shell.powershell.hint.search import hint_get_child_item, hint_select_string
 from voidx.tooling.builtin.shell.common import RouteHint
-from voidx.tooling.builtin.shell.hint.git import _hint_git
+from voidx.tooling.builtin.shell.hint.git import hint_git
 
 
 def try_hint(command: str) -> RouteHint | None:
@@ -53,7 +53,7 @@ def _try_hint_impl(command: str) -> RouteHint | None:
     if _has_shell_expansion(stripped):
         return None
 
-    words = _shell_words(stripped)
+    words = shell_words(stripped)
     if not words:
         return None
 
@@ -70,27 +70,27 @@ def _try_hint_impl(command: str) -> RouteHint | None:
             after_pipe = words[pipe_idx + 1].lower()
             after_pipe_resolved = _ALIAS_MAP.get(after_pipe, after_pipe).lower()
             if after_pipe_resolved in ("out-file", "set-content", "add-content"):
-                return _hint_out_file(words[pipe_idx + 1:])
+                return hint_out_file(words[pipe_idx + 1:])
         return None
 
     # git — reuse shell.hint.git
     if prog == "git" and len(words) >= 2:
-        return _hint_git(stripped, words)
+        return hint_git(stripped, words)
 
     # Get-Content / cat / type → read
     if prog_resolved == "get-content":
-        return _hint_get_content(words)
+        return hint_get_content(words)
 
     # Select-String / sls → search
     if prog_resolved == "select-string":
-        return _hint_select_string(words)
+        return hint_select_string(words)
 
     # Get-ChildItem / dir / ls / gci → find
     if prog_resolved == "get-childitem":
-        return _hint_get_child_item(words)
+        return hint_get_child_item(words)
 
     # Out-File / Set-Content / Add-Content → write (can be piped)
     if prog_resolved in ("out-file", "set-content", "add-content"):
-        return _hint_out_file(words)
+        return hint_out_file(words)
 
     return None

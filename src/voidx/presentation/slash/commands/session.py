@@ -32,14 +32,16 @@ class SessionCommandsMixin:
                 await self._clear()
                 return
 
-            from voidx.agent.adapters.persistence.session_repository import create_session
-            config = getattr(self.host, "config", None)
+            repository = self.session_repository
+            if repository is None:
+                raise RuntimeError("session_repository is required")
+            config = self.session_port.model_config
             model_info = getattr(config, "model", None) if config else None
             provider = getattr(model_info, "provider", "anthropic") if model_info else "anthropic"
             model = getattr(model_info, "model", "claude-3-5-sonnet") if model_info else "claude-3-5-sonnet"
-            workspace = getattr(self.host, "workspace", "")
+            workspace = self.session_port.workspace
 
-            session = await create_session(
+            session = await repository.create_session(
                 workspace=workspace,
                 provider=provider,
                 model=model,
@@ -47,10 +49,10 @@ class SessionCommandsMixin:
                 title="Chat session" if profile == "chat" else "New session",
             )
 
-            if hasattr(self.host, "resume_session"):
-                await self.host.resume_session(session)
-            self.host._ui.session_tracker.clear()
-            active_dock = self.host._ui.get_dock()
+            if True:
+                await self.session_port.resume_session(session)
+            self.session_port.ui_state.session_tracker.clear()
+            active_dock = self.session_port.ui_state.get_dock()
             if active_dock is not None:
                 active_dock.reset()
             await self._show_startup(prefer_direct=True)
@@ -62,7 +64,7 @@ class SessionCommandsMixin:
         if subcommand in {"del", "delete"}:
             await self._session_del(rest)
             return
-        self.host.ui.print("[dim]Usage: /session list|new|resume|del[/dim]")
+        self.session_port.ui.print("[dim]Usage: /session list|new|resume|del[/dim]")
 
     async def _switch_profile(self, profile: str) -> None:
         """Switch the session's runtime profile.
@@ -71,14 +73,16 @@ class SessionCommandsMixin:
         updated and the host's session object is refreshed. A session that has
         messages is locked, so a new session is created in the target profile.
         """
-        session = getattr(self.host, "session", None)
+        session = self.session_port.session
         message_count = getattr(session, "message_count", 0) or 0
         if session is not None and message_count == 0:
-            from voidx.agent.adapters.persistence.session_repository import update_session_profile
+            repository = self.session_repository
+            if repository is None:
+                raise RuntimeError("session_repository is required")
 
-            await update_session_profile(session.id, profile)
+            await repository.update_session_profile(session.id, profile)
             session.runtime_profile = profile
-            self.host.ui.print(f"[dim]Mode set to [cyan]{profile}[/cyan] — next message starts the {profile} session.[/dim]")
+            self.session_port.ui.print(f"[dim]Mode set to [cyan]{profile}[/cyan] — next message starts the {profile} session.[/dim]")
             return
         await self._session(f"new {profile}".strip())
 
@@ -101,18 +105,20 @@ class SessionCommandsMixin:
         if not scope_parts:
             selected_scope = await self._select_session_delete_scope()
             if selected_scope is None:
-                self.host.ui.print("[dim]Deletion cancelled.[/dim]")
+                self.session_port.ui.print("[dim]Deletion cancelled.[/dim]")
                 return
             scope = selected_scope
         else:
             scope = scope_parts[0]
 
-        from voidx.agent.adapters.persistence.session_cleanup import apply_session_delete_plan, plan_session_delete
+        cleanup = self.session_cleanup
+        if cleanup is None:
+            raise RuntimeError("session_cleanup is required")
 
         try:
-            plan = await plan_session_delete(scope)
+            plan = await cleanup.plan_session_delete(scope)
         except ValueError as exc:
-            self.host.ui.error(str(exc))
+            self.session_port.ui.error(str(exc))
             return
 
         self._print_session_delete_plan(plan, dry_run=dry_run)
@@ -121,15 +127,15 @@ class SessionCommandsMixin:
 
         confirmed = await self._confirm_session_delete()
         if not confirmed:
-            self.host.ui.print("[dim]Deletion cancelled.[/dim]")
+            self.session_port.ui.print("[dim]Deletion cancelled.[/dim]")
             return
 
-        deleted = await apply_session_delete_plan(plan)
-        self.host.ui.print(f"[green]Deleted {deleted} session(s).[/green]")
+        deleted = await cleanup.apply_session_delete_plan(plan)
+        self.session_port.ui.print(f"[green]Deleted {deleted} session(s).[/green]")
 
     def _print_session_delete_plan(self, plan, *, dry_run: bool) -> None:
         label = "Dry run" if dry_run else "Delete preview"
-        self.host.ui.print(
+        self.session_port.ui.print(
             f"[bold]{label}:[/bold] "
             f"{plan.total_sessions} session(s), "
             f"{plan.empty_sessions} empty, "
@@ -137,19 +143,19 @@ class SessionCommandsMixin:
             f"{_format_bytes(plan.bytes_to_reclaim)} reclaimable"
         )
         if not plan.candidates:
-            self.host.ui.print("[dim]No sessions match deletion scope.[/dim]")
+            self.session_port.ui.print("[dim]No sessions match deletion scope.[/dim]")
             return
         for candidate in plan.candidates:
             title = candidate.title[:50] + ("..." if len(candidate.title) > 50 else "")
             workspace = candidate.workspace[:40] + ("..." if len(candidate.workspace) > 40 else "")
             updated = candidate.updated_at[:10]
-            self.host.ui.print(
+            self.session_port.ui.print(
                 f"  {candidate.session_id[:8]} | {updated} | {candidate.message_count} msgs | "
                 f"{_format_bytes(candidate.bytes_to_reclaim)} | {workspace} | {title}"
             )
 
     async def _confirm_session_delete(self) -> bool:
-        app = self.host.app
+        app = self.session_port.prompt_ui
         if app is None:
             answer = await self._prompt("Delete these sessions? Type y to confirm", default="")
             return (answer or "").strip().lower() in {"y", "yes"}
@@ -163,7 +169,7 @@ class SessionCommandsMixin:
         return choice == "yes"
 
     async def _select_session_delete_scope(self) -> str | None:
-        app = self.host.app
+        app = self.session_port.prompt_ui
         if app is None:
             return "30d"
         choice = await app.ask_choice(
@@ -181,37 +187,37 @@ class SessionCommandsMixin:
         return str(choice)
 
     async def _rollback(self) -> None:
-        if not self.host._ui.session_tracker.has_rollbackable_changes:
-            self.host.ui.print("[dim]No file changes to roll back.[/dim]")
+        if not self.session_port.ui_state.session_tracker.has_rollbackable_changes:
+            self.session_port.ui.print("[dim]No file changes to roll back.[/dim]")
             return
 
-        lines = self.host._ui.session_tracker.rollback_summary_lines()
+        lines = self.session_port.ui_state.session_tracker.rollback_summary_lines()
         if lines:
-            self.host.ui.print("[bold]Files changed this turn:[/bold]")
+            self.session_port.ui.print("[bold]Files changed this turn:[/bold]")
             for line in lines:
-                self.host.ui.print(line)
-            self.host.ui.print("")
-        self.host.ui.print("[yellow]Rollback will overwrite current file contents with the pre-edit snapshot.[/yellow]")
+                self.session_port.ui.print(line)
+            self.session_port.ui.print("")
+        self.session_port.ui.print("[yellow]Rollback will overwrite current file contents with the pre-edit snapshot.[/yellow]")
 
         confirmed = await self._confirm_rollback()
         if not confirmed:
-            self.host.ui.print("[dim]Rollback cancelled.[/dim]")
+            self.session_port.ui.print("[dim]Rollback cancelled.[/dim]")
             return
 
-        result = self.host._ui.session_tracker.rollback_current()
+        result = self.session_port.ui_state.session_tracker.rollback_current()
         if result.restored:
-            self.host.ui.print(f"[green]Restored:[/green] {', '.join(result.restored)}")
+            self.session_port.ui.print(f"[green]Restored:[/green] {', '.join(result.restored)}")
         if result.removed:
-            self.host.ui.print(f"[green]Removed:[/green] {', '.join(result.removed)}")
+            self.session_port.ui.print(f"[green]Removed:[/green] {', '.join(result.removed)}")
         if result.ok:
             if not result.restored and not result.removed:
-                self.host.ui.print("[dim]No files needed rollback.[/dim]")
+                self.session_port.ui.print("[dim]No files needed rollback.[/dim]")
             return
         for err in result.errors:
-            self.host.ui.error(err)
+            self.session_port.ui.error(err)
 
     async def _confirm_rollback(self) -> bool:
-        app = self.host.app
+        app = self.session_port.prompt_ui
         if app is None:
             answer = await self._prompt("Rollback these changes? Type y to confirm", default="")
             return (answer or "").strip().lower() in {"y", "yes"}
@@ -225,86 +231,90 @@ class SessionCommandsMixin:
         return choice == "yes"
 
     async def _list_sessions(self) -> None:
-        from voidx.agent.adapters.persistence.session_repository import list_sessions
+        repository = self.session_repository
+        if repository is None:
+            raise RuntimeError("session_repository is required")
 
         sessions = _order_sessions_by_workspace(
-            await list_sessions(), getattr(self.host, "workspace", "")
+            await repository.list_sessions(), self.session_port.workspace
         )
         if not sessions:
-            self.host.ui.print("No saved sessions.")
+            self.session_port.ui.print("No saved sessions.")
             return
 
-        self.host.ui.print("[bold]Sessions:[/bold]")
+        self.session_port.ui.print("[bold]Sessions:[/bold]")
         items = []
         for session in sessions:
             title = session.title[:50] + ("..." if len(session.title) > 50 else "")
             items.append(f"{session.id[:8]} | {title} | {session.workspace} | {getattr(session, 'updated_at', '')[:16]}")
 
         idx = None
-        app = self.host.app
+        app = self.session_port.prompt_ui
         if app is not None:
             idx = await _select_from_list(app, "Resume session?", items)
         else:
             for item in items:
-                self.host.ui.print(f"  {item}")
+                self.session_port.ui.print(f"  {item}")
 
         if idx is not None:
             await self._resume(f"/resume {sessions[idx].id}")
 
     async def _resume(self, cmd: str) -> None:
-        from voidx.agent.adapters.persistence.session_repository import get_session, list_sessions
+        repository = self.session_repository
+        if repository is None:
+            raise RuntimeError("session_repository is required")
 
         sid = cmd.removeprefix("/resume").strip()
         if not sid:
             sessions = _order_sessions_by_workspace(
-                await list_sessions(), getattr(self.host, "workspace", "")
+                await repository.list_sessions(), self.session_port.workspace
             )
             if not sessions:
-                self.host.ui.print("[dim]No saved sessions.[/dim]")
+                self.session_port.ui.print("[dim]No saved sessions.[/dim]")
                 return
             items = []
             for session in sessions:
                 title = session.title[:50] + ("..." if len(session.title) > 50 else "")
                 items.append(f"{session.id[:8]} | {title} | {session.workspace} | {getattr(session, 'updated_at', '')[:16]}")
             idx = None
-            app = self.host.app
+            app = self.session_port.prompt_ui
             if app is not None:
                 idx = await _select_from_list(app, "Resume session?", items)
             if idx is None:
-                self.host.ui.print("[dim]Cancelled.[/dim]")
+                self.session_port.ui.print("[dim]Cancelled.[/dim]")
                 return
             sid = sessions[idx].id
 
-        session = await get_session(sid)
+        session = await repository.get_session(sid)
         if not session:
-            self.host.ui.error(f"Session not found: {sid}")
+            self.session_port.ui.error(f"Session not found: {sid}")
             return
 
-        await self.host.resume_session(session)
-        active_dock = self.host._ui.get_dock()
+        await self.session_port.resume_session(session)
+        active_dock = self.session_port.ui_state.get_dock()
         if active_dock is not None:
             active_dock.reset()
         await self._restore_transcript_snapshot(append=True)
-        self.host.ui.print(f"[dim]Resumed: {session.id} — {session.title} ({session.message_count} msgs)[/dim]")
+        self.session_port.ui.print(f"[dim]Resumed: {session.id} — {session.title} ({session.message_count} msgs)[/dim]")
 
     async def _set_title(self, cmd: str) -> None:
-        session = self.host.session
+        session = self.session_port.session
         if not session:
             return
         title = cmd.removeprefix("/title").strip()
         if title.lower() == "auto":
-            if await self.host.regenerate_session_title():
-                self.host.ui.print("[dim]Regenerating title...[/dim]")
+            if await self.session_port.regenerate_session_title():
+                self.session_port.ui.print("[dim]Regenerating title...[/dim]")
             else:
-                self.host.ui.print("[dim]No user message available for title generation.[/dim]")
+                self.session_port.ui.print("[dim]No user message available for title generation.[/dim]")
             return
         if title:
-            if await self.host.set_session_title(title):
-                self.host.ui.print(f"[dim]Title set: {title}[/dim]")
+            if await self.session_port.set_session_title(title):
+                self.session_port.ui.print(f"[dim]Title set: {title}[/dim]")
 
     async def _restore_transcript_snapshot(self, *, append: bool = False) -> bool:
-        return await self.host.restore_transcript_snapshot(append=append)
+        return await self.session_port.restore_transcript_snapshot(append=append)
 
     async def _show_startup(self, **kwargs) -> None:
-        await self.host.show_startup(**kwargs)
+        await self.session_port.show_startup(**kwargs)
 

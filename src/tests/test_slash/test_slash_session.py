@@ -171,11 +171,11 @@ async def test_session_del_dry_run_lists_candidates_without_deleting(monkeypatch
     try:
         now = datetime.now(timezone.utc)
         await save_message(MessageRow(session_id=old_session.id, role="user", content="old"))
-        await store._execute_commit(
+        await store.execute_commit(
             "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
             ("Old Session", (now - timedelta(days=30)).isoformat(), old_session.id),
         )
-        await store._execute_commit(
+        await store.execute_commit(
             "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
             ("Recent Session", (now - timedelta(days=1)).isoformat(), recent_session.id),
         )
@@ -200,11 +200,11 @@ async def test_session_del_cancel_keeps_candidates(monkeypatch, isolated_memory_
     recent_session = await create_session()
     try:
         await save_message(MessageRow(session_id=old_session.id, role="user", content="old"))
-        await store._execute_commit(
+        await store.execute_commit(
             "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
             ("Old Session", "2000-01-01T00:00:00+00:00", old_session.id),
         )
-        await store._execute_commit(
+        await store.execute_commit(
             "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
             ("Future Session", "2999-01-01T00:00:00+00:00", recent_session.id),
         )
@@ -233,11 +233,11 @@ async def test_session_del_confirm_deletes_candidates_only(monkeypatch, isolated
     try:
         await save_message(MessageRow(session_id=old_session.id, role="user", content="old"))
         await save_message(MessageRow(session_id=recent_session.id, role="user", content="recent"))
-        await store._execute_commit(
+        await store.execute_commit(
             "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
             ("Old Session", "2000-01-01T00:00:00+00:00", old_session.id),
         )
-        await store._execute_commit(
+        await store.execute_commit(
             "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
             ("Future Session", "2999-01-01T00:00:00+00:00", recent_session.id),
         )
@@ -259,11 +259,11 @@ async def test_session_del_without_scope_asks_for_scope_before_confirm(monkeypat
     recent_session = await create_session()
     try:
         await save_message(MessageRow(session_id=old_session.id, role="user", content="old"))
-        await store._execute_commit(
+        await store.execute_commit(
             "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
             ("Old Session", "2000-01-01T00:00:00+00:00", old_session.id),
         )
-        await store._execute_commit(
+        await store.execute_commit(
             "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
             ("Future Session", "2999-01-01T00:00:00+00:00", recent_session.id),
         )
@@ -312,7 +312,7 @@ async def test_session_list_alias_lists_savedsessions(monkeypatch, isolated_memo
     output = _capture_output(monkeypatch)
     session = await create_session()
     try:
-        await store._execute_commit(
+        await store.execute_commit(
             "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
             ("Listed Session", "2026-06-15T00:00:00+00:00", session.id),
         )
@@ -355,7 +355,7 @@ async def test_session_resume_alias_resumes_savedsession(monkeypatch, isolated_m
     session = await create_session()
     calls: list[str] = []
     try:
-        await store._execute_commit(
+        await store.execute_commit(
             "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
             ("Resume Me", "2026-06-15T00:00:00+00:00", session.id),
         )
@@ -556,15 +556,15 @@ async def test_resume_lists_workspace_matches_first_then_by_recency(monkeypatch,
     s_cur_old = await create_session(workspace=current, title="cur-old")
     s_cur_new = await create_session(workspace=current, title="cur-new")
 
-    await store._execute_commit(
+    await store.execute_commit(
         "UPDATE sessions SET updated_at = ? WHERE id = ?",
         ("2026-01-01T00:00:00+00:00", s_cur_old.id),
     )
-    await store._execute_commit(
+    await store.execute_commit(
         "UPDATE sessions SET updated_at = ? WHERE id = ?",
         ("2026-03-01T00:00:00+00:00", s_cur_new.id),
     )
-    await store._execute_commit(
+    await store.execute_commit(
         "UPDATE sessions SET updated_at = ? WHERE id = ?",
         ("2026-02-01T00:00:00+00:00", s_other_new.id),
     )

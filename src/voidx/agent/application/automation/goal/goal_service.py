@@ -18,8 +18,7 @@ from voidx.agent.domain.thread import (
     AgentThreadState,
     LifecycleState,
 )
-from voidx.agent.adapters.persistence.session_repository import ensure_session
-from voidx.agent.adapters.persistence.thread_repository import ThreadStore
+from voidx.agent.ports.persistence import ThreadStore
 
 
 @dataclass(frozen=True)
@@ -73,7 +72,7 @@ class GoalService(AutonomousServiceBase[GoalSpec, GoalScheduler]):
         await self._deactivate_current(parent, summary="Goal superseded by a new /goal start.")
         await self._store.discard_pending_outbox_prefix(f"goal:{parent}:")
         session_id = spec.goal_session_id(parent)
-        await ensure_session(session_id, self._workspace, profile="goal")
+        await self._store.ensure_session(session_id, self._workspace, profile="goal")
         goal_state = GoalState.from_spec(spec, run_id=spec.generation)
         await self._store.create_thread(
             AgentThread(

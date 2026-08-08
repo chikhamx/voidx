@@ -11,7 +11,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from pydantic import BaseModel, Field
 
 from voidx.persistence.jsonl import read_session_records, write_session_records
-from voidx.persistence.sqlite import _execute_commit, _fetch_all, _now
+from voidx.persistence.sqlite import execute_commit, fetch_all, now
 
 
 class ContextFrameRecord(BaseModel):
@@ -28,7 +28,7 @@ class ContextFrameRecord(BaseModel):
     token_estimate: int = 0
     messages: list[dict[str, Any]]
     metadata: dict[str, Any] = Field(default_factory=dict)
-    created_at: str = Field(default_factory=_now)
+    created_at: str = Field(default_factory=now)
 
 
 def build_context_frame(
@@ -61,7 +61,7 @@ def build_context_frame(
 
 
 async def save_context_frame(record: ContextFrameRecord) -> int:
-    cur = await _execute_commit(
+    cur = await execute_commit(
         """INSERT INTO context_frames (
                session_id, user_message_id, frame_kind, agent_persona, provider,
                model, prefix_hash, frame_hash, message_count, token_estimate,
@@ -86,7 +86,7 @@ async def save_context_frame(record: ContextFrameRecord) -> int:
     )
     frame_id = cur.lastrowid
     file_path = f"context/{frame_id}.jsonl"
-    await _execute_commit(
+    await execute_commit(
         "UPDATE context_frames SET file_path = ? WHERE id = ?",
         (file_path, frame_id),
     )
@@ -124,7 +124,7 @@ async def save_context_frame_from_messages(
 
 
 async def load_context_frames(session_id: str, limit: int = 50) -> list[ContextFrameRecord]:
-    rows = await _fetch_all(
+    rows = await fetch_all(
         """SELECT * FROM context_frames
            WHERE session_id = ?
            ORDER BY id DESC""",

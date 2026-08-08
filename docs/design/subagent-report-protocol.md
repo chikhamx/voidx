@@ -178,9 +178,9 @@ class SubagentRunResult(BaseModel):
 
 | 调用方 | 当前代码位置 | 需要的变更 |
 | --- | --- | --- |
-| `AgentTool.execute()` | `src/voidx/tools/agent.py:218` | `output = await self._run_child_agent(...)` → 解包 `run_result.output`，透传 `run_result.report` 到 metadata |
-| `VoidxGraph._subagent_runner()` | `src/voidx/agent/graph/core/voidx_graph.py:637-649` | `result = await _run_subagent(...)` → 保留 `run_result`，`SubagentFinished` 的 `summary` 用 `run_result.output` |
-| `run_subagent()` 内部所有 `return text` | `src/voidx/agent/graph/subagent.py:284,289,313,426,436,441` | 每条终止路径改为 `return SubagentRunResult(...)`，见 §7 |
+| `AgentTool.execute()` | `src/voidx/agent/adapters/tools/subagent.py` | `output = await self._run_child_agent(...)` → 解包 `run_result.output`，透传 `run_result.report` 到 metadata |
+| `VoidxGraph._subagent_runner()` | `src/voidx/agent/adapters/langgraph/execution.py` | `result = await _run_subagent(...)` → 保留 `run_result`，`SubagentFinished` 的 `summary` 用 `run_result.output` |
+| `run_subagent()` 内部所有 `return text` | `src/voidx/agent/adapters/langgraph/runtime/subagent.py` | 每条终止路径改为 `return SubagentRunResult(...)`，见 §7 |
 
 ### 3. `AgentTool` 透传结构化 metadata
 
@@ -206,7 +206,7 @@ ToolResult(
 
 ### 4. workflow auto-advance 优先读结构化结果
 
-> **当前状态**：`_check_review_result()`（`src/voidx/workflow/auto_advance.py:90-113`）通过 `metadata.get("agent") != "review"` 判断是否为 review 子 agent，再用 `_REVIEW_VERDICT_RE` 正则扫描 `output`。注意 `metadata["agent"]` 存的是 `agent_def_name`（如 `"voidx"`），不是 mode；当前能工作是因为 review 子 agent 的 `agent_def.name` 恰好为 `"review"`，但这不是稳定契约。
+> **当前状态**：`_check_review_result()`（`src/voidx/agent/application/automation/workflow/auto_advance.py`）通过 `metadata.get("agent") != "review"` 判断是否为 review 子 agent，再用 `_REVIEW_VERDICT_RE` 正则扫描 `output`。注意 `metadata["agent"]` 存的是 `agent_def_name`（如 `"voidx"`），不是 mode；当前能工作是因为 review 子 agent 的 `agent_def.name` 恰好为 `"review"`，但这不是稳定契约。
 
 `auto_advance_events()` 的 review 判断顺序改为：
 

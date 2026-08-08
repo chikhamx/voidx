@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voidx.agent.adapters.langgraph.ui_events import GuidanceCommitted, InputSet, StatusFinished, StatusUpdated, TodoCleared, TodoCommitted, TurnCancelled, TurnCompleted, TurnFailed, TurnStarted
+from voidx.agent.domain.ui_events import GuidanceCommitted, InputSet, StatusFinished, StatusUpdated, TodoCleared, TodoCommitted, TurnCancelled, TurnCompleted, TurnFailed, TurnStarted
 
 import asyncio
 import json
@@ -38,7 +38,7 @@ from voidx.llm.message_status import message_status
 from voidx.observability.tool_log import log_tool_event
 from voidx.agent.adapters.persistence.session_repository import MessageRow, count_messages, create_session, delete_messages_from, load_messages, save_message, touch_session, update_title
 from voidx.agent.adapters.persistence.runtime_state_repository import MessageRuntimeSnapshot, save_message_runtime_snapshot
-from voidx.persistence.sqlite import now as memory_now
+from voidx.persistence.sqlite import now as memorynow
 from voidx.agent.application.automation.workflow.service import reconcile_workflow_runs_for_turn
 from voidx.agent.domain.automation.workflow import WorkflowRunStatus
 
@@ -280,7 +280,7 @@ class TurnRunner:
                         role="user",
                         content=saved_user_content,
                         content_format=user_content_format,
-                        created_at=memory_now(),
+                        created_at=memorynow(),
                     ))
                     if host._session_msg_cache is not None:
                         host._session_msg_cache.append(MessageRow(
@@ -289,7 +289,7 @@ class TurnRunner:
                             role="user",
                             content=saved_user_content,
                             content_format=user_content_format,
-                            created_at=memory_now(),
+                            created_at=memorynow(),
                         ))
                 host._any_messages_sent = True
 
@@ -485,7 +485,7 @@ async def _persist_new_messages(host: Any, new_messages: list) -> None:
                 content=saved,
                 content_format=fmt,
                 tool_calls=msg.tool_calls if msg.tool_calls else None,
-                created_at=memory_now(),
+                created_at=memorynow(),
             ))
             if host._session_msg_cache is not None:
                 host._session_msg_cache.append(MessageRow(
@@ -495,7 +495,7 @@ async def _persist_new_messages(host: Any, new_messages: list) -> None:
                     content=saved,
                     content_format=fmt,
                     tool_calls=msg.tool_calls if msg.tool_calls else None,
-                    created_at=memory_now(),
+                    created_at=memorynow(),
                 ))
         elif isinstance(msg, ToolMessage):
             status = message_status(getattr(msg, "status", None))
@@ -505,7 +505,7 @@ async def _persist_new_messages(host: Any, new_messages: list) -> None:
                 content=str(msg.content),
                 tool_call_id=getattr(msg, "tool_call_id", None),
                 status=status,
-                created_at=memory_now(),
+                created_at=memorynow(),
             ))
             if host._session_msg_cache is not None:
                 host._session_msg_cache.append(MessageRow(
@@ -515,7 +515,7 @@ async def _persist_new_messages(host: Any, new_messages: list) -> None:
                     content=str(msg.content),
                     tool_call_id=getattr(msg, "tool_call_id", None),
                     status=status,
-                    created_at=memory_now(),
+                    created_at=memorynow(),
                 ))
     if new_messages:
         await touch_session(host._session.id)

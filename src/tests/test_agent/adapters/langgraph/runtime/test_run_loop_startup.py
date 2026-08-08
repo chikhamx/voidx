@@ -11,7 +11,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 import voidx.persistence.sqlite as store
 
 
-from voidx.presentation.slash import SlashHandler
+from voidx.bootstrap.slash import build_slash_handler
 from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.adapters.presentation_adapter import LangGraphRuntimeStatusReader
@@ -530,7 +530,7 @@ async def test_clear_reprints_startup(tmp_path):
     try:
         test_dock.append_message("old transcript")
 
-        await SlashHandler(execution)._clear()
+        await build_slash_handler(execution)._clear()
 
         rendered = "\n".join(test_dock.tree.render(120))
         assert "voidx v" in rendered
@@ -566,7 +566,7 @@ async def test_clear_detaches_old_session_and_cleans_storage_in_background(tmp_p
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
-        await SlashHandler(graph)._clear()
+        await build_slash_handler(graph)._clear()
         new_session = await create_session(
             workspace=str(tmp_path),
             provider="mimo",
@@ -639,7 +639,12 @@ async def test_resume_does_not_reprint_startup(tmp_path):
     try:
         test_dock.append_message("old transcript")
 
-        await SlashHandler(execution)._resume(f"/resume {session.id}")
+        from voidx.agent.adapters.persistence.session_adapter import SessionRepositoryAdapter
+
+        await build_slash_handler(
+            execution,
+            session_repository=SessionRepositoryAdapter(),
+        )._resume(f"/resume {session.id}")
 
         rendered_lines = test_dock.tree.render(120)
         rendered = "\n".join(rendered_lines)
@@ -679,7 +684,12 @@ async def test_resume_restores_structured_runtime_state(tmp_path):
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
-        await SlashHandler(execution)._resume(f"/resume {session.id}")
+        from voidx.agent.adapters.persistence.session_adapter import SessionRepositoryAdapter
+
+        await build_slash_handler(
+            execution,
+            session_repository=SessionRepositoryAdapter(),
+        )._resume(f"/resume {session.id}")
 
         assert execution._interaction_mode == InteractionMode.GOAL
         assert execution._task_state.current_intent == TaskIntent.CODING

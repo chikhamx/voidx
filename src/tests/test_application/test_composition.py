@@ -56,10 +56,11 @@ def test_build_agent_components_wires_presentation_neutral_runtime(monkeypatch):
 
 def test_bootstrap_build_agent_app_owns_terminal_composition(monkeypatch):
     from voidx.bootstrap.agent import build_agent_app
+    from voidx.presentation.output.console import VoidConsole
 
     snapshots = []
     execution = SimpleNamespace(
-        ui=SimpleNamespace(),
+        ui=VoidConsole(),
         bind_presentation_snapshots=snapshots.append,
         bind_startup_presenter=lambda _presenter: None,
         skills_api_provider=lambda _workspace: SimpleNamespace(service=object()),
@@ -88,6 +89,7 @@ def test_bootstrap_build_agent_app_owns_terminal_composition(monkeypatch):
     assert app._run_loop._input_port is service
     publisher = captured["event_publisher_factory"](execution)
     assert isinstance(publisher, UiAgentEventPublisher)
+    publisher.publish_message("hello")
 
 
 async def test_agent_facade_run_delegates_to_run_loop():
@@ -108,3 +110,78 @@ async def test_agent_facade_run_delegates_to_run_loop():
         "web_port": 8787,
         "web_token": "token",
     }
+
+
+def test_bootstrap_resource_types_are_explicit_and_factories_are_named_protocols():
+    from typing import Any, get_type_hints
+
+    from voidx.agent.adapters.langgraph.execution import LangGraphExecution
+    from voidx.bootstrap import agent as bootstrap_agent
+
+    agent_hints = get_type_hints(bootstrap_agent.AgentResources)
+    assert agent_hints["execution"] is LangGraphExecution
+
+    for resources_type in (
+        bootstrap_agent.ApplicationResources,
+        bootstrap_agent.IntegrationResources,
+        bootstrap_agent.AgentResources,
+    ):
+        for annotation in get_type_hints(resources_type).values():
+            assert annotation is not Any
+            assert "typing.Any" not in str(annotation)
+            assert "Callable[...," not in str(annotation)
+
+    integration_hints = get_type_hints(bootstrap_agent.IntegrationResources)
+    factory_types = {
+        annotation
+        for annotation in integration_hints.values()
+        for annotation in getattr(annotation, "__args__", (annotation,))
+        if annotation is not type(None)
+    }
+    assert factory_types
+    assert all(getattr(factory_type, "_is_protocol", False) for factory_type in factory_types)
+
+    event_call = bootstrap_agent.AgentEventPublisherFactory.__call__
+    event_hints = get_type_hints(event_call)
+    assert event_hints["execution"] is LangGraphExecution
+
+
+def test_build_agent_components_rejects_missing_required_dependencies_at_entry(monkeypatch):
+    def unexpected_execution(*_args, **_kwargs):
+        raise AssertionError("execution construction must not start with missing dependencies")
+
+    monkeypatch.setattr("voidx.bootstrap.agent.LangGraphExecution", unexpected_execution)
+
+    import pytest
+
+    with pytest.raises((TypeError, ValueError), match="config"):
+        build_agent_components(None, "key", ui=runtime_ui_port)
+    with pytest.raises((TypeError, ValueError), match="ui"):
+        build_agent_components(SimpleNamespace(workspace=""), "key", ui=None)
+
+
+def test_build_agent_components_keeps_product_integrations_optional(monkeypatch):
+    execution = SimpleNamespace(
+        session=None,
+        model=None,
+        session_id="",
+        workspace="",
+        slash=SimpleNamespace(dispatch=lambda _command: False),
+        bind_coding_turn_runner=lambda _runner: None,
+        bind_automation_services=lambda _loop, _goal: None,
+        can_submit_guidance=lambda: False,
+        submit_guidance=lambda *_args, **_kwargs: False,
+    )
+    injected = {}
+
+    def fake_execution(config, api_key, **kwargs):
+        injected.update(kwargs)
+        return execution
+
+    monkeypatch.setattr("voidx.bootstrap.agent.LangGraphExecution", fake_execution)
+
+    build_agent_components(SimpleNamespace(workspace=""), "key", ui=runtime_ui_port)
+
+    assert injected["external_manager_factory"] is None
+    assert injected["mcp_reference_resolver"] is None
+    assert injected["web_route"] is None

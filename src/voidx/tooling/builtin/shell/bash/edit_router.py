@@ -10,10 +10,10 @@ from voidx.tooling.builtin.shell.bash.core import (
     _RE_AMP,
     _has_shell_expansion,
     _has_unquoted_pathname_expansion,
-    _shell_words,
+    shell_words,
     _strip_cd_prefix,
 )
-from voidx.tooling.builtin.shell.bash.hint.search import _SED_LINE_DELETE, _SED_RANGE_DELETE, _sed_split
+from voidx.tooling.builtin.shell.bash.hint.search import SED_LINE_DELETE, SED_RANGE_DELETE, sed_split
 from voidx.tooling.builtin.shell.common import RouteHint, build_hint_result
 
 
@@ -72,7 +72,7 @@ def _parse_simple_sed_inplace(command: str) -> _SedCommand | None:
     if _RE_AMP.search(stripped):
         return None
 
-    words = _shell_words(stripped)
+    words = shell_words(stripped)
     if len(words) < 4 or words[0].lower() != "sed":
         return None
     if any(word in {"|", "|&"} for word in words):
@@ -124,7 +124,7 @@ def _parse_simple_sed_inplace(command: str) -> _SedCommand | None:
 def _parse_safe_line_substitution(script: str) -> _SedSubstitution | None:
     if "\\" in script:
         return None
-    parsed = _sed_split(script)
+    parsed = sed_split(script)
     if parsed is None:
         return None
     line_prefix, old_text, new_text, flags = parsed
@@ -151,7 +151,7 @@ def _parse_safe_line_substitution(script: str) -> _SedSubstitution | None:
 
 
 def _parse_line_delete(script: str) -> int | None:
-    match = _SED_LINE_DELETE.match(script)
+    match = SED_LINE_DELETE.match(script)
     if not match:
         return None
     line_no = int(match.group(1))
@@ -159,7 +159,7 @@ def _parse_line_delete(script: str) -> int | None:
 
 
 def _parse_range_delete(script: str) -> tuple[int, int] | None:
-    match = _SED_RANGE_DELETE.match(script)
+    match = SED_RANGE_DELETE.match(script)
     if not match:
         return None
     start = int(match.group(1))

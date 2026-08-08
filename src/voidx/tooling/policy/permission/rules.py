@@ -153,7 +153,7 @@ def is_safe_bash(command: str) -> bool:
     if "$(" in stripped or "`" in stripped:
         return False
 
-    words = _shell_words(stripped)
+    words = shell_words(stripped)
     if words is None:
         return False
     if _has_write_redirection(words):
@@ -163,7 +163,7 @@ def is_safe_bash(command: str) -> bool:
     return bool(segments) and all(_is_safe_bash_segment(segment) for segment in segments)
 
 
-def _shell_words(command: str) -> list[str] | None:
+def shell_words(command: str) -> list[str] | None:
     try:
         lexer = shlex.shlex(command, posix=False, punctuation_chars=True)
         lexer.whitespace_split = True
@@ -216,7 +216,7 @@ def _is_safe_bash_segment(words: list[str]) -> bool:
         return _is_safe_env(args)
 
     if prog == "git" and len(words) > 1:
-        sub, sub_args = _git_subcommand(args)
+        sub, sub_args = git_subcommand(args)
         if not sub:
             return True
         read_only_git = {
@@ -327,7 +327,7 @@ def _is_safe_env(args: list[str]) -> bool:
 
 
 
-def _git_subcommand(args: list[str]) -> tuple[str, list[str]]:
+def git_subcommand(args: list[str]) -> tuple[str, list[str]]:
     index = 0
     while index < len(args):
         word = args[index]

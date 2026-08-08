@@ -1,3 +1,5 @@
+> **Status: Done** — Archived on 2026-08-08.
+
 ---
 name: src-voidx-modular-architecture-refactor
 display_name: src/voidx 模块化架构重构规格

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 StreamingRenderer = None
 
-from voidx.agent.adapters.langgraph.ui_events import StatusFinished, StatusUpdated
+from voidx.agent.domain.ui_events import StatusFinished, StatusUpdated
 from voidx.agent.ports.ui import NullAgentUiPort
 
 from collections.abc import Awaitable, Callable

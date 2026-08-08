@@ -21,7 +21,7 @@ def _has_flag(words: list[str], name: str) -> bool:
     return any(word.lower() == name or word.lower().startswith(name + ":") for word in words)
 
 
-def _hint_select_string(words: list[str]) -> RouteHint | None:
+def hint_select_string(words: list[str]) -> RouteHint | None:
     if len(words) < 2 or "|" in words:
         return None
     pattern = _value(words[1:], "-pattern")
@@ -60,7 +60,7 @@ def _hint_select_string(words: list[str]) -> RouteHint | None:
     return RouteHint(tool_id="search", ui_label="→ search", llm_hint=f"Prefer search tool: {args}", tool_args=args)
 
 
-def _hint_get_child_item(words: list[str]) -> RouteHint | None:
+def hint_get_child_item(words: list[str]) -> RouteHint | None:
     if len(words) < 2 or "|" in words:
         return None
     if not _has_flag(words, "-file") or not _has_flag(words, "-recurse"):

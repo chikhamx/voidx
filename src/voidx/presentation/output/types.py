@@ -10,7 +10,33 @@ from voidx.agent.domain.turn_context import TurnExecutionContext
 # Compatibility alias for TUI integrations using the former name.
 ThreadExecutionContext = TurnExecutionContext
 
-from voidx.llm.usage import UsageStats
+
+class UsageStatsView(Protocol):
+    context_tokens: int
+    context_limit: int
+    total_input_tokens: int
+    total_output_tokens: int
+    total_cache_read_tokens: int
+    total_cache_write_tokens: int
+    total_calls: int
+
+    @property
+    def total_tokens(self) -> int: ...
+
+    @property
+    def turn_calls(self) -> int: ...
+
+    @property
+    def turn_input_tokens(self) -> int: ...
+
+    @property
+    def turn_output_tokens(self) -> int: ...
+
+    @property
+    def cache_hit_rate(self) -> float | None: ...
+
+    @property
+    def cache_hit_rate_is_estimated(self) -> bool: ...
 
 SubmitHandler = Callable[..., Awaitable[bool]]
 
@@ -28,7 +54,7 @@ def coding_turn_context_for_queue(
     thread_id: str = "",
     context: TurnExecutionContext | None = None,
 ) -> TurnExecutionContext:
-    from voidx.agent.application.coding_service import CODING_PROFILE
+    from voidx.agent.domain.profile import CODING_PROFILE
 
     if context is not None:
         resolved_session_id = context.session_id
@@ -72,7 +98,7 @@ class UiStatus:
     active_workflows: Callable[[], list[str]] = field(default_factory=lambda: lambda: [])
     reasoning_effort: str = "xhigh"
     permission_label: Callable[[], str] = field(default_factory=lambda: lambda: "Safe")
-    usage_stats: UsageStats = field(default_factory=UsageStats)
+    usage_stats: UsageStatsView | None = None
     mcp_servers: Callable[[], list[McpServerStatus]] = field(default_factory=lambda: lambda: [])
     mcp_config_path: str = ""
     code_ide: Callable[[], str] = field(default_factory=lambda: lambda: "trae")

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from voidx.agent.adapters.langgraph.ui_events import AssistantStreamCommitted, AssistantStreamUpdated, StatusFinished, StatusUpdated
+from voidx.agent.domain.ui_events import AssistantStreamCommitted, AssistantStreamUpdated, StatusFinished, StatusUpdated
 
 import asyncio
 from dataclasses import dataclass

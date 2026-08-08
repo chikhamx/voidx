@@ -12,7 +12,7 @@ _RE_CD_PREFIX = re.compile(r"^Set-Location\s+\S+\s*;\s*", re.IGNORECASE)
 _RE_SEMI = re.compile(r";")
 
 
-def _shell_words(command: str) -> list[str]:
+def shell_words(command: str) -> list[str]:
     """Split a PowerShell command into tokens.
 
     Handles single/double quotes and pipe separators. Does NOT use shlex —

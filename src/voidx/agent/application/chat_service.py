@@ -3,18 +3,33 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Protocol
+
+from voidx.agent.application.runtime.contracts import TurnRequest, TurnResult
 from voidx.agent.domain.chat_policy import ChatResourceScope, ChatToolView
 from voidx.agent.domain.prompt_policy import ChatPromptPolicy
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.domain.thread import AgentThread
-from voidx.agent.application.runtime.contracts import TurnRequest, TurnResult
-from voidx.agent.adapters.persistence.session_repository import SessionInfo, create_session
 
 CHAT_PROFILE = RuntimeProfile(
     profile_id="chat", revision=1, name="Chat", prompt_policy=ChatPromptPolicy()
 )
+
+
+class CreatedSession(Protocol):
+    id: str
+
+
+class SessionCreator(Protocol):
+    async def __call__(
+        self,
+        *,
+        workspace: str,
+        directory: str,
+        profile: str,
+    ) -> CreatedSession: ...
 
 
 class ChatService:
@@ -25,8 +40,9 @@ class ChatService:
     those stay with the runtime facade and the LangGraph infrastructure.
     """
 
-    def __init__(self, runtime) -> None:
+    def __init__(self, runtime, *, session_creator: SessionCreator) -> None:
         self._runtime = runtime
+        self._session_creator = session_creator
 
     async def run_chat_turn(self, **kwargs):
         return await self.run_turn(**kwargs)
@@ -71,10 +87,9 @@ class ChatService:
             )
         )
 
-    @staticmethod
-    async def _create_session(workspace: str | Path | None) -> SessionInfo:
+    async def _create_session(self, workspace: str | Path | None) -> CreatedSession:
         normalized = str(Path(workspace).expanduser().resolve()) if workspace is not None else ""
-        return await create_session(
+        return await self._session_creator(
             workspace=normalized,
             directory=normalized,
             profile="chat",

@@ -18,7 +18,7 @@ class UiAgentEventPublisher:
     def show_loop_waiting(self, wakeup_at: float) -> None:
         from voidx.presentation.output.events import StatusUpdated
 
-        self._ui.events.emit_nowait(StatusUpdated(
+        self._ui.events.emitnowait(StatusUpdated(
             status_id="loop:waiting",
             label="Looping",
             detail=str(wakeup_at),
@@ -28,4 +28,4 @@ class UiAgentEventPublisher:
     def clear_loop_waiting(self) -> None:
         from voidx.presentation.output.events import StatusFinished
 
-        self._ui.events.emit_nowait(StatusFinished(status_id="loop:waiting"))
+        self._ui.events.emitnowait(StatusFinished(status_id="loop:waiting"))

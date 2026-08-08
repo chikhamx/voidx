@@ -30,13 +30,26 @@ ALLOWED: dict[str, set[str]] = {
 }
 
 
+def _top_level_dependency_allowed(source: str, target: str) -> bool:
+    source_top = top_level(source)
+    target_top = top_level(target)
+    return source_top in ALLOWED and (
+        source_top == target_top or target_top in ALLOWED[source_top]
+    )
+
+
+def test_unknown_top_level_packages_are_forbidden() -> None:
+    assert not _top_level_dependency_allowed(
+        "voidx.unowned.feature",
+        "voidx.platform.paths",
+    )
+
+
 def test_top_level_dependencies_match_allowlist():
     violations = [
         edge
         for edge in without_debt(import_edges(), "top_level_dependency")
-        if top_level(edge.source) != top_level(edge.target)
-        and top_level(edge.source) in ALLOWED
-        and top_level(edge.target) not in ALLOWED[top_level(edge.source)]
+        if not _top_level_dependency_allowed(edge.source, edge.target)
     ]
     assert violations == [], "forbidden top-level dependencies:\n" + format_edges(violations)
 
@@ -53,6 +66,19 @@ def test_core_layers_do_not_import_presentation():
 
 
 
+def test_presentation_depends_only_on_agent_domain_ports_or_facade() -> None:
+    violations = [
+        edge
+        for edge in import_edges()
+        if is_under(edge.source, "voidx.presentation")
+        and (
+            is_under(edge.target, "voidx.agent.application")
+            or is_under(edge.target, "voidx.agent.adapters")
+        )
+    ]
+    assert violations == [], "presentation agent implementation dependencies:\n" + format_edges(violations)
+
+
 def test_agent_tool_adapters_do_not_import_presentation():
     violations = [
         edge
@@ -61,34 +87,43 @@ def test_agent_tool_adapters_do_not_import_presentation():
         and is_under(edge.target, "voidx.presentation")
     ]
     assert violations == [], "agent tool adapter presentation dependencies:\n" + format_edges(violations)
+def _feature_core_dependency_allowed(source: str, target: str) -> bool:
+    target_top = top_level(target)
+    if is_under(source, "voidx.agent.domain") or is_under(source, "voidx.agent.ports"):
+        return target_top == "agent"
+    if is_under(source, "voidx.agent.application"):
+        agent_core = target_top == "agent" and not is_under(target, "voidx.agent.adapters")
+        return agent_core or target_top in {"platform", "observability"}
+    if is_under(source, "voidx.tooling.domain") or is_under(source, "voidx.tooling.ports"):
+        return target_top == "tooling"
+    if is_under(source, "voidx.tooling.application"):
+        tooling_core = target_top == "tooling" and not is_under(target, "voidx.tooling.adapters")
+        return tooling_core or target_top in {"platform", "observability"}
+    return True
+
+
+def test_same_feature_application_dependencies_are_allowed() -> None:
+    assert _feature_core_dependency_allowed(
+        "voidx.agent.application.runtime.dispatcher",
+        "voidx.agent.application.runtime.recovery",
+    )
+    assert _feature_core_dependency_allowed(
+        "voidx.tooling.application.authorization",
+        "voidx.tooling.application.permission_service",
+    )
+
+
+def test_feature_application_adapter_dependencies_are_forbidden() -> None:
+    assert not _feature_core_dependency_allowed(
+        "voidx.agent.application.chat_service",
+        "voidx.agent.adapters.persistence.session_repository",
+    )
+
+
 def test_feature_core_dependencies_are_narrow():
-    violations = []
-    for edge in without_debt(import_edges(), "feature_core_dependency"):
-        source = edge.source
-        target = edge.target
-        if is_under(source, "voidx.agent.domain") or is_under(source, "voidx.agent.ports"):
-            if top_level(target) != "agent":
-                violations.append(edge)
-        elif is_under(source, "voidx.agent.application"):
-            if not (
-                top_level(target) == "agent"
-                and (is_under(target, "voidx.agent.domain") or is_under(target, "voidx.agent.ports"))
-            ) and top_level(target) not in {"platform", "observability"}:
-                violations.append(edge)
-        elif is_under(source, "voidx.tooling.domain") or is_under(source, "voidx.tooling.ports"):
-            if top_level(target) != "tooling":
-                violations.append(edge)
-        elif is_under(source, "voidx.tooling.application"):
-            tooling_core = top_level(target) == "tooling" and (
-                is_under(target, "voidx.tooling.domain") or is_under(target, "voidx.tooling.ports")
-            )
-            filesystem_grant_policy = (
-                source in {
-                    "voidx.tooling.application.authorization",
-                    "voidx.tooling.application.permission_service",
-                }
-                and target == "voidx.tooling.policy.filesystem.grants"
-            )
-            if not (tooling_core or filesystem_grant_policy) and top_level(target) not in {"platform", "observability"}:
-                violations.append(edge)
+    violations = [
+        edge
+        for edge in without_debt(import_edges(), "feature_core_dependency")
+        if not _feature_core_dependency_allowed(edge.source, edge.target)
+    ]
     assert violations == [], "feature core dependency violations:\n" + format_edges(violations)

@@ -271,8 +271,8 @@ class TestFileOps:
 class TestLineDriftMapModel:
     def test_line_drift_map_round_trip_serialization(self):
         from voidx.tooling.application.file_state import (
-            _line_drift_maps_from_raw,
-            _line_drift_maps_to_raw,
+            line_drift_maps_from_raw,
+            line_drift_maps_to_raw,
         )
         from voidx.tooling.domain.file_tracking import DiffSpan, LineDriftMap, ReadLineRange
 
@@ -291,8 +291,8 @@ class TestLineDriftMapModel:
                 span_steps=[],
             ),
         ]
-        raw = _line_drift_maps_to_raw(maps)
-        restored = _line_drift_maps_from_raw(raw)
+        raw = line_drift_maps_to_raw(maps)
+        restored = line_drift_maps_from_raw(raw)
 
         assert len(restored) == 2
         assert restored[0].epoch == 1
@@ -304,11 +304,11 @@ class TestLineDriftMapModel:
         assert restored[1].source_ranges == [ReadLineRange(20, 30)]
         assert restored[1].span_steps == []
 
-    def test_line_drift_maps_from_raw_empty(self):
-        from voidx.tooling.application.file_state import _line_drift_maps_from_raw
+    def testline_drift_maps_from_raw_empty(self):
+        from voidx.tooling.application.file_state import line_drift_maps_from_raw
 
-        assert _line_drift_maps_from_raw([]) == []
-        assert _line_drift_maps_from_raw(None) == []
+        assert line_drift_maps_from_raw([]) == []
+        assert line_drift_maps_from_raw(None) == []
 
 
 class TestRecordReadRangePreservesDriftMaps:
@@ -322,7 +322,7 @@ class TestRecordReadRangePreservesDriftMaps:
 
         key = str(f.resolve())
         coverage = ctx.file_state.read_coverage[key]
-        maps = fs._line_drift_maps_from_raw(coverage.get("line_drift_maps"))
+        maps = fs.line_drift_maps_from_raw(coverage.get("line_drift_maps"))
         assert len(maps) == 1
         assert maps[0].epoch == 1
         assert maps[0].source_ranges == [fs.ReadLineRange(1, 2)]
@@ -338,7 +338,7 @@ class TestRecordReadRangePreservesDriftMaps:
         fs.record_read_range(ctx, f, 2, 3)
 
         key = str(f.resolve())
-        maps = fs._line_drift_maps_from_raw(ctx.file_state.read_coverage[key].get("line_drift_maps"))
+        maps = fs.line_drift_maps_from_raw(ctx.file_state.read_coverage[key].get("line_drift_maps"))
         assert len(maps) == 2
         assert maps[0].epoch == 1
         assert maps[0].source_ranges == [fs.ReadLineRange(1, 3)]
@@ -360,7 +360,7 @@ class TestRecordReadRangePreservesDriftMaps:
         fs.record_read_range(ctx, f, 1, 1)
 
         key = str(f.resolve())
-        maps = fs._line_drift_maps_from_raw(ctx.file_state.read_coverage[key].get("line_drift_maps"))
+        maps = fs.line_drift_maps_from_raw(ctx.file_state.read_coverage[key].get("line_drift_maps"))
         assert len(maps) == 1
         assert maps[0].epoch == 1  # 重新从 1 开始
 
@@ -375,7 +375,7 @@ class TestRecordReadRangePreservesDriftMaps:
             fs.record_read_range(ctx, f, 1, 1)
 
         key = str(f.resolve())
-        maps = fs._line_drift_maps_from_raw(ctx.file_state.read_coverage[key].get("line_drift_maps"))
+        maps = fs.line_drift_maps_from_raw(ctx.file_state.read_coverage[key].get("line_drift_maps"))
         assert len(maps) == fs.MAX_LINE_DRIFT_MAPS_PER_FILE
         # epoch 最小的被淘汰,保留 2..MAX+1
         assert maps[0].epoch == 2
@@ -402,7 +402,7 @@ class TestRemapAppendsStep:
         file_diff = make_structured_diff("a.txt", old_content, new_content)
         fs.remap_read_coverage_from_file_diff(ctx, f, file_diff, old_ranges=old_ranges)
 
-        maps = fs._line_drift_maps_from_raw(ctx.file_state.read_coverage[key].get("line_drift_maps"))
+        maps = fs.line_drift_maps_from_raw(ctx.file_state.read_coverage[key].get("line_drift_maps"))
         assert len(maps) == 2
         for m in maps:
             assert len(m.span_steps) == 1
@@ -434,7 +434,7 @@ class TestRemapAppendsStep:
         old_ranges2 = ctx.file_state.read_coverage[key]["ranges"]
         fs.remap_read_coverage_from_file_diff(ctx, f, fd2, old_ranges=old_ranges2)
 
-        maps = fs._line_drift_maps_from_raw(ctx.file_state.read_coverage[key].get("line_drift_maps"))
+        maps = fs.line_drift_maps_from_raw(ctx.file_state.read_coverage[key].get("line_drift_maps"))
         assert len(maps) == 1
         assert len(maps[0].span_steps) == 2
 

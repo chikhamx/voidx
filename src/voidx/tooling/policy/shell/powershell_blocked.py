@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 
 # Patterns that are always blocked regardless of permission
-# All patterns use re.IGNORECASE at match time (see _check_command).
+# All patterns use re.IGNORECASE at match time (see check_command).
 _BLOCKED = [
     (r"\bStop-Computer\b", "Stop-Computer is blocked — system shutdown"),
     (r"\bRestart-Computer\b", "Restart-Computer is blocked — system reboot"),
@@ -51,7 +51,7 @@ def _normalize_command(command: str) -> str:
     return s
 
 
-def _check_command(command: str) -> str | None:
+def check_command(command: str) -> str | None:
     """Return block reason if command matches a dangerous pattern, else None.
 
     Scans the raw command first so dangerous cmdlets hidden inside

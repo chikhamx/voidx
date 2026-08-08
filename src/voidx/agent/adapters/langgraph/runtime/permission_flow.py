@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voidx.agent.adapters.langgraph.ui_events import PermissionPromptCleared, PermissionPromptShown, PermissionToolDetail, RefreshRequested
+from voidx.agent.domain.ui_events import PermissionPromptCleared, PermissionPromptShown, PermissionToolDetail, RefreshRequested
 
 import json
 from dataclasses import replace

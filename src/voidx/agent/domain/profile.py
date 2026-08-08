@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
+from voidx.agent.domain.prompt_policy import CodingPromptPolicy
+
 
 class RuntimeProfile(BaseModel):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
@@ -36,3 +38,8 @@ class RuntimeProfile(BaseModel):
         if not value.strip():
             raise ValueError("must not be empty")
         return value
+
+
+CODING_PROFILE = RuntimeProfile(
+    profile_id="coding", revision=1, name="Coding", prompt_policy=CodingPromptPolicy()
+)

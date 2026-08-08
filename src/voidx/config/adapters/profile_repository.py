@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from voidx.persistence.sqlite import _execute_commit, _fetch_all, _fetch_one, _now, _write_transaction
+from voidx.persistence.sqlite import execute_commit, fetch_all, fetch_one, now, write_transaction
 
 
 class ModelProfileRow(BaseModel):
@@ -20,7 +20,7 @@ class ModelProfileRow(BaseModel):
 
 
 async def list_model_profiles_async() -> list[ModelProfileRow]:
-    rows = await _fetch_all(
+    rows = await fetch_all(
         """SELECT name, provider, model, api_key, base_url, protocol
            FROM model_profiles
            ORDER BY updated_at DESC, name ASC"""
@@ -29,7 +29,7 @@ async def list_model_profiles_async() -> list[ModelProfileRow]:
 
 
 async def get_model_profile_async(name: str) -> ModelProfileRow | None:
-    row = await _fetch_one(
+    row = await fetch_one(
         """SELECT name, provider, model, api_key, base_url, protocol
            FROM model_profiles
            WHERE name = ?""",
@@ -39,7 +39,7 @@ async def get_model_profile_async(name: str) -> ModelProfileRow | None:
 
 
 async def first_model_profile_for_provider_async(provider: str) -> ModelProfileRow | None:
-    row = await _fetch_one(
+    row = await fetch_one(
         """SELECT name, provider, model, api_key, base_url, protocol
            FROM model_profiles
            WHERE provider = ?
@@ -51,8 +51,8 @@ async def first_model_profile_for_provider_async(provider: str) -> ModelProfileR
 
 
 async def save_model_profile_async(profile: ModelProfileRow) -> None:
-    now = _now()
-    await _execute_commit(
+    timestamp = now()
+    await execute_commit(
         """INSERT INTO model_profiles
                (name, provider, model, api_key, base_url, protocol, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -70,14 +70,14 @@ async def save_model_profile_async(profile: ModelProfileRow) -> None:
             profile.api_key,
             profile.base_url,
             profile.protocol,
-            now,
-            now,
+            timestamp,
+            timestamp,
         ),
     )
 
 
 async def delete_model_profile_async(name: str) -> None:
-    await _execute_commit(
+    await execute_commit(
         "DELETE FROM model_profiles WHERE name = ?", (name,)
     )
 

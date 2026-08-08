@@ -31,7 +31,7 @@ class _AiApprovalTransientError(Exception):
         super().__init__(reason)
 
 
-def _classify_ai_approval_failure(exc: Exception) -> Literal["timeout", "connection_error", "error"]:
+def classify_ai_approval_failure(exc: Exception) -> Literal["timeout", "connection_error", "error"]:
     class_names = {base.__name__.lower() for base in type(exc).__mro__}
     if isinstance(exc, (asyncio.TimeoutError, TimeoutError)) or any(
         "timeout" in name or name == "deadlineexceeded"
@@ -64,16 +64,26 @@ def is_ai_approval_candidate(decision) -> bool:
 class AiApprovalService:
     """Stateless, fail-closed reviewer for approvable permission decisions."""
 
-    def __init__(self, model_factory=None, resolver_model_factory=None) -> None:
+    def __init__(
+        self,
+        model_factory=None,
+        resolver_model_factory=None,
+        structured_invoker=None,
+    ) -> None:
         self._model_factory = model_factory
         self._resolver_model_factory = resolver_model_factory
+        self._structured_invoker = structured_invoker
 
     async def review(self, decisions, settings) -> AiApprovalResult:
         if settings is None:
             return AiApprovalResult(reason="unavailable")
         skipped_reasons: dict[str, str] = {}
         try:
-            if self._model_factory is None or self._resolver_model_factory is None:
+            if (
+                self._model_factory is None
+                or self._resolver_model_factory is None
+                or self._structured_invoker is None
+            ):
                 return AiApprovalResult(reason="unavailable")
 
             config = settings.get_ai_approval_config()
@@ -133,7 +143,7 @@ class AiApprovalService:
             )
             model = self._model_factory(profile.api_key, model_config)
             resolver = self._resolver_model_factory(model, model_config)
-            from voidx.llm.structured import ainvoke_structured
+            ainvoke_structured = self._structured_invoker
             if not callable(getattr(resolver, "with_structured_output", None)):
                 return AiApprovalResult(reason="unavailable", skipped_reasons=skipped_reasons)
             from langchain_core.messages import HumanMessage, SystemMessage
@@ -165,7 +175,7 @@ class AiApprovalService:
                         )
                         return validate_ai_approval_response(response, set(ids))
                     except Exception as exc:
-                        reason = _classify_ai_approval_failure(exc)
+                        reason = classify_ai_approval_failure(exc)
                         if reason in {"timeout", "connection_error"}:
                             raise _AiApprovalTransientError(reason) from exc
                         raise
@@ -191,6 +201,6 @@ class AiApprovalService:
             return AiApprovalResult(reason=exc.reason, skipped_reasons=skipped_reasons)
         except Exception as exc:
             return AiApprovalResult(
-                reason=_classify_ai_approval_failure(exc),
+                reason=classify_ai_approval_failure(exc),
                 skipped_reasons=skipped_reasons,
             )

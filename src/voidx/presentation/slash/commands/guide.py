@@ -10,28 +10,28 @@ class GuideCommandsMixin:
     async def _guide(self, text: str) -> None:
         guidance = text.strip()
         if not guidance:
-            self.host.ui.print("[dim]Usage: /guide <guidance for the next agent step>[/dim]")
+            self.automation_port.ui.print("[dim]Usage: /guide <guidance for the next agent step>[/dim]")
             return
-        if not self.host.can_submit_guidance():
-            self.host.ui.print("[dim]Guidance is not available in this session.[/dim]")
+        if not self.automation_port.can_submit_guidance():
+            self.automation_port.ui.print("[dim]Guidance is not available in this session.[/dim]")
             return
-        if not self.host.submit_guidance(guidance):
-            self.host.ui.print("[dim]No guidance submitted.[/dim]")
+        if not self.automation_port.submit_guidance(guidance):
+            self.automation_port.ui.print("[dim]No guidance submitted.[/dim]")
 
     async def _init(self, args: str) -> None:
         arg = args.strip().lower()
         if arg not in {"", "force"}:
-            self.host.ui.error("Usage: /init [force]")
+            self.automation_port.ui.error("Usage: /init [force]")
             return
 
-        if self.host.interaction_mode_value() == InteractionMode.PLAN.value:
-            self.host.ui.error("/init writes AGENTS.md. Run /unplan first.")
+        if self.automation_port.interaction_mode_value() == InteractionMode.PLAN.value:
+            self.automation_port.ui.error("/init writes AGENTS.md. Run /unplan first.")
             return
 
-        existing = Path(self.host.workspace) / "AGENTS.md"
+        existing = Path(self.automation_port.workspace) / "AGENTS.md"
         if existing.exists() and arg != "force":
-            self.host.ui.print("[dim]AGENTS.md already exists. Use /init force to regenerate.[/dim]")
+            self.automation_port.ui.print("[dim]AGENTS.md already exists. Use /init force to regenerate.[/dim]")
             return
 
-        await self.host.run_coding_turn(INIT_PROMPT, display_text="/init")
+        await self.automation_port.run_coding_turn(INIT_PROMPT, display_text="/init")
 

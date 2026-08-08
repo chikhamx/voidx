@@ -9,9 +9,9 @@ from typing import Any, Literal
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, model_validator
 
-from voidx.agent.application.workflow_utils import active_workflow_names
+from voidx.agent.domain.workflow_utils import active_workflow_names
 from voidx.observability.request_log import log_llm_diagnostic, serialize_llm_message
-from voidx.agent.domain.task.intent import InteractionMode, TaskIntent, _contains_any
+from voidx.agent.domain.task.intent import InteractionMode, TaskIntent, contains_any
 from enum import Enum
 from voidx.agent.domain.task.state import (
     GoalResolution,
@@ -23,13 +23,16 @@ from voidx.agent.domain.task.state import (
 )
 from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 from voidx.platform.retry_config import RetryConfig
-from voidx.llm.structured import ainvoke_structured, resolve_structured_output_method
-from voidx.llm.usage import (
-    TokenUsage,
-    UsageStats,
-    estimate_context_tokens,
-    estimate_message_tokens,
-    extract_token_usage,
+from voidx.agent.ports.goal_resolution import (
+    StructuredInvoker,
+    StructuredMethodResolver,
+    TokenEstimator,
+    TokenUsageExtractor,
+    UsageRecorder,
+    invoke_structured_default,
+    no_token_estimate,
+    no_token_usage,
+    resolve_structured_method_default,
 )
 from voidx.platform.retry import retry_async
 
@@ -97,9 +100,14 @@ async def resolve_goal_for_turn(
     task_state: TaskState,
     log_diagnostic: bool = True,
     retry_config: RetryConfig | None = None,
-    usage_stats: UsageStats | None = None,
+    usage_stats: UsageRecorder | None = None,
     model_config: Any | None = None,
     resolver_model_factory: Any | None = None,
+    structured_invoker: StructuredInvoker = invoke_structured_default,
+    structured_method_resolver: StructuredMethodResolver = resolve_structured_method_default,
+    context_token_estimator: TokenEstimator = no_token_estimate,
+    message_token_estimator: TokenEstimator = no_token_estimate,
+    token_usage_extractor: TokenUsageExtractor = no_token_usage,
 ) -> GoalResolution:
     del interaction_mode
     fallback = GoalResolution(
@@ -133,7 +141,7 @@ async def resolve_goal_for_turn(
 
     resolver_goal: ResolverGoal | None
     try:
-        method = resolve_structured_output_method(resolver_model)
+        method = structured_method_resolver(resolver_model)
         resolver_messages = _resolver_messages_from_exchanges(
             user_text,
             task_state,
@@ -142,7 +150,7 @@ async def resolve_goal_for_turn(
         rc = retry_config or RetryConfig()
 
         async def _invoke_once():
-            return await ainvoke_structured(
+            return await structured_invoker(
                 model=resolver_model,
                 schema=ResolverGoal,
                 messages=resolver_messages,
@@ -166,6 +174,9 @@ async def resolve_goal_for_turn(
                 model=resolver_model,
                 messages=resolver_messages,
                 response=raw,
+                context_token_estimator=context_token_estimator,
+                message_token_estimator=message_token_estimator,
+                token_usage_extractor=token_usage_extractor,
             )
         _log_goal_resolver_exchange(resolver_messages, raw=raw, enabled=log_diagnostic)
         resolver_goal = _coerce_resolution(raw)
@@ -213,18 +224,21 @@ def _resolver_messages_from_exchanges(user_text: str, task_state: TaskState, *, 
 
 
 def _record_resolver_usage(
-    usage_stats: UsageStats,
+    usage_stats: UsageRecorder,
     *,
     model: Any,
     messages: list[BaseMessage],
     response: object,
+    context_token_estimator: TokenEstimator,
+    message_token_estimator: TokenEstimator,
+    token_usage_extractor: TokenUsageExtractor,
 ) -> None:
     raw_message = _resolver_raw_message(response)
     model_name = _resolver_model_name(model)
     usage_stats.record_call(
-        extract_token_usage(raw_message) if raw_message is not None else TokenUsage(),
-        fallback_input_tokens=estimate_context_tokens(messages, model_name),
-        fallback_output_tokens=estimate_message_tokens(
+        token_usage_extractor(raw_message) if raw_message is not None else no_token_usage(response),
+        fallback_input_tokens=context_token_estimator(messages, model_name),
+        fallback_output_tokens=message_token_estimator(
             raw_message if raw_message is not None else response,
             model_name,
         ),
@@ -538,7 +552,7 @@ def _is_short_continuation(user_text: str) -> bool:
     text = user_text.strip().lower()
     if text in _SHORT_CONTINUATION_TEXTS:
         return True
-    return len(text) <= 8 and _contains_any(text, ("继续", "改", "ok"))
+    return len(text) <= 8 and contains_any(text, ("继续", "改", "ok"))
 
 
 def _current_active_join(task_state: TaskState) -> str:

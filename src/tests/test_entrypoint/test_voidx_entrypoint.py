@@ -70,3 +70,11 @@ def test_select_start_session_signature_only_keeps_resume_and_console() -> None:
     voidx_main = importlib.import_module("voidx.bootstrap.command_line")
 
     assert list(inspect.signature(voidx_main._select_start_session).parameters) == ["resume", "vconsole"]
+
+
+def test_bootstrap_statically_exports_cli_without_dynamic_attribute_hook() -> None:
+    bootstrap = importlib.import_module("voidx.bootstrap")
+    command_line = importlib.import_module("voidx.bootstrap.command_line")
+
+    assert bootstrap.cli is command_line.cli
+    assert "__getattr__" not in vars(bootstrap)

@@ -6,12 +6,12 @@ import re
 import shlex
 
 from voidx.tooling.builtin.shell.common import RouteHint
-from voidx.tooling.builtin.shell.hint.git import _GIT_GLOBAL_OPTIONS_WITH_VALUE, _git_subcommand
+from voidx.tooling.builtin.shell.hint.git import GIT_GLOBAL_OPTIONS_WITH_VALUE, git_subcommand
 
-_HEREDOC_MAX_CONTENT = 200
+HEREDOC_MAX_CONTENT = 200
 
 
-def _shell_words(command: str) -> list[str]:
+def shell_words(command: str) -> list[str]:
     try:
         lexer = shlex.shlex(command, posix=False, punctuation_chars=True)
         lexer.whitespace_split = True

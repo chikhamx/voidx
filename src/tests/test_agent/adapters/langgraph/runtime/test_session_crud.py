@@ -48,7 +48,7 @@ async def test_runtime_state_schema_drops_recent_user_texts_column():
 
 
 @pytest.mark.asyncio
-async def test_execute_commit_retries_transient_database_locked(monkeypatch):
+async def testexecute_commit_retries_transient_database_locked(monkeypatch):
     class FakeConn:
         def __init__(self):
             self.execute_calls = 0
@@ -71,7 +71,7 @@ async def test_execute_commit_retries_transient_database_locked(monkeypatch):
     conn = FakeConn()
     monkeypatch.setattr(store, "_get_db", lambda: conn)
 
-    cursor = await store._execute_commit("UPDATE sessions SET title = ?", ("x",))
+    cursor = await store.execute_commit("UPDATE sessions SET title = ?", ("x",))
 
     assert cursor is conn.cursor
     assert conn.execute_calls == 2
@@ -80,7 +80,7 @@ async def test_execute_commit_retries_transient_database_locked(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_execute_commit_rolls_back_before_retrying_locked_commit(monkeypatch):
+async def testexecute_commit_rolls_back_before_retrying_locked_commit(monkeypatch):
     class FakeConn:
         def __init__(self):
             self.execute_calls = 0
@@ -103,7 +103,7 @@ async def test_execute_commit_rolls_back_before_retrying_locked_commit(monkeypat
     conn = FakeConn()
     monkeypatch.setattr(store, "_get_db", lambda: conn)
 
-    cursor = await store._execute_commit("UPDATE sessions SET title = ?", ("x",))
+    cursor = await store.execute_commit("UPDATE sessions SET title = ?", ("x",))
 
     assert cursor is conn.cursor
     assert conn.execute_calls == 2
@@ -229,11 +229,11 @@ async def test_session_delete_dry_run_plans_candidates_and_disk_usage():
         await save_message(MessageRow(session_id=old_session.id, role="user", content="old"))
         session_path = _session_dir(old_session.id)
         (session_path / "artifact.txt").write_text("x" * 10, encoding="utf-8")
-        await store._execute_commit(
+        await store.execute_commit(
             "UPDATE sessions SET updated_at = ? WHERE id IN (?, ?)",
             ("2026-01-01T00:00:00+00:00", old_session.id, empty_old_session.id),
         )
-        await store._execute_commit(
+        await store.execute_commit(
             "UPDATE sessions SET updated_at = ? WHERE id = ?",
             ("2026-06-14T00:00:00+00:00", recent_session.id),
         )

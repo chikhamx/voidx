@@ -92,7 +92,7 @@ def _append_extension(extensions: list[str] | None, ext: str) -> list[str]:
     return values
 
 
-def _hint_grep(words: list[str]) -> RouteHint | None:
+def hint_grep(words: list[str]) -> RouteHint | None:
     prog = words[0].lower()
     args = words[1:]
     pattern = None
@@ -222,14 +222,14 @@ def _hint_grep(words: list[str]) -> RouteHint | None:
 # sed hints
 # ---------------------------------------------------------------------------
 
-_SED_RANGE_DELETE = re.compile(r"^(\d+),(\d+)d$")
-_SED_LINE_DELETE = re.compile(r"^(\d+)d$")
+SED_RANGE_DELETE = re.compile(r"^(\d+),(\d+)d$")
+SED_LINE_DELETE = re.compile(r"^(\d+)d$")
 _SED_PATTERN_DELETE = re.compile(r"^/(.+)/d$")
 _SED_RANGE_PRINT = re.compile(r"^(\d+),(\d+)p$")
 _SED_LINE_PRINT = re.compile(r"^(\d+)p$")
 
 
-def _sed_split(script: str) -> tuple[str, str, str, str] | None:
+def sed_split(script: str) -> tuple[str, str, str, str] | None:
     """Parse a sed substitution script into (line_prefix, old, new, flags).
 
     Supports any delimiter (``s/old/new/``, ``s|old|new|``, ``s#old#new#``)
@@ -273,7 +273,7 @@ def _sed_split(script: str) -> tuple[str, str, str, str] | None:
     return None
 
 
-def _hint_sed(words: list[str]) -> RouteHint | None:
+def hint_sed(words: list[str]) -> RouteHint | None:
     if len(words) < 3:
         return None
     args = words[1:]
@@ -297,7 +297,7 @@ def _hint_sed(words: list[str]) -> RouteHint | None:
     if i != len(args) or script is None or path is None:
         return None
 
-    parsed = _sed_split(script)
+    parsed = sed_split(script)
     if parsed:
         line_prefix, old_text, new_text, flags = parsed
         is_global = "g" in flags
@@ -318,7 +318,7 @@ def _hint_sed(words: list[str]) -> RouteHint | None:
                 llm_hint=f'Prefer replace(file_path="{path}", start_no, end_no, start_anchor="{old_text}", end_anchor="{old_text}", new_string="{new_text}").',
             )
 
-    m = _SED_RANGE_DELETE.match(script)
+    m = SED_RANGE_DELETE.match(script)
     if m:
         start, end = int(m.group(1)), int(m.group(2))
         return RouteHint(
@@ -326,7 +326,7 @@ def _hint_sed(words: list[str]) -> RouteHint | None:
             llm_hint=f'For line range deletion: first read {path} to see lines {start}-{end}, then use replace(file_path="{path}", start_no={start}, end_no={end}, start_anchor="...", end_anchor="...", new_string="").',
         )
 
-    m = _SED_LINE_DELETE.match(script)
+    m = SED_LINE_DELETE.match(script)
     if m:
         line_no = int(m.group(1))
         return RouteHint(

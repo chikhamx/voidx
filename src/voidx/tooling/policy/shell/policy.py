@@ -550,14 +550,14 @@ def _has_external_interpreter_path(words: list[str], *, workspace: str | None) -
 
 
 def _is_git_push(words: list[str]) -> bool:
-    return _git_subcommand(words) == "push"
+    return git_subcommand(words) == "push"
 
 
 def _is_git_network_command(words: list[str]) -> bool:
-    return _git_subcommand(words) in {"clone", "fetch", "ls-remote", "pull"}
+    return git_subcommand(words) in {"clone", "fetch", "ls-remote", "pull"}
 
 
-def _git_subcommand(words: list[str]) -> str:
+def git_subcommand(words: list[str]) -> str:
     if not words:
         return ""
     index = 0

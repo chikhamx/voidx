@@ -8,8 +8,8 @@ Depth limit = 1: child agents cannot start further child agents.
 
 from __future__ import annotations
 
-from voidx.agent.adapters.langgraph.ui_events import GuidanceSubmitted, PermissionToolDetail, SubagentFinished, SubagentStarted
-from voidx.agent.adapters.langgraph.display_policy import DEFAULT_DISPLAY_RULES, ToolDisplayPolicy
+from voidx.agent.domain.ui_events import GuidanceSubmitted, PermissionToolDetail, SubagentFinished, SubagentStarted
+from voidx.agent.domain.display_policy import DEFAULT_DISPLAY_RULES, ToolDisplayPolicy
 
 from voidx.agent.adapters.langgraph.runtime.core.helpers import _invalidate_tui, _render_inline_compaction_guide
 
@@ -24,6 +24,7 @@ from voidx.tooling.domain.risk import RiskLevel
 from voidx.agent.domain.task.intent import PersonaName
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from voidx.agent.application.runtime_context import ContextCompilerCache, InteractionMode, raw_semantic_messages
+from voidx.agent.adapters.external_context import strip_external_tool_context
 from voidx.agent.adapters.langgraph.state import AgentState
 from voidx.agent.domain.task.state import TaskState, goal_type_from_join
 from voidx.agent.adapters.langgraph.runtime.streaming import extract_text
@@ -63,15 +64,12 @@ from voidx.agent.adapters.langgraph.runtime.topology import build_graph, session
 from voidx.agent.adapters.langgraph.runtime.turn_metrics import TurnControlMetrics
 from voidx.agent.adapters.langgraph.runtime.turn_runner import TurnRunner
 from voidx.agent.adapters.langgraph.runtime.wiring import build_compaction_service
-from voidx.agent.application.runtime_context import (
-    ContextCompilerCache,
-    InteractionMode,
-)
 from voidx.agent.domain.task.state import GoalResolution, TaskState, goal_type_from_join
 from voidx.agent.application.todo_state import apply_todo_state_to_host
 from voidx.tooling.application.ai_approval import AiApprovalService
 from voidx.agent.application.instruction import InstructionService
 from voidx.llm.message_markers import GUIDANCE_MARKER
+from voidx.llm.structured import ainvoke_structured
 from voidx.agent.adapters.persistence.session_repository import SessionInfo
 from voidx.agent.adapters.persistence.subagent_repository import append_subagent_event
 from voidx.agent.ports.ui import AgentUiPort
@@ -371,6 +369,7 @@ class LangGraphExecution:
         tone_labels: Any,
         update_service: Any | None = None,
         clipboard_image: Any | None = None,
+        available_servers_renderer: Callable[..., str] | None = None,
     ):
         self.config = config
         self.api_key = api_key
@@ -401,6 +400,8 @@ class LangGraphExecution:
         self._permission_service_factory = permission_service_factory
         self._model_factory = model_factory
         self._resolver_model_factory = resolver_model_factory
+        self._available_servers_renderer = available_servers_renderer
+        self._historical_tool_context_stripper = strip_external_tool_context
         self._tool_registry_factory = tool_registry_factory
         self._scoped_tools_binder = scoped_tools_binder
         self.reasoning_effort_type = reasoning_effort_type
@@ -417,6 +418,7 @@ class LangGraphExecution:
         self._ai_approval = AiApprovalService(
             model_factory=model_factory,
             resolver_model_factory=resolver_model_factory,
+            structured_invoker=ainvoke_structured,
         )
         self._ui = ui
         self._workspace_write_lock = workspace_write_lock
@@ -438,6 +440,11 @@ class LangGraphExecution:
             self._workspace,
             settings=settings,
             skill_summaries_provider=self._available_skill_summaries,
+            **(
+                {"available_servers_renderer": self._available_servers_renderer}
+                if self._available_servers_renderer is not None
+                else {}
+            ),
         )
         self._permission = self._permission_service_factory(config, settings=self._settings, notifier=self._ui.ui.print)
 
@@ -508,6 +515,24 @@ class LangGraphExecution:
     @property
     def ui(self):
         return self._ui.ui
+
+    @property
+    def presentation_ui(self):
+        return self._ui
+
+
+    @property
+    def compaction(self):
+        return self._compaction
+
+    def model_factory(self, api_key, config):
+        return self._model_factory(api_key, config)
+
+    def interaction_mode_value(self) -> str:
+        return self._interaction_mode.value
+
+    def invalidate_skill_service_cache(self) -> None:
+        self._invalidate_skill_service_cache()
 
     @property
     def runtime_guards(self):

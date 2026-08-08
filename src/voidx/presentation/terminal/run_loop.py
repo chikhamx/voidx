@@ -6,10 +6,11 @@ import asyncio
 from functools import partial
 from collections.abc import Awaitable, Callable
 
-from voidx.agent.application.coding_service import CODING_PROFILE
-from voidx.agent.application.workflow_utils import active_workflow_names
+from voidx.agent.domain.profile import CODING_PROFILE
+from voidx.agent.domain.workflow_utils import active_workflow_names
 from voidx.agent.domain.task.state import goal_label
 from voidx.agent.domain.turn_context import TurnExecutionContext
+from voidx.agent.ports.persistence import SessionRepository
 from voidx.agent.ports.presentation import (
     GuidancePort,
     InteractiveInputPort,
@@ -27,7 +28,7 @@ from voidx.presentation.output.dock import reset_dock, set_dock
 from voidx.presentation.gateway import GatewayEventConsumer, GatewayHeadlessFrontend, GatewayServer
 from voidx.presentation.gateway.bootstrap import emit_web_gateway_bootstrap
 from voidx.presentation.terminal.frontend_factory import create_frontend
-from voidx.agent.application.agent_service import RunLoopStartupError
+from voidx.agent.facade import RunLoopStartupError
 from voidx.presentation.gateway.command_handler import GatewayCommandHandler
 from voidx.presentation.gateway.session_adapter import build_gateway_session
 from voidx.presentation.gateway.thread_registry import GatewayThreadRegistryAdapter
@@ -52,6 +53,7 @@ class TerminalRunLoop:
         settings_factory: Callable[[str], Awaitable[object]] | None = None,
         skills_api_factory: Callable[[str], Awaitable[object]] | None = None,
         skills_api_provider: Callable[[str], object] | None = None,
+        session_repository: SessionRepository | None = None,
     ) -> None:
         self._status_reader = status_reader
         self._sessions = sessions
@@ -71,6 +73,7 @@ class TerminalRunLoop:
         self._settings_factory = settings_factory
         self._skills_api_factory = skills_api_factory
         self._skills_api_provider = skills_api_provider
+        self._session_repository = session_repository
         self._gateway_session = None
         self._thread_registry = GatewayThreadRegistryAdapter(lambda: self._gateway_session)
         self._command_handler = GatewayCommandHandler(status_reader, guidance, self._thread_registry)
@@ -110,6 +113,7 @@ class TerminalRunLoop:
                     settings_update_handler=self._frontend_binding.apply_settings_update,
                     usage_stats_provider=self._frontend_binding.usage_stats,
                     mcp_catalog_provider=self._integrations.mcp_catalog,
+                    session_repository=self._session_repository,
                 )
                 self._workspace_write_lock.bind(gateway_session.workspace_write_lock)
                 self._ui.events.start(CompositeEventConsumer(

@@ -119,7 +119,7 @@ async def test_context_frame_stores_file_path_not_messages_json():
 
         frame_id = await save_context_frame(record)
 
-        row = await store._fetch_one("SELECT file_path FROM context_frames WHERE id = ?", (frame_id,))
+        row = await store.fetch_one("SELECT file_path FROM context_frames WHERE id = ?", (frame_id,))
         frames = await load_context_frames(session.id)
 
         assert row is not None
@@ -179,7 +179,7 @@ async def test_context_frame_loader_applies_delete_tombstones_to_existing_frames
             "mode": "from",
             "first_user_message_id": first_message_id,
             "reason": "test",
-            "created_at": store._now(),
+            "created_at": store.now(),
         })
 
         second_record = build_context_frame(

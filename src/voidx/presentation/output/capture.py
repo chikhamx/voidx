@@ -8,7 +8,7 @@ from voidx.presentation.output.agent_display import agent_display_name
 from voidx.presentation.output.tree import OutputTree, OutputNode
 from voidx.presentation.output.console import _fmt_args, _title, VoidConsole
 from voidx.presentation.output.dock import dock
-from voidx.presentation.output.dock.nodes import _bash_markdown_lines
+from voidx.presentation.output.dock.nodes import bash_markdown_lines
 from voidx.presentation.output.events import (
     ErrorAppended,
     SubagentStepStarted,
@@ -76,7 +76,7 @@ class CaptureConsole:
         elif tool_name in ("bash", "powershell"):
             command = str(args.get("command") or "")
             detail = ""
-            body_lines = _bash_markdown_lines(command, self._dummy.width)
+            body_lines = bash_markdown_lines(command, self._dummy.width)
         self._current_tool = self._tree.new_node(
             parent=self._parent, node_type="tool_call",
             header=f"● {gerund}{detail}",

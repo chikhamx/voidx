@@ -16,7 +16,7 @@ from voidx.tooling.builtin.shell.bash.router import try_hint
 from voidx.tooling.domain.authorization import PermissionContext
 from voidx.tooling.domain.grants import AccessGrants
 from voidx.tooling.policy.shell.policy import shell_sandbox_precheck
-from voidx.tooling.builtin.shell.bash.safety import _check_command, _sandbox_denial
+from voidx.tooling.builtin.shell.bash.safety import check_command, sandbox_denial
 from voidx.tooling.builtin.shell.common import (
     build_blocked_result,
     build_hint_result,
@@ -48,7 +48,7 @@ class BashTool:
         except Exception as exc:
             return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
 
-        blocked = _check_command(inp.command)
+        blocked = check_command(inp.command)
         if blocked:
             return build_blocked_result(inp.command, blocked)
 
@@ -57,7 +57,7 @@ class BashTool:
             return workspace_error
 
         approved_shell_risk = ctx.has_approved_tool_risk("bash", inp.command)
-        blocked = None if approved_shell_risk else _sandbox_denial(inp.command, ctx)
+        blocked = None if approved_shell_risk else sandbox_denial(inp.command, ctx)
         if blocked:
             return build_blocked_result(inp.command, blocked)
 

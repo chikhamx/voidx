@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from voidx.llm.domain.model import DEFAULT_MODEL
 from voidx.llm.message_status import message_status
 from voidx.persistence.jsonl import append_session_record, drop_session_lock, read_session_records, session_dir
-from voidx.persistence.sqlite import _execute_commit, _fetch_all, _fetch_one, _now, _write_transaction
+from voidx.persistence.sqlite import execute_commit, fetch_all, fetch_one, now, write_transaction
 
 
 def _uid() -> str:
@@ -31,8 +31,8 @@ class SessionInfo(BaseModel):
     directory: str = ""
     model_provider: str = "anthropic"
     model_name: str = DEFAULT_MODEL
-    created_at: str = Field(default_factory=_now)
-    updated_at: str = Field(default_factory=_now)
+    created_at: str = Field(default_factory=now)
+    updated_at: str = Field(default_factory=now)
     message_count: int = 0
     runtime_profile: str = "coding"
 
@@ -55,7 +55,7 @@ class MessageRow(BaseModel):
     tool_calls: list[dict] | None = None
     tool_call_id: str | None = None
     status: str | None = None
-    created_at: str = Field(default_factory=_now)
+    created_at: str = Field(default_factory=now)
 
 
 # ── session CRUD ────────────────────────────────────────────────────────
@@ -71,16 +71,16 @@ async def create_session(
 ) -> SessionInfo:
     profile = validate_runtime_profile(profile)
     sid = _uid()
-    now = _now()
-    await _execute_commit(
+    timestamp = now()
+    await execute_commit(
         """INSERT INTO sessions (id, title, workspace, directory, model_provider, model_name, runtime_profile, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (sid, title, workspace, directory, provider, model, profile, now, now),
+        (sid, title, workspace, directory, provider, model, profile, timestamp, timestamp),
     )
     return SessionInfo(
         id=sid, title=title, workspace=workspace, directory=directory,
         model_provider=provider, model_name=model, runtime_profile=profile,
-        created_at=now, updated_at=now,
+        created_at=timestamp, updated_at=timestamp,
     )
 
 
@@ -93,16 +93,16 @@ async def ensure_session(
 ) -> None:
     """Insert a session row if missing so FK references from loop threads hold."""
     profile = validate_runtime_profile(profile)
-    now = _now()
-    await _execute_commit(
+    timestamp = now()
+    await execute_commit(
         """INSERT OR IGNORE INTO sessions (id, title, workspace, directory, model_provider, model_name, runtime_profile, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (session_id, title, workspace, workspace, "anthropic", DEFAULT_MODEL, profile, now, now),
+        (session_id, title, workspace, workspace, "anthropic", DEFAULT_MODEL, profile, timestamp, timestamp),
     )
 
 
 async def get_session(session_id: str) -> SessionInfo | None:
-    row = await _fetch_one(
+    row = await fetch_one(
         "SELECT * FROM sessions WHERE id = ?", (session_id,)
     )
     if not row:
@@ -117,7 +117,7 @@ async def get_session(session_id: str) -> SessionInfo | None:
 
 
 async def list_sessions(limit: int = 50) -> list[SessionInfo]:
-    rows = await _fetch_all(
+    rows = await fetch_all(
         """SELECT *
            FROM sessions
            ORDER BY updated_at DESC
@@ -137,7 +137,7 @@ async def list_sessions(limit: int = 50) -> list[SessionInfo]:
 
 
 async def latest_session_for_workspace(workspace: str) -> SessionInfo | None:
-    row = await _fetch_one(
+    row = await fetch_one(
         """SELECT *
            FROM sessions
            WHERE workspace = ?
@@ -158,12 +158,12 @@ async def latest_session_for_workspace(workspace: str) -> SessionInfo | None:
 
 async def update_title(session_id: str, title: str, *, touch: bool = True) -> None:
     if touch:
-        await _execute_commit(
+        await execute_commit(
             "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
-            (title, _now(), session_id),
+            (title, now(), session_id),
         )
         return
-    await _execute_commit(
+    await execute_commit(
         "UPDATE sessions SET title = ? WHERE id = ?",
         (title, session_id),
     )
@@ -177,12 +177,12 @@ async def update_title_if_current(
     touch: bool = True,
 ) -> bool:
     if touch:
-        cur = await _execute_commit(
+        cur = await execute_commit(
             "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ? AND title = ?",
-            (title, _now(), session_id, expected_title),
+            (title, now(), session_id, expected_title),
         )
         return cur.rowcount > 0
-    cur = await _execute_commit(
+    cur = await execute_commit(
         "UPDATE sessions SET title = ? WHERE id = ? AND title = ?",
         (title, session_id, expected_title),
     )
@@ -190,23 +190,23 @@ async def update_title_if_current(
 
 
 async def update_session_profile(session_id: str, profile: str) -> None:
-    await _execute_commit(
+    await execute_commit(
         "UPDATE sessions SET runtime_profile = ?, updated_at = ? WHERE id = ?",
-        (profile, _now(), session_id),
+        (profile, now(), session_id),
     )
 
 
 async def update_session_model(session_id: str, provider: str, model: str) -> None:
-    await _execute_commit(
+    await execute_commit(
         "UPDATE sessions SET model_provider = ?, model_name = ?, updated_at = ? WHERE id = ?",
-        (provider, model, _now(), session_id),
+        (provider, model, now(), session_id),
     )
 
 
 async def touch_session(session_id: str) -> None:
-    await _execute_commit(
+    await execute_commit(
         "UPDATE sessions SET updated_at = ? WHERE id = ?",
-        (_now(), session_id),
+        (now(), session_id),
     )
 
 
@@ -224,19 +224,19 @@ async def fork_session(
     if source is None:
         return None
     sid = _uid()
-    now = _now()
+    timestamp = now()
     fork_title = title if title is not None else f"Fork of {source.title}"
-    await _execute_commit(
+    await execute_commit(
         """INSERT INTO sessions (id, title, workspace, directory, model_provider, model_name, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
         (sid, fork_title, source.workspace, source.directory,
-         source.model_provider, source.model_name, now, now),
+         source.model_provider, source.model_name, timestamp, timestamp),
     )
     return SessionInfo(
         id=sid, title=fork_title, workspace=source.workspace,
         directory=source.directory,
         model_provider=source.model_provider, model_name=source.model_name,
-        created_at=now, updated_at=now,
+        created_at=timestamp, updated_at=timestamp,
     )
 
 
@@ -244,7 +244,7 @@ async def delete_session(session_id: str) -> None:
     dir_path = session_dir(session_id)
     if dir_path.exists():
         await asyncio.to_thread(shutil.rmtree, dir_path)
-    await _execute_commit(
+    await execute_commit(
         "DELETE FROM sessions WHERE id = ?", (session_id,)
     )
     await drop_session_lock(session_id)
@@ -262,7 +262,7 @@ async def save_message(msg: MessageRow) -> int:
             (msg.session_id,),
         )
 
-    await _write_transaction(_run)
+    await write_transaction(_run)
     record = {
         "type": "message",
         "id": row_id,
@@ -282,7 +282,7 @@ async def save_message(msg: MessageRow) -> int:
 
 
 async def _next_message_id(session_id: str) -> int:
-    row = await _fetch_one(
+    row = await fetch_one(
         "SELECT message_count FROM sessions WHERE id = ?",
         (session_id,),
     )
@@ -343,14 +343,14 @@ async def _load_messages_jsonl(session_id: str) -> list[MessageRow] | None:
             tool_calls=record.get("tool_calls") if isinstance(record.get("tool_calls"), list) else None,
             tool_call_id=record.get("tool_call_id") if isinstance(record.get("tool_call_id"), str) else None,
             status=record.get("status") if isinstance(record.get("status"), str) else None,
-            created_at=str(record.get("created_at", "")) or _now(),
+            created_at=str(record.get("created_at", "")) or now(),
         )
     return [messages[key] for key in sorted(messages)]
 
 
 async def count_messages(session_id: str) -> int:
     """Count persisted messages for a session."""
-    row = await _fetch_one(
+    row = await fetch_one(
         "SELECT message_count AS cnt FROM sessions WHERE id = ?",
         (session_id,),
     )
@@ -365,7 +365,7 @@ async def _append_delete_cascade_records(
     first_message_id: int | None = None,
     last_message_id: int | None = None,
 ) -> None:
-    created_at = _now()
+    created_at = now()
     context_record = {
         "type": "context_frame_deleted",
         "mode": mode,
@@ -391,7 +391,7 @@ async def _append_delete_cascade_records(
 
 async def clear_messages(session_id: str) -> None:
     previous_message_count = 0
-    row = await _fetch_one(
+    row = await fetch_one(
         "SELECT message_count FROM sessions WHERE id = ?",
         (session_id,),
     )
@@ -400,7 +400,7 @@ async def clear_messages(session_id: str) -> None:
     await append_session_record(session_id, "messages.jsonl", {
         "type": "session_cleared",
         "reason": "clear_messages",
-        "cleared_at": _now(),
+        "cleared_at": now(),
         "previous_message_count": previous_message_count,
     })
     await _append_delete_cascade_records(
@@ -414,7 +414,7 @@ async def clear_messages(session_id: str) -> None:
         conn.execute("DELETE FROM session_runtime_state WHERE session_id = ?", (session_id,))
         conn.execute("UPDATE sessions SET message_count = 0 WHERE id = ?", (session_id,))
 
-    await _write_transaction(_run)
+    await write_transaction(_run)
 
 
 async def delete_messages_from(session_id: str, first_message_id: int) -> None:
@@ -424,13 +424,13 @@ async def delete_messages_from(session_id: str, first_message_id: int) -> None:
             (session_id, first_message_id),
         )
 
-    await _write_transaction(_run)
+    await write_transaction(_run)
     await append_session_record(session_id, "messages.jsonl", {
         "type": "message_deleted",
         "mode": "from",
         "first_message_id": first_message_id,
         "reason": "delete_messages_from",
-        "created_at": _now(),
+        "created_at": now(),
     })
     await _append_delete_cascade_records(
         session_id,
@@ -449,13 +449,13 @@ async def delete_messages_through(session_id: str, last_message_id: int) -> None
             (session_id, last_message_id),
         )
 
-    await _write_transaction(_run)
+    await write_transaction(_run)
     await append_session_record(session_id, "messages.jsonl", {
         "type": "message_deleted",
         "mode": "through",
         "last_message_id": last_message_id,
         "reason": "delete_messages_through",
-        "created_at": _now(),
+        "created_at": now(),
     })
     await _append_delete_cascade_records(
         session_id,
@@ -469,7 +469,7 @@ async def delete_messages_through(session_id: str, last_message_id: int) -> None
 
 async def _refresh_message_count_from_jsonl(session_id: str) -> None:
     messages = await _load_messages_jsonl(session_id) or []
-    await _execute_commit(
+    await execute_commit(
         "UPDATE sessions SET message_count = ? WHERE id = ?",
         (len(messages), session_id),
     )

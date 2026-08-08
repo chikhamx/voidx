@@ -96,6 +96,82 @@ def test_automation_services_are_not_dynamically_injected_or_probed():
     assert 'getattr(self.host, "goal_service"' not in source
 
 
+def test_slash_presentation_uses_narrow_use_case_ports() -> None:
+    handler_path = ROOT / "src/voidx/presentation/slash/handler.py"
+    port_path = ROOT / "src/voidx/presentation/slash/port.py"
+    handler = handler_path.read_text(encoding="utf-8")
+    port_source = port_path.read_text(encoding="utf-8")
+    protocols = [
+        node for node in ast.parse(port_source).body
+        if isinstance(node, ast.ClassDef)
+        and any(isinstance(base, ast.Name) and base.id == "Protocol" for base in node.bases)
+    ]
+    assert len(protocols) >= 2
+    for protocol in protocols:
+        members = [
+            node for node in protocol.body
+            if isinstance(node, (ast.AnnAssign, ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
+        assert len(members) <= 15, f"{protocol.name} has {len(members)} members"
+    commands = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (ROOT / "src/voidx/presentation/slash/commands").glob("*.py")
+    )
+    assert "SlashHostPort" not in handler
+    assert "commands: Any" not in handler
+    assert "__getattr__" not in port_source
+    assert "self.host" not in commands
+    forbidden_fields = {"config", "settings", "permission", "mcp_manager", "lsp_manager"}
+    for protocol in protocols:
+        fields = {
+            node.target.id
+            for node in protocol.body
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+        }
+        assert fields.isdisjoint(forbidden_fields), f"{protocol.name} exposes wide objects: {fields & forbidden_fields}"
+
+    adapter_source = (AGENT / "adapters" / "slash_host.py").read_text(encoding="utf-8")
+    bootstrap_source = (ROOT / "src/voidx/bootstrap/slash.py").read_text(encoding="utf-8")
+    for adapter in (
+        "SlashControlAdapter", "AutomationSlashAdapter", "ModeSlashAdapter",
+        "SessionSlashAdapter", "ModelSlashAdapter", "IntegrationsSlashAdapter",
+        "PreferencesSlashAdapter",
+    ):
+        assert f"class {adapter}" in adapter_source
+    assert "class LangGraphSlashHost" not in adapter_source
+    assert "build_slash_ports(host)" in bootstrap_source
+    assert "*([port] * 7)" not in bootstrap_source
+
+
+    protocol_members = {
+        protocol.name: {
+            node.target.id if isinstance(node, ast.AnnAssign) else node.name
+            for node in protocol.body
+            if isinstance(node, (ast.AnnAssign, ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        for protocol in protocols
+    }
+    port_protocols = {
+        "automation_port": "AutomationSlashPort",
+        "mode_port": "ModeSlashPort",
+        "session_port": "SessionSlashPort",
+        "model_port": "ModelSlashPort",
+        "integrations_port": "IntegrationsSlashPort",
+        "preferences_port": "PreferencesSlashPort",
+    }
+    missing: list[str] = []
+    for path in (ROOT / "src/voidx/presentation/slash/commands").glob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.Attribute) or not isinstance(node.value, ast.Attribute):
+                continue
+            owner = node.value
+            if not isinstance(owner.value, ast.Name) or owner.value.id != "self":
+                continue
+            protocol_name = port_protocols.get(owner.attr)
+            if protocol_name and node.attr not in protocol_members[protocol_name]:
+                missing.append(f"{path.name}:{node.lineno}:{owner.attr}.{node.attr}")
+    assert missing == [], "slash port members missing from protocols:\n" + "\n".join(missing)
+
 def test_parent_result_publisher_is_a_concrete_adapter():
     path = AGENT / "adapters" / "persistence" / "parent_result_publisher.py"
     assert path.exists()

@@ -8,7 +8,7 @@ from voidx.agent.domain.automation.goal import GoalSpec, GoalState
 from voidx.agent.application.automation.goal.runner import GoalRuntimeRunner
 from voidx.agent.application.runtime.dispatcher import DispatchResult, RuntimeDispatcher
 from voidx.agent.application.runtime.pump import WakeupPumpMixin
-from voidx.agent.adapters.persistence.thread_repository import ThreadStore
+from voidx.agent.ports.persistence import ThreadStore
 
 
 class GoalEvaluatorFactory(Protocol):

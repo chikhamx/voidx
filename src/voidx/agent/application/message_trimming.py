@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
-from voidx.tooling.domain.file_tracking import DiffSpan, remap_old_range as _remap_old_range
+from voidx.agent.domain.file_ranges import DiffSpan, remap_old_range
 
 COVERAGE_THRESHOLD = 0.6
 
@@ -168,18 +168,13 @@ def remap_ranges(
     ranges: list[tuple[int, int]],
     spans: list[DiffSpan],
 ) -> list[tuple[int, int]]:
-    """Remap line ranges through diff spans using _remap_old_range.
+    """Remap line ranges through diff spans.
 
     Returns merged remapped ranges. Empty if fully deleted.
     """
     remapped: list[tuple[int, int]] = []
     for start, end in ranges:
-        items = _remap_old_range(start, end, spans)
-        for item in items:
-            s = int(item.get("start_line", 0))
-            e = int(item.get("end_line", 0))
-            if s > 0 and e >= s:
-                remapped.append((s, e))
+        remapped.extend(remap_old_range(start, end, spans))
     return merge_ranges(remapped)
 
 

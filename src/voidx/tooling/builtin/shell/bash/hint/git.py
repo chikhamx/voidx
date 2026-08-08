@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from voidx.tooling.builtin.shell.hint.git import _hint_git
+from voidx.tooling.builtin.shell.hint.git import hint_git
 
-__all__ = ["_hint_git"]
+__all__ = ["hint_git"]

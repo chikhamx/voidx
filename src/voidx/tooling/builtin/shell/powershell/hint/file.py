@@ -5,7 +5,7 @@ from __future__ import annotations
 from voidx.tooling.builtin.shell.common import RouteHint
 
 
-def _hint_get_content(words: list[str]) -> RouteHint | None:
+def hint_get_content(words: list[str]) -> RouteHint | None:
     """Get-Content / cat / type → read tool."""
     if len(words) < 2:
         return None
@@ -25,7 +25,7 @@ def _hint_get_content(words: list[str]) -> RouteHint | None:
     )
 
 
-def _hint_out_file(words: list[str]) -> RouteHint | None:
+def hint_out_file(words: list[str]) -> RouteHint | None:
     """Out-File / Set-Content / Add-Content → write tool."""
     if len(words) < 2:
         return None

@@ -326,7 +326,7 @@ class LspManager:
             client = self._clients.get(language)
             if client is not None and client.connected:
                 return client
-            self._check_command(config)
+            self.check_command(config)
             client = self._client_factory(config, self.workspace)
             try:
                 await client.start(root_uri=file_uri(self.workspace), timeout=timeout)
@@ -368,7 +368,7 @@ class LspManager:
             raise LspServerUnavailable(f"No LSP server configured for file type: {path.suffix or path.name}")
         return language
 
-    def _check_command(self, config: LspServerConfig) -> None:
+    def check_command(self, config: LspServerConfig) -> None:
         resolved = config.resolved_command or _resolve_command(config.command)
         if resolved:
             if not config.resolved_command:

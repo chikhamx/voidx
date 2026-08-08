@@ -9,7 +9,7 @@ from typing import Protocol
 
 from voidx.agent.domain.thread import RuntimeDecision
 from voidx.agent.application.runtime.lifecycle import LifecycleController
-from voidx.agent.adapters.persistence.thread_repository import ThreadStateConflict, ThreadStore
+from voidx.agent.ports.persistence import ThreadStateConflict, ThreadStore
 
 
 class RuntimeTurnRunner(Protocol):

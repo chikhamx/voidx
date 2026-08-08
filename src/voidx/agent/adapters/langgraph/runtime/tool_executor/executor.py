@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from voidx.agent.adapters.langgraph.ui_events import AssistantStreamCommitted, AssistantStreamUpdated, StatusFinished, StatusUpdated, WarningAppended
-from voidx.agent.adapters.langgraph.display_policy import DEFAULT_DISPLAY_RULES, ToolDisplayPolicy
+from voidx.agent.domain.ui_events import AssistantStreamCommitted, AssistantStreamUpdated, StatusFinished, StatusUpdated, WarningAppended
+from voidx.agent.domain.display_policy import DEFAULT_DISPLAY_RULES, ToolDisplayPolicy
 
 import asyncio
 import time
@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from voidx.observability.tool_log import log_tool_event
 from voidx.agent.domain.task.intent import InteractionMode
 from voidx.agent.adapters.langgraph.runtime.runtime import current_parent_tool_call_id
-from voidx.agent.application.workflow_utils import active_workflow_names
+from voidx.agent.domain.workflow_utils import active_workflow_names
 from voidx.agent.application.todo_state import todo_run_state_from_result
 from voidx.agent.domain.task.state import goal_label, goal_type_from_join
 from voidx.agent.application.tool_messages import sanitize_tool_message_content

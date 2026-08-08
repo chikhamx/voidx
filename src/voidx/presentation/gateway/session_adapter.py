@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
+from voidx.agent.ports.persistence import SessionRepository
 from voidx.agent.ports.presentation import RuntimePresentationStatus, RuntimeStatusReader
 from voidx.presentation.gateway import GatewaySession
 from voidx.presentation.output.tree import OutputTree
@@ -29,6 +30,7 @@ def build_gateway_session(
     settings_update_handler: Callable[[object], Awaitable[None] | None] | None = None,
     usage_stats_provider: Callable[[], object] | None = None,
     mcp_catalog_provider: Callable[[], list] | None = None,
+    session_repository: SessionRepository | None = None,
 ) -> GatewaySession:
     status = status_reader.runtime_status()
     session_id = status.session.session_id
@@ -44,6 +46,7 @@ def build_gateway_session(
         settings_update_handler=settings_update_handler,
         usage_stats_provider=usage_stats_provider,
         mcp_catalog_provider=mcp_catalog_provider,
+        session_repository=session_repository,
     )
 
 

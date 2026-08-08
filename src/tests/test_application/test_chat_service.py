@@ -28,19 +28,20 @@ class FakeRuntime:
 
 
 @pytest.mark.asyncio
-async def test_chat_service_creates_isolated_session_and_delegates(monkeypatch):
+async def test_chat_service_creates_isolated_session_and_delegates():
     runtime = FakeRuntime()
+    calls = []
 
     async def fake_create_session(**kwargs):
-        from voidx.agent.adapters.persistence.session_repository import SessionInfo
-        return SessionInfo(id="chat-session", workspace="", runtime_profile="chat")
+        calls.append(kwargs)
+        return type("CreatedSession", (), {"id": "chat-session"})()
 
-    monkeypatch.setattr("voidx.agent.application.chat_service.create_session", fake_create_session)
-    service = ChatService(runtime)
+    service = ChatService(runtime, session_creator=fake_create_session)
 
     result = await service.run_turn(user_text="hello")
 
     assert result.session_id == "chat-session"
+    assert calls == [{"workspace": "", "directory": "", "profile": "chat"}]
     assert result.thread.thread_id == "chat:chat-session"
     assert len(runtime.requests) == 1
     assert runtime.requests[0].context.runtime_profile.profile_id == "chat"
@@ -52,7 +53,7 @@ async def test_chat_service_creates_isolated_session_and_delegates(monkeypatch):
 @pytest.mark.asyncio
 async def test_chat_service_preserves_existing_chat_thread():
     runtime = FakeRuntime()
-    service = ChatService(runtime)
+    service = ChatService(runtime, session_creator=None)  # type: ignore[arg-type]
     thread = AgentThread(thread_id="chat:existing", session_id="existing")
 
     result = await service.run_turn(

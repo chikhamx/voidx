@@ -341,7 +341,12 @@ async def test_slash_lsp_dispatches_status_and_restart(tmp_path):
         lsp_manager=manager,
         workspace=str(tmp_path),
     )
-    handler = SlashHandler(graph)
+    from voidx.bootstrap.slash import build_slash_handler
+    from tests.presentation_ui import make_presentation_ui
+
+    graph.presentation_ui = make_presentation_ui()
+    graph.ui = graph.presentation_ui.ui
+    handler = build_slash_handler(graph)
 
     assert await handler.dispatch("/lsp status") is True
     assert await handler.dispatch("/lsp doctor") is True

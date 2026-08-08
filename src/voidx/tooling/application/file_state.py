@@ -12,10 +12,10 @@ from voidx.tooling.domain.file_tracking import (
     MAX_LINE_DRIFT_MAPS_PER_FILE,
     LineDriftMap,
     ReadLineRange,
-    _diff_spans_from_file_diff,
-    _line_drift_maps_from_raw,
-    _line_drift_maps_to_raw,
-    _line_numbers_to_ranges,
+    diff_spans_from_file_diff,
+    line_drift_maps_from_raw,
+    line_drift_maps_to_raw,
+    line_numbers_to_ranges,
     file_fingerprint,
     remap_old_range,
 )
@@ -32,7 +32,7 @@ def _store(value: FileStateStore | FileStateContext) -> FileStateStore:
 def get_line_drift_maps(state: object, resolved: Path) -> list[LineDriftMap]:
     store = _store(state)
     coverage = store.read_coverage.get(str(resolved.resolve()))
-    return [] if coverage is None else _line_drift_maps_from_raw(coverage.get("line_drift_maps"))
+    return [] if coverage is None else line_drift_maps_from_raw(coverage.get("line_drift_maps"))
 
 
 def check_staleness(state: object, resolved: Path) -> str | None:
@@ -109,14 +109,14 @@ def record_read_range(state: object, resolved: Path, start_line: int, end_line: 
     existing = store.read_coverage.get(key, {})
     fp_match = existing.get("fingerprint") == fingerprint
     ranges = existing.get("ranges", []) if fp_match else []
-    existing_maps = _line_drift_maps_from_raw(existing.get("line_drift_maps")) if fp_match else []
+    existing_maps = line_drift_maps_from_raw(existing.get("line_drift_maps")) if fp_match else []
     next_epoch = max((item.epoch for item in existing_maps), default=0) + 1 if fp_match else 1
     updated_maps = [*existing_maps, LineDriftMap(epoch=next_epoch, source_ranges=[ReadLineRange(start_line, end_line)], span_steps=[])]
     updated_maps = sorted(updated_maps, key=lambda item: item.epoch)[-MAX_LINE_DRIFT_MAPS_PER_FILE:]
     store.read_coverage[key] = {
         "fingerprint": fingerprint,
         "ranges": _merge_ranges([*ranges, asdict(ReadLineRange(start_line, end_line))]),
-        "line_drift_maps": _line_drift_maps_to_raw(updated_maps),
+        "line_drift_maps": line_drift_maps_to_raw(updated_maps),
     }
     record_mtime(store, resolved)
 
@@ -126,20 +126,20 @@ def remap_read_coverage_from_file_diff(state: object, resolved: Path, file_diff:
     if not resolved.exists():
         clear_read_coverage(store, resolved)
         return
-    spans = _diff_spans_from_file_diff(file_diff)
+    spans = diff_spans_from_file_diff(file_diff)
     remapped: list[dict] = []
     for item in old_ranges:
         start, end = int(item.get("start_line", 0)), int(item.get("end_line", 0))
         if start > 0 and end >= start:
             remapped.extend(remap_old_range(start, end, spans))
     visible_lines = [line.new_lineno for hunk in file_diff.hunks for line in hunk.lines if line.kind in {"add", "context"} and line.new_lineno is not None]
-    visible_ranges = [asdict(ReadLineRange(start, end)) for start, end in _line_numbers_to_ranges(visible_lines)]
+    visible_ranges = [asdict(ReadLineRange(start, end)) for start, end in line_numbers_to_ranges(visible_lines)]
     ranges = _merge_ranges([*remapped, *visible_ranges])
     key = str(resolved.resolve())
-    existing_maps = _line_drift_maps_from_raw(store.read_coverage.get(key, {}).get("line_drift_maps"))
+    existing_maps = line_drift_maps_from_raw(store.read_coverage.get(key, {}).get("line_drift_maps"))
     updated_maps = [LineDriftMap(epoch=item.epoch, source_ranges=item.source_ranges, span_steps=[*item.span_steps, spans]) for item in existing_maps]
     if ranges:
-        store.read_coverage[key] = {"fingerprint": asdict(file_fingerprint(resolved)), "ranges": ranges, "line_drift_maps": _line_drift_maps_to_raw(updated_maps)}
+        store.read_coverage[key] = {"fingerprint": asdict(file_fingerprint(resolved)), "ranges": ranges, "line_drift_maps": line_drift_maps_to_raw(updated_maps)}
     else:
         clear_read_coverage(store, resolved)
     record_mtime(store, resolved)

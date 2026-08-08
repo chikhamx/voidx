@@ -69,7 +69,7 @@ async def test_chat_turn_runs_in_isolated_session_with_tool_view(tmp_path):
 
         execution.graph = FakeGraph()
 
-        service = ChatService(_runtime(execution))
+        service = ChatService(_runtime(execution), session_creator=create_session)
         dock = BottomInputDock()
         set_dock(dock)
         dock.begin_capture()
@@ -120,7 +120,7 @@ async def test_chat_resumed_thread_keeps_own_session(tmp_path):
                 yield {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
 
         execution.graph = FakeGraph()
-        service = ChatService(_runtime(execution))
+        service = ChatService(_runtime(execution), session_creator=create_session)
 
         dock = BottomInputDock()
         set_dock(dock)
@@ -174,8 +174,7 @@ async def test_chat_system_prompt_excludes_coding_persona_and_workflow(tmp_path)
                 yield {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
 
         execution.graph = FakeGraph()
-        service = ChatService(_runtime(execution))
-        service = ChatService(_runtime(execution))
+        service = ChatService(_runtime(execution), session_creator=create_session)
         dock = BottomInputDock()
         set_dock(dock)
         dock.begin_capture()

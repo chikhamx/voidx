@@ -61,12 +61,12 @@ def _read_jsonl(path: Path) -> list[dict]:
 
 
 async def _table_names() -> set[str]:
-    rows = await store._fetch_all("SELECT name FROM sqlite_master WHERE type = 'table'")
+    rows = await store.fetch_all("SELECT name FROM sqlite_master WHERE type = 'table'")
     return {str(row["name"]) for row in rows}
 
 
 async def _table_columns(table: str) -> set[str]:
-    rows = await store._fetch_all(f"PRAGMA table_info({table})")
+    rows = await store.fetch_all(f"PRAGMA table_info({table})")
     return {str(row["name"]) for row in rows}
 
 

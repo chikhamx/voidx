@@ -48,7 +48,7 @@ async def test_upgrade_check_dispatches_and_markssettings(tmp_path, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_upgrade_now_dispatches_perform_upgrade(monkeypatch):
+async def test_upgradenow_dispatches_perform_upgrade(monkeypatch):
     output = _capture_output(monkeypatch)
 
     async def fake_perform_upgrade():
@@ -64,7 +64,7 @@ async def test_upgrade_now_dispatches_perform_upgrade(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_upgrade_now_uses_fresh_cached_latest_version(tmp_path, monkeypatch):
+async def test_upgradenow_uses_fresh_cached_latest_version(tmp_path, monkeypatch):
     output = _capture_output(monkeypatch)
     settings = Settings(str(tmp_path))
     settings.mark_update_check("9.0.0")

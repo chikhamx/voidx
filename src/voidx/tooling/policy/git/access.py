@@ -22,7 +22,7 @@ def _parse_conflicts(output: str) -> list[str]:
     return conflicts
 
 
-def _resolve_path_context(path: str, ctx: ToolContext) -> ToolContext | None:
+def resolve_path_context(path: str, ctx: ToolContext) -> ToolContext | None:
     """Return a ToolContext with workspace adjusted to inp.path."""
     if not path or path == ".":
         return ctx
@@ -58,7 +58,7 @@ def _contains(base: Path, path: Path) -> bool:
         return False
 
 
-def _external_requested_repo_root_error(path: str, original_ctx: ToolContext, effective_ctx: ToolContext) -> str:
+def external_requested_repo_root_error(path: str, original_ctx: ToolContext, effective_ctx: ToolContext) -> str:
     if not path or path == ".":
         return ""
     requested = Path(effective_ctx.workspace).resolve()
@@ -78,7 +78,7 @@ def _looks_like_bare_git_dir(path: Path) -> bool:
     return (path / "HEAD").is_file() and (path / "objects").is_dir() and ((path / "refs").is_dir() or (path / "packed-refs").exists())
 
 
-def _external_repo_root_error(path: str, original_ctx: ToolContext, effective_ctx: ToolContext, repo_root: str) -> str:
+def external_repo_root_error(path: str, original_ctx: ToolContext, effective_ctx: ToolContext, repo_root: str) -> str:
     if not path or path == ".":
         return ""
     requested = Path(effective_ctx.workspace).resolve()

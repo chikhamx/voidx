@@ -16,9 +16,9 @@ from voidx.tooling.policy.git.constants import (
 from voidx.tooling.builtin.git.models import GitInput, GitRepo, GitProcessTimeout
 from voidx.tooling.policy.git.routing import has_denied_flag
 from voidx.tooling.policy.git.access import (
-    _resolve_path_context,
-    _external_requested_repo_root_error,
-    _external_repo_root_error,
+    resolve_path_context,
+    external_requested_repo_root_error,
+    external_repo_root_error,
     validate_runtime_access_plan,
 )
 from voidx.tooling.builtin.git.access import runtime_access_plan
@@ -47,10 +47,10 @@ class GitTool:
             inp = GitInput.model_validate(args)
         except Exception as exc:
             return _result("unknown", ctx, ok=False, error=f"invalid_args: {exc}")
-        effective_ctx = _resolve_path_context(inp.path, ctx)
+        effective_ctx = resolve_path_context(inp.path, ctx)
         if effective_ctx is None:
             return _result("unknown", ctx, ok=False, error="unsafe_path: path escapes workspace")
-        explicit_root_error = _external_requested_repo_root_error(inp.path, ctx, effective_ctx)
+        explicit_root_error = external_requested_repo_root_error(inp.path, ctx, effective_ctx)
         if explicit_root_error:
             return _result("unknown", effective_ctx, ok=False, error=explicit_root_error)
         try:
@@ -83,7 +83,7 @@ class GitTool:
         subcommand = policy.subcommand
         rest = list(policy.rest)
 
-        root_error = _external_repo_root_error(inp.path, ctx, effective_ctx, repo.repo_root)
+        root_error = external_repo_root_error(inp.path, ctx, effective_ctx, repo.repo_root)
         if root_error:
             return _result(subcommand, effective_ctx, repo=repo, ok=False, error=root_error)
         plan = await runtime_access_plan(repo)

@@ -19,11 +19,7 @@ from voidx.agent.domain.task.todo import TodoRunState
 from voidx.agent.domain.user_profile import UserProfile
 from voidx.agent.domain.task.intent import InteractionMode, TaskIntent
 from voidx.agent.domain.task.todo import TodoStatus
-from voidx.mcp.context import has_mcp_tool_context, strip_mcp_tool_context
-from voidx.skills.service import (
-    has_skill_tool_context,
-    strip_skill_tool_context,
-)
+from voidx.agent.ports.context_sanitization import ContextStripper, strip_known_external_context
 from voidx.agent.application.automation.workflow.service import (
     is_workflow_context_content,
     workflow_exit_summaries,
@@ -108,6 +104,7 @@ class RuntimeContext(BaseModel):
     task_sections: list[ContextSection] = Field(default_factory=list)
     system_content: str | None = None
     system_message: SystemMessage | None = Field(default=None, exclude=True)
+    historical_tool_context_stripper: ContextStripper = Field(default=strip_known_external_context, exclude=True)
 
     def section_names(self) -> list[str]:
         names = [section.name for section in self.sections]
@@ -135,7 +132,11 @@ class ContextCompiler:
     def compile_messages(self, messages: list[BaseMessage]) -> list[BaseMessage]:
         semantic_messages = raw_semantic_messages(messages)
         skill_context_cutoff = _tool_skill_context_cutoff(semantic_messages)
-        semantic_messages = _strip_historical_tool_skill_context(semantic_messages, skill_context_cutoff)
+        semantic_messages = _strip_historical_tool_context(
+            semantic_messages,
+            skill_context_cutoff,
+            self.context.historical_tool_context_stripper,
+        )
 
         system_content = self.context.render_system()
         cached_system = self.context.system_message
@@ -180,11 +181,13 @@ class RuntimeContextBuilder:
         turn_state: str = "initial",
         profile_sections: Iterable[ContextSection] = (),
         suppress_sections: Iterable[str] = (),
+        historical_tool_context_stripper: ContextStripper = strip_known_external_context,
     ) -> None:
         from voidx.agent.domain.task.state import TaskState as _TaskState
 
         ts = task_state if isinstance(task_state, _TaskState) else _TaskState()
         self._suppress_sections = set(suppress_sections)
+        self._historical_tool_context_stripper = historical_tool_context_stripper
         self.config = config
         self.workspace = workspace
         self.structured_prompts = isinstance(base_system_prompt, BaseSystemPrompt) or workflow_runtime is not None
@@ -211,6 +214,7 @@ class RuntimeContextBuilder:
         return RuntimeContext(
             sections=self._build_stable_sections(),
             task_sections=self._build_task_sections(),
+            historical_tool_context_stripper=self._historical_tool_context_stripper,
         )
 
     def build_incremental(
@@ -237,6 +241,7 @@ class RuntimeContextBuilder:
             task_sections=self._build_task_sections(),
             system_content=system_content,
             system_message=system_message,
+            historical_tool_context_stripper=self._historical_tool_context_stripper,
         ), cache
 
     def _build_stable_sections(self) -> list[ContextSection]:
@@ -441,18 +446,15 @@ def raw_semantic_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
     return raw
 
 
-def _strip_historical_tool_skill_context(
+def _strip_historical_tool_context(
     messages: list[BaseMessage],
     cutoff: int,
+    strip_context: ContextStripper,
 ) -> list[BaseMessage]:
     stripped: list[BaseMessage] = []
     for index, message in enumerate(messages):
         if index < cutoff and isinstance(message, ToolMessage):
-            content = message.content
-            if has_skill_tool_context(content):
-                content = strip_skill_tool_context(content)
-            if has_mcp_tool_context(content):
-                content = strip_mcp_tool_context(content)
+            content = strip_context(message.content)
             if content != message.content:
                 stripped.append(message.model_copy(update={"content": content}))
                 continue

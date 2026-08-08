@@ -14,8 +14,8 @@ from voidx.tooling.domain.schema import model_to_json_schema
 from voidx.tooling.domain.authorization import PermissionContext
 from voidx.tooling.domain.grants import AccessGrants
 from voidx.tooling.policy.shell.policy import shell_sandbox_precheck
-from voidx.tooling.policy.shell.powershell_blocked import _check_command
-from voidx.tooling.policy.shell.powershell_sandbox import _sandbox_denial
+from voidx.tooling.policy.shell.powershell_blocked import check_command
+from voidx.tooling.policy.shell.powershell_sandbox import sandbox_denial
 from voidx.tooling.builtin.shell.powershell.router import try_hint as _try_hint
 from voidx.tooling.builtin.shell.common import (
     build_blocked_result,
@@ -48,7 +48,7 @@ class PowerShellTool:
         except Exception as exc:
             return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
 
-        blocked = _check_command(inp.command)
+        blocked = check_command(inp.command)
         if blocked:
             return build_blocked_result(inp.command, blocked)
 
@@ -57,7 +57,7 @@ class PowerShellTool:
             return workspace_error
 
         approved_shell_risk = ctx.has_approved_tool_risk("powershell", inp.command)
-        sandbox_blocked = None if approved_shell_risk else _sandbox_denial(inp.command, ctx)
+        sandbox_blocked = None if approved_shell_risk else sandbox_denial(inp.command, ctx)
         if sandbox_blocked:
             return build_blocked_result(inp.command, sandbox_blocked)
 

@@ -9,7 +9,7 @@ import shlex
 
 from voidx.tooling.builtin.shell.common import RouteHint
 
-_GIT_GLOBAL_OPTIONS_WITH_VALUE = frozenset({
+GIT_GLOBAL_OPTIONS_WITH_VALUE = frozenset({
     "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",
 })
 
@@ -56,7 +56,7 @@ def _git_tool_args(words: list[str]) -> tuple[str, str, bool]:
     return "", "", has_config
 
 
-def _git_subcommand(words: list[str]) -> tuple[str, list[str]]:
+def git_subcommand(words: list[str]) -> tuple[str, list[str]]:
     _, git_args, _ = _git_tool_args(words)
     if not git_args:
         return "", []
@@ -66,7 +66,7 @@ def _git_subcommand(words: list[str]) -> tuple[str, list[str]]:
     return parsed[0], parsed[1:]
 
 
-def _hint_git(stripped: str, words: list[str]) -> RouteHint | None:
+def hint_git(stripped: str, words: list[str]) -> RouteHint | None:
     path, git_args, has_config = _git_tool_args(words)
     if not git_args:
         return None

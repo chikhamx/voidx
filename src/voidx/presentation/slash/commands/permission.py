@@ -26,27 +26,27 @@ class PermissionCommandsMixin:
         ]
         valid = set(labels)
 
-        app = self.host.app
+        app = self.preferences_port.prompt_ui
         if not raw and app is not None:
             raw = await app.ask_choice("Permission mode", choices) or ""
 
         if not raw:
-            current = getattr(self.host.permission, "permission_mode", PermissionMode.SAFE.value)
-            self.host.ui.print(f"Permission mode: [cyan]{labels.get(current, labels[PermissionMode.SAFE.value])}[/cyan]")
-            self.host.ui.print("Usage: /permission [read_only|safe|ai_approval [profile]|project_trusted|full_access]")
+            current = self.preferences_port.permission_ops.permission_mode
+            self.preferences_port.ui.print(f"Permission mode: [cyan]{labels.get(current, labels[PermissionMode.SAFE.value])}[/cyan]")
+            self.preferences_port.ui.print("Usage: /permission [read_only|safe|ai_approval [profile]|project_trusted|full_access]")
             return
         if raw not in valid:
-            self.host.ui.error(f"Invalid permission mode: {raw}. Use: {', '.join(sorted(valid))}")
+            self.preferences_port.ui.error(f"Invalid permission mode: {raw}. Use: {', '.join(sorted(valid))}")
             return
 
-        settings = self.host.settings
+        settings = self.preferences_port.preference_settings
         selected_profile: str | None = None
         if raw == PermissionMode.AI_APPROVAL.value and settings is not None:
             profiles = [profile for profile in await settings.list_profiles() if profile.api_key]
             if requested_profile is not None:
                 match = next((profile for profile in profiles if profile.name == requested_profile), None)
                 if match is None:
-                    self.host.ui.error(f"Unknown or unconfigured AI approval profile: {requested_profile}")
+                    self.preferences_port.ui.error(f"Unknown or unconfigured AI approval profile: {requested_profile}")
                     return
                 selected_profile = match.name
             elif app is not None:
@@ -58,15 +58,15 @@ class PermissionCommandsMixin:
 
         preset = PermissionMode(raw)
         try:
-            self.host.permission.set_permission_mode(preset.value)
+            self.preferences_port.permission_ops.set_permission_mode(preset.value)
         except PermissionError as exc:
-            self.host.ui.error(str(exc))
+            self.preferences_port.ui.error(str(exc))
             return
-        self.host.clear_successful_dangerous_calls()
+        self.preferences_port.clear_successful_dangerous_calls()
         if settings is not None:
             settings.set_permission_mode(preset)
             if selected_profile is not None:
                 settings.set_ai_approval_profile(selected_profile)
         suffix = f" using {selected_profile or 'current main profile'}" if selected_profile is not None else ""
-        self.host.ui.print(f"[dim]Permission mode set to [cyan]{labels[preset.value]}[/cyan]{suffix}[/dim]")
+        self.preferences_port.ui.print(f"[dim]Permission mode set to [cyan]{labels[preset.value]}[/cyan]{suffix}[/dim]")
 

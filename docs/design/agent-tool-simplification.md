@@ -10,7 +10,7 @@
 
 ## 背景与问题
 
-当前 `agent` 工具位于 `src/voidx/tools/agent.py`，同时承担三类职责：
+当前 `agent` 工具位于 `src/voidx/agent/adapters/tools/subagent.py`，同时承担三类职责：
 
 - 启动子 agent：`spawn`；
 - 等待子 agent：`wait`；
@@ -403,18 +403,18 @@ tdd -> verify
 
 预计修改：
 
-- `src/voidx/tools/agent.py`：重建 spawn 输入、mode route、goal/detail/scope 归一化和控制逻辑；
-- 新增 `src/voidx/tools/agent_control.py`：实现 wait/cancel 工具；
-- `src/voidx/agent/infrastructure/langgraph/runtime/wiring.py`：注册新工具并更新 agent surface；
-- `src/voidx/agent/infrastructure/langgraph/runtime/subagent.py`：注入局部 workflow prompt、根据 mode 设置 persona，并继续屏蔽嵌套 delegation；
+- `src/voidx/agent/adapters/tools/subagent.py`：重建 spawn 输入、mode route、goal/detail/scope 归一化和控制逻辑；
+- 新增 `src/voidx/agent/adapters/tools/subagent_control.py`：实现 wait/cancel 工具；
+- `src/voidx/agent/adapters/langgraph/runtime/wiring.py`：注册新工具并更新 agent surface；
+- `src/voidx/agent/adapters/langgraph/runtime/subagent.py`：注入局部 workflow prompt、根据 mode 设置 persona，并继续屏蔽嵌套 delegation；
 - `src/voidx/agent/application/prompts.py` 或新增 workflow prompt helper：提供通用规则和局部节点渲染；
 - `src/voidx/agent/application/agents.py`：更新子 agent 描述，删除对可选 child identity 的公开暗示；
 - 相关 agent/tool/workflow 测试：更新 schema、调用、mode、结果和 prompt 断言。
 
 不预计修改：
 
-- `src/voidx/agent/gateway/gateway.py`：保留数值 timeout 的基础设施 API；
-- `src/voidx/agent/gateway/models.py`：run/message 模型不因工具字段重命名而改变。
+- `src/voidx/agent/adapters/subagent/inprocess_gateway.py`：保留数值 timeout 的基础设施 API；
+- `src/voidx/agent/domain/subagent.py`：run/message 模型不因工具字段重命名而改变。
 
 ## 测试与验收标准
 

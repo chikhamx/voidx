@@ -7,10 +7,8 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from voidx.persistence.jsonl import session_dir
 from voidx.platform.paths import voidx_workspace_dir
 from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
-import voidx.persistence.sqlite as store
 
 async def save_file_version(
     ctx: ToolContext,
@@ -23,7 +21,7 @@ async def save_file_version(
     if not resolved.exists() or not resolved.is_file():
         return
 
-    history_dir = session_dir(ctx.session_id) / "file-history"
+    history_dir = voidx_workspace_dir(ctx.workspace) / "sessions" / ctx.session_id / "file-history"
     manifest_path = history_dir / "manifest.jsonl"
 
     full_hash = hashlib.sha256(str(resolved.resolve()).encode("utf-8")).hexdigest()
