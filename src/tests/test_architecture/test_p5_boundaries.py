@@ -83,7 +83,7 @@ def test_agent_composition_moved_to_bootstrap():
 
 def test_automation_services_are_not_dynamically_injected_or_probed():
     paths = [
-        AGENT / "infrastructure" / "input_router.py",
+        AGENT / "adapters" / "input_router.py",
         AGENT / "infrastructure" / "langgraph" / "execution.py",
         AGENT / "slash" / "commands" / "loop_cmd.py",
         AGENT / "slash" / "commands" / "mode.py",

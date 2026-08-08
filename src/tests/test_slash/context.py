@@ -6,6 +6,7 @@ from typing import Any
 from voidx.agent.domain.task.intent import InteractionMode
 from voidx.agent.domain.task.state import TaskState
 from voidx.update import service as update_service
+from voidx.presentation.tools import clipboard_image
 
 
 def command_context(**overrides: Any) -> SimpleNamespace:
@@ -53,6 +54,7 @@ def command_context(**overrides: Any) -> SimpleNamespace:
         "set_session_title": noop_async,
         "get_aiapproval_config": lambda: None,
         "update_service": update_service,
+        "clipboard_image": clipboard_image,
     }
     for name, value in defaults.items():
         setattr(context, name, value)

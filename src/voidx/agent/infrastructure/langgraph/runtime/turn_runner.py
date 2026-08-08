@@ -15,7 +15,7 @@ from langgraph.errors import GraphRecursionError
 from voidx.agent.infrastructure.langgraph.runtime.convergence import generate_fallback_summary
 
 from voidx.agent.application.attachments import build_user_message_payload, serialize_message_content
-from voidx.agent.infrastructure.message_rows import messages_from_rows_incremental
+from voidx.agent.adapters.persistence.message_rows import messages_from_rows_incremental
 from voidx.agent.application.automation.goal.goal_resolver import build_goal_resolution, resolve_plan_mode
 from voidx.agent.application.runtime_context import TaskIntent
 from voidx.agent.domain.turn_context import TurnExecutionContext

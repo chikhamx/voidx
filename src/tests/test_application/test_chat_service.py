@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from tests.test_application.input_ports import service_ports
-from voidx.agent.infrastructure.input_router import LangGraphAutonomousInputRouter
+from voidx.agent.adapters.input_router import LangGraphAutonomousInputRouter
 from voidx.agent.ports.presentation import NullAgentEventPublisher
 
 from voidx.agent.application.chat_service import ChatService

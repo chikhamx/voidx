@@ -16,7 +16,7 @@ from voidx.agent.application.workflow_utils import active_workflow_names
 from voidx.agent.application.todo_state import todo_run_state_from_result
 from voidx.agent.domain.task.state import goal_label, goal_type_from_join
 from voidx.agent.application.tool_messages import sanitize_tool_message_content
-from voidx.agent.infrastructure.tool_result_storage import maybe_persist_tool_result
+from voidx.agent.adapters.tools.result_storage import maybe_persist_tool_result
 from voidx.agent.infrastructure.langgraph.runtime.todo_events import todo_updated_event
 from voidx.agent.ports.ui import UiEventTimeout
 from voidx.agent.adapters.tools.automation.loop import LoopTool

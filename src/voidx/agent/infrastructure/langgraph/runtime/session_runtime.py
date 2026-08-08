@@ -9,11 +9,11 @@ from typing import TYPE_CHECKING, Any
 
 from voidx.agent.application.session_service import SessionService
 from voidx.agent.domain.state import SessionRuntimeState
-from voidx.agent.infrastructure.memory_session import MemorySessionAdapter
+from voidx.agent.adapters.persistence.memory_session import MemorySessionAdapter
 from voidx.agent.adapters.persistence.session_repository import MessageRow, count_messages, delete_session, load_messages, update_title, update_title_if_current
 from voidx.agent.ports.presentation import NullPresentationSnapshotPort, PresentationSnapshotPort
 from voidx.observability.tool_log import log_tool_event
-from voidx.agent.infrastructure.tool_result_storage import cleanup_session_results
+from voidx.agent.adapters.tools.result_storage import cleanup_session_results
 
 TITLE_TIMEOUT_SECONDS = 10.0
 TITLE_PERSONA_USER_CHARS = 500

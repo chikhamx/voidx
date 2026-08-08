@@ -41,7 +41,7 @@ from voidx.agent.domain.task.state import GoalResolution, GoalSpec, TaskState
 from voidx.agent.domain.task.todo import TodoRunState
 from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.agent.application.tool_messages import sanitize_tool_message_content
-from voidx.agent.infrastructure.tool_result_storage import maybe_persist_tool_result
+from voidx.agent.adapters.tools.result_storage import maybe_persist_tool_result
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.infrastructure.langgraph.runtime.tool_surface import (
     ToolSurfaceContext,

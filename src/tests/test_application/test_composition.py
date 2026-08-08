@@ -6,8 +6,8 @@ from voidx.agent.application.runtime import AgentRuntime
 from voidx.bootstrap.agent import AgentResources, build_agent_components
 from voidx.agent.facade import AgentFacade
 from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
-from voidx.agent.infrastructure.memory_session import MemorySessionAdapter
-from voidx.agent.infrastructure.null_events import NullEventPublisher
+from voidx.agent.adapters.persistence.memory_session import MemorySessionAdapter
+from voidx.agent.adapters.null_events import NullEventPublisher
 from voidx.agent.ports.presentation import NullAgentEventPublisher
 from voidx.presentation.terminal.events import UiAgentEventPublisher
 from voidx.presentation.terminal.run_loop import TerminalRunLoop

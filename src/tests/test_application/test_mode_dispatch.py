@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from voidx.agent.infrastructure.input_router import LangGraphAutonomousInputRouter
+from voidx.agent.adapters.input_router import LangGraphAutonomousInputRouter
 from voidx.agent.ports.presentation import NullAgentEventPublisher
 
 

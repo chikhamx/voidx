@@ -237,7 +237,7 @@ class FakeExecutionHost:
 
 def _agent_service_with_coding(execution, coding_service):
     from voidx.agent.application.agent_service import AgentService
-    from voidx.agent.infrastructure.input_router import LangGraphAutonomousInputRouter
+    from voidx.agent.adapters.input_router import LangGraphAutonomousInputRouter
     from voidx.agent.ports.presentation import NullAgentEventPublisher
     from tests.test_application.input_ports import FakeInputPorts
 

@@ -17,13 +17,13 @@ from voidx.agent.application.chat_service import ChatService
 from voidx.agent.application.coding_service import CodingService
 from voidx.agent.application.runtime import AgentRuntime
 from voidx.agent.facade import AgentFacade
-from voidx.agent.infrastructure.input_adapter import LangGraphInputAdapter
-from voidx.agent.infrastructure.input_router import LangGraphAutonomousInputRouter
+from voidx.agent.adapters.input_adapter import LangGraphInputAdapter
+from voidx.agent.adapters.input_router import LangGraphAutonomousInputRouter
 from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
-from voidx.agent.infrastructure.memory_session import MemorySessionAdapter
-from voidx.agent.infrastructure.null_events import NullEventPublisher
-from voidx.agent.infrastructure.presentation_adapter import (
+from voidx.agent.adapters.persistence.memory_session import MemorySessionAdapter
+from voidx.agent.adapters.null_events import NullEventPublisher
+from voidx.agent.adapters.presentation_adapter import (
     LangGraphPresentationBinding,
     LangGraphPresentationIntegrations,
     LangGraphRuntimeStatusReader,
@@ -102,6 +102,7 @@ def build_agent_components(
     from voidx.bootstrap.providers import build_model_catalog
     from voidx.bootstrap.skills import build_skills_api_provider
     from voidx.update import service as update_service
+    from voidx.presentation.tools import clipboard_image
 
     def model_catalog_factory(value):
         return build_model_catalog(value)
@@ -125,6 +126,7 @@ def build_agent_components(
         "mcp_reference_resolver": integrations.mcp_reference_resolver,
         "web_route": integrations.web_route,
         "update_service": update_service,
+        "clipboard_image": clipboard_image,
     }
     if integrations.permission_service_factory is not None:
         execution_kwargs["permission_service_factory"] = integrations.permission_service_factory

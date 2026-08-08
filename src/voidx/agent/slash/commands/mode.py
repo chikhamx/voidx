@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from voidx.tooling.adapters.git_diff import git_diff, git_diff_stat
 from voidx.agent.domain.task.intent import InteractionMode
-from voidx.agent.infrastructure.clipboard_image import paste_clipboard_image
 
 
 class ModeCommandsMixin:
@@ -147,7 +146,7 @@ class ModeCommandsMixin:
 
 
     def _paste_clipboard_image(self) -> None:
-        result = paste_clipboard_image(self.host.workspace)
+        result = self.host.clipboard_image.paste_clipboard_image(self.host.workspace)
         if result.ok:
             self.host.ui.print(f"[dim]{result.message}[/dim]")
             return

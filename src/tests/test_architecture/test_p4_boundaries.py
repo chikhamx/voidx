@@ -300,6 +300,6 @@ def test_presentation_protocol_does_not_import_persistence_adapters():
 
 
 def test_input_adapter_uses_explicit_frontend_protocol():
-    path = ROOT / "src" / "voidx" / "agent" / "infrastructure" / "input_adapter.py"
+    path = ROOT / "src" / "voidx" / "agent" / "adapters" / "input_adapter.py"
     source = path.read_text(encoding="utf-8")
     assert 'getattr(self._frontend, "hide_command_output"' not in source

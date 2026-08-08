@@ -376,6 +376,7 @@ class LangGraphExecution:
         web_route: Callable[..., Awaitable[Any]] | None = None,
         permission_service_factory: Callable[..., Any] = _in_memory_permission_service,
         update_service: Any | None = None,
+        clipboard_image: Any | None = None,
     ):
         self.config = config
         self.api_key = api_key
@@ -407,6 +408,9 @@ class LangGraphExecution:
         if update_service is None:
             raise RuntimeError("update_service is required")
         self.update_service = update_service
+        if clipboard_image is None:
+            raise RuntimeError("clipboard_image is required")
+        self.clipboard_image = clipboard_image
         self._ai_approval = AiApprovalService(
             model_factory=create_chat_model,
             resolver_model_factory=create_resolver_model,

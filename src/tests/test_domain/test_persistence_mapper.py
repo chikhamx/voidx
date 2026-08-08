@@ -1,5 +1,5 @@
 from voidx.agent.domain.state import SessionRuntimeState
-from voidx.agent.infrastructure.runtime_state_mapper import (
+from voidx.agent.adapters.persistence.runtime_state_mapper import (
     agent_runtime_from_snapshot,
     snapshot_from_agent_runtime,
 )

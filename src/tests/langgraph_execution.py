@@ -21,6 +21,10 @@ def make_langgraph_execution(*args, ui=None, **kwargs) -> LangGraphExecution:
         from voidx.update import service as update_service
 
         kwargs["update_service"] = update_service
+    if "clipboard_image" not in kwargs:
+        from voidx.presentation.tools import clipboard_image
+
+        kwargs["clipboard_image"] = clipboard_image
 
     return LangGraphExecution(
         *args,

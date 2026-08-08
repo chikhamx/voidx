@@ -13,7 +13,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 import voidx.persistence.sqlite as store
 import voidx.persistence.jsonl as jsonl_store
 
-from voidx.agent.infrastructure.message_rows import message_from_row, messages_from_rows, messages_from_rows_incremental, row_fingerprint
+from voidx.agent.adapters.persistence.message_rows import message_from_row, messages_from_rows, messages_from_rows_incremental, row_fingerprint
 from voidx.agent.application.runtime_context import InteractionMode, TaskIntent
 from voidx.agent.domain.task.state import GoalSpec, TaskState, TurnExchange
 from voidx.agent.domain.task.todo import TodoRunState

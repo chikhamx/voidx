@@ -14,7 +14,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from voidx.agent.domain.compaction import CompactionResult, PreflightCompactionResult
 from voidx.agent.infrastructure.langgraph.runtime.streaming import extract_text, stream_llm
-from voidx.agent.infrastructure.message_rows import messages_from_rows
+from voidx.agent.adapters.persistence.message_rows import messages_from_rows
 from voidx.agent.application.runtime_context import raw_semantic_messages
 from voidx.llm.compaction import (
     COMPACTION_MAX_RETRIES,

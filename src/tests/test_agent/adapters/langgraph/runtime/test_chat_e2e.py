@@ -16,8 +16,8 @@ from voidx.agent.application.prompts import BaseSystemProfile
 from voidx.agent.infrastructure.langgraph.adapter import LangGraphTurnEngine
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
-from voidx.agent.infrastructure.memory_session import MemorySessionAdapter
-from voidx.agent.infrastructure.null_events import NullEventPublisher
+from voidx.agent.adapters.persistence.memory_session import MemorySessionAdapter
+from voidx.agent.adapters.null_events import NullEventPublisher
 from voidx.agent.application.runtime import AgentRuntime
 from voidx.config import Config
 from voidx.agent.adapters.persistence.session_repository import create_session, delete_session, get_session, load_messages

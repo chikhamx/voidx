@@ -14,7 +14,7 @@ import voidx.persistence.sqlite as store
 from voidx.agent.slash import SlashHandler
 from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
-from voidx.agent.infrastructure.presentation_adapter import LangGraphRuntimeStatusReader
+from voidx.agent.adapters.presentation_adapter import LangGraphRuntimeStatusReader
 from voidx.agent.infrastructure.langgraph.runtime.compaction_coordinator import PreflightCompactionResult
 from voidx.agent.application.coding_service import CODING_PROFILE, CodingService
 from voidx.agent.application.agent_service import AgentService
