@@ -3,33 +3,35 @@
 Python backend core for voidx.
 
 ## Module Map
-- `voidx/agent/`: Agent runtime — layered as `application/` (services), `domain/` (policies/state/turn), `ports/` (interfaces), `infrastructure/` (LangGraph + adapters), `loop/` (controller/scheduler), `runtime/` (dispatcher/lifecycle), and `slash/` (slash command handlers).
-- `voidx/agent/slash/`: Slash command handlers — runtime config, session, model, MCP/LSP, skills, profile, host, and IDE integration commands.
-- `voidx/config/`: Settings & profiles — Pydantic models, MCP server config, API keys, permissions.
-- `voidx/llm/`: Provider setup, prompt context, compaction, token usage.
-- `voidx/mcp/`: MCP support — `client/` (JSON-RPC client), `manager.py` (lifecycle), `tool.py` (tool wrapper), `schema.py`, and `server/` (built-in MCP server implementations, e.g. voidx-web).
-- `voidx/memory/`: SQLite-backed sessions, transcript, runtime snapshots, context frames.
-- `voidx/permission/`: Permission engine — rules, sandbox, approval policy, wildcard matching.
-- `voidx/runtime/`: Shared runtime — UI sink, task state, intent resolution.
-- `voidx/skills/`: Skill system — registry, policy, bundled skills.
-- `voidx/tools/`: Typed tool implementations and MCP/LSP adapters — `bash/` (shell execution, safety, routing), `file/` (read, write, edit, listing), plus `git/`, `shell/`, `powershell/`, `web/`, and top-level tools (search, todo, workflow, etc.).
-- `voidx/lsp/`: Language Server Protocol client — manager, service, detector, schema.
-- `voidx/workflow/`: Structured workflow runtime — DAG, nodes, policy, routing, reconciliation, schema.
-- `voidx/logging/`: Request and tool logging.
-- `voidx/ui/output/`: Output rendering — dock tree, streaming, capture, events, diff.
-- `voidx/ui/protocol/`: UI protocol layer — v2 JSON-RPC models, schema, transcript, commands, requests.
-- `voidx/ui/tools/`: UI-side tools — clipboard, file picker, skill picker, IDE integration.
-- `voidx/ui/gateway/`: WebSocket gateway for web/desktop frontend.
+- `voidx/agent/`: Agent feature — `domain/` owns state and policy, `ports/` owns interfaces, `application/` owns use cases and runtime orchestration, `adapters/` owns LangGraph, persistence, tools, and subagent integrations.
+- `voidx/tooling/`: Tool platform — `domain/`, `ports/`, `application/`, `policy/`, `adapters/`, and `builtin/` implementations.
+- `voidx/presentation/`: Terminal/web presentation — output, protocol, gateway, slash commands, presentation adapters, and UI-side tools.
+- `voidx/config/`: Settings, profiles, config models, and persistence adapters.
+- `voidx/llm/`: Provider/model domain, catalog application services, concrete model adapters, compaction, and token usage.
+- `voidx/mcp/` and `voidx/lsp/`: Layered domain/ports/application/adapters for external protocol clients.
+- `voidx/skills/`: Skill domain and application services.
+- `voidx/persistence/`: Shared SQLite/JSONL infrastructure and migrations.
+- `voidx/platform/`: OS paths, processes, retry, execution context, and file-type helpers.
+- `voidx/observability/`: Request, tool, external, and internal-error logging.
+- `voidx/update/`: Version check and explicit self-update service.
+- `voidx/bootstrap/`: The only composition root; wires concrete adapters and owns CLI startup.
+- `voidx/main.py`: Thin package entrypoint that exports `voidx.bootstrap.cli`.
+
+## Dependency Direction
+- Domain and ports do not import concrete adapters or presentation.
+- Application code depends on its feature domain/ports plus approved foundation packages.
+- Cross-feature concrete adapter composition belongs only in `voidx/bootstrap/`.
+- Agent core does not import presentation; presentation capabilities are injected by bootstrap.
+- `voidx/main.py` imports only `voidx.bootstrap`.
 
 ## Testing
-- `tests/`: pytest coverage — per-module test directories (agent, config, llm, lsp, mcp, memory, permission, runtime, skills, tools, ui, workflow, etc.) plus top-level install/npm packaging tests.
-- Test layout mirrors `voidx/` module structure — one test directory per module.
-- Fixtures and helpers live in `tests/conftest.py` and per-directory `conftest.py`.
-- Full tests: `./test.py --backend` (covers `src/tests` + `tui/tests`)
-- Focused tests: `./test.py --backend -- src/tests/test_tools/test_clarify_tool.py -v`
+- Tests mirror final ownership under `src/tests/`, for example `test_agent/adapters/langgraph`, `test_tooling`, `test_presentation`, `test_observability`, `test_platform`, and `test_update`.
+- Full backend: `./test.py --backend`.
+- Focused example: `./test.py --backend -- src/tests/test_agent/adapters/langgraph -v`.
+- Architecture and contracts: `./test.py --backend -- src/tests/test_architecture src/tests/test_contracts -v`.
 
 ## Code Rules
 - Use Pydantic models for config, tool inputs, and persisted structured data.
 - Tool ids stay snake_case with precise, action-oriented descriptions.
 - Prefer structured metadata over parsing rendered text.
-- Keep prompts rules-first, concise, and specific to the agent role.
+- Keep prompt rules concise and specific to the agent role.

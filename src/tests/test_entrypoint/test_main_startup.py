@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import importlib
+
 from types import SimpleNamespace
 
 import pytest
 
 from voidx.config import Config, Profile
 from voidx.llm.domain.model import ModelConfig
-from voidx.main import _run_chat
+from voidx.bootstrap.command_line import _run_chat
 
+
+cli_module = importlib.import_module("voidx.bootstrap.command_line")
 
 @pytest.mark.asyncio
 async def test_run_chat_resolves_profile_once(monkeypatch, tmp_path):
@@ -43,7 +47,7 @@ async def test_run_chat_resolves_profile_once(monkeypatch, tmp_path):
         return FakeAgentApp()
 
     monkeypatch.setattr("voidx.bootstrap.agent.build_agent_app", fake_build_agent_app)
-    monkeypatch.setattr("voidx.main._select_start_session", fake_select_start_session)
+    monkeypatch.setattr(cli_module, "_select_start_session", fake_select_start_session)
 
     await _run_chat(workspace=str(tmp_path))
 
@@ -84,7 +88,7 @@ async def test_run_chat_awaits_resolve_api_key_when_no_profile(monkeypatch, tmp_
         return FakeAgentApp()
 
     monkeypatch.setattr("voidx.bootstrap.agent.build_agent_app", fake_build_agent_app)
-    monkeypatch.setattr("voidx.main._select_start_session", fake_select_start_session)
+    monkeypatch.setattr(cli_module, "_select_start_session", fake_select_start_session)
 
     await _run_chat(workspace=str(tmp_path))
 
@@ -125,7 +129,7 @@ async def test_run_chat_uses_provider_specific_key_after_cli_override(monkeypatc
         return FakeAgentApp()
 
     monkeypatch.setattr("voidx.bootstrap.agent.build_agent_app", fake_build_agent_app)
-    monkeypatch.setattr("voidx.main._select_start_session", fake_select_start_session)
+    monkeypatch.setattr(cli_module, "_select_start_session", fake_select_start_session)
 
     await _run_chat(workspace=str(tmp_path), provider="openai")
 

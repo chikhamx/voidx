@@ -90,3 +90,93 @@ def test_slash_commands_are_owned_by_presentation() -> None:
 
     assert [path for path in expected if not (ROOT / path).is_file()] == []
     assert not (ROOT / "src/voidx/agent/slash").exists()
+
+
+def test_main_depends_only_on_bootstrap() -> None:
+    import ast
+
+    path = ROOT / "src/voidx/main.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    imports = {
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module is not None
+    }
+
+    assert imports == {"voidx.bootstrap"}
+
+
+def test_all_legacy_package_directories_are_removed() -> None:
+    legacy = (
+        "runtime",
+        "workflow",
+        "memory",
+        "permission",
+        "tools",
+        "ui",
+        "logging",
+        "agent/goal",
+        "agent/loop",
+        "agent/runtime",
+        "agent/infrastructure",
+        "agent/gateway",
+        "agent/slash",
+    )
+
+    assert [path for path in legacy if (ROOT / "src/voidx" / path).exists()] == []
+
+
+LEGACY_MODULE_PREFIXES = (
+    "voidx.runtime",
+    "voidx.workflow",
+    "voidx.memory",
+    "voidx.permission",
+    "voidx.tools",
+    "voidx.ui",
+    "voidx.logging",
+    "voidx.selfupdate",
+    "voidx.agent.goal",
+    "voidx.agent.loop",
+    "voidx.agent.runtime",
+    "voidx.agent.infrastructure",
+    "voidx.agent.gateway",
+    "voidx.agent.slash",
+)
+
+
+def _is_legacy_module(value: str) -> bool:
+    return any(value == prefix or value.startswith(f"{prefix}.") for prefix in LEGACY_MODULE_PREFIXES)
+
+
+def test_executable_python_has_no_legacy_import_or_patch_targets() -> None:
+    import ast
+
+    offenders: list[str] = []
+    for root_name in ("src", "tui", "scripts"):
+        for path in (ROOT / root_name).rglob("*.py"):
+            if "__pycache__" in path.parts or "build" in path.parts:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                values: list[str] = []
+                if isinstance(node, ast.Import):
+                    values = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    values = [node.module]
+                elif isinstance(node, ast.Call):
+                    function_name = ""
+                    if isinstance(node.func, ast.Name):
+                        function_name = node.func.id
+                    elif isinstance(node.func, ast.Attribute):
+                        function_name = node.func.attr
+                    if function_name in {"import_module", "setattr", "delattr"}:
+                        values = [
+                            arg.value
+                            for arg in node.args
+                            if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+                        ]
+                for value in values:
+                    if _is_legacy_module(value):
+                        offenders.append(f"{path.relative_to(ROOT)}:{node.lineno}: {value}")
+
+    assert offenders == []

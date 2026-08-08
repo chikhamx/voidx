@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import os
 import subprocess
 import sys
@@ -48,7 +49,7 @@ def test_voidx_script_prioritizes_workspace_source_over_installed_package(
 
 
 def test_print_version_uses_void_console(monkeypatch) -> None:
-    from voidx import main as voidx_main
+    voidx_main = importlib.import_module("voidx.bootstrap.command_line")
 
     printed = []
 
@@ -66,6 +67,6 @@ def test_print_version_uses_void_console(monkeypatch) -> None:
 
 def test_select_start_session_signature_only_keeps_resume_and_console() -> None:
     import inspect
-    from voidx import main as voidx_main
+    voidx_main = importlib.import_module("voidx.bootstrap.command_line")
 
     assert list(inspect.signature(voidx_main._select_start_session).parameters) == ["resume", "vconsole"]

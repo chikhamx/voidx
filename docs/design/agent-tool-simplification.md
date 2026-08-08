@@ -64,7 +64,7 @@ Start one isolated child agent for an independent task and return its run_id. Th
   "mode": "implement",
   "goal": "精简 agent 工具参数",
   "detail": "删除 name 和 result_preset，将 success_criteria 合并到任务说明中，更新 schema 和相关测试，并运行定向测试。",
-  "scope": "src/voidx/tools/agent.py"
+  "scope": "src/voidx/agent/adapters/tools/subagent.py"
 }
 ```
 

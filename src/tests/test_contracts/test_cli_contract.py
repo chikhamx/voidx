@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import re
 
 from typer.main import get_command
@@ -52,7 +53,7 @@ def test_cli_contract(monkeypatch) -> None:
         if resume:
             await main_module._select_start_session(resume, Console())
 
-    import voidx.main as main_module
+    main_module = importlib.import_module("voidx.bootstrap.command_line")
     import voidx.agent.adapters.persistence.session_repository as sessions
 
     monkeypatch.setattr(main_module, "_print_version", lambda: print("voidx v${VERSION}"))

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import importlib
+
 import ast
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+
+cli_module = importlib.import_module("voidx.bootstrap.command_line")
 
 MAIN_PATH = Path(__file__).parents[2] / "voidx" / "main.py"
 
@@ -33,7 +37,7 @@ def test_main_does_not_import_graph_implementation() -> None:
 async def test_run_chat_builds_agent_through_composition(monkeypatch, tmp_path) -> None:
     from voidx.config import Config
     from voidx.llm.domain.model import ModelConfig
-    from voidx.main import _run_chat
+    from voidx.bootstrap.command_line import _run_chat
 
     captured = SimpleNamespace(build_kwargs=None, run_kwargs=None)
 
@@ -69,7 +73,7 @@ async def test_run_chat_builds_agent_through_composition(monkeypatch, tmp_path) 
 
     monkeypatch.setattr("voidx.config.Settings", FakeSettings)
     monkeypatch.setattr("voidx.bootstrap.agent.build_agent_app", fake_build_agent_app)
-    monkeypatch.setattr("voidx.main._select_start_session", fake_select_start_session)
+    monkeypatch.setattr(cli_module, "_select_start_session", fake_select_start_session)
 
     await _run_chat(workspace=str(tmp_path), web=True, web_host="0.0.0.0", web_port=8123)
 

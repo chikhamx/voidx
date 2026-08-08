@@ -25,9 +25,8 @@ from voidx.agent.domain.automation.workflow import (
 
 def test_goal_type_compatibility_exports_are_removed():
     import voidx.agent.domain.task.state as agent_task_state
-    import voidx.runtime as runtime
 
-    for module in (runtime, agent_task_state):
+    for module in (agent_task_state,):
         assert not hasattr(module, "GoalType")
         assert not hasattr(module, "infer_goal_type")
         assert not hasattr(module, "goal_type_value")

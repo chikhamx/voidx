@@ -626,7 +626,7 @@ class CodeGraphBridge:
 ### 7.2 voidx 工具注册
 
 ```python
-# src/voidx/tools/codegraph.py
+# src/voidx/tooling/builtin/codegraph.py
 
 class CodegraphIndexTool(BaseTool):
     id = "codegraph_index"

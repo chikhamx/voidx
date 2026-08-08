@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from voidx.main import _select_start_session
+from voidx.bootstrap.command_line import _select_start_session
 from voidx.agent.adapters.persistence.session_repository import create_session, delete_session, update_title
 
 
