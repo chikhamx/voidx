@@ -6,10 +6,10 @@ import os
 import shlex
 import sys
 from collections.abc import Mapping
-from voidx.agent.slash.runtime import _select_from_list
+from voidx.presentation.slash.runtime import _select_from_list
 from voidx.mcp.domain.config import McpServerConfig
 from voidx.tooling.domain.web import WebToolRoute
-from voidx.agent.slash.helpers import _parse_env_pairs
+from voidx.presentation.slash.helpers import _parse_env_pairs
 
 
 class McpCommandsMixin:

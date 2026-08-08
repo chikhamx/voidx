@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from voidx.platform.code_ide import CodeIde
 from voidx.platform.code_ide import code_ide_status, detect_code_ides, normalize_ide
-from voidx.agent.slash.helpers import _ide_label
+from voidx.presentation.slash.helpers import _ide_label
 
 
 class IdeCommandsMixin:

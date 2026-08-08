@@ -345,7 +345,7 @@ async def test_compaction_drops_removed_row_cache_entries(tmp_path):
 
 @pytest.mark.asyncio
 async def test_slash_compact_runs_manual_session_compaction(tmp_path):
-    from voidx.agent.slash import SlashHandler
+    from voidx.presentation.slash import SlashHandler
 
     session = await create_session(workspace=str(tmp_path))
     try:

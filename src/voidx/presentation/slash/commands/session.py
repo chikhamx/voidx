@@ -1,8 +1,8 @@
 """Slash /session commands."""
 from __future__ import annotations
 
-from voidx.agent.slash.runtime import _select_from_list
-from voidx.agent.slash.helpers import _format_bytes
+from voidx.presentation.slash.runtime import _select_from_list
+from voidx.presentation.slash.helpers import _format_bytes
 
 
 def _order_sessions_by_workspace(sessions, workspace):

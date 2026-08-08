@@ -113,6 +113,10 @@ def _render_bullets(items: list[PromptRule]) -> str:
     return "\n".join(f"- {item.render()}" for item in items)
 
 
+def language_labels() -> dict[str, tuple[str, str]]:
+    return dict(_LANGUAGE_LABELS)
+
+
 _LANGUAGE_LABELS = {
     "zh-cn": ("Chinese (Simplified)", "zh-CN"),
     "zh": ("Chinese", "zh"),

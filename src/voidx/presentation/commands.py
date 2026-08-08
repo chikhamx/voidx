@@ -1,13 +1,13 @@
 """Slash command palette — Claude Code style. / triggers selectable command list.
 
-Top-level commands derive from ``voidx.agent.slash.registry.SLASH_COMMANDS``
+Top-level commands derive from ``voidx.presentation.slash.registry.SLASH_COMMANDS``
 so a new command is registered in exactly one place and automatically appears
 in ``/help``, the command palette, and the gateway catalog. Sub-command
 entries (e.g. ``/mcp del``) have no dedicated dispatch handler and stay here.
 """
 from __future__ import annotations
 
-from voidx.agent.slash.registry import SLASH_COMMANDS
+from voidx.presentation.slash.registry import SLASH_COMMANDS
 
 _COMMAND_EXTRA: list[tuple[str, str]] = [
     ("/bocha delete", "Delete Bocha API key"),

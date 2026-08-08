@@ -1,7 +1,7 @@
 """Slash /upgrade commands."""
 from __future__ import annotations
 
-from voidx.agent.slash.helpers import _format_timestamp, _format_upgrade_success
+from voidx.presentation.slash.helpers import _format_timestamp, _format_upgrade_success
 
 
 class UpgradeCommandsMixin:

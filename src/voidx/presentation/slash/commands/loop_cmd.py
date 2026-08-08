@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from voidx.agent.domain.automation.loop import LoopSpec
-from voidx.agent.slash.helpers import _parse_interval
+from voidx.presentation.slash.helpers import _parse_interval
 
 
 class LoopCmdCommandsMixin:

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from voidx.agent.slash import SlashHandler
+from voidx.presentation.slash import SlashHandler
 from tests.test_slash.context import command_context
 from voidx.config import Settings
 from voidx.update.service import UpdateCheckResult, UpgradeResult
@@ -13,11 +13,11 @@ from voidx.update.service import UpdateCheckResult, UpgradeResult
 def _capture_output(monkeypatch):
     output: list[str] = []
     monkeypatch.setattr(
-        "voidx.agent.slash.handler.ui.print",
+        "voidx.presentation.slash.handler.ui.print",
         lambda text="": output.append(str(text)),
     )
     monkeypatch.setattr(
-        "voidx.agent.slash.handler.ui.error",
+        "voidx.presentation.slash.handler.ui.error",
         lambda text="": output.append(f"ERROR: {text}"),
     )
     return output

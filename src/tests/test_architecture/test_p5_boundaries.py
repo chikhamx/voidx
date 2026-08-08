@@ -85,8 +85,8 @@ def test_automation_services_are_not_dynamically_injected_or_probed():
     paths = [
         AGENT / "adapters" / "input_router.py",
         AGENT / "adapters" / "langgraph" / "execution.py",
-        AGENT / "slash" / "commands" / "loop_cmd.py",
-        AGENT / "slash" / "commands" / "mode.py",
+        ROOT / "src" / "voidx" / "presentation" / "slash" / "commands" / "loop_cmd.py",
+        ROOT / "src" / "voidx" / "presentation" / "slash" / "commands" / "mode.py",
     ]
     source = "\n".join(path.read_text(encoding="utf-8") for path in paths)
     assert 'getattr(self._execution, "loop_service"' not in source

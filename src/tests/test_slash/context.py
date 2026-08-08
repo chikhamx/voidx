@@ -7,6 +7,11 @@ from voidx.agent.domain.task.intent import InteractionMode
 from voidx.agent.domain.task.state import TaskState
 from voidx.update import service as update_service
 from voidx.presentation.tools import clipboard_image
+from voidx.llm.domain.model import ReasoningEffort
+from voidx.llm.domain.provider import get_context_limit
+from voidx.llm.providers.catalog import PROVIDER_SPECS
+from voidx.agent.application.prompts import _LANGUAGE_LABELS
+from voidx.agent.application.runtime_context import _TONE_LABELS
 
 
 def command_context(**overrides: Any) -> SimpleNamespace:
@@ -39,6 +44,11 @@ def command_context(**overrides: Any) -> SimpleNamespace:
         context._successful_dangerous_calls = set()
         context._successful_dangerous_calls_session_id = None
 
+    def model_factory(*args: Any, **kwargs: Any):
+        from voidx.llm.adapters import langchain_model_factory
+
+        return langchain_model_factory.create_chat_model(*args, **kwargs)
+
     defaults: dict[str, Any] = {
         "interaction_mode_value": lambda: (
             context._interaction_mode.value
@@ -55,6 +65,12 @@ def command_context(**overrides: Any) -> SimpleNamespace:
         "get_aiapproval_config": lambda: None,
         "update_service": update_service,
         "clipboard_image": clipboard_image,
+        "_model_factory": model_factory,
+        "reasoning_effort_type": ReasoningEffort,
+        "context_limit_resolver": get_context_limit,
+        "provider_specs": PROVIDER_SPECS,
+        "language_labels": _LANGUAGE_LABELS,
+        "tone_labels": _TONE_LABELS,
     }
     for name, value in defaults.items():
         setattr(context, name, value)

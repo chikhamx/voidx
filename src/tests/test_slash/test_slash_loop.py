@@ -4,14 +4,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from voidx.agent.slash import SlashHandler
+from voidx.presentation.slash import SlashHandler
 from tests.test_slash.context import command_context
 
 
 def _capture_output(monkeypatch):
     output: list[str] = []
-    monkeypatch.setattr("voidx.agent.slash.handler.ui.print", lambda text="": output.append(str(text)))
-    monkeypatch.setattr("voidx.agent.slash.handler.ui.error", lambda text="": output.append(f"ERROR: {text}"))
+    monkeypatch.setattr("voidx.presentation.slash.handler.ui.print", lambda text="": output.append(str(text)))
+    monkeypatch.setattr("voidx.presentation.slash.handler.ui.error", lambda text="": output.append(f"ERROR: {text}"))
     return output
 
 

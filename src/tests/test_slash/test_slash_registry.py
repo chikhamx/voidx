@@ -1,8 +1,8 @@
 """Slash command registry — single source of truth for dispatch and help."""
 from __future__ import annotations
 
-from voidx.agent.slash import SlashHandler
-from voidx.agent.slash.registry import SLASH_COMMANDS
+from voidx.presentation.slash import SlashHandler
+from voidx.presentation.slash.registry import SLASH_COMMANDS
 from voidx.presentation.commands import COMMANDS
 
 

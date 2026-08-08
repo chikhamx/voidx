@@ -79,3 +79,14 @@ def test_langgraph_adapters_have_final_owner() -> None:
 
     assert [path for path in expected if not (ROOT / path).is_file()] == []
     assert not (ROOT / "src/voidx/agent/infrastructure").exists()
+
+
+def test_slash_commands_are_owned_by_presentation() -> None:
+    expected = (
+        "src/voidx/presentation/slash/__init__.py",
+        "src/voidx/presentation/slash/handler.py",
+        "src/voidx/presentation/slash/commands/__init__.py",
+    )
+
+    assert [path for path in expected if not (ROOT / path).is_file()] == []
+    assert not (ROOT / "src/voidx/agent/slash").exists()

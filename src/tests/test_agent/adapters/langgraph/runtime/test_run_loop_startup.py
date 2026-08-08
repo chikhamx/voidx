@@ -11,7 +11,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 import voidx.persistence.sqlite as store
 
 
-from voidx.agent.slash import SlashHandler
+from voidx.presentation.slash import SlashHandler
 from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.adapters.presentation_adapter import LangGraphRuntimeStatusReader

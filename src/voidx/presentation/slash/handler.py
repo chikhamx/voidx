@@ -4,12 +4,12 @@ from __future__ import annotations
 import asyncio
 from inspect import isawaitable
 from typing import Any
-from voidx.agent.slash.registry import REGISTRY, SLASH_COMMANDS, SlashCommand
-from voidx.agent.slash.runtime import prompt_text
+from voidx.presentation.slash.registry import REGISTRY, SLASH_COMMANDS, SlashCommand
+from voidx.presentation.slash.runtime import prompt_text
 from voidx.agent.ports.ui import NullAgentUiPort
 
 ui = NullAgentUiPort().ui
-from voidx.agent.slash.commands import (
+from voidx.presentation.slash.commands import (
     ModeCommandsMixin,
     SessionCommandsMixin,
     ModelCommandsMixin,

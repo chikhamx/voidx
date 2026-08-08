@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
-from voidx.agent.slash.runtime import _select_from_list, get_providers
+from voidx.presentation.slash.runtime import _select_from_list, get_providers
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,12 +53,13 @@ class ModelCommandsMixin:
 
     async def _model_new(self) -> None:
         """Interactive model configuration — create or update a named profile."""
-        from voidx.llm.adapters.langchain_model_factory import create_chat_model
-
         self.host.ui.print("[bold]Configure LLM[/bold]")
 
         # Step 1: choose provider via arrow keys
-        providers = await get_providers(self.host.settings)
+        providers = await get_providers(
+            self.host.settings,
+            provider_specs=self.host.provider_specs,
+        )
         provider_choices = providers + ["Add custom provider..."]
         idx = await _select_from_list(self.host.app, "Provider", provider_choices)
         if idx is None:
@@ -158,7 +159,7 @@ class ModelCommandsMixin:
         test_cfg.base_url = base_url
         test_cfg.protocol = protocol
 
-        test_model = create_chat_model(api_key, test_cfg)
+        test_model = self.host._model_factory(api_key, test_cfg)
 
         self.host.ui.print()
         self.host.ui.print(f"[dim]  Testing connection to {new_provider}/{new_model}...[/dim]")
@@ -223,7 +224,10 @@ class ModelCommandsMixin:
         current = f"{self.host.config.model.provider}/{self.host.config.model.model}"
         self.host.ui.print(f"[bold]Current:[/bold] [cyan]{current}[/cyan]\n")
 
-        for provider in await get_providers(self.host.settings):
+        for provider in await get_providers(
+            self.host.settings,
+            provider_specs=self.host.provider_specs,
+        ):
             self.host.ui.print(f"  [bold]{provider}[/bold] ", end="")
             try:
                 models = await asyncio.wait_for(
@@ -294,7 +298,6 @@ class ModelCommandsMixin:
 
     async def _model_test(self, target: str) -> None:
         async def _do_test(profile_name: str) -> None:
-            from voidx.llm.adapters.langchain_model_factory import create_chat_model
             settings = self.host.settings
             if settings is None:
                 self.host.ui.error("No Settings reference.")
@@ -308,7 +311,7 @@ class ModelCommandsMixin:
             cfg.model = profile.model
             cfg.base_url = profile.base_url or await settings.resolve_base_url(profile.provider)
             cfg.protocol = profile.protocol or await settings.resolve_protocol(profile.provider)
-            model = create_chat_model(profile.api_key, cfg)
+            model = self.host._model_factory(profile.api_key, cfg)
             self.host.ui.print(f"[dim]Testing {profile.name} ({profile.provider}/{profile.model})...[/dim]")
             ok, err_msg = await self._test_connection(model)
             if ok:
@@ -341,7 +344,6 @@ class ModelCommandsMixin:
         await self._pick_or_act("Delete", target, _do_delete)
 
     async def _model_switch(self, target: str) -> None:
-        from voidx.llm.adapters.langchain_model_factory import create_chat_model
         from voidx.agent.adapters.persistence.session_repository import update_session_model
 
         target, scope = self._model_switch_scope(target)
@@ -379,7 +381,7 @@ class ModelCommandsMixin:
             self.host.config.model.protocol = profile.protocol or await settings.resolve_protocol(profile.provider)
             self._sync_context_limit()
             self.host.api_key = profile.api_key
-            self.host.model = create_chat_model(profile.api_key, self.host.config.model)
+            self.host.model = self.host._model_factory(profile.api_key, self.host.config.model)
             await settings.save_profile(profile, scope=scope)
             if self.host.session:
                 await update_session_model(self.host.session.id, profile.provider, profile.model)
@@ -389,24 +391,23 @@ class ModelCommandsMixin:
         await self._pick_or_act("Switch", target, _do_switch)
 
     async def _model_reasoning(self, effort: str) -> None:
-        from voidx.llm.domain.model import ReasoningEffort
-
-        valid = tuple(item.value for item in ReasoningEffort)
+        reasoning_effort_type = self.host.reasoning_effort_type
+        valid = tuple(item.value for item in reasoning_effort_type)
 
         if effort and effort in valid:
-            new_effort = ReasoningEffort(effort)
+            new_effort = reasoning_effort_type(effort)
         elif not effort:
             current = (
                 self.host.config.model.reasoning_effort.value
                 if self.host.config.model.reasoning_effort is not None
-                else ReasoningEffort.XHIGH.value
+                else reasoning_effort_type.XHIGH.value
             )
             choices = list(valid)
             idx = await _select_from_list(self.host.app, "Select effort", choices)
             if idx is None:
                 self.host.ui.print("[dim]Cancelled.[/dim]")
                 return
-            new_effort = ReasoningEffort(choices[idx])
+            new_effort = reasoning_effort_type(choices[idx])
         else:
             self.host.ui.error(f"Invalid effort: '{effort}'. Use: {', '.join(valid)}")
             return
@@ -415,8 +416,7 @@ class ModelCommandsMixin:
         self._sync_context_limit()
 
         if self.host.api_key:
-            from voidx.llm.adapters.langchain_model_factory import create_chat_model
-            self.host.model = create_chat_model(self.host.api_key, self.host.config.model)
+            self.host.model = self.host._model_factory(self.host.api_key, self.host.config.model)
 
         self.host.ui.print(f"Reasoning effort: [cyan]{new_effort.value}[/cyan] [green]✓[/green]")
 
@@ -473,9 +473,7 @@ class ModelCommandsMixin:
         return " ".join(filtered), scope
 
     def _sync_context_limit(self) -> None:
-        from voidx.llm.domain.provider import get_context_limit
-
-        limit = get_context_limit(self.host.config.model.provider, self.host.config.model.protocol or "", self.host.config.model.context_window)
+        limit = self.host.context_limit_resolver(self.host.config.model.provider, self.host.config.model.protocol or "", self.host.config.model.context_window)
         stats = self.host.usage_stats
         if stats is not None:
             stats.context_limit = limit

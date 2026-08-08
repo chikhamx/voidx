@@ -363,6 +363,12 @@ class LangGraphExecution:
         resolver_model_factory: Callable[..., Any],
         tool_registry_factory: Callable[..., Any],
         scoped_tools_binder: Callable[..., None],
+        slash_handler_factory: Callable[[Any], Any],
+        reasoning_effort_type: Any,
+        context_limit_resolver: Callable[..., int],
+        provider_specs: Any,
+        language_labels: Any,
+        tone_labels: Any,
         update_service: Any | None = None,
         clipboard_image: Any | None = None,
     ):
@@ -397,6 +403,11 @@ class LangGraphExecution:
         self._resolver_model_factory = resolver_model_factory
         self._tool_registry_factory = tool_registry_factory
         self._scoped_tools_binder = scoped_tools_binder
+        self.reasoning_effort_type = reasoning_effort_type
+        self.context_limit_resolver = context_limit_resolver
+        self.provider_specs = provider_specs
+        self.language_labels = language_labels
+        self.tone_labels = tone_labels
         if update_service is None:
             raise RuntimeError("update_service is required")
         self.update_service = update_service
@@ -473,9 +484,7 @@ class LangGraphExecution:
         self._display_policy = ToolDisplayPolicy.from_config(display_config, defaults=DEFAULT_DISPLAY_RULES)
 
         self._build()
-        from voidx.agent.slash import SlashHandler
-
-        self._slash = SlashHandler(self)
+        self._slash = slash_handler_factory(self)
         self._mcp_manager = None
         self._lsp_manager = None
         if external_manager_factory is not None:

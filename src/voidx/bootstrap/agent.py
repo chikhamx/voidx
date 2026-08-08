@@ -109,6 +109,12 @@ def build_agent_components(
     )
     from voidx.bootstrap.tooling import bind_scoped_tools, build_tool_registry
     from voidx.bootstrap.permission import build_permission_service
+    from voidx.presentation.slash import SlashHandler
+    from voidx.llm.domain.model import ReasoningEffort
+    from voidx.llm.domain.provider import get_context_limit
+    from voidx.llm.providers.catalog import PROVIDER_SPECS
+    from voidx.agent.application.prompts import language_labels
+    from voidx.agent.application.runtime_context import tone_labels
 
     def model_catalog_factory(value):
         return build_model_catalog(value)
@@ -137,6 +143,12 @@ def build_agent_components(
         "resolver_model_factory": create_resolver_model,
         "tool_registry_factory": build_tool_registry,
         "scoped_tools_binder": bind_scoped_tools,
+        "slash_handler_factory": SlashHandler,
+        "reasoning_effort_type": ReasoningEffort,
+        "context_limit_resolver": get_context_limit,
+        "provider_specs": PROVIDER_SPECS,
+        "language_labels": language_labels(),
+        "tone_labels": tone_labels(),
         "permission_service_factory": (
             integrations.permission_service_factory or build_permission_service
         ),

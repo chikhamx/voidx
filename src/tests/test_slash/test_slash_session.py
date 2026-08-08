@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 
-from voidx.agent.slash import SlashHandler
+from voidx.presentation.slash import SlashHandler
 from tests.test_slash.context import command_context
 import voidx.persistence.sqlite as store
 from voidx.agent.adapters.persistence.session_repository import MessageRow, create_session, delete_session, get_session, save_message
@@ -72,11 +72,11 @@ def _graph(app=None):
 def _capture_output(monkeypatch):
     output: list[str] = []
     monkeypatch.setattr(
-        "voidx.agent.slash.handler.ui.print",
+        "voidx.presentation.slash.handler.ui.print",
         lambda text="": output.append(str(text)),
     )
     monkeypatch.setattr(
-        "voidx.agent.slash.handler.ui.error",
+        "voidx.presentation.slash.handler.ui.error",
         lambda text="": output.append(f"ERROR: {text}"),
     )
     return output
@@ -403,7 +403,7 @@ async def test_guide_command_submits_pending_guidance():
 async def test_guide_command_without_text_prints_usage(monkeypatch):
     output: list[str] = []
     monkeypatch.setattr(
-        "voidx.agent.slash.handler.ui.print",
+        "voidx.presentation.slash.handler.ui.print",
         lambda text="": output.append(str(text)),
     )
 

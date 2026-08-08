@@ -290,7 +290,7 @@ def test_skills_legacy_references_and_production_fallbacks_are_gone() -> None:
     for relative in (
         "src/voidx/agent/adapters/langgraph/execution.py",
         "src/voidx/agent/application/instruction.py",
-        "src/voidx/agent/slash/commands/skills.py",
+        "src/voidx/presentation/slash/commands/skills.py",
         "src/voidx/presentation/tools/skill_picker.py",
         "src/voidx/presentation/gateway/session/method/references.py",
         "src/voidx/presentation/gateway/session/method/integrations.py",

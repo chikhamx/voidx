@@ -6,9 +6,9 @@ from types import SimpleNamespace
 import pytest
 
 
-from voidx.agent.slash import SlashHandler
+from voidx.presentation.slash import SlashHandler
 from tests.test_slash.context import command_context
-from voidx.agent.slash.runtime import _select_from_list
+from voidx.presentation.slash.runtime import _select_from_list
 from voidx.agent.domain.task.state import GoalSpec, TaskState
 from voidx.config import Config, McpServerConfig, PermissionMode, Settings
 from voidx.platform.code_ide import CodeIde
@@ -59,11 +59,11 @@ class FakeChoiceApp:
 def _capture_handler_output(monkeypatch):
     output: list[str] = []
     monkeypatch.setattr(
-        "voidx.agent.slash.handler.ui.print",
+        "voidx.presentation.slash.handler.ui.print",
         lambda text="": output.append(str(text)),
     )
     monkeypatch.setattr(
-        "voidx.agent.slash.handler.ui.error",
+        "voidx.presentation.slash.handler.ui.error",
         lambda text="": output.append(f"ERROR: {text}"),
     )
     return output
@@ -343,14 +343,17 @@ async def test_model_switch_global_scope_updates_global_and_local(tmp_path, monk
         await delete_model_profile_async(profile_name)
 
 
-def test_model_provider_list_matches_catalog():
-    from voidx.agent.slash.runtime import PROVIDERS
+@pytest.mark.asyncio
+async def test_model_provider_list_matches_catalog():
+    from voidx.presentation.slash.runtime import get_providers
 
-    assert {spec.name for spec in PROVIDER_SPECS}.issubset(PROVIDERS)
+    providers = await get_providers(provider_specs=PROVIDER_SPECS)
+
+    assert {spec.name for spec in PROVIDER_SPECS}.issubset(providers)
 
 
 def test_slash_handler_fallback_ui_is_agent_owned():
-    from voidx.agent.slash.handler import ui as slash_ui
+    from voidx.presentation.slash.handler import ui as slash_ui
     from voidx.agent.ports.ui import NullAgentUiPort
 
     assert type(slash_ui) is type(NullAgentUiPort().ui)

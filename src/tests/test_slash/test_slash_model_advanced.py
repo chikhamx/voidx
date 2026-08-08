@@ -6,9 +6,9 @@ from types import SimpleNamespace
 import pytest
 
 
-from voidx.agent.slash import SlashHandler
+from voidx.presentation.slash import SlashHandler
 from tests.test_slash.context import command_context
-from voidx.agent.slash.runtime import _select_from_list
+from voidx.presentation.slash.runtime import _select_from_list
 from voidx.agent.domain.task.state import GoalSpec, TaskState
 from voidx.config import Config, McpServerConfig, PermissionMode, Settings
 from voidx.platform.code_ide import CodeIde
@@ -45,11 +45,11 @@ class FakeChoiceApp:
 def _capture_handler_output(monkeypatch):
     output: list[str] = []
     monkeypatch.setattr(
-        "voidx.agent.slash.handler.ui.print",
+        "voidx.presentation.slash.handler.ui.print",
         lambda text="": output.append(str(text)),
     )
     monkeypatch.setattr(
-        "voidx.agent.slash.handler.ui.error",
+        "voidx.presentation.slash.handler.ui.error",
         lambda text="": output.append(f"ERROR: {text}"),
     )
     return output
@@ -298,7 +298,7 @@ async def test_code_ide_dispatch_uses_choice_panel(tmp_path, monkeypatch):
     app = FakeChoiceApp(result=CodeIde.CURSOR.value)
     graph = command_context(settings=settings, app=app)
 
-    monkeypatch.setattr("voidx.agent.slash.commands.ide.detect_code_ides", lambda: [])
+    monkeypatch.setattr("voidx.presentation.slash.commands.ide.detect_code_ides", lambda: [])
 
     assert await SlashHandler(graph).dispatch("/code-ide") is True
 

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 
-from voidx.agent.slash import SlashHandler
+from voidx.presentation.slash import SlashHandler
 from tests.test_slash.context import command_context
 from voidx.config import McpServerConfig, Settings
 from voidx.tooling.domain.web import WebToolRoute

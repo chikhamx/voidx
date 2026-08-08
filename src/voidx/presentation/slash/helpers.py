@@ -32,6 +32,31 @@ def _format_bytes(value: int) -> str:
             return f"{size:.1f} {unit}"
         size /= 1024
 
+
+
+def _format_token_count(value: int | None) -> str:
+    value = max(int(value or 0), 0)
+    if value >= 1_000_000:
+        return _format_scaled(value, 1_000_000, "m")
+    if value >= 1_000:
+        return _format_scaled(value, 1_000, "k")
+    return str(value)
+
+
+def _format_scaled(value: int, divisor: int, suffix: str) -> str:
+    if value % divisor == 0:
+        return f"{value // divisor}{suffix}"
+    return f"{value / divisor:.1f}{suffix}"
+
+
+def _format_cache_hit_rate(stats) -> str:
+    rate = stats.cache_hit_rate
+    if rate is None:
+        return "--"
+    percent = max(0, min(round(rate * 100), 100))
+    prefix = "~" if stats.cache_hit_rate_is_estimated else ""
+    return f"{prefix}{percent}%"
+
 def _format_timestamp(value: int | None) -> str:
     if value is None:
         return "never"

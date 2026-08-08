@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from voidx.agent.slash import runtime
+from voidx.presentation.slash import runtime
 from voidx.llm.adapters import langchain_model_factory as provider
 from voidx.llm.adapters import http_model_discovery as adapter
 from voidx.llm.adapters.http_model_discovery import HttpModelDiscovery

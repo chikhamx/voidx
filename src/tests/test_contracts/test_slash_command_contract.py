@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
-from voidx.agent.slash.registry import SLASH_COMMANDS
+from voidx.presentation.slash.registry import SLASH_COMMANDS
 
 from .snapshot import assert_snapshot
 

@@ -5,11 +5,7 @@ from __future__ import annotations
 import asyncio
 import sys
 
-def _builtin_providers(provider_specs=None) -> list[str]:
-    if provider_specs is None:
-        from voidx.llm.providers.catalog import PROVIDER_SPECS
-
-        provider_specs = PROVIDER_SPECS
+def _builtin_providers(provider_specs) -> list[str]:
     return [spec.name for spec in provider_specs]
 
 
@@ -27,21 +23,6 @@ async def get_providers(settings=None, *, provider_specs=None) -> list[str]:
     return base
 
 
-class _ProviderNames:
-    def __iter__(self):
-        return iter(_builtin_providers())
-
-    def __len__(self) -> int:
-        return len(_builtin_providers())
-
-    def __contains__(self, value: object) -> bool:
-        return value in _builtin_providers()
-
-    def __eq__(self, other: object) -> bool:
-        return _builtin_providers() == other
-
-
-PROVIDERS = _ProviderNames()
 
 
 def _w(text: str) -> None:

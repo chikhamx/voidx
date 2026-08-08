@@ -38,6 +38,26 @@ def make_langgraph_execution(*args, ui=None, **kwargs) -> LangGraphExecution:
 
         kwargs.setdefault("tool_registry_factory", build_tool_registry)
         kwargs.setdefault("scoped_tools_binder", bind_scoped_tools)
+    if "slash_handler_factory" not in kwargs:
+        from voidx.presentation.slash import SlashHandler
+
+        kwargs["slash_handler_factory"] = SlashHandler
+    if "reasoning_effort_type" not in kwargs or "context_limit_resolver" not in kwargs:
+        from voidx.llm.domain.model import ReasoningEffort
+        from voidx.llm.domain.provider import get_context_limit
+
+        kwargs.setdefault("reasoning_effort_type", ReasoningEffort)
+        kwargs.setdefault("context_limit_resolver", get_context_limit)
+    if "provider_specs" not in kwargs:
+        from voidx.llm.providers.catalog import PROVIDER_SPECS
+
+        kwargs["provider_specs"] = PROVIDER_SPECS
+    if "language_labels" not in kwargs or "tone_labels" not in kwargs:
+        from voidx.agent.application.prompts import language_labels
+        from voidx.agent.application.runtime_context import tone_labels
+
+        kwargs.setdefault("language_labels", language_labels())
+        kwargs.setdefault("tone_labels", tone_labels())
     if "permission_service_factory" not in kwargs:
         from voidx.tooling.adapters.permission.in_memory_state import create_permission_service
 

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 
-from voidx.agent.slash import SlashHandler
+from voidx.presentation.slash import SlashHandler
 from voidx.agent.application.tool_filters import filter_unavailable_lsp_tools
 from voidx.lsp.adapters.client import LSP_REQUEST_TIMEOUT_SECONDS, encode_lsp_message, create_lsp_client
 from voidx.lsp.domain.errors import LspConnectionError, LspServerUnavailable

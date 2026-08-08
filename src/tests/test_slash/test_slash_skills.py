@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 
-from voidx.agent.slash import SlashHandler
+from voidx.presentation.slash import SlashHandler
 from tests.test_slash.context import command_context
 from voidx.bootstrap.skills import build_skills_api
 from voidx.config import Settings
@@ -88,7 +88,7 @@ async def test_skills_paths_dispatch(tmp_path):
 @pytest.mark.asyncio
 async def test_skills_paths_prints_bundled_source(tmp_path, monkeypatch):
     output: list[str] = []
-    monkeypatch.setattr("voidx.agent.slash.handler.ui.print", lambda text="": output.append(str(text)))
+    monkeypatch.setattr("voidx.presentation.slash.handler.ui.print", lambda text="": output.append(str(text)))
     graph = _skills_context(tmp_path, Settings(str(tmp_path)))
 
     assert await SlashHandler(graph).dispatch("/skills paths") is True

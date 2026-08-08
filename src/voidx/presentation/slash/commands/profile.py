@@ -1,9 +1,9 @@
 """Slash /profile commands."""
 from __future__ import annotations
 
-from voidx.agent.slash.runtime import _select_from_list
+from voidx.presentation.slash.runtime import _select_from_list
 from voidx.agent.domain.user_profile import UserProfile
-from voidx.agent.slash.helpers import _normalize_language, _normalize_tone
+from voidx.presentation.slash.helpers import _normalize_language, _normalize_tone
 
 
 class ProfileCommandsMixin:
@@ -22,11 +22,11 @@ class ProfileCommandsMixin:
         self._apply_tone(value)
 
     async def _lang_interactive(self) -> None:
-        from voidx.agent.application.prompts import _LANGUAGE_LABELS
+        language_labels = self.host.language_labels
 
         items: list[str] = []
         values: list[str] = []
-        for _key, (name, tag) in _LANGUAGE_LABELS.items():
+        for _key, (name, tag) in language_labels.items():
             items.append(f"{name} [{tag}]")
             values.append(tag)
         if self.host.app is None:
@@ -44,11 +44,11 @@ class ProfileCommandsMixin:
             self._apply_language(selected)
 
     async def _tone_interactive(self) -> None:
-        from voidx.agent.application.runtime_context import _TONE_LABELS
+        tone_labels = self.host.tone_labels
 
         items: list[str] = []
         values: list[str] = []
-        for value, (name, description, _instruction) in _TONE_LABELS.items():
+        for value, (name, description, _instruction) in tone_labels.items():
             items.append(f"{name} - {description}")
             values.append(value)
         if self.host.app is None:

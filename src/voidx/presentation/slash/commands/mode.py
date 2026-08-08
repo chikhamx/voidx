@@ -3,6 +3,10 @@ from __future__ import annotations
 
 from voidx.tooling.adapters.git_diff import git_diff, git_diff_stat
 from voidx.agent.domain.task.intent import InteractionMode
+from voidx.presentation.slash.helpers import (
+    _format_cache_hit_rate,
+    _format_token_count,
+)
 
 
 class ModeCommandsMixin:
@@ -61,7 +65,6 @@ class ModeCommandsMixin:
         )
 
     def _usage(self) -> None:
-        from voidx.llm.usage import format_cache_hit_rate, format_token_count
 
         stats = self.host.usage_stats
         if stats is None:
@@ -70,21 +73,21 @@ class ModeCommandsMixin:
 
         self.host.ui.print("[bold]Token Usage[/bold]")
         self.host.ui.print(
-            f"  Context: [cyan]{format_token_count(stats.context_tokens)}[/cyan]"
-            f" / {format_token_count(stats.context_limit)}"
+            f"  Context: [cyan]{_format_token_count(stats.context_tokens)}[/cyan]"
+            f" / {_format_token_count(stats.context_limit)}"
         )
         self.host.ui.print(
-            f"  Last call: in [cyan]{format_token_count(stats.last_input_tokens)}[/cyan]"
-            f" · out [cyan]{format_token_count(stats.last_output_tokens)}[/cyan]"
+            f"  Last call: in [cyan]{_format_token_count(stats.last_input_tokens)}[/cyan]"
+            f" · out [cyan]{_format_token_count(stats.last_output_tokens)}[/cyan]"
             " · cache read "
-            f"[cyan]{format_token_count(stats.last_cache_read_tokens or stats.last_estimated_cache_read_tokens)}[/cyan]"
-            f" · write [cyan]{format_token_count(stats.last_cache_write_tokens)}[/cyan]"
+            f"[cyan]{_format_token_count(stats.last_cache_read_tokens or stats.last_estimated_cache_read_tokens)}[/cyan]"
+            f" · write [cyan]{_format_token_count(stats.last_cache_write_tokens)}[/cyan]"
         )
         self.host.ui.print(
-            f"  Session: in [cyan]{format_token_count(stats.total_input_tokens)}[/cyan]"
-            f" · out [cyan]{format_token_count(stats.total_output_tokens)}[/cyan]"
-            f" · total [cyan]{format_token_count(stats.total_tokens)}[/cyan]"
-            f" · cache {format_cache_hit_rate(stats)}"
+            f"  Session: in [cyan]{_format_token_count(stats.total_input_tokens)}[/cyan]"
+            f" · out [cyan]{_format_token_count(stats.total_output_tokens)}[/cyan]"
+            f" · total [cyan]{_format_token_count(stats.total_tokens)}[/cyan]"
+            f" · cache {_format_cache_hit_rate(stats)}"
             f" · calls {stats.total_calls}"
         )
 

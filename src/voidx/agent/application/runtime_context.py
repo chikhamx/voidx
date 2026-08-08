@@ -589,6 +589,11 @@ _TONE_LABELS: dict[str, tuple[str, str, str]] = {
 
 
 
+
+def tone_labels() -> dict[str, tuple[str, str, str]]:
+    return dict(_TONE_LABELS)
+
+
 def _tone_instruction(value: str) -> str:
     text = value.strip()
     label = _TONE_LABELS.get(text.lower())
