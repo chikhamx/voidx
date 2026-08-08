@@ -7,7 +7,7 @@ import inspect
 from collections.abc import Awaitable
 from typing import Any
 
-from voidx.logging import log_internal_error
+from voidx.observability import log_internal_error
 from rich.markup import escape
 
 from voidx.presentation.output.agent_display import subagent_display_name

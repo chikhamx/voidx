@@ -12,8 +12,8 @@ import httpx
 
 from voidx.mcp.domain.config import McpServerConfig
 from voidx.mcp.domain.errors import McpConnectionError, McpProtocolError, McpTimeoutError
-from voidx.logging import log_internal_error
-from voidx.logging.tool_log import log_tool_event
+from voidx.observability import log_internal_error
+from voidx.observability.tool_log import log_tool_event
 from voidx.platform.retry_config import RetryConfig
 from voidx.platform.retry import retry_async
 from voidx.mcp.adapters.client.http_transport import StreamableHttpTransportMixin

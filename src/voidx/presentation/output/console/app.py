@@ -7,7 +7,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
 
-from voidx.logging.tool_log import log_tool_event
+from voidx.observability.tool_log import log_tool_event
 from voidx.presentation.output.console.formatting import (
     _capture_ansi,
     _done_spin,

@@ -5,6 +5,7 @@ from typing import Any
 
 from voidx.agent.domain.task.intent import InteractionMode
 from voidx.agent.domain.task.state import TaskState
+from voidx.update import service as update_service
 
 
 def command_context(**overrides: Any) -> SimpleNamespace:
@@ -51,6 +52,7 @@ def command_context(**overrides: Any) -> SimpleNamespace:
         "persist_runtime_state": noop_async,
         "set_session_title": noop_async,
         "get_aiapproval_config": lambda: None,
+        "update_service": update_service,
     }
     for name, value in defaults.items():
         setattr(context, name, value)

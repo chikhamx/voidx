@@ -12,7 +12,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from voidx.tooling.adapters.persistence.result_storage import persist_named_tool_result
-from voidx.logging.tool_log import log_tool_event
+from voidx.observability.tool_log import log_tool_event
 from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import ToolResult
 from voidx.platform.paths import resolve_tool_path as _resolve_tool_path

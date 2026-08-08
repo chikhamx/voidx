@@ -101,6 +101,7 @@ def build_agent_components(
     workspace_write_lock = DelegatingWorkspaceWriteLock()
     from voidx.bootstrap.providers import build_model_catalog
     from voidx.bootstrap.skills import build_skills_api_provider
+    from voidx.update import service as update_service
 
     def model_catalog_factory(value):
         return build_model_catalog(value)
@@ -123,6 +124,7 @@ def build_agent_components(
         "external_manager_factory": integrations.external_manager_factory,
         "mcp_reference_resolver": integrations.mcp_reference_resolver,
         "web_route": integrations.web_route,
+        "update_service": update_service,
     }
     if integrations.permission_service_factory is not None:
         execution_kwargs["permission_service_factory"] = integrations.permission_service_factory

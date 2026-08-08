@@ -6,7 +6,7 @@ from typing import Any
 
 from rich.markup import escape
 
-from voidx.logging.tool_log import log_tool_event
+from voidx.observability.tool_log import log_tool_event
 from voidx.presentation.output.tree import OutputNode
 
 

@@ -6,7 +6,7 @@ from typing import NamedTuple
 from pydantic import BaseModel, Field, model_validator
 
 from voidx.tooling.domain.diff import make_file_diff, make_structured_diff, render_numbered_diff
-from voidx.logging.tool_log import log_tool_event
+from voidx.observability.tool_log import log_tool_event
 from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import ToolResult
 from voidx.tooling.application.authorization import authorized_path as _resolve_tool_path_for_access

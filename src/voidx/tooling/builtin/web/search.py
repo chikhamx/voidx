@@ -11,7 +11,7 @@ from html.parser import HTMLParser
 import httpx
 from pydantic import BaseModel, Field
 
-from voidx.logging.tool_log import log_tool_event
+from voidx.observability.tool_log import log_tool_event
 from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import (
     ToolResult,

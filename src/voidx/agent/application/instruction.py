@@ -19,9 +19,9 @@ from pathlib import Path
 
 import httpx
 
-from voidx.logging.request_log import log_llm_diagnostic
+from voidx.observability.request_log import log_llm_diagnostic
 from voidx.mcp.auto import render_available_mcp_servers
-from voidx.logging.tool_log import log_tool_event
+from voidx.observability.tool_log import log_tool_event
 from voidx.platform.paths import voidx_home
 from voidx.agent.application.automation.workflow.service import WorkflowService
 from voidx.agent.domain.automation.workflow import WorkflowRunState

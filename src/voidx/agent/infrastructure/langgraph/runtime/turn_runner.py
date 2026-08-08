@@ -35,7 +35,7 @@ from voidx.agent.domain.task.state import (
     goal_type_from_join,
 )
 from voidx.llm.message_status import message_status
-from voidx.logging.tool_log import log_tool_event
+from voidx.observability.tool_log import log_tool_event
 from voidx.agent.adapters.persistence.session_repository import MessageRow, count_messages, create_session, delete_messages_from, load_messages, save_message, touch_session, update_title
 from voidx.agent.adapters.persistence.runtime_state_repository import MessageRuntimeSnapshot, save_message_runtime_snapshot
 from voidx.persistence.sqlite import now as memory_now

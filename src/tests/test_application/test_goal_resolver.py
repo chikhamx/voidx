@@ -275,7 +275,7 @@ async def test_goal_resolver_propagates_review_only_route():
 
 @pytest.mark.asyncio
 async def test_goal_resolver_legacy_shape_sets_kind_hint_only_in_logs(tmp_path, monkeypatch):
-    from voidx.logging import request_log
+    from voidx.observability import request_log
 
     monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", tmp_path)
     model = StructuredModel(
@@ -541,7 +541,7 @@ async def test_goal_resolver_falls_back_to_general_when_structured_output_fails(
 
 @pytest.mark.asyncio
 async def test_goal_resolver_logs_fallback_decision(tmp_path, monkeypatch):
-    from voidx.logging import request_log
+    from voidx.observability import request_log
 
     monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", tmp_path)
 
@@ -572,7 +572,7 @@ async def test_goal_resolver_logs_fallback_decision(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_goal_resolver_logs_native_request_and_response(tmp_path, monkeypatch):
-    from voidx.logging import request_log
+    from voidx.observability import request_log
 
     monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", tmp_path)
 

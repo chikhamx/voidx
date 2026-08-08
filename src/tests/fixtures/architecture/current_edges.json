@@ -3689,13 +3689,6 @@
     "remove_by": "P6"
   },
   {
-    "source": "voidx.llm.adapters.http_model_discovery",
-    "target": "voidx.logging.tool_log",
-    "rule": "top_level_dependency",
-    "reason": "logging migration is deferred to P7",
-    "remove_by": "P7"
-  },
-  {
     "source": "voidx.llm.context",
     "target": "voidx.config.defaults",
     "rule": "top_level_dependency",
@@ -4541,96 +4534,5 @@
     "rule": "top_level_dependency",
     "reason": "Agent composition moves fully to bootstrap in P4",
     "remove_by": "P4"
-  },
-  {
-    "source": "voidx.lsp.adapters.client.stdio",
-    "target": "voidx.logging",
-    "rule": "top_level_dependency",
-    "reason": "foundation logging rename to observability in P7",
-    "remove_by": "P7"
-  },
-  {
-    "source": "voidx.lsp.adapters.client.stdio",
-    "target": "voidx.logging.tool_log",
-    "rule": "top_level_dependency",
-    "reason": "foundation logging rename to observability in P7",
-    "remove_by": "P7"
-  },
-  {
-    "source": "voidx.lsp.adapters.client.stdio",
-    "target": "voidx.runtime.processes",
-    "rule": "top_level_dependency",
-    "reason": "foundation runtime processes rename to platform in P7",
-    "remove_by": "P7"
-  },
-  {
-    "source": "voidx.mcp.adapters.client.base",
-    "target": "voidx.logging",
-    "rule": "top_level_dependency",
-    "reason": "foundation logging rename to observability in P7",
-    "remove_by": "P7"
-  },
-  {
-    "source": "voidx.mcp.adapters.client.base",
-    "target": "voidx.logging.tool_log",
-    "rule": "top_level_dependency",
-    "reason": "foundation logging rename to observability in P7",
-    "remove_by": "P7"
-  },
-  {
-    "source": "voidx.mcp.adapters.client.base",
-    "target": "voidx.runtime.processes",
-    "rule": "top_level_dependency",
-    "reason": "foundation runtime processes rename to platform in P7",
-    "remove_by": "P7"
-  },
-  {
-    "source": "voidx.mcp.adapters.client.http_transport",
-    "target": "voidx.logging.tool_log",
-    "rule": "top_level_dependency",
-    "reason": "foundation logging rename to observability in P7",
-    "remove_by": "P7"
-  },
-  {
-    "source": "voidx.mcp.adapters.client.sse_transport",
-    "target": "voidx.logging.tool_log",
-    "rule": "top_level_dependency",
-    "reason": "foundation logging rename to observability in P7",
-    "remove_by": "P7"
-  },
-  {
-    "source": "voidx.mcp.adapters.client.stdio_transport",
-    "target": "voidx.logging.tool_log",
-    "rule": "top_level_dependency",
-    "reason": "foundation logging rename to observability in P7",
-    "remove_by": "P7"
-  },
-  {
-    "source": "voidx.mcp.adapters.client.stdio_transport",
-    "target": "voidx.runtime.processes",
-    "rule": "top_level_dependency",
-    "reason": "foundation runtime processes rename to platform in P7",
-    "remove_by": "P7"
-  },
-  {
-    "source": "voidx.mcp.application.manager",
-    "target": "voidx.logging",
-    "rule": "top_level_dependency",
-    "reason": "foundation logging rename to observability in P7",
-    "remove_by": "P7"
-  },
-  {
-    "source": "voidx.mcp.application.manager",
-    "target": "voidx.logging.tool_log",
-    "rule": "top_level_dependency",
-    "reason": "foundation logging rename to observability in P7",
-    "remove_by": "P7"
-  },
-  {
-    "source": "voidx.tooling.policy.git.process",
-    "target": "voidx.runtime.processes",
-    "rule": "top_level_dependency",
-    "reason": "foundation runtime processes rename to platform in P7",
-    "remove_by": "P7"
   }
 ]

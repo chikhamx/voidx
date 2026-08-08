@@ -7,7 +7,7 @@ from typing import Awaitable, Callable
 
 from voidx.agent.ports.presentation import RuntimeStatusReader
 from voidx.agent.ports.ui import AgentUiPort
-from voidx.logging.tool_log import log_tool_event
+from voidx.observability.tool_log import log_tool_event
 from voidx.presentation.output.events import StartupShown
 
 
@@ -83,7 +83,7 @@ class StartupPresenter:
         if self._update_check_due is None or not self._update_check_due():
             return
         try:
-            from voidx.selfupdate import check_for_update, upgrade_hint
+            from voidx.update.service import check_for_update, upgrade_hint
 
             result = await check_for_update()
             if self._mark_update_check is not None:

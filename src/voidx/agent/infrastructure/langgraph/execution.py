@@ -375,6 +375,7 @@ class LangGraphExecution:
         mcp_reference_resolver: Callable[..., Awaitable[Any]] | None = None,
         web_route: Callable[..., Awaitable[Any]] | None = None,
         permission_service_factory: Callable[..., Any] = _in_memory_permission_service,
+        update_service: Any | None = None,
     ):
         self.config = config
         self.api_key = api_key
@@ -403,6 +404,9 @@ class LangGraphExecution:
         self._mcp_reference_resolver = mcp_reference_resolver
         self._web_route = web_route
         self._permission_service_factory = permission_service_factory
+        if update_service is None:
+            raise RuntimeError("update_service is required")
+        self.update_service = update_service
         self._ai_approval = AiApprovalService(
             model_factory=create_chat_model,
             resolver_model_factory=create_resolver_model,

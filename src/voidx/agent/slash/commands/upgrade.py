@@ -1,7 +1,6 @@
 """Slash /upgrade commands."""
 from __future__ import annotations
 
-from voidx.selfupdate import check_for_update, is_newer, perform_upgrade, upgrade_hint
 from voidx.agent.slash.helpers import _format_timestamp, _format_upgrade_success
 
 
@@ -22,7 +21,7 @@ class UpgradeCommandsMixin:
             self.host.ui.error("Usage: /upgrade [check|now|on|off|status]")
 
     async def _upgrade_check(self) -> None:
-        result = await check_for_update()
+        result = await self.host.update_service.check_for_update()
         settings = self.host.settings
         mark_update_check = getattr(settings, "mark_update_check", None)
         if callable(mark_update_check):
@@ -32,16 +31,16 @@ class UpgradeCommandsMixin:
             return
         self.host.ui.print(result.message)
         if result.update_available:
-            self.host.ui.print(f"[dim]{upgrade_hint()}[/dim]")
+            self.host.ui.print(f"[dim]{self.host.update_service.upgrade_hint()}[/dim]")
 
     async def _upgrade_now(self) -> None:
         target = self._cached_upgrade_target()
         if target is not None:
             self.host.ui.print(f"[dim]Upgrading to voidx {target}...[/dim]")
-            result = await perform_upgrade(target)
+            result = await self.host.update_service.perform_upgrade(target)
         else:
             self.host.ui.print("[dim]Checking for updates...[/dim]")
-            result = await perform_upgrade()
+            result = await self.host.update_service.perform_upgrade()
         if result.ok:
             self.host.ui.print(_format_upgrade_success(result))
         else:
@@ -78,7 +77,7 @@ class UpgradeCommandsMixin:
             return None
         get_latest = getattr(settings, "get_update_check_latest_version", None)
         latest = get_latest() if callable(get_latest) else None
-        if isinstance(latest, str) and is_newer(latest):
+        if isinstance(latest, str) and self.host.update_service.is_newer(latest):
             return latest
         return None
 

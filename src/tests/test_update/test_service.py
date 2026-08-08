@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from voidx import selfupdate
+from voidx.update import service as selfupdate
 
 
 def test_is_newer_compares_stable_versions() -> None:
@@ -573,3 +573,18 @@ def test_clear_install_marker_logs_failure(monkeypatch, tmp_path) -> None:
     selfupdate._clear_install_marker()
 
     assert errors == [("selfupdate_marker_clear", "unlink failed")]
+
+
+def test_current_version_reads_installed_package_metadata(monkeypatch) -> None:
+    monkeypatch.setattr(selfupdate, "package_version", lambda _name: "9.1.2")
+
+    assert selfupdate.current_version() == "9.1.2"
+
+
+def test_current_version_falls_back_when_package_is_not_installed(monkeypatch) -> None:
+    def missing(_name: str) -> str:
+        raise selfupdate.PackageNotFoundError
+
+    monkeypatch.setattr(selfupdate, "package_version", missing)
+
+    assert selfupdate.current_version() == "0.0.0"

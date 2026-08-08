@@ -221,7 +221,7 @@ def test_llm_application_does_not_import_adapters_or_config() -> None:
             if node.module.startswith((
                 "voidx.llm.adapters",
                 "voidx.config",
-                "voidx.logging",
+                "voidx.observability",
             )):
                 offenders.append(f"{path.name}:{node.lineno}:{node.module}")
     assert offenders == []

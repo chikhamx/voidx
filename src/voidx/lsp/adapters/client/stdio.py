@@ -8,8 +8,8 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-from voidx.logging import log_internal_error
-from voidx.logging.tool_log import log_tool_event
+from voidx.observability import log_internal_error
+from voidx.observability.tool_log import log_tool_event
 from voidx.lsp.domain import LspConnectionError, LspRequestError, LspServerConfig, LspTimeoutError
 from voidx.lsp.domain.schema import parse_diagnostics
 from voidx.lsp.ports.client import LSP_REQUEST_TIMEOUT_SECONDS

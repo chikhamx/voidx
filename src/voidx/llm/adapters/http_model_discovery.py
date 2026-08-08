@@ -10,7 +10,7 @@ import httpx
 
 from voidx.llm.application.model_catalog import sort_models_latest_first
 from voidx.llm.providers.gemini import strip_gemini_version_suffix
-from voidx.logging.tool_log import log_tool_event
+from voidx.observability.tool_log import log_tool_event
 
 
 def catalog_log_event(event: str, **kwargs) -> None:

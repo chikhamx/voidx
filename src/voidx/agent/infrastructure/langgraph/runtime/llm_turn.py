@@ -41,7 +41,7 @@ from voidx.agent.infrastructure.langgraph.runtime.streaming import (
 )
 from voidx.agent.infrastructure.langgraph.runtime.topology import latest_user_text, prepare_state
 from voidx.agent.application.workflow_utils import active_workflow_names
-from voidx.logging.request_log import log_llm_exchange
+from voidx.observability.request_log import log_llm_exchange
 from voidx.llm.domain.provider import resolve_protocol
 from voidx.llm.usage import estimate_context_tokens_with_tools, estimate_message_tokens, extract_token_usage
 from voidx.agent.infrastructure.langgraph.runtime.control_protocol import (

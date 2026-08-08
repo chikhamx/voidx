@@ -1,4 +1,4 @@
-"""Tests for voidx.logging.request_log."""
+"""Tests for voidx.observability.request_log."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from voidx.logging.request_log import (
+from voidx.observability.request_log import (
     _serialize_message,
     _serialize_response,
     log_llm_diagnostic,
@@ -110,7 +110,7 @@ class TestSerializeResponse:
 
 class TestLogLlmExchange:
     def test_writes_jsonl(self, tmp_path, monkeypatch):
-        from voidx.logging import request_log
+        from voidx.observability import request_log
 
         monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", tmp_path)
 
@@ -141,7 +141,7 @@ class TestLogLlmExchange:
         assert entry["response"]["usage"]["input_tokens"] == 10
 
     def test_appends_multiple_calls(self, tmp_path, monkeypatch):
-        from voidx.logging import request_log
+        from voidx.observability import request_log
 
         monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", tmp_path)
 
@@ -169,7 +169,7 @@ class TestLogLlmExchange:
         assert entry2["response"]["content"] == "a2"
 
     def test_no_session_id_omitted(self, tmp_path, monkeypatch):
-        from voidx.logging import request_log
+        from voidx.observability import request_log
 
         monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", tmp_path)
 
@@ -186,7 +186,7 @@ class TestLogLlmExchange:
         assert "session_id" not in entry
 
     def test_creates_log_dir(self, tmp_path, monkeypatch):
-        from voidx.logging import request_log
+        from voidx.observability import request_log
 
         nested = tmp_path / "deep" / "logs"
         monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", nested)
@@ -202,7 +202,7 @@ class TestLogLlmExchange:
         assert (nested / "llm_requests.jsonl").exists()
 
     def test_serialization_failure_does_not_raise(self, tmp_path, monkeypatch):
-        from voidx.logging import request_log
+        from voidx.observability import request_log
 
         monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", tmp_path)
 
@@ -220,7 +220,7 @@ class TestLogLlmExchange:
         )
 
     def test_write_failure_does_not_raise(self, tmp_path, monkeypatch):
-        from voidx.logging import request_log
+        from voidx.observability import request_log
 
         read_only = tmp_path / "readonly"
         read_only.mkdir()
@@ -238,7 +238,7 @@ class TestLogLlmExchange:
 
 class TestLogLlmDiagnostic:
     def test_writes_jsonl_event(self, tmp_path, monkeypatch):
-        from voidx.logging import request_log
+        from voidx.observability import request_log
 
         monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", tmp_path)
 
@@ -259,7 +259,7 @@ class TestLogLlmDiagnostic:
 
 class TestLogLlmExchangeToggle:
     def test_enabled_false_skips_write(self, tmp_path, monkeypatch):
-        from voidx.logging import request_log
+        from voidx.observability import request_log
 
         monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", tmp_path)
 
@@ -276,7 +276,7 @@ class TestLogLlmExchangeToggle:
         assert not log_file.exists()
 
     def test_enabled_true_writes(self, tmp_path, monkeypatch):
-        from voidx.logging import request_log
+        from voidx.observability import request_log
 
         monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", tmp_path)
 
@@ -295,7 +295,7 @@ class TestLogLlmExchangeToggle:
 
 class TestLogLlmDiagnosticToggle:
     def test_enabled_false_skips_write(self, tmp_path, monkeypatch):
-        from voidx.logging import request_log
+        from voidx.observability import request_log
 
         monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", tmp_path)
 
@@ -305,7 +305,7 @@ class TestLogLlmDiagnosticToggle:
         assert not log_file.exists()
 
     def test_enabled_true_writes(self, tmp_path, monkeypatch):
-        from voidx.logging import request_log
+        from voidx.observability import request_log
 
         monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", tmp_path)
 

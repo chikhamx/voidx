@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 import time
 from voidx.platform.code_ide import CodeIde
-from voidx.selfupdate import UpgradeResult
+from typing import Protocol
 from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 
 def _ide_label(value: str) -> str:
@@ -37,7 +37,13 @@ def _format_timestamp(value: int | None) -> str:
         return "never"
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(value))
 
-def _format_upgrade_success(result: UpgradeResult) -> str:
+
+
+class UpgradeResultView(Protocol):
+    version: str | None
+    message: str
+
+def _format_upgrade_success(result: UpgradeResultView) -> str:
     if result.version is None:
         return result.message
     return f"[green]{result.message}[/green]"

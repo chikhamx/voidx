@@ -4,7 +4,7 @@ from voidx.agent.infrastructure.ui_events import FileChangeAppended, StatusFinis
 from voidx.agent.infrastructure.display_policy import ToolDisplayMode, ToolDisplayPolicy
 
 from voidx.tooling.domain.diff import diff_stat
-from voidx.logging.tool_log import log_tool_event
+from voidx.observability.tool_log import log_tool_event
 
 
 async def notify_tool_started(host, tc, display_policy) -> object | None:

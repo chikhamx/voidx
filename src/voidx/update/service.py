@@ -13,9 +13,9 @@ from urllib.parse import quote
 
 import httpx
 
-from voidx import __version__
-from voidx.logging import log_internal_error
-from voidx.logging.tool_log import log_tool_event
+from importlib.metadata import PackageNotFoundError, version as package_version
+from voidx.observability import log_internal_error
+from voidx.observability.tool_log import log_tool_event
 
 
 PYPI_JSON_URL = "https://pypi.org/pypi/{package}/json"
@@ -116,6 +116,14 @@ print(json.dumps(payload))
 """
 
 
+
+
+def current_version() -> str:
+    try:
+        return package_version("voidx")
+    except PackageNotFoundError:
+        return "0.0.0"
+
 async def fetch_latest_version(package: str = "voidx", timeout: float = 5.0) -> str | None:
     """Fetch the latest package version from PyPI JSON metadata."""
     url = PYPI_JSON_URL.format(package=quote(package))
@@ -128,8 +136,9 @@ async def fetch_latest_version(package: str = "voidx", timeout: float = 5.0) -> 
     return version if isinstance(version, str) and version.strip() else None
 
 
-def is_newer(latest: str, current: str = __version__) -> bool:
+def is_newer(latest: str, current: str | None = None) -> bool:
     """Return True when latest is a newer stable release than current."""
+    current = current or current_version()
     latest_key = _stable_release_key(latest)
     current_key = _stable_release_key(current)
     if latest_key is None or current_key is None:
@@ -140,8 +149,9 @@ def is_newer(latest: str, current: str = __version__) -> bool:
     return latest_padded > current_padded
 
 
-async def check_for_update(current: str = __version__) -> UpdateCheckResult:
+async def check_for_update(current: str | None = None) -> UpdateCheckResult:
     """Check PyPI for a newer stable voidx release."""
+    current = current or current_version()
     try:
         latest = await fetch_latest_version()
     except Exception as exc:
@@ -176,8 +186,14 @@ async def check_for_update(current: str = __version__) -> UpdateCheckResult:
     )
 
 
-async def perform_upgrade(version: str | None = None, timeout: float = 120.0) -> UpgradeResult:
+async def perform_upgrade(
+    version: str | None = None,
+    timeout: float = 120.0,
+    *,
+    current: str | None = None,
+) -> UpgradeResult:
     """Explicitly upgrade the Python package in the current virtual environment."""
+    current = current or current_version()
     if _launched_by_npm():
         return UpgradeResult(
             ok=False,
@@ -193,7 +209,7 @@ async def perform_upgrade(version: str | None = None, timeout: float = 120.0) ->
 
     target = version
     if target is None:
-        check = await check_for_update()
+        check = await check_for_update(current)
         if check.error:
             return UpgradeResult(ok=False, version=None, message=check.message)
         target = check.latest_version
@@ -203,8 +219,8 @@ async def perform_upgrade(version: str | None = None, timeout: float = 120.0) ->
         return UpgradeResult(ok=False, version=None, message="Unable to determine upgrade target.")
     if _stable_release_key(target) is None:
         return UpgradeResult(ok=False, version=target, message="Upgrade target is not a stable voidx release.")
-    if not is_newer(target, __version__):
-        return UpgradeResult(ok=True, version=target, message=f"voidx is already up to date ({__version__}).")
+    if not is_newer(target, current):
+        return UpgradeResult(ok=True, version=target, message=f"voidx is already up to date ({current}).")
 
     env = {
         **os.environ,

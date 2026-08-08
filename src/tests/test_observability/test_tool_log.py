@@ -1,4 +1,4 @@
-"""Tests for voidx.logging.tool_log."""
+"""Tests for voidx.observability.tool_log."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from voidx.logging.tool_log import log_tool_event
+from voidx.observability.tool_log import log_tool_event
 
 
 class TestLogToolEvent:
@@ -75,7 +75,7 @@ class TestLogToolEvent:
 
 class TestLogRotation:
     def test_rotates_when_file_exceeds_limit(self, tmp_path: Path) -> None:
-        from voidx.logging.tool_log import _MAX_LOG_BYTES, _rotate_if_needed
+        from voidx.observability.tool_log import _MAX_LOG_BYTES, _rotate_if_needed
 
         log_file = tmp_path / "agent_events.jsonl"
         log_file.write_text("x" * (_MAX_LOG_BYTES + 1), encoding="utf-8")
@@ -88,7 +88,7 @@ class TestLogRotation:
         assert log_file.stat().st_size == 0
 
     def test_no_rotation_when_under_limit(self, tmp_path: Path) -> None:
-        from voidx.logging.tool_log import _MAX_LOG_BYTES, _rotate_if_needed
+        from voidx.observability.tool_log import _MAX_LOG_BYTES, _rotate_if_needed
 
         log_file = tmp_path / "agent_events.jsonl"
         log_file.write_text("small", encoding="utf-8")
@@ -100,7 +100,7 @@ class TestLogRotation:
         assert log_file.read_text(encoding="utf-8") == "small"
 
     def test_shifts_existing_rotated_files(self, tmp_path: Path) -> None:
-        from voidx.logging.tool_log import _MAX_LOG_BYTES, _rotate_if_needed
+        from voidx.observability.tool_log import _MAX_LOG_BYTES, _rotate_if_needed
 
         log_file = tmp_path / "agent_events.jsonl"
         rot1 = tmp_path / "agent_events.1.jsonl"

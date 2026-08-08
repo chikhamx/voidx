@@ -412,7 +412,7 @@ async def test_status_finished_without_prior_update_does_not_log_orphan(isolated
     def fake_log_tool_event(event, *, tool_name="", message="", **kwargs):
         orphan_calls.append({"event": event, "tool_name": tool_name, "message": message})
 
-    monkeypatch.setattr("voidx.logging.tool_log.log_tool_event", fake_log_tool_event)
+    monkeypatch.setattr("voidx.observability.tool_log.log_tool_event", fake_log_tool_event)
 
     isolated_dock.begin_capture()
     bus = UiEventBus()
@@ -435,7 +435,7 @@ async def test_status_finished_for_existing_record_only_status_no_orphan(isolate
     def fake_log_tool_event(event, *, tool_name="", message="", **kwargs):
         orphan_calls.append({"event": event, "tool_name": tool_name, "message": message})
 
-    monkeypatch.setattr("voidx.logging.tool_log.log_tool_event", fake_log_tool_event)
+    monkeypatch.setattr("voidx.observability.tool_log.log_tool_event", fake_log_tool_event)
 
     isolated_dock.begin_capture()
     bus = UiEventBus()

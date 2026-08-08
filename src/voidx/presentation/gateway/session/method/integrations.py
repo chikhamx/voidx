@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voidx.logging import log_internal_error
+from voidx.observability import log_internal_error
 from voidx.presentation.protocol.v2.methods import MethodParamsError
 
 

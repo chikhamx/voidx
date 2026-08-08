@@ -6,7 +6,7 @@ import asyncio
 import json
 
 from voidx.mcp.domain.errors import McpConnectionError
-from voidx.logging.tool_log import log_tool_event
+from voidx.observability.tool_log import log_tool_event
 from voidx.platform.processes import create_owned_subprocess_exec
 
 

@@ -20,8 +20,8 @@ from rich.markup import escape
 from rich.text import Text
 
 from voidx.agent.domain.profile import RuntimeProfile
-from voidx.logging import log_internal_error
-from voidx.logging.external import install_external_log_bridge
+from voidx.observability import log_internal_error
+from voidx.observability.external import install_external_log_bridge
 from voidx.platform.paths import voidx_workspace_dir
 from voidx.presentation.output.dock import dock
 from voidx.presentation.output.dock.formatting import text_from_line

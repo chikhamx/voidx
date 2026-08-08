@@ -30,7 +30,7 @@ from voidx.config import Config
 from voidx.llm.usage import UsageStats
 from voidx.agent.adapters.persistence.runtime_state_repository import RuntimeStateSnapshot, save_runtime_state
 from voidx.agent.adapters.persistence.session_repository import MessageRow, create_session, get_session, load_messages, save_message, update_title
-from voidx.selfupdate import UpdateCheckResult
+from voidx.update.service import UpdateCheckResult
 from voidx.agent.application.automation.workflow.runtime import WorkflowActivationSource, WorkflowRunState, WorkflowRunStatus
 from voidx.agent.application.runtime.task_tracker import TaskTracker
 from voidx.presentation.output.dock import BottomInputDock, set_dock

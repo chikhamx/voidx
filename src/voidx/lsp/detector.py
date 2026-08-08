@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from voidx.logging import log_internal_error
+from voidx.observability import log_internal_error
 from voidx.lsp.detector_data import (
     LANGUAGE_DEFAULTS,
     _EXTENSION_MAP,

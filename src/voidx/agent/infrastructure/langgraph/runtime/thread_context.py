@@ -17,7 +17,7 @@ from voidx.agent.application.runtime_context import ContextCompilerCache, Intera
 from voidx.agent.domain.task.state import TaskState
 from voidx.agent.adapters.persistence.session_repository import SessionInfo, get_session
 from voidx.agent.adapters.persistence.runtime_state_repository import load_runtime_state
-from voidx.runtime.execution_context import ExecutionIdentity, bind_execution_identity
+from voidx.platform.execution_context import ExecutionIdentity, bind_execution_identity
 
 if TYPE_CHECKING:
     from langchain_core.messages import BaseMessage

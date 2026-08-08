@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from pydantic import BaseModel, Field, model_validator
 
 from voidx.agent.application.workflow_utils import active_workflow_names
-from voidx.logging.request_log import log_llm_diagnostic, serialize_llm_message
+from voidx.observability.request_log import log_llm_diagnostic, serialize_llm_message
 from voidx.agent.domain.task.intent import InteractionMode, TaskIntent, _contains_any
 from enum import Enum
 from voidx.agent.domain.task.state import (

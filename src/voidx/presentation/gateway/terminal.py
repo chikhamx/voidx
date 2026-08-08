@@ -17,7 +17,7 @@ import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
-from voidx.logging import log_internal_error
+from voidx.observability import log_internal_error
 
 _IS_WINDOWS = sys.platform == "win32"
 

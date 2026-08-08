@@ -1,11 +1,11 @@
-"""Tests for voidx.logging.internal_error."""
+"""Tests for voidx.observability.internal_error."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from voidx.logging.internal_error import log_internal_error
+from voidx.observability.internal_error import log_internal_error
 
 
 class TestLogInternalError:
@@ -61,7 +61,7 @@ class TestLogInternalError:
     def test_never_raises_on_write_failure(self, tmp_path: Path, monkeypatch) -> None:
         log_file = tmp_path / "internal_error.jsonl"
         monkeypatch.setattr(
-            "voidx.logging.internal_error._rotate_if_needed",
+            "voidx.observability.internal_error._rotate_if_needed",
             lambda path: (_ for _ in ()).throw(OSError("rotate failed")),
         )
         log_internal_error(RuntimeError("x"), context="y", log_path=log_file)

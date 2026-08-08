@@ -9,8 +9,8 @@ from urllib.parse import parse_qs, urlparse
 
 from websockets.asyncio.server import Server, ServerConnection, serve
 
-from voidx.logging import log_internal_error
-from voidx.logging.tool_log import log_tool_event
+from voidx.observability import log_internal_error
+from voidx.observability.tool_log import log_tool_event
 
 from voidx.presentation.gateway.session import GatewaySession
 from voidx.presentation.protocol.v2.envelope import (

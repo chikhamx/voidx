@@ -4,7 +4,7 @@ import logging
 
 
 def test_external_log_bridge_routes_warning_and_restores_logging(tmp_path, monkeypatch):
-    from voidx.logging.external import install_external_log_bridge
+    from voidx.observability.external import install_external_log_bridge
 
     namespace = "langchain_openai"
     namespace_logger = logging.getLogger(namespace)

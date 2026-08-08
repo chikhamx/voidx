@@ -10,7 +10,7 @@ from typing import Any
 from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 from voidx.platform.paths import resolve_tool_path as _resolve_tool_path
 from voidx.tooling.application.authorization import sandbox_paths_for_access as _sandbox_paths_for_access
-from voidx.logging.tool_log import log_tool_event
+from voidx.observability.tool_log import log_tool_event
 
 from voidx.tooling.builtin.git.constants import DIFF_HUNK_MAX_CHARS
 from voidx.tooling.builtin.git.models import GitRepo

@@ -8,7 +8,7 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
-from voidx.logging.tool_log import log_tool_event
+from voidx.observability.tool_log import log_tool_event
 from voidx.mcp.domain.errors import McpConnectionError
 
 

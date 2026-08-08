@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from voidx.logging import log_internal_error
-from voidx.logging.tool_log import log_tool_event
+from voidx.observability import log_internal_error
+from voidx.observability.tool_log import log_tool_event
 
 from voidx.mcp.domain.errors import McpConnectionError
 from voidx.mcp.ports.client import McpClient, McpClientFactory

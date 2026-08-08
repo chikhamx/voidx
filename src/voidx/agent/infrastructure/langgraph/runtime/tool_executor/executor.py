@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from langchain_core.messages import AIMessage, ToolMessage
 
-from voidx.logging.tool_log import log_tool_event
+from voidx.observability.tool_log import log_tool_event
 from voidx.agent.domain.task.intent import InteractionMode
 from voidx.agent.infrastructure.langgraph.runtime.runtime import current_parent_tool_call_id
 from voidx.agent.application.workflow_utils import active_workflow_names

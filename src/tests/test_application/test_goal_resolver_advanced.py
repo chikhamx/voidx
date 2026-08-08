@@ -36,7 +36,7 @@ class StructuredModel:
 
 @pytest.mark.asyncio
 async def test_goal_resolver_validation_error_falls_back_to_general(tmp_path, monkeypatch):
-    from voidx.logging import request_log
+    from voidx.observability import request_log
 
     monkeypatch.setattr(request_log, "_DEFAULT_LOG_DIR", tmp_path)
 

@@ -4,7 +4,7 @@ import pytest
 
 
 def test_execution_identity_defaults_to_empty_values():
-    from voidx.runtime.execution_context import current_execution_identity
+    from voidx.platform.execution_context import current_execution_identity
 
     identity = current_execution_identity()
 
@@ -13,7 +13,7 @@ def test_execution_identity_defaults_to_empty_values():
 
 
 def test_bind_execution_identity_is_nested_and_resets():
-    from voidx.runtime.execution_context import (
+    from voidx.platform.execution_context import (
         ExecutionIdentity,
         bind_execution_identity,
         current_execution_identity,
@@ -33,7 +33,7 @@ def test_bind_execution_identity_is_nested_and_resets():
 
 @pytest.mark.asyncio
 async def test_bind_execution_identity_isolated_between_concurrent_tasks():
-    from voidx.runtime.execution_context import (
+    from voidx.platform.execution_context import (
         ExecutionIdentity,
         bind_execution_identity,
         current_execution_identity,

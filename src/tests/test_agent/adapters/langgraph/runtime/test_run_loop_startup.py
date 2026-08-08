@@ -32,7 +32,7 @@ from voidx.llm.domain.model import ModelConfig
 from voidx.llm.usage import UsageStats
 from voidx.agent.adapters.persistence.runtime_state_repository import RuntimeStateSnapshot, save_runtime_state
 from voidx.agent.adapters.persistence.session_repository import MessageRow, create_session, get_session, load_messages, save_message, update_title
-from voidx.selfupdate import UpdateCheckResult
+from voidx.update.service import UpdateCheckResult
 from voidx.agent.application.automation.workflow.runtime import WorkflowActivationSource, WorkflowRunState, WorkflowRunStatus
 from voidx.agent.application.runtime.task_tracker import TaskTracker
 from voidx.presentation.output.dock import BottomInputDock, set_dock
@@ -78,8 +78,8 @@ async def test_startup_update_check_appends_update_notice(tmp_path, monkeypatch)
             message="voidx 9.0.0 is available.",
         )
 
-    monkeypatch.setattr("voidx.selfupdate.check_for_update", fake_check_for_update)
-    monkeypatch.setattr("voidx.selfupdate.upgrade_hint", lambda: "Run /upgrade now")
+    monkeypatch.setattr("voidx.update.service.check_for_update", fake_check_for_update)
+    monkeypatch.setattr("voidx.update.service.upgrade_hint", lambda: "Run /upgrade now")
 
     await StartupPresenter(
         LangGraphRuntimeStatusReader(graph.test_host),
@@ -114,7 +114,7 @@ async def test_startup_update_check_skips_when_ttl_not_due(tmp_path, monkeypatch
     async def fail_check_for_update():
         raise AssertionError("check_for_update should not run before TTL expires")
 
-    monkeypatch.setattr("voidx.selfupdate.check_for_update", fail_check_for_update)
+    monkeypatch.setattr("voidx.update.service.check_for_update", fail_check_for_update)
 
     await StartupPresenter(
         LangGraphRuntimeStatusReader(graph.test_host),

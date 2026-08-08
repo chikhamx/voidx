@@ -17,6 +17,10 @@ def make_langgraph_execution(*args, ui=None, **kwargs) -> LangGraphExecution:
         api = SkillsApi(SkillService(SkillRegistry(workspace)))
         kwargs["skills_api"] = api
         kwargs["skills_api_provider"] = lambda _workspace: api
+    if "update_service" not in kwargs:
+        from voidx.update import service as update_service
+
+        kwargs["update_service"] = update_service
 
     return LangGraphExecution(
         *args,
