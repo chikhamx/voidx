@@ -42,6 +42,7 @@ from voidx.presentation.gateway.session.method.terminal import TerminalMethods
 
 RuntimeStateProvider = Callable[[], dict[str, object]]
 SettingsUpdateHandler = Callable[[object], Awaitable[None] | None]
+SkillsApiFactory = Callable[[str], Awaitable[Any]]
 
 
 class ProtocolClient(Protocol):
@@ -72,6 +73,8 @@ class GatewaySession(
         mcp_catalog_provider: Callable[[], list] | None = None,
         usage_stats_provider: Callable[[], object] | None = None,
         settings_factory: Callable[[str], Awaitable[object]] | None = None,
+        skills_api_factory: SkillsApiFactory | None = None,
+        skills_api_provider: Callable[[str], object] | None = None,
     ) -> None:
         self._tree_provider = tree_providers
         self._session_id = session_id or thread_id
@@ -88,6 +91,8 @@ class GatewaySession(
         self._usage_stats_provider = usage_stats_provider
         self._clients: set[ProtocolClient] = set()
         self._settings_factory = settings_factory
+        self._skills_api_factory = skills_api_factory
+        self._skills_api_provider = skills_api_provider
         self._seq = 0
         self._thread_id_provider: Callable[[], str] | None = None
         self._persisted_sync_task: asyncio.Task[None] | None = None

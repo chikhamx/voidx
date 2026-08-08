@@ -22,6 +22,9 @@ from voidx.agent.adapters.tools.interaction.checkpoint import PlanCheckpointTool
 from voidx.agent.adapters.tools.compaction import CompactContextTool
 from voidx.tooling.builtin.web.fetch import WebFetchTool
 from voidx.tooling.builtin.web.search import WebSearchTool
+from voidx.skills.application.api import SkillsApi
+from voidx.skills.registry import SkillRegistry
+from voidx.skills.service import SkillService
 from voidx.tooling.adapters.skills import SkillsTool
 from voidx.tooling.builtin.document import DocumentTool
 from voidx.agent.adapters.tools.subagent import AgentTool
@@ -160,8 +163,9 @@ async def test_websearch_invalid_args_returns_error():
 
 
 @pytest.mark.asyncio
-async def test_skills_invalid_args_returns_error():
-    result = await SkillsTool().execute({"op": 123}, _CTX)
+async def test_skills_invalid_args_returns_error(tmp_path):
+    skills_api = SkillsApi(SkillService(SkillRegistry(str(tmp_path))))
+    result = await SkillsTool(skills_api).execute({"op": 123}, _CTX)
     assert isinstance(result, ToolResult)
     assert result.metadata.get("error") is True
 

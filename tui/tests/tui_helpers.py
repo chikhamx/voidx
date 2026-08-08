@@ -7,6 +7,8 @@ from rich.console import Console
 from rich.text import Text
 
 
+from voidx.bootstrap.skills import build_skills_api_provider
+from voidx.config import Settings
 from voidx.presentation.commands import COMMANDS
 from voidx.presentation.output.dock import BottomInputDock, set_dock
 from voidx_cli import PureTui
@@ -26,7 +28,11 @@ def setup_dock():
 def _tui(tmp_path: Path | None = None, *, commands: list[tuple[str, str]] | None = None) -> PureTui:
     workspace = str(tmp_path) if tmp_path is not None else "/tmp/workspace"
     status = SimpleNamespace(workspace=workspace)
-    return PureTui(status, commands or COMMANDS)
+    tui = PureTui(status, commands or COMMANDS)
+    tui.set_skills_api_provider(
+        build_skills_api_provider(workspace, Settings(workspace))
+    )
+    return tui
 
 
 def _render_lines(tui: PureTui, *, width: int = 100) -> list[str]:

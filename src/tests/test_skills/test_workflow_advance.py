@@ -26,7 +26,7 @@ from voidx.agent.application.automation.workflow.runtime import (
     advance_workflow_states,
 )
 from voidx.skills.schema import SkillSelectionConfig
-from voidx.skills.references import skill_reference_message
+from voidx.skills.application.resolve_references import ResolveSkillReferences
 from voidx.skills.service import SkillService
 from voidx.presentation.tools.skill_picker import list_skill_candidates
 from voidx.agent.application.automation.workflow.service import WorkflowService

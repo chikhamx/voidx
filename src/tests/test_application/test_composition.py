@@ -62,6 +62,7 @@ def test_bootstrap_build_agent_app_owns_terminal_composition(monkeypatch):
         ui=SimpleNamespace(),
         bind_presentation_snapshots=snapshots.append,
         bind_startup_presenter=lambda _presenter: None,
+        skills_api_provider=lambda _workspace: SimpleNamespace(service=object()),
     )
     service = object()
     captured = {}

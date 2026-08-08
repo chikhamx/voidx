@@ -18,6 +18,7 @@ from voidx.tooling.ports.web_route import WebRoute
 def build_integration_plugins(
     *,
     settings: Any = None,
+    skills_api_provider: Any = None,
     web_route: WebRoute | None = None,
     lsp_operations: LspOperations | None = None,
     authorization: AuthorizationRuntime | None = None,
@@ -29,7 +30,7 @@ def build_integration_plugins(
     return [
         FileScopedPlugin(LspTool(lsp_operations, authorization), authorization, files),
         FileScopedPlugin(LspFormatTool(lsp_operations), authorization, files),
-        SkillsTool(settings=settings),
+        SkillsTool(skills_api_provider),
         WebFetchTool(settings=settings, retry_config=retry_config, web_route=web_route),
         WebSearchTool(settings=settings, web_route=web_route),
     ]

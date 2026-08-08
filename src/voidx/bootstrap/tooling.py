@@ -41,12 +41,17 @@ def build_tool_registry(
     settings: Settings | None,
     config: Config,
     subagent_runner: Callable[..., Any],
+    skills_api_provider: Any,
     web_route: Callable[..., Any] | None = None,
 ) -> tuple[TaskTracker, ToolRegistry]:
     tracker = TaskTracker()
     plugins = [
         *build_builtin_plugins(),
-        *build_integration_plugins(settings=settings, web_route=web_route),
+        *build_integration_plugins(
+            settings=settings,
+            skills_api_provider=skills_api_provider,
+            web_route=web_route,
+        ),
         McpGatewayTool(None),
         *build_agent_plugins(
             tracker=tracker,

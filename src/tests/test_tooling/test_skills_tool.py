@@ -9,9 +9,16 @@ import pytest
 
 from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
+from voidx.skills.application.api import SkillsApi
+from voidx.skills.registry import SkillRegistry
+from voidx.skills.service import SkillService
 from voidx.tooling.adapters.skills import SkillsTool, SkillsInput
 
 
+
+
+def _tool(workspace: Path) -> SkillsTool:
+    return SkillsTool(lambda _workspace: SkillsApi(SkillService(SkillRegistry(str(workspace)))))
 class TestSkillsToolLoad:
     def _write_skill(self, workspace: Path, dirname: str, text: str) -> None:
         skill_dir = workspace / ".voidx" / "skills" / dirname
@@ -25,7 +32,7 @@ class TestSkillsToolLoad:
             "---\nname: docs\ndescription: Write docs\n---\nDocs body",
         )
 
-        result = await SkillsTool().execute(
+        result = await _tool(tmp_path).execute(
             {"op": "load", "name": "docs"},
             ToolContext(workspace=str(tmp_path)),
         )
@@ -44,7 +51,7 @@ class TestSkillsToolLoad:
             "---\nname: exists\ndescription: Exists\n---\nBody",
         )
 
-        result = await SkillsTool().execute(
+        result = await _tool(tmp_path).execute(
             {"op": "load", "name": "nope"},
             ToolContext(workspace=str(tmp_path)),
         )
@@ -60,7 +67,7 @@ class TestSkillsToolLoad:
             "---\nname: disabled\nenabled: false\n---\nBody",
         )
 
-        result = await SkillsTool().execute(
+        result = await _tool(tmp_path).execute(
             {"op": "load", "name": "disabled"},
             ToolContext(workspace=str(tmp_path)),
         )
@@ -70,7 +77,7 @@ class TestSkillsToolLoad:
 
     @pytest.mark.asyncio
     async def test_load_rejects_path_input(self, tmp_path):
-        result = await SkillsTool().execute(
+        result = await _tool(tmp_path).execute(
             {"op": "load", "name": ".voidx/skills/docs/SKILL.md"},
             ToolContext(workspace=str(tmp_path)),
         )
@@ -81,7 +88,7 @@ class TestSkillsToolLoad:
 
     @pytest.mark.asyncio
     async def test_load_empty_name_returns_missing_not_invalid(self, tmp_path):
-        result = await SkillsTool().execute(
+        result = await _tool(tmp_path).execute(
             {"op": "load", "name": ""},
             ToolContext(workspace=str(tmp_path)),
         )
@@ -93,7 +100,7 @@ class TestSkillsToolLoad:
 class TestSkillsToolCreate:
     @pytest.mark.asyncio
     async def test_create_project_skill(self, tmp_path):
-        result = await SkillsTool().execute(
+        result = await _tool(tmp_path).execute(
             {"op": "create", "name": "react-patterns", "description": "React patterns", "body": "Use hooks."},
             ToolContext(workspace=str(tmp_path)),
         )
@@ -113,7 +120,7 @@ class TestSkillsToolCreate:
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
         (tmp_path / "home").mkdir()
 
-        result = await SkillsTool().execute(
+        result = await _tool(tmp_path).execute(
             {"op": "create", "name": "global-helper", "description": "Helper", "body": "Body.", "scope": "global"},
             ToolContext(workspace=str(tmp_path)),
         )
@@ -128,7 +135,7 @@ class TestSkillsToolCreate:
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text("---\nname: exists\n---\nOld body", encoding="utf-8")
 
-        result = await SkillsTool().execute(
+        result = await _tool(tmp_path).execute(
             {"op": "create", "name": "exists", "description": "New", "body": "New body"},
             ToolContext(workspace=str(tmp_path)),
         )
@@ -139,7 +146,7 @@ class TestSkillsToolCreate:
 
     @pytest.mark.asyncio
     async def test_create_invalid_name_returns_error(self, tmp_path):
-        result = await SkillsTool().execute(
+        result = await _tool(tmp_path).execute(
             {"op": "create", "name": "Bad Name", "description": "Desc", "body": "Body"},
             ToolContext(workspace=str(tmp_path)),
         )
@@ -148,7 +155,7 @@ class TestSkillsToolCreate:
 
     @pytest.mark.asyncio
     async def test_create_output_mentions_explicit_reference_and_auto_command(self, tmp_path):
-        result = await SkillsTool().execute(
+        result = await _tool(tmp_path).execute(
             {"op": "create", "name": "my-skill", "description": "Desc", "body": "Body"},
             ToolContext(workspace=str(tmp_path)),
         )
@@ -162,17 +169,17 @@ class TestSkillsToolCreate:
     async def test_create_os_error_returns_friendly_message(self, tmp_path, monkeypatch):
         from voidx.tooling.adapters.skills import SkillsTool as _ST
 
-        tool = _ST()
-        original = _ST._registry_for
+        skills_api = SkillsApi(SkillService(SkillRegistry(str(tmp_path))))
+        tool = _ST(lambda _workspace: skills_api)
 
-        class _BadRegistry:
-            project_dir = tmp_path / "project"
-            global_dir = tmp_path / "global"
+        def fail_create(*args, **kwargs):
+            raise OSError("Permission denied")
 
-            def create_skill(self, *args, **kwargs):
-                raise OSError("Permission denied")
-
-        tool._registry_for = lambda ws: _BadRegistry()
+        monkeypatch.setattr(
+            skills_api.service.registry,
+            "create_skill",
+            fail_create,
+        )
 
         result = await tool.execute(
             {"op": "create", "name": "fail-skill", "description": "Desc", "body": "Body"},
@@ -200,7 +207,7 @@ class TestSkillsToolList:
             "---\nname: lint\ndescription: Lint code\nenabled: false\n---\nBody",
         )
 
-        result = await SkillsTool().execute(
+        result = await _tool(tmp_path).execute(
             {"op": "list"},
             ToolContext(workspace=str(tmp_path)),
         )
@@ -220,7 +227,7 @@ class TestSkillsToolList:
     @pytest.mark.asyncio
     async def test_list_empty_returns_count_zero(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
-        result = await SkillsTool().execute(
+        result = await _tool(tmp_path).execute(
             {"op": "list"},
             ToolContext(workspace=str(tmp_path)),
         )
@@ -230,17 +237,47 @@ class TestSkillsToolList:
 
 
 class TestSkillsToolSchema:
-    def test_parameters_schema_has_op_field(self):
-        schema = SkillsTool().parameters_schema()
+    def test_parameters_schema_has_op_field(self, tmp_path):
+        schema = _tool(tmp_path).parameters_schema()
         assert "op" in schema["properties"]
         assert "load" in schema["properties"]["op"]["enum"]
         assert "create" in schema["properties"]["op"]["enum"]
         assert "list" in schema["properties"]["op"]["enum"]
 
-    def test_parameters_schema_has_all_fields(self):
-        schema = SkillsTool().parameters_schema()
+    def test_parameters_schema_has_all_fields(self, tmp_path):
+        schema = _tool(tmp_path).parameters_schema()
         props = schema["properties"]
         assert "name" in props
         assert "description" in props
         assert "body" in props
         assert "scope" in props
+
+
+@pytest.mark.asyncio
+async def test_tool_uses_execution_context_workspace(tmp_path):
+    primary = tmp_path / "primary"
+    secondary = tmp_path / "secondary"
+    skill_dir = secondary / ".voidx" / "skills" / "secondary-skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: secondary-skill\ndescription: Secondary\n---\nBody",
+        encoding="utf-8",
+    )
+
+    calls: list[str] = []
+
+    def api_for_workspace(workspace: str) -> SkillsApi:
+        calls.append(str(Path(workspace).resolve()))
+        return SkillsApi(SkillService(SkillRegistry(workspace)))
+
+    tool = SkillsTool(api_for_workspace)
+    result = await tool.execute(
+        {"op": "list"},
+        ToolContext(workspace=str(secondary)),
+    )
+
+    assert "secondary-skill" in {
+        item["name"] for item in result.metadata["skills"]
+    }
+    assert calls == [str(secondary.resolve())]
+    assert not (primary / ".voidx" / "skills").exists()

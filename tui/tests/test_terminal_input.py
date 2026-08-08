@@ -100,13 +100,13 @@ def test_input_cursor_position_accounts_for_wrapped_long_line(tmp_path, monkeypa
     assert int(match.group(1)) == 3
 
 
-def test_skill_panel_reuses_candidate_service_between_queries(tmp_path, monkeypatch):
+def test_skill_panel_reuses_injected_candidate_service_between_queries(tmp_path, monkeypatch):
     import voidx_cli.panels as panels
 
     services = []
 
-    def fake_list_skill_candidates(workspace, query, limit=8, *, service=None):
-        del workspace, query, limit
+    def fake_list_skill_candidates(query, limit=8, *, service):
+        del query, limit
         services.append(service)
         return []
 

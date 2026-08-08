@@ -9,13 +9,25 @@ import pytest
 from voidx.presentation.gateway.session import GatewaySession
 from voidx.presentation.output.dock import BottomInputDock
 from voidx.presentation.protocol.v2.envelope import JsonRpcRequest, JsonRpcResult
+from voidx.skills.application.api import SkillsApi
+from voidx.skills.registry import SkillRegistry
+from voidx.skills.service import SkillService
 
 from tests.test_skills.conftest import _write_skill
 
 
 def _session(workspace: str) -> GatewaySession:
     dock = BottomInputDock()
-    return GatewaySession(lambda: dock.tree, thread_id="t1", workspace=workspace)
+
+    async def skills_api_factory(target_workspace: str) -> SkillsApi:
+        return SkillsApi(SkillService(SkillRegistry(target_workspace)))
+
+    return GatewaySession(
+        lambda: dock.tree,
+        thread_id="t1",
+        workspace=workspace,
+        skills_api_factory=skills_api_factory,
+    )
 
 
 @pytest.mark.asyncio

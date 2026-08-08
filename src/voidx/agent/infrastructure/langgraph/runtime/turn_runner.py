@@ -39,7 +39,6 @@ from voidx.logging.tool_log import log_tool_event
 from voidx.agent.adapters.persistence.session_repository import MessageRow, count_messages, create_session, delete_messages_from, load_messages, save_message, touch_session, update_title
 from voidx.agent.adapters.persistence.runtime_state_repository import MessageRuntimeSnapshot, save_message_runtime_snapshot
 from voidx.persistence.sqlite import now as memory_now
-from voidx.skills.references import skill_reference_message
 from voidx.agent.application.automation.workflow.service import reconcile_workflow_runs_for_turn
 from voidx.agent.domain.automation.workflow import WorkflowRunStatus
 
@@ -122,12 +121,10 @@ class TurnRunner:
             try:
                 host._ui.session_tracker.begin_turn(host._workspace)
                 has_ref = "$" in user_text
-                skill_service = host._skill_service_for_references() if has_ref else None
-                skill_refs = skill_reference_message(
-                    user_text,
-                    host._workspace,
-                    settings=host._settings,
-                    service=skill_service,
+                skill_refs = (
+                    host._resolve_skill_references(user_text)
+                    if has_ref
+                    else _EmptyReferenceMessage()
                 )
                 mcp_refs = _EmptyReferenceMessage()
                 if has_ref and host._mcp_reference_resolver is not None:

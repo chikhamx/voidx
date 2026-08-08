@@ -1,7 +1,7 @@
 """Slash /skills commands."""
 from __future__ import annotations
 
-from voidx.skills.service import SkillRegistry, SkillService
+from voidx.skills.service import SkillService
 
 
 class SkillsCommandsMixin:
@@ -28,15 +28,7 @@ class SkillsCommandsMixin:
             self.host.ui.error("Usage: /skills [list|show|enable|disable|auto|manual|paths]")
 
     def _skill_service(self) -> SkillService:
-        selection = (
-            self.host.settings.get_skill_selection()
-            if self.host.settings is not None
-            else None
-        )
-        return SkillService(
-            SkillRegistry(self.host.workspace),
-            selection=selection,
-        )
+        return self.host.skills_api.service
 
     def _skills_list(self) -> None:
         service = self._skill_service()
@@ -108,7 +100,7 @@ class SkillsCommandsMixin:
         self.host.ui.print(f"[dim]{name} set to {mode}. Saved to {path}[/dim]")
 
     def _skills_paths(self) -> None:
-        registry = SkillRegistry(self.host.workspace)
+        registry = self._skill_service().registry
         self.host.ui.print("[bold]Skill paths:[/bold]")
         self.host.ui.print(f"  bundled [dim]{registry.bundled_dir}[/dim]")
         self.host.ui.print(f"  global  [dim]{registry.global_dir}[/dim]")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
@@ -9,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from voidx.skills.context import render_skill_tool_context
 from voidx.skills.registry import SkillRegistry, normalize_skill_name
-from voidx.skills.schema import SkillSelectionConfig
+from voidx.skills.application.api import SkillsApi
 from voidx.skills.service import SkillService
 from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import ToolResult
@@ -77,11 +78,9 @@ class SkillsTool:
         "Load/list are read-only; create writes a SKILL.md file."
     )
 
-    def __init__(self, settings=None) -> None:
+    def __init__(self, skills_api_provider: Callable[[str], SkillsApi]) -> None:
         super().__init__()
-        self._settings = settings
-        self._skill_service: SkillService | None = None
-        self._skill_service_signature: tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...]] | None = None
+        self._skills_api_provider = skills_api_provider
 
     def parameters_schema(self) -> dict:
         return model_to_json_schema(SkillsInput)
@@ -144,7 +143,7 @@ class SkillsTool:
         description = inp.description or ""
         body = inp.body or ""
 
-        registry = self._registry_for(ctx.workspace)
+        registry = self._skills_api_provider(ctx.workspace).service.registry
         try:
             path = registry.create_skill(name, description, body, scope=inp.scope)
         except ValueError as exc:
@@ -206,23 +205,12 @@ class SkillsTool:
             metadata={"skills": structured, "count": len(skills)},
         )
 
-    def _registry_for(self, workspace: str) -> SkillRegistry:
-        return SkillRegistry(workspace)
-
     def _existing_skill_path(self, registry: SkillRegistry, name: str, scope: str) -> Path:
         root = registry.project_dir if scope == "project" else registry.global_dir
         return root / name / "SKILL.md"
 
     def _skill_service_for(self, workspace: str) -> SkillService:
-        selection = self._settings.get_skill_selection() if self._settings is not None else None
-        signature = _skill_service_signature(workspace, selection)
-        if self._skill_service is None or self._skill_service_signature != signature:
-            self._skill_service = SkillService(
-                SkillRegistry(signature[0]),
-                selection=selection,
-            )
-            self._skill_service_signature = signature
-        return self._skill_service
+        return self._skills_api_provider(workspace).service
 
 
 def _looks_like_path(name: str) -> bool:
@@ -236,14 +224,6 @@ def _looks_like_path(name: str) -> bool:
     )
 
 
-def _skill_service_signature(
-    workspace: str,
-    selection: SkillSelectionConfig | None,
-) -> tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
-    resolved = str(Path(workspace).resolve())
-    if selection is None:
-        return resolved, (), (), ()
-    return resolved, tuple(sorted(selection.enabled)), tuple(sorted(selection.disabled)), tuple(sorted(selection.auto))
 
 
 def _error_result(

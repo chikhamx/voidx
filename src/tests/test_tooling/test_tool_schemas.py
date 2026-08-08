@@ -33,6 +33,9 @@ from voidx.agent.application.runtime.task_tracker import TaskTracker
 from voidx.agent.adapters.tools.todo import TodoInput, TodoWriteTool
 from voidx.tooling.application.registry import ToolRegistry
 from voidx.agent.adapters.tools.interaction.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
+from voidx.skills.application.api import SkillsApi
+from voidx.skills.registry import SkillRegistry
+from voidx.skills.service import SkillService
 from voidx.tooling.adapters.skills import SkillsTool
 from voidx.tooling.builtin.document import DocumentTool, DocumentInput
 from voidx.agent.adapters.tools.interaction.checkpoint import PlanCheckpointTool
@@ -215,7 +218,7 @@ class TestToolSchemas:
         assert inp.command == "ls"
         assert inp.timeout == 120
 
-    def test_execution_and_discovery_tool_descriptions_are_precise_for_llms(self):
+    def test_execution_and_discovery_tool_descriptions_are_precise_for_llms(self, tmp_path):
         git_schema = GitTool().parameters_schema()
         bash_schema = BashTool().parameters_schema()
         powershell_schema = PowerShellTool().parameters_schema()
@@ -223,7 +226,8 @@ class TestToolSchemas:
         search_schema = SearchTool().parameters_schema()
         lsp_schema = LspTool().parameters_schema()
         lsp_format_schema = LspFormatTool().parameters_schema()
-        skill_schema = SkillsTool().parameters_schema()
+        skills_api = SkillsApi(SkillService(SkillRegistry(str(tmp_path))))
+        skill_schema = SkillsTool(skills_api).parameters_schema()
 
         assert "do not include the git executable" in git_schema["properties"]["args"]["description"]
         assert "read-only commands return structured JSON" in GitTool.description

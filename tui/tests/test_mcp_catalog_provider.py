@@ -48,3 +48,30 @@ def test_skill_matches_passes_none_when_no_provider(tmp_path: Path, monkeypatch)
     tui._skill_matches()
 
     assert captured_catalogs == [None]
+
+
+def test_skill_matches_without_skills_provider_still_lists_mcp(tmp_path: Path, monkeypatch):
+    import voidx_cli.panels as panels
+
+    mcp_candidate = panels.McpCandidate(
+        name="tavily",
+        description="Search",
+        mode="manual",
+    )
+    monkeypatch.setattr(
+        panels,
+        "list_skill_candidates",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("local skills require an injected provider")
+        ),
+    )
+    monkeypatch.setattr(
+        panels,
+        "list_mcp_candidates",
+        lambda *args, **kwargs: [mcp_candidate],
+    )
+    tui = PureTui(type("Status", (), {"workspace": str(tmp_path)})(), [])
+    tui._input_lines = ["#tav"]
+    tui._cursor_col = len("#tav")
+
+    assert [candidate.name for candidate in tui._skill_matches()] == ["tavily"]

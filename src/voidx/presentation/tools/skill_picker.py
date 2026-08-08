@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from voidx.config import Settings
-from voidx.skills.service import SkillRegistry, SkillService
+from voidx.skills.service import SkillService
 
 
 @dataclass(frozen=True)
@@ -41,18 +40,11 @@ def find_skill_token(text: str, cursor: int) -> SkillToken | None:
 
 
 def list_skill_candidates(
-    workspace: str,
     query: str,
     limit: int = 8,
     *,
-    service: SkillService | None = None,
+    service: SkillService,
 ) -> list[SkillCandidate]:
-    if service is None:
-        settings = Settings(workspace)
-        service = SkillService(
-            SkillRegistry(workspace),
-            selection=settings.get_skill_selection(),
-        )
     query_lower = query.strip().lower()
     prefix_matches: list[SkillCandidate] = []
     other_matches: list[SkillCandidate] = []

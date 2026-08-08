@@ -8,7 +8,6 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from voidx.skills.domain.selection import SkillSelectionConfig
-from voidx.agent.domain.turn.references import EXPLICIT_REF_RE
 
 __all__ = [
     "SkillScope",

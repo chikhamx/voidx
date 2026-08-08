@@ -26,7 +26,7 @@ from voidx.agent.application.automation.workflow.runtime import (
     advance_workflow_states,
 )
 from voidx.skills.schema import SkillSelectionConfig
-from voidx.skills.references import skill_reference_message
+from voidx.skills.application.resolve_references import ResolveSkillReferences
 from voidx.skills.service import SkillService
 from voidx.presentation.tools.skill_picker import list_skill_candidates
 from voidx.agent.application.automation.workflow.service import WorkflowService
@@ -70,7 +70,15 @@ async def test_instruction_service_system_includes_available_skills_section(tmp_
     settings = Settings(str(tmp_path))
     settings.set_skill_auto("docs", True)
 
-    instructions = await InstructionService(str(tmp_path), settings=settings).system()
+    service = SkillService(
+        SkillRegistry(str(tmp_path)),
+        selection=settings.get_skill_selection(),
+    )
+    instructions = await InstructionService(
+        str(tmp_path),
+        settings=settings,
+        skill_summaries_provider=service.available_skill_summaries,
+    ).system()
 
     joined = "\n\n".join(instructions)
     assert "## Available Skills" in joined
@@ -260,15 +268,24 @@ def test_skill_service_renders_instruction_with_source_path(tmp_path):
     assert "Docs rules" in rendered
 
 
-def test_skill_reference_message_wraps_enabled_explicit_refs(tmp_path):
-    project_dir = tmp_path / "workspace" / ".voidx" / "skills"
+def test_resolve_skill_references_wraps_enabled_explicit_refs(tmp_path):
+    workspace = tmp_path / "workspace"
+    project_dir = workspace / ".voidx" / "skills"
     _write_skill(
         project_dir,
         "docs",
         "---\nname: docs\ndescription: Write documentation\n---\nDocs body",
     )
+    service = SkillService(
+        SkillRegistry(
+            str(workspace),
+            bundled_dir=tmp_path / "bundled",
+            global_dir=tmp_path / "global",
+            project_dir=project_dir,
+        )
+    )
 
-    wrapped = skill_reference_message("use $docs for this", str(tmp_path / "workspace"))
+    wrapped = ResolveSkillReferences(service)("use $docs for this")
 
     assert wrapped.remove_spans == [(4, 9)]
     assert wrapped.prefix == (
@@ -281,15 +298,24 @@ def test_skill_reference_message_wraps_enabled_explicit_refs(tmp_path):
     assert "Docs body" not in wrapped.prefix
 
 
-def test_skill_reference_message_ignores_unknown_refs(tmp_path):
-    wrapped = skill_reference_message("keep $not-a-skill in text", str(tmp_path / "workspace"))
+def test_resolve_skill_references_ignores_unknown_refs(tmp_path):
+    service = SkillService(
+        SkillRegistry(
+            str(tmp_path / "workspace"),
+            bundled_dir=tmp_path / "bundled",
+            global_dir=tmp_path / "global",
+            project_dir=tmp_path / "project",
+        )
+    )
+
+    wrapped = ResolveSkillReferences(service)("keep $not-a-skill in text")
 
     assert wrapped.prefix == ""
     assert wrapped.remove_spans == []
     assert wrapped.skills == []
 
 
-def test_skill_reference_message_uses_provided_service(tmp_path, monkeypatch):
+def test_resolve_skill_references_ignores_disabled_refs(tmp_path):
     workspace = tmp_path / "workspace"
     project_dir = workspace / ".voidx" / "skills"
     _write_skill(project_dir, "docs", "---\nname: docs\ndescription: Write docs\n---\nDocs body")
@@ -299,34 +325,17 @@ def test_skill_reference_message_uses_provided_service(tmp_path, monkeypatch):
             bundled_dir=tmp_path / "bundled",
             global_dir=tmp_path / "global",
             project_dir=project_dir,
-        )
+        ),
+        selection=SkillSelectionConfig(disabled={"docs"}),
     )
 
-    def fail_settings(*_args, **_kwargs):
-        raise AssertionError("Settings should not be constructed when service is supplied")
-
-    monkeypatch.setattr("voidx.skills.references.Settings", fail_settings)
-
-    wrapped = skill_reference_message("use $docs", str(workspace), service=service)
-
-    assert wrapped.remove_spans == [(4, 9)]
-    assert [skill.name for skill in wrapped.skills] == ["docs"]
-
-
-def test_skill_reference_message_ignores_disabled_refs(tmp_path):
-    workspace = tmp_path / "workspace"
-    project_dir = workspace / ".voidx" / "skills"
-    _write_skill(project_dir, "docs", "---\nname: docs\ndescription: Write docs\n---\nDocs body")
-    settings = Settings(str(workspace))
-    settings.set_skill_enabled("docs", False)
-
-    wrapped = skill_reference_message("use $docs for this", str(workspace), settings=settings)
+    wrapped = ResolveSkillReferences(service)("use $docs for this")
 
     assert wrapped.prefix == ""
     assert wrapped.remove_spans == []
 
 
-def test_list_skill_candidates_accepts_prebuilt_service(tmp_path, monkeypatch):
+def test_list_skill_candidates_requires_prebuilt_service(tmp_path):
     workspace = tmp_path / "workspace"
     project_dir = workspace / ".voidx" / "skills"
     _write_skill(project_dir, "docs", "---\nname: docs\ndescription: Write docs\n---\nDocs body")
@@ -339,11 +348,6 @@ def test_list_skill_candidates_accepts_prebuilt_service(tmp_path, monkeypatch):
         )
     )
 
-    def fail_settings(*_args, **_kwargs):
-        raise AssertionError("Settings should not be constructed when service is supplied")
-
-    monkeypatch.setattr("voidx.presentation.tools.skill_picker.Settings", fail_settings)
-
-    candidates = list_skill_candidates(str(workspace), "do", service=service)
+    candidates = list_skill_candidates("do", service=service)
 
     assert [candidate.name for candidate in candidates] == ["docs"]

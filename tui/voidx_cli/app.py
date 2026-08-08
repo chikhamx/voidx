@@ -295,6 +295,9 @@ class PureTui(
     def set_mcp_catalog_provider(self, provider) -> None:
         self._mcp_catalog_provider = provider
 
+    def set_skills_api_provider(self, provider) -> None:
+        self._skills_api_provider = provider
+
     def show_transient_output(self, text: str, title: str = "") -> None:
         from voidx.presentation.output.dock import dock
         dock.append_message(text)

@@ -50,6 +50,8 @@ class TerminalRunLoop:
         ui: AgentUiPort,
         *,
         settings_factory: Callable[[str], Awaitable[object]] | None = None,
+        skills_api_factory: Callable[[str], Awaitable[object]] | None = None,
+        skills_api_provider: Callable[[str], object] | None = None,
     ) -> None:
         self._status_reader = status_reader
         self._sessions = sessions
@@ -67,6 +69,8 @@ class TerminalRunLoop:
         )
         frontend_binding.bind_startup_presenter(self._startup.show)
         self._settings_factory = settings_factory
+        self._skills_api_factory = skills_api_factory
+        self._skills_api_provider = skills_api_provider
         self._gateway_session = None
         self._thread_registry = GatewayThreadRegistryAdapter(lambda: self._gateway_session)
         self._command_handler = GatewayCommandHandler(status_reader, guidance, self._thread_registry)
@@ -101,6 +105,8 @@ class TerminalRunLoop:
                     self._status_reader,
                     active_dock,
                     settings_factory=self._settings_factory,
+                    skills_api_factory=self._skills_api_factory,
+                    skills_api_provider=self._skills_api_provider,
                     settings_update_handler=self._frontend_binding.apply_settings_update,
                     usage_stats_provider=self._frontend_binding.usage_stats,
                     mcp_catalog_provider=self._integrations.mcp_catalog,
@@ -184,9 +190,9 @@ class TerminalRunLoop:
         self._frontend_binding.bind_input_frontend(app)
         app.set_external_command_handler(partial(self._command_handler.handle, app))
         if hasattr(app, "set_mcp_catalog_provider"):
-            app.set_mcp_catalog_provider(
-                self._integrations.mcp_catalog
-            )
+            app.set_mcp_catalog_provider(self._integrations.mcp_catalog)
+        if hasattr(app, "set_skills_api_provider"):
+            app.set_skills_api_provider(self._skills_api_provider)
         update_check_task = asyncio.create_task(self._startup.show_update_check_if_needed())
 
         self._gateway_session = gateway_session

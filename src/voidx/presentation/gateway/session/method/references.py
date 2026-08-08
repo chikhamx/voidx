@@ -60,14 +60,18 @@ class ReferenceMethods:
             ]
         }
 
-    def _method_skills_candidates(self, params: dict) -> dict:
+    async def _method_skills_candidates(self, params: dict) -> dict:
+        from voidx.presentation.protocol.v2.methods import MethodParamsError
         from voidx.presentation.tools.skill_picker import list_skill_candidates
 
+        if self._skills_api_factory is None:
+            raise MethodParamsError("skills_api_factory is required")
         query = str(params.get("query", "") or "")
         limit = int(params.get("limit", 8) or 8)
         thread_id = str(params.get("thread_id") or self._active_thread_id or "")
         workspace = self._workspace_for_thread(thread_id)
-        candidates = list_skill_candidates(workspace, query, limit=limit)
+        skills_api = await self._skills_api_factory(workspace)
+        candidates = list_skill_candidates(query, limit=limit, service=skills_api.service)
         return {
             "candidates": [
                 {

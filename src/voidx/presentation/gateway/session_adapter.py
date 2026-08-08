@@ -15,6 +15,8 @@ class GatewayDock(Protocol):
 
 
 SettingsFactory = Callable[[str], Awaitable[object]]
+SkillsApiFactory = Callable[[str], Awaitable[object]]
+SkillsApiProvider = Callable[[str], object]
 
 
 def build_gateway_session(
@@ -22,6 +24,8 @@ def build_gateway_session(
     active_dock: GatewayDock,
     *,
     settings_factory: SettingsFactory | None = None,
+    skills_api_factory: SkillsApiFactory | None = None,
+    skills_api_provider: SkillsApiProvider | None = None,
     settings_update_handler: Callable[[object], Awaitable[None] | None] | None = None,
     usage_stats_provider: Callable[[], object] | None = None,
     mcp_catalog_provider: Callable[[], list] | None = None,
@@ -34,6 +38,8 @@ def build_gateway_session(
         session_id=session_id,
         workspace=status.workspace,
         settings_factory=settings_factory,
+        skills_api_factory=skills_api_factory,
+        skills_api_provider=skills_api_provider,
         runtime_state_provider=lambda: _runtime_state(status_reader.runtime_status()),
         settings_update_handler=settings_update_handler,
         usage_stats_provider=usage_stats_provider,

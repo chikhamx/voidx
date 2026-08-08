@@ -33,19 +33,23 @@ async def test_instruction_read_file_uses_mtime_ns_and_size_cache(tmp_path, monk
 
 
 @pytest.mark.asyncio
-async def test_instruction_service_reuses_skill_service_until_selection_changes(tmp_path):
-    settings = Settings(str(tmp_path))
-    service = InstructionService(str(tmp_path), settings=settings)
+async def test_instruction_service_reuses_injected_skill_summary_provider(tmp_path):
+    calls = []
 
-    first_service = service._skill_service_for_current_selection()
-    await service.available_skills_section()
-    second_service = service._skill_service_for_current_selection()
+    def summaries():
+        calls.append(True)
+        return ["- verify [auto]: Verify changes"]
 
-    settings.set_skill_enabled("verify", False)
-    third_service = service._skill_service_for_current_selection()
+    service = InstructionService(
+        str(tmp_path),
+        skill_summaries_provider=summaries,
+    )
 
-    assert second_service is first_service
-    assert third_service is not first_service
+    first = await service.available_skills_section()
+    second = await service.available_skills_section()
+
+    assert first == second
+    assert calls == [True, True]
 
 
 @pytest.mark.asyncio
@@ -131,3 +135,28 @@ async def test_resolve_retries_unclaimed_instruction_after_transient_read_failur
     assert await service.resolve(str(target), "msg-1") == [
         f"Instructions from: {instruction.resolve()}\nFollow package rules."
     ]
+
+
+@pytest.mark.asyncio
+async def test_execution_instruction_skill_summaries_follow_replaced_api(tmp_path):
+    from types import SimpleNamespace
+
+    from voidx.agent.infrastructure.langgraph.execution import LangGraphExecution
+
+    execution = LangGraphExecution.__new__(LangGraphExecution)
+    execution._workspace = str(tmp_path)
+    execution.skills_api_provider = None
+    execution.skills_api = SimpleNamespace(
+        service=SimpleNamespace(available_skill_summaries=lambda: ["- old"])
+    )
+    execution._instruction = InstructionService(
+        str(tmp_path),
+        skill_summaries_provider=execution._available_skill_summaries,
+    )
+
+    execution.skills_api = SimpleNamespace(
+        service=SimpleNamespace(available_skill_summaries=lambda: ["- new"])
+    )
+
+    assert "- new" in await execution._instruction.available_skills_section()
+    assert "- old" not in await execution._instruction.available_skills_section()

@@ -100,9 +100,15 @@ def build_agent_components(
     )
     workspace_write_lock = DelegatingWorkspaceWriteLock()
     from voidx.bootstrap.providers import build_model_catalog
+    from voidx.bootstrap.skills import build_skills_api_provider
 
     def model_catalog_factory(value):
         return build_model_catalog(value)
+
+    skills_api_provider = build_skills_api_provider(config.workspace, settings)
+
+    def skills_api_factory(value):
+        return skills_api_provider.replace(config.workspace, value)
 
     execution_kwargs = {
         "session": session,
@@ -111,6 +117,9 @@ def build_agent_components(
         "settings": settings,
         "model_catalog": model_catalog_factory(settings),
         "model_catalog_factory": model_catalog_factory,
+        "skills_api": skills_api_provider(config.workspace),
+        "skills_api_factory": skills_api_factory,
+        "skills_api_provider": skills_api_provider,
         "external_manager_factory": integrations.external_manager_factory,
         "mcp_reference_resolver": integrations.mcp_reference_resolver,
         "web_route": integrations.web_route,
@@ -210,6 +219,10 @@ def build_agent_app(
     components.execution.tool_ui_events = PresentationToolUiEventPublisher()
     components.execution.bind_presentation_snapshots(TranscriptSnapshotAdapter(presentation_ui))
     from voidx.bootstrap.application import build_settings
+    skills_api_provider = components.execution.skills_api_provider
+
+    async def workspace_skills_api_factory(workspace: str):
+        return skills_api_provider(workspace)
 
     status_reader = LangGraphRuntimeStatusReader(components.execution)
     sessions = LangGraphSessionLifecycle(components.execution)
@@ -225,6 +238,8 @@ def build_agent_app(
         components.workspace_write_lock,
         presentation_ui,
         settings_factory=build_settings,
+        skills_api_factory=workspace_skills_api_factory,
+        skills_api_provider=skills_api_provider,
     )
     return AgentFacade(run_loop=run_loop)
 

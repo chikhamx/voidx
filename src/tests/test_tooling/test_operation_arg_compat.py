@@ -9,6 +9,9 @@ from voidx.agent.adapters.tools.subagent import AgentTool
 from voidx.tooling.builtin.document import DocumentTool
 from voidx.tooling.adapters.lsp import LspTool
 from voidx.tooling.application.registry import ToolRegistry
+from voidx.skills.application.api import SkillsApi
+from voidx.skills.registry import SkillRegistry
+from voidx.skills.service import SkillService
 from voidx.tooling.adapters.skills import SkillsTool
 from voidx.agent.adapters.tools.todo import TodoWriteTool
 from voidx.agent.adapters.tools.automation.workflow import WorkflowTool
@@ -113,7 +116,8 @@ async def test_lsp_diagnostics_ignores_position_noise(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_skill_list_ignores_load_create_noise(tmp_path) -> None:
-    result = await SkillsTool().execute(
+    skills_api = SkillsApi(SkillService(SkillRegistry(str(tmp_path))))
+    result = await SkillsTool(lambda _workspace: skills_api).execute(
         {
             "op": "list",
             "name": {"ignored": True},

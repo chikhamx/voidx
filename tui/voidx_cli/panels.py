@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
-from voidx.config import Settings
-from voidx.platform.paths import voidx_workspace_dir
-from voidx.skills.service import SkillRegistry, SkillService
 from voidx.presentation.output.dock.formatting import strip_pasted_wrapper
 from voidx.presentation.tools.attachment_tokens import attachment_token_text
 from voidx.presentation.tools.file_picker import (
@@ -171,12 +167,15 @@ class _PanelManagerMixin:
         key = (workspace, token.query, token.start, token.end)
         if key == self._skill_matches_cache_key:
             return self._skill_matches_cache
-        skill_matches = list_skill_candidates(
-            workspace,
-            token.query,
-            limit=8,
-            service=self._skill_candidate_service(workspace),
-        )
+        if self._skills_api_provider is None:
+            skill_matches = []
+        else:
+            skills_api = self._skills_api_provider(workspace)
+            skill_matches = list_skill_candidates(
+                token.query,
+                limit=8,
+                service=skills_api.service,
+            )
         mcp_catalog = self._mcp_catalog_provider() if self._mcp_catalog_provider else None
         mcp_matches = list_mcp_candidates(
             workspace, token.query, limit=8, catalog=mcp_catalog,
@@ -189,19 +188,6 @@ class _PanelManagerMixin:
         self._skill_matches_cache_key = key
         self._skill_matches_cache = matches
         return matches
-
-    def _skill_candidate_service(self, workspace: str) -> SkillService:
-        key = (workspace, *_skill_settings_signature(workspace))
-        if key == self._skill_service_cache_key and self._skill_service_cache is not None:
-            return self._skill_service_cache
-        settings = Settings(workspace)
-        service = SkillService(
-            SkillRegistry(workspace),
-            selection=settings.get_skill_selection(),
-        )
-        self._skill_service_cache_key = key
-        self._skill_service_cache = service
-        return service
 
     def _attachment_selectable_count(self) -> int:
         return min(len(self._attachment_matches()), 8)
@@ -343,21 +329,3 @@ class _PanelManagerMixin:
             value = model_dump()
             return value if isinstance(value, dict) else {}
         return {}
-
-
-def _skill_settings_signature(
-    workspace: str,
-) -> tuple[tuple[int, int] | None, tuple[int, int] | None]:
-    root = voidx_workspace_dir(workspace)
-    return (
-        _file_signature(root / "skills.json"),
-        _file_signature(root / "settings.json"),
-    )
-
-
-def _file_signature(path: Path) -> tuple[int, int] | None:
-    try:
-        stat = path.stat()
-    except OSError:
-        return None
-    return (stat.st_mtime_ns, stat.st_size)

@@ -146,6 +146,7 @@ class ExternalState:
     request_handler: Callable[[Any], Awaitable[Any]] | None = None
     command_handler: Callable[[Any], Awaitable[Any]] | None = None
     mcp_catalog_provider: Callable[[], list] | None = None
+    skills_api_provider: Callable[[str], Any] | None = None
 
 
 @dataclass
@@ -256,6 +257,7 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_external_request_handler": ("_external_state", "request_handler"),
     "_external_command_handler": ("_external_state", "command_handler"),
     "_mcp_catalog_provider": ("_external_state", "mcp_catalog_provider"),
+    "_skills_api_provider": ("_external_state", "skills_api_provider"),
     "_stdin_fd": ("_terminal_state", "stdin_fd"),
     "_tty": ("_terminal_state", "tty"),
     "_old_termios": ("_terminal_state", "old_termios"),

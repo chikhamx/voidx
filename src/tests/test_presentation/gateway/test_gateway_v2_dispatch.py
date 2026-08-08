@@ -370,7 +370,14 @@ async def test_integrations_get_returns_snapshot_sections(tmp_path, monkeypatch)
     skill_path.write_text("---\nname: demo-skill\ndescription: Demo skill\nenabled: true\n---\n\nBody", encoding="utf-8")
 
     dock = BottomInputDock()
-    session = GatewaySession(lambda: dock.tree, thread_id="t1", workspace=str(tmp_path))
+    from voidx.bootstrap.skills import WorkspaceSkillsApiProvider
+
+    session = GatewaySession(
+        lambda: dock.tree,
+        thread_id="t1",
+        workspace=str(tmp_path),
+        skills_api_provider=WorkspaceSkillsApiProvider(str(tmp_path), settings),
+    )
     result = await session.dispatch_request(JsonRpcRequest(id=17, method="integrations.get", params={}))
 
     assert isinstance(result, JsonRpcResult)
@@ -398,7 +405,14 @@ async def test_mcp_and_skills_row_actions_update_state(tmp_path):
     skill_path.write_text("---\nname: demo-skill\ndescription: Demo skill\nenabled: true\n---\n\nBody", encoding="utf-8")
 
     dock = BottomInputDock()
-    session = GatewaySession(lambda: dock.tree, thread_id="t1", workspace=str(tmp_path))
+    from voidx.bootstrap.skills import WorkspaceSkillsApiProvider
+
+    session = GatewaySession(
+        lambda: dock.tree,
+        thread_id="t1",
+        workspace=str(tmp_path),
+        skills_api_provider=WorkspaceSkillsApiProvider(str(tmp_path), settings),
+    )
 
     disabled = await session.dispatch_request(JsonRpcRequest(id=18, method="mcp.setDisabled", params={"name": "demo", "disabled": True}))
     assert isinstance(disabled, JsonRpcResult)

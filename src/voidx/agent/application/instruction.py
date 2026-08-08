@@ -23,8 +23,6 @@ from voidx.logging.request_log import log_llm_diagnostic
 from voidx.mcp.auto import render_available_mcp_servers
 from voidx.logging.tool_log import log_tool_event
 from voidx.platform.paths import voidx_home
-from voidx.skills.schema import SkillSelectionConfig
-from voidx.skills.service import SkillService
 from voidx.agent.application.automation.workflow.service import WorkflowService
 from voidx.agent.domain.automation.workflow import WorkflowRunState
 
@@ -49,9 +47,16 @@ class _FileContentCacheEntry:
 class InstructionService:
     """Manages project instructions injection into system prompt."""
 
-    def __init__(self, workspace: str, settings=None) -> None:
+    def __init__(
+        self,
+        workspace: str,
+        settings=None,
+        *,
+        skill_summaries_provider=None,
+    ) -> None:
         self._workspace = Path(workspace).resolve()
         self._settings = settings
+        self._skill_summaries_provider = skill_summaries_provider
         self._global_dir = voidx_home()
         self._claude_dir = Path.home() / ".claude"
 
@@ -61,8 +66,6 @@ class InstructionService:
         # Cached system paths (refreshed each turn)
         self._system_paths: list[str] = []
         self._file_cache: dict[str, _FileContentCacheEntry] = {}
-        self._skill_service: SkillService | None = None
-        self._skill_service_signature: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]] | None = None
         self._available_mcp_servers: str | None = None
         self._mcp_description_provider = None
         self._workflow_service = WorkflowService()
@@ -136,8 +139,9 @@ class InstructionService:
         return instructions
 
     async def available_skills_section(self) -> str:
-        service = self._skill_service_for_current_selection()
-        summaries = await asyncio.to_thread(service.available_skill_summaries)
+        if self._skill_summaries_provider is None:
+            return ""
+        summaries = await asyncio.to_thread(self._skill_summaries_provider)
         if not summaries:
             return ""
         return "## Available Skills\n" + "\n".join(summaries)
@@ -229,16 +233,6 @@ class InstructionService:
 
     # ── helpers ─────────────────────────────────────────────────────────
 
-    def _skill_service_for_current_selection(self) -> SkillService:
-        selection = self._settings.get_skill_selection() if self._settings is not None else None
-        signature = _skill_selection_signature(selection)
-        if self._skill_service is None or self._skill_service_signature != signature:
-            self._skill_service = SkillService.for_workspace(
-                str(self._workspace),
-                selection=selection,
-            )
-            self._skill_service_signature = signature
-        return self._skill_service
 
     async def _read_file(self, path: str) -> str:
         target = Path(path)
@@ -298,12 +292,6 @@ class InstructionService:
         return paths
 
 
-def _skill_selection_signature(
-    selection: SkillSelectionConfig | None,
-) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
-    if selection is None:
-        return (), (), ()
-    return tuple(sorted(selection.enabled)), tuple(sorted(selection.disabled)), tuple(sorted(selection.auto))
 
 
 def _merged_names(*groups: Iterable[str]) -> set[str]:

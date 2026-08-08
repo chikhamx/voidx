@@ -82,7 +82,6 @@ from voidx.agent.adapters.persistence.session_repository import SessionInfo
 from voidx.agent.adapters.persistence.subagent_repository import append_subagent_event
 from voidx.agent.ports.ui import AgentUiPort
 from voidx.agent.ports.workspace_lock import WorkspaceWriteLockPort
-from voidx.skills.service import SkillRegistry, SkillService
 
 GUIDANCE_MAX_CHARS = 2_000
 
@@ -340,6 +339,9 @@ class LangGraphExecution:
         settings: Settings | None = None,
         model_catalog: Any | None = None,
         model_catalog_factory: Callable[[Any | None], Any] | None = None,
+        skills_api: Any | None = None,
+        skills_api_factory: Callable[[Any | None], Any] | None = None,
+        skills_api_provider: Callable[[str], Any] | None = None,
         *,
         ui: AgentUiPort,
         workspace_write_lock: WorkspaceWriteLockPort,
@@ -366,6 +368,13 @@ class LangGraphExecution:
                 settings=settings,
             )
         self.model_catalog = model_catalog
+        self._skills_api_factory = skills_api_factory
+        self.skills_api_provider = skills_api_provider
+        if skills_api is None:
+            if self.skills_api_provider is None:
+                raise RuntimeError("skills_api is required")
+            skills_api = self.skills_api_provider(self._workspace)
+        self.skills_api = skills_api
         self._mcp_reference_resolver = mcp_reference_resolver
         self._web_route = web_route
         self._permission_service_factory = permission_service_factory
@@ -385,10 +394,15 @@ class LangGraphExecution:
             settings=settings,
             config=config,
             subagent_runner=self._subagent_runner,
+            skills_api_provider=self.skills_api_provider,
             web_route=self._web_route,
         )
 
-        self._instruction = InstructionService(self._workspace, settings=settings)
+        self._instruction = InstructionService(
+            self._workspace,
+            settings=settings,
+            skill_summaries_provider=self._available_skill_summaries,
+        )
         self._permission = self._permission_service_factory(config, settings=self._settings, notifier=self._ui.ui.print)
 
         self._interaction_mode: InteractionMode = InteractionMode.AUTO
@@ -429,7 +443,6 @@ class LangGraphExecution:
         )
         self._tool_executor = ToolExecutorAdapter(self)
         self._turn_runner = TurnRunner(self)
-        self._skill_service: SkillService | None = None
 
         display_config = getattr(config, "display_policy", None) or {}
         self._display_policy = ToolDisplayPolicy.from_config(display_config, defaults=DEFAULT_DISPLAY_RULES)
@@ -517,17 +530,25 @@ class LangGraphExecution:
     def task_state(self) -> TaskState:
         return self._task_state
 
-    def _skill_service_for_references(self) -> SkillService:
-        if self._skill_service is None:
-            settings = self._settings or Settings(self._workspace)
-            self._skill_service = SkillService(
-                SkillRegistry(self._workspace),
-                selection=settings.get_skill_selection(),
-            )
-        return self._skill_service
+    def _skills_api_for_current_workspace(self):
+        state = current_thread_execution_state()
+        workspace = state.workspace if state is not None and state.workspace else self._workspace
+        if workspace == self._workspace or self.skills_api_provider is None:
+            return self.skills_api
+        return self.skills_api_provider(workspace)
+
+    def _resolve_skill_references(self, user_text: str):
+        return self._skills_api_for_current_workspace().resolve_references(user_text)
+
+    def _available_skill_summaries(self):
+        return self._skills_api_for_current_workspace().service.available_skill_summaries()
+
+    def _skill_service_for_references(self):
+        return self._skills_api_for_current_workspace().service
 
     def _invalidate_skill_service_cache(self) -> None:
-        self._skill_service = None
+        if self._skills_api_factory is not None:
+            self.skills_api = self._skills_api_factory(self._settings)
         self._ui.invalidate_skill_service_cache()
 
     @property
@@ -549,10 +570,13 @@ class LangGraphExecution:
 
         if self._model_catalog_factory is not None:
             self.model_catalog = self._model_catalog_factory(settings)
+        if self._skills_api_factory is not None:
+            self.skills_api = self._skills_api_factory(settings)
         self._tracker, self.tools = build_tool_registry(
             settings=settings,
             config=self.config,
             subagent_runner=self._subagent_runner,
+            skills_api_provider=self.skills_api_provider,
             web_route=self._web_route,
         )
         old_permission = getattr(self, "_permission", None)

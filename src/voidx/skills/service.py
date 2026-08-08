@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from voidx.skills.domain.references import parse_skill_references
 from voidx.skills.registry import SkillRegistry, normalize_skill_name
 from voidx.skills.schema import (
-    EXPLICIT_REF_RE,
     SkillDefinition,
     SkillMatch,
     SkillScope,
@@ -35,6 +35,10 @@ class SkillService:
         self._registry = registry
         self._selection = selection or SkillSelectionConfig()
 
+
+    @property
+    def registry(self) -> SkillRegistry:
+        return self._registry
     def list_skills(self) -> list[SkillDefinition]:
         return self._registry.discover()
 
@@ -178,4 +182,4 @@ class SkillService:
 
     @staticmethod
     def _explicit_refs(text: str) -> set[str]:
-        return {normalize_skill_name(match.group(1)) for match in EXPLICIT_REF_RE.finditer(text)}
+        return {reference.name for reference in parse_skill_references(text)}

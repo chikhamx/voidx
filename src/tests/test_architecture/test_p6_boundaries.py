@@ -248,3 +248,54 @@ def test_llm_provider_factory_is_owned_by_adapter() -> None:
                 if module.startswith(("langchain", "voidx.llm.adapters")):
                     offenders.append(f"{path.name}:{node.lineno}:{module}")
     assert offenders == []
+
+
+def _imports_under(root: Path) -> dict[Path, set[str]]:
+    imports: dict[Path, set[str]] = {}
+    for path in sorted(root.rglob("*.py")):
+        modules: set[str] = set()
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Import):
+                modules.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                modules.add(node.module)
+        imports[path] = modules
+    return imports
+
+
+def test_skills_layers_have_one_way_dependencies() -> None:
+    skills_root = ROOT / "src/voidx/skills"
+    domain_imports = _imports_under(skills_root / "domain")
+    application_imports = _imports_under(skills_root / "application")
+
+    domain_forbidden = ("voidx.config", "voidx.agent", "voidx.skills.service", "voidx.skills.registry")
+    application_forbidden = ("voidx.config", "voidx.skills.adapters")
+    assert {
+        str(path.relative_to(ROOT)): sorted(module for module in modules if module.startswith(domain_forbidden))
+        for path, modules in domain_imports.items()
+        if any(module.startswith(domain_forbidden) for module in modules)
+    } == {}
+    assert {
+        str(path.relative_to(ROOT)): sorted(module for module in modules if module.startswith(application_forbidden))
+        for path, modules in application_imports.items()
+        if any(module.startswith(application_forbidden) for module in modules)
+    } == {}
+
+
+def test_skills_legacy_references_and_production_fallbacks_are_gone() -> None:
+    assert not (ROOT / "src/voidx/skills/references.py").exists()
+
+    for relative in (
+        "src/voidx/agent/infrastructure/langgraph/execution.py",
+        "src/voidx/agent/application/instruction.py",
+        "src/voidx/agent/slash/commands/skills.py",
+        "src/voidx/presentation/tools/skill_picker.py",
+        "src/voidx/presentation/gateway/session/method/references.py",
+        "src/voidx/presentation/gateway/session/method/integrations.py",
+        "src/voidx/tooling/adapters/skills.py",
+    ):
+        source = (ROOT / relative).read_text(encoding="utf-8")
+        assert "Settings(" not in source, relative
+        assert "SkillService(" not in source, relative
+        assert "SkillRegistry(" not in source, relative
+        assert "SkillService.for_workspace(" not in source, relative

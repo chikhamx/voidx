@@ -79,6 +79,7 @@ class IntegrationMethods:
         if service.get(name) is None:
             raise MethodParamsError("skill not found")
         settings.set_skill_enabled(name, bool(params.get("enabled")))
+        self._skills_api_provider.replace(self._workspace or ".", settings)
         return {"ok": True, "skills": self._skill_summaries(settings)}
 
     def _method_skills_set_auto(self, params: dict) -> dict:
@@ -90,6 +91,7 @@ class IntegrationMethods:
         if service.get(name) is None:
             raise MethodParamsError("skill not found")
         settings.set_skill_auto(name, bool(params.get("auto")))
+        self._skills_api_provider.replace(self._workspace or ".", settings)
         return {"ok": True, "skills": self._skill_summaries(settings)}
 
     async def _method_lsp_status(self, params: dict) -> dict:
@@ -196,8 +198,11 @@ class IntegrationMethods:
         return {"ok": True, "tavily": self._tavily_summary(settings)}
 
     def _skill_service(self, settings):
-        from voidx.skills.service import SkillService
-        return SkillService.for_workspace(self._workspace or ".", selection=settings.get_skill_selection())
+        if self._skills_api_provider is None:
+            from voidx.presentation.protocol.v2.methods import MethodParamsError
+
+            raise MethodParamsError("skills_api_provider is required")
+        return self._skills_api_provider(self._workspace or ".").service
 
     def _skill_summaries(self, settings) -> list[dict]:
         service = self._skill_service(settings)

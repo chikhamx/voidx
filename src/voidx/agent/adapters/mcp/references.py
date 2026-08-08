@@ -1,7 +1,6 @@
 """Resolve $name MCP server references in user messages.
 
-Mirrors voidx.skills.references: when the user types $tavily (selected from the
-# reference menu), this injects a semantic server summary as current-turn prefix
+Like skill references, a selected `$name` injects a semantic server summary
 and removes the token from the visible user message.
 """
 
