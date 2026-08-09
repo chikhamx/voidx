@@ -129,7 +129,9 @@ class AgentTool:
             )
 
     def parameters_schema(self) -> dict:
-        return model_to_json_schema(AgentInput)
+        schema = model_to_json_schema(AgentInput)
+        schema["required"] = [name for name in schema["required"] if name != "scope"]
+        return schema
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
         args = _normalize_agent_args(args)
@@ -215,17 +217,10 @@ class AgentTool:
                 description=normalized.description,
                 runner=gateway_runner,
             )
-            goal = normalized.goal_resolution.goal
-            plan = normalized.goal_resolution.plan
             metadata = {
                 "agent": agent_def_name,
-                "intent": normalized.goal_resolution.intent.model_dump(mode="json"),
-                "goal": goal.model_dump(mode="json") if goal is not None else None,
-                "workflow_route": plan.model_dump(mode="json") if plan is not None else None,
-                "result_schema": normalized.result_contract.schema_name,
                 "run_id": run.run_id,
                 "status": run.status,
-                "run": run.model_dump(mode="json"),
             }
             return ToolResult(
                 title=f"{agent_def_name}: {normalized.description[:60]}",

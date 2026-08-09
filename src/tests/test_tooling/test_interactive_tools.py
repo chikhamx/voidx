@@ -218,9 +218,7 @@ class TestInteractiveTools:
         assert "Agent run status: completed" in wait_result.output
         assert "Wait outcome: terminal_reached_during_wait" in wait_result.output
         assert "Final result:\nchild result" in wait_result.output
-        assert spawn_result.metadata["goal"] == {"desc": "审查 agent 工具"}
-        assert spawn_result.metadata["workflow_route"] == {"join": "review", "leave": "review"}
-        assert spawn_result.metadata["result_schema"] == "review_result"
+        assert set(spawn_result.metadata) == {"agent", "run_id", "status"}
         assert "Scope: src/voidx/tools/agent.py" in captured["description"]
         assert "Result contract:" not in captured["description"]
         assert captured["goal_resolution"].goal.desc == "审查 agent 工具"

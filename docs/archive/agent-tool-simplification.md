@@ -1,5 +1,7 @@
 # Agent 工具精简与子 Agent Workflow 隔离设计
 
+> **Status: Done** — Archived on 2026-08-09.
+
 ## 状态
 
 已实现，测试覆盖完成。
@@ -448,11 +450,11 @@ tdd -> verify
 ### 推荐验证命令
 
 ```bash
-./test.py --backend -- src/tests/test_tools/test_agent.py -v
-./test.py --backend -- src/tests/test_tools/test_agent_control.py -v
-./test.py --backend -- src/tests/test_infrastructure/runtime/test_graph_setup_prompts.py -v
-./test.py --backend -- src/tests/test_infrastructure/runtime/test_subagent_gateway_result.py -v
-./test.py --backend -- src/tests/test_tools/test_interactive_tools.py -v
+./test.py --backend -- src/tests/test_agent/adapters/tools/test_agent_contract.py -v
+./test.py --backend -- src/tests/test_tooling/test_agent_control.py -v
+./test.py --backend -- src/tests/test_agent/adapters/langgraph/runtime/test_subagent_workflow_prompt.py -v
+./test.py --backend -- src/tests/test_agent/adapters/langgraph/runtime/test_subagent_gateway_result.py -v
+./test.py --backend -- src/tests/test_tooling/test_interactive_tools.py -v
 ./test.py --backend
 ```
 
