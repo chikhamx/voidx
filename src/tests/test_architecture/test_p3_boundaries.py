@@ -279,7 +279,7 @@ def _manifest_targets(disposition: str) -> set[str]:
 
 
 def test_p3_authoritative_manifests_are_complete_and_landed() -> None:
-    spec = (ROOT / "docs/specs/src-voidx-modular-architecture-refactor-2026-08-05.md").read_text(encoding="utf-8")
+    spec = (ROOT / "docs/archive/src-voidx-modular-architecture-refactor-2026-08-05.md").read_text(encoding="utf-8")
     fixture = json.loads(
         (ROOT / "src/tests/fixtures/architecture/p3_pre_migration_sources.json").read_text(encoding="utf-8")
     )
