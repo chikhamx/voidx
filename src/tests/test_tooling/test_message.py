@@ -107,15 +107,15 @@ async def test_message_tool_accepts_json_string_payload(tmp_path):
     result = await MessageTool().execute(
         {
             "action": "send",
-            "message_type": "progress",
-            "payload": '{"step": "working"}',
+            "message_type": "message",
+            "payload": '{"text": "working"}',
         },
         ctx,
     )
 
-    assert result.metadata["message_type"] == "progress"
+    assert result.metadata["message_type"] == "message"
     message = await gateway.receive(run_id=root_id, limit=1, timeout=0)
-    assert message[0].payload == {"step": "working"}
+    assert message[0].payload == {"text": "working"}
     await gateway.cancel(requester_run_id=root_id, target_run_id=child.run_id)
 
 @pytest.mark.asyncio

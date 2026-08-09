@@ -13,19 +13,18 @@ AgentWaitOutcome = Literal[
     "terminal_reached_during_wait",
     "timed_out_still_running",
 ]
-UserMessageType = Literal["message", "question", "answer", "progress", "result"]
+UserMessageType = Literal["message", "question", "answer", "result"]
 LifecycleMessageType = Literal["completed", "failed", "cancelled"]
 AgentMessageType = Literal[
     "message",
     "question",
     "answer",
-    "progress",
     "result",
     "completed",
     "failed",
     "cancelled",
 ]
-USER_MESSAGE_TYPES: frozenset[str] = frozenset({"message", "question", "answer", "progress", "result"})
+USER_MESSAGE_TYPES: frozenset[str] = frozenset({"message", "question", "answer", "result"})
 TERMINAL_STATUSES: frozenset[AgentRunStatus] = frozenset({"completed", "failed", "cancelled"})
 AgentType = Literal["root", "sub"]
 

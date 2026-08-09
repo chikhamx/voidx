@@ -1,9 +1,99 @@
 import asyncio
+from typing import get_args
 
 import pytest
+from pydantic import ValidationError
 
 from voidx.agent.adapters.subagent import InProcessSubagentGateway
-from voidx.agent.domain.subagent import AgentGatewayError
+from voidx.agent.domain.subagent import (
+    USER_MESSAGE_TYPES,
+    AgentGatewayError,
+    AgentMessage,
+    AgentMessageType,
+    UserMessageType,
+)
+
+
+def test_progress_is_removed_from_transport_protocol():
+    assert "progress" not in get_args(UserMessageType)
+    assert "progress" not in get_args(AgentMessageType)
+    assert "progress" not in USER_MESSAGE_TYPES
+
+    with pytest.raises(ValidationError):
+        AgentMessage.model_validate(
+            {
+                "message_id": "message-1",
+                "session_id": "session-1",
+                "source_run_id": "run-1",
+                "target_run_id": "root:session-1",
+                "type": "progress",
+                "payload": {"step": "working"},
+                "created_at": 1.0,
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_default_inbox_capacity_is_256_for_root_and_child():
+    gateway = InProcessSubagentGateway()
+    root_id = gateway.ensure_root("session-capacity")
+    release = asyncio.Event()
+
+    async def runner(_run_id: str) -> str:
+        await release.wait()
+        return "done"
+
+    child = await gateway.spawn(
+        session_id="session-capacity",
+        parent_run_id=root_id,
+        agent_name="child",
+        description="capacity",
+        runner=runner,
+    )
+
+    assert gateway._inbox_capacity == 256
+    assert gateway._runs[root_id].inbox.maxsize == 256
+    assert gateway._runs[child.run_id].inbox.maxsize == 256
+
+    release.set()
+    await gateway.wait(requester_run_id=root_id, target_run_id=child.run_id, timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_gateway_rejects_progress_without_changing_run_state():
+    gateway = InProcessSubagentGateway()
+    root_id = gateway.ensure_root("session-progress")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def runner(_run_id: str) -> str:
+        started.set()
+        await release.wait()
+        return "done"
+
+    child = await gateway.spawn(
+        session_id="session-progress",
+        parent_run_id=root_id,
+        agent_name="child",
+        description="reject progress",
+        runner=runner,
+    )
+    await started.wait()
+
+    with pytest.raises(AgentGatewayError):
+        await gateway.send(
+            sender_run_id=child.run_id,
+            target_run_id=root_id,
+            message_type="progress",
+            payload={"step": "working"},
+        )
+
+    assert gateway.lookup_run(child.run_id).status == "running"
+    assert gateway.lookup_run(root_id).status == "running"
+    assert await gateway.receive(run_id=root_id, limit=1, timeout=0) == []
+
+    release.set()
+    await gateway.wait(requester_run_id=root_id, target_run_id=child.run_id, timeout=1)
 
 
 @pytest.mark.asyncio
@@ -17,8 +107,8 @@ async def test_root_spawn_send_receive_and_wait_result():
         await gateway.send(
             sender_run_id=run_id,
             target_run_id=root_id,
-            message_type="progress",
-            payload={"step": "working"},
+            message_type="message",
+            payload={"text": "working"},
         )
         started.set()
         await release.wait()
@@ -40,7 +130,7 @@ async def test_root_spawn_send_receive_and_wait_result():
 
     messages = await gateway.receive(run_id=root_id, limit=10, timeout=0)
     assert [(message.type, message.payload) for message in messages] == [
-        ("progress", {"step": "working"}),
+        ("message", {"text": "working"}),
     ]
     release.set()
 
@@ -112,8 +202,8 @@ async def test_result_message_completes_run_and_blocks_later_messages():
             await gateway.send(
                 sender_run_id=run_id,
                 target_run_id=root_id,
-                message_type="progress",
-                payload={"step": "after result"},
+                message_type="message",
+                payload={"text": "after result"},
             )
         return "ignored"
 
@@ -339,15 +429,15 @@ async def test_inbox_full_rejects_regular_message_but_keeps_lifecycle():
     await gateway.send(
         sender_run_id=child.run_id,
         target_run_id=root_id,
-        message_type="progress",
-        payload={"step": "fill"},
+        message_type="message",
+        payload={"text": "fill"},
     )
     with pytest.raises(AgentGatewayError, match="Inbox is full"):
         await gateway.send(
             sender_run_id=child.run_id,
             target_run_id=root_id,
-            message_type="progress",
-            payload={"step": "overflow"},
+            message_type="message",
+            payload={"text": "overflow"},
         )
 
     release.set()
@@ -358,12 +448,195 @@ async def test_inbox_full_rejects_regular_message_but_keeps_lifecycle():
     )
     assert waited.status == "completed"
     messages = await gateway.receive(run_id=root_id, limit=10, timeout=0)
-    assert any(message.type == "completed" for message in messages)
-    assert any(
-        message.type == "completed" and message.payload.get("run_id") == child.run_id
-        for message in messages
+    assert [(message.type, message.payload) for message in messages] == [
+        ("completed", {"run_id": child.run_id}),
+    ]
+
+
+
+@pytest.mark.asyncio
+async def test_result_completes_child_when_capacity_one_inbox_is_full():
+    gateway = InProcessSubagentGateway(inbox_capacity=1)
+    root_id = gateway.ensure_root("session-result-full")
+    filled = asyncio.Event()
+    release = asyncio.Event()
+    payload = {"result": "authoritative", "verdict": "PASS"}
+
+    async def runner(run_id: str) -> str:
+        await gateway.send(
+            sender_run_id=run_id,
+            target_run_id=root_id,
+            message_type="message",
+            payload={"text": "fill"},
+        )
+        filled.set()
+        await release.wait()
+        await gateway.send(
+            sender_run_id=run_id,
+            target_run_id=root_id,
+            message_type="result",
+            payload=payload,
+        )
+        return "must-not-overwrite"
+
+    child = await gateway.spawn(
+        session_id="session-result-full",
+        parent_run_id=root_id,
+        agent_name="child",
+        description="reliable result",
+        runner=runner,
+    )
+    await filled.wait()
+    release.set()
+
+    waited = await gateway.wait(
+        requester_run_id=root_id,
+        target_run_id=child.run_id,
+        timeout=1,
     )
 
+    assert waited.status == "completed"
+    assert waited.result == payload
+    messages = await gateway.receive(run_id=root_id, limit=10, timeout=0)
+    assert [(message.type, message.payload) for message in messages] == [
+        ("completed", {"run_id": child.run_id}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_full_inbox_retains_result_and_completed_notifications_when_capacity_allows_both():
+    gateway = InProcessSubagentGateway(inbox_capacity=2)
+    root_id = gateway.ensure_root("session-terminal-priority")
+    filled = asyncio.Event()
+    release = asyncio.Event()
+
+    async def runner(run_id: str) -> str:
+        for sequence in range(2):
+            await gateway.send(
+                sender_run_id=run_id,
+                target_run_id=root_id,
+                message_type="message",
+                payload={"sequence": sequence},
+            )
+        filled.set()
+        await release.wait()
+        await gateway.send(
+            sender_run_id=run_id,
+            target_run_id=root_id,
+            message_type="result",
+            payload={"result": "done"},
+        )
+        return "ignored"
+
+    child = await gateway.spawn(
+        session_id="session-terminal-priority",
+        parent_run_id=root_id,
+        agent_name="child",
+        description="terminal priority",
+        runner=runner,
+    )
+    await filled.wait()
+    release.set()
+
+    waited = await gateway.wait(
+        requester_run_id=root_id,
+        target_run_id=child.run_id,
+        timeout=1,
+    )
+    messages = await gateway.receive(run_id=root_id, limit=10, timeout=0)
+
+    assert waited.status == "completed"
+    assert waited.result == {"result": "done"}
+    assert [(message.type, message.payload) for message in messages] == [
+        ("result", {"result": "done"}),
+        ("completed", {"run_id": child.run_id}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_51_results_complete_without_parent_receiving_from_default_inbox():
+    gateway = InProcessSubagentGateway()
+    root_id = gateway.ensure_root("session-51-results")
+
+    async def runner(run_id: str) -> str:
+        payload = {"result": run_id}
+        await gateway.send(
+            sender_run_id=run_id,
+            target_run_id=root_id,
+            message_type="result",
+            payload=payload,
+        )
+        return "ignored"
+
+    children = [
+        await gateway.spawn(
+            session_id="session-51-results",
+            parent_run_id=root_id,
+            agent_name=f"child-{index}",
+            description="result pressure",
+            runner=runner,
+        )
+        for index in range(51)
+    ]
+    waited = await asyncio.gather(
+        *(
+            gateway.wait(
+                requester_run_id=root_id,
+                target_run_id=child.run_id,
+                timeout=1,
+            )
+            for child in children
+        )
+    )
+
+    assert all(run.status == "completed" for run in waited)
+    assert [run.result for run in waited] == [
+        {"result": child.run_id} for child in children
+    ]
+
+
+@pytest.mark.asyncio
+async def test_128_results_remain_authoritative_while_notifications_are_evicted():
+    gateway = InProcessSubagentGateway(inbox_capacity=17)
+    root_id = gateway.ensure_root("session-128-results")
+
+    async def runner(run_id: str) -> str:
+        await gateway.send(
+            sender_run_id=run_id,
+            target_run_id=root_id,
+            message_type="result",
+            payload={"result": run_id, "complete": True},
+        )
+        return "ignored"
+
+    children = [
+        await gateway.spawn(
+            session_id="session-128-results",
+            parent_run_id=root_id,
+            agent_name=f"child-{index}",
+            description="concurrent terminal pressure",
+            runner=runner,
+        )
+        for index in range(128)
+    ]
+    waited = await asyncio.gather(
+        *(
+            gateway.wait(
+                requester_run_id=root_id,
+                target_run_id=child.run_id,
+                timeout=2,
+            )
+            for child in children
+        )
+    )
+    notifications = await gateway.receive(run_id=root_id, limit=256, timeout=0)
+
+    assert all(run.status == "completed" for run in waited)
+    assert [run.result for run in waited] == [
+        {"result": child.run_id, "complete": True} for child in children
+    ]
+    assert len(notifications) == 17
+    assert all(message.type in {"result", "completed"} for message in notifications)
 
 @pytest.mark.asyncio
 async def test_payload_size_limit_rejects_oversized_message():
@@ -667,3 +940,329 @@ async def test_cancel_returns_cancelled_and_preserves_already_terminal_run():
 
     assert cancelled.status == "cancelled"
     assert cancelled_again == cancelled
+
+
+@pytest.mark.asyncio
+async def test_cancel_reaps_runner_after_result_without_overwriting_terminal_result():
+    gateway = InProcessSubagentGateway()
+    root_id = gateway.ensure_root("session-result-cancel")
+    result_sent = asyncio.Event()
+    task_cancelled = asyncio.Event()
+
+    async def runner(run_id: str) -> str:
+        await gateway.send(
+            sender_run_id=run_id,
+            target_run_id=root_id,
+            message_type="result",
+            payload={"result": "authoritative"},
+        )
+        result_sent.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            task_cancelled.set()
+            raise
+
+    run = await gateway.spawn(
+        session_id="session-result-cancel",
+        parent_run_id=root_id,
+        agent_name="child",
+        description="result then hang",
+        runner=runner,
+    )
+    await result_sent.wait()
+
+    try:
+        completed = await gateway.cancel(
+            requester_run_id=root_id,
+            target_run_id=run.run_id,
+        )
+
+        assert completed.status == "completed"
+        assert completed.result == {"result": "authoritative"}
+        assert task_cancelled.is_set()
+        assert gateway._runs[run.run_id].task.done()
+    finally:
+        task = gateway._runs[run.run_id].task
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        await gateway.close_session("session-result-cancel")
+
+
+@pytest.mark.asyncio
+async def test_close_session_reaps_runner_after_result_without_hanging():
+    gateway = InProcessSubagentGateway()
+    root_id = gateway.ensure_root("session-result-close")
+    result_sent = asyncio.Event()
+
+    async def runner(run_id: str) -> str:
+        await gateway.send(
+            sender_run_id=run_id,
+            target_run_id=root_id,
+            message_type="result",
+            payload={"result": "done"},
+        )
+        result_sent.set()
+        await asyncio.Future()
+
+    run = await gateway.spawn(
+        session_id="session-result-close",
+        parent_run_id=root_id,
+        agent_name="child",
+        description="result then hang",
+        runner=runner,
+    )
+    await result_sent.wait()
+    waited = await gateway.wait(
+        requester_run_id=root_id,
+        target_run_id=run.run_id,
+        timeout=0.1,
+    )
+    assert waited.status == "completed"
+
+    close_task = asyncio.create_task(gateway.close_session("session-result-close"))
+    try:
+        done, _pending = await asyncio.wait({close_task}, timeout=0.1)
+        assert close_task in done
+        await close_task
+        assert gateway.list_runs(session_id="session-result-close") == []
+    finally:
+        if not close_task.done():
+            close_task.cancel()
+            await asyncio.gather(close_task, return_exceptions=True)
+        if gateway.lookup_run(run.run_id) is not None:
+            await gateway.close_session("session-result-close")
+
+
+@pytest.mark.asyncio
+async def test_close_all_reaps_terminal_runner_tasks_without_hanging():
+    gateway = InProcessSubagentGateway()
+    roots = [gateway.ensure_root(f"session-result-close-{index}") for index in range(2)]
+    result_sent = [asyncio.Event(), asyncio.Event()]
+
+    async def runner(index: int, run_id: str) -> str:
+        await gateway.send(
+            sender_run_id=run_id,
+            target_run_id=roots[index],
+            message_type="result",
+            payload={"result": f"done-{index}"},
+        )
+        result_sent[index].set()
+        await asyncio.Future()
+
+    children = []
+    for index, root_id in enumerate(roots):
+        children.append(await gateway.spawn(
+            session_id=f"session-result-close-{index}",
+            parent_run_id=root_id,
+            agent_name="child",
+            description="result then hang",
+            runner=lambda run_id, index=index: runner(index, run_id),
+        ))
+    await asyncio.gather(*(event.wait() for event in result_sent))
+
+    close_task = asyncio.create_task(gateway.close_all())
+    try:
+        done, _pending = await asyncio.wait({close_task}, timeout=0.1)
+        assert close_task in done
+        await close_task
+        assert gateway.list_runs() == []
+    finally:
+        if not close_task.done():
+            close_task.cancel()
+            await asyncio.gather(close_task, return_exceptions=True)
+        tasks = [
+            gateway._runs[child.run_id].task
+            for child in children
+            if child.run_id in gateway._runs
+        ]
+        for task in tasks:
+            if task is not None and not task.done():
+                task.cancel()
+        await asyncio.gather(*(task for task in tasks if task is not None), return_exceptions=True)
+        if gateway.list_runs():
+            await gateway.close_all()
+
+
+@pytest.mark.asyncio
+async def test_close_session_times_out_when_terminal_runner_suppresses_cancellation(monkeypatch):
+    gateway = InProcessSubagentGateway()
+    root_id = gateway.ensure_root("session-stubborn-result")
+    result_sent = asyncio.Event()
+    release = asyncio.Event()
+
+    async def runner(run_id: str) -> str:
+        await gateway.send(
+            sender_run_id=run_id,
+            target_run_id=root_id,
+            message_type="result",
+            payload={"result": "authoritative"},
+        )
+        result_sent.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            await release.wait()
+        return "ignored"
+
+    run = await gateway.spawn(
+        session_id="session-stubborn-result",
+        parent_run_id=root_id,
+        agent_name="child",
+        description="suppress cancellation after result",
+        runner=runner,
+    )
+    await result_sent.wait()
+    monkeypatch.setattr(
+        "voidx.agent.adapters.subagent.inprocess_gateway._CANCEL_ACK_TIMEOUT",
+        0.01,
+    )
+
+    close_task = asyncio.create_task(gateway.close_session("session-stubborn-result"))
+    try:
+        done, _pending = await asyncio.wait({close_task}, timeout=0.1)
+
+        assert close_task in done
+        with pytest.raises(
+            AgentGatewayError,
+            match="Child cancellation was not acknowledged",
+        ) as error:
+            await close_task
+        assert error.value.reason == "cancel_timeout"
+        current = gateway.lookup_run(run.run_id)
+        assert current is not None
+        assert current.status == "completed"
+        assert current.result == {"result": "authoritative"}
+    finally:
+        release.set()
+        if not close_task.done():
+            await close_task
+        task = gateway._runs.get(run.run_id).task if run.run_id in gateway._runs else None
+        if task is not None and not task.done():
+            await asyncio.wait_for(task, timeout=1)
+        if gateway.lookup_run(run.run_id) is not None:
+            await gateway.close_session("session-stubborn-result")
+
+
+@pytest.mark.asyncio
+async def test_send_validation_precedence_is_route_then_open_then_payload():
+    gateway = InProcessSubagentGateway(max_payload_bytes=10)
+    root_id = gateway.ensure_root("session-validation-order")
+    release = asyncio.Event()
+
+    async def runner(_run_id: str) -> str:
+        await release.wait()
+        return "done"
+
+    first = await gateway.spawn(
+        session_id="session-validation-order",
+        parent_run_id=root_id,
+        agent_name="first",
+        description="first",
+        runner=runner,
+    )
+    sibling = await gateway.spawn(
+        session_id="session-validation-order",
+        parent_run_id=root_id,
+        agent_name="sibling",
+        description="sibling",
+        runner=runner,
+    )
+
+    try:
+        with pytest.raises(AgentGatewayError, match="Route not allowed"):
+            await gateway.send(
+                sender_run_id=first.run_id,
+                target_run_id=sibling.run_id,
+                message_type="message",
+                payload={"text": "payload is much too large"},
+            )
+
+        await gateway.cancel(requester_run_id=root_id, target_run_id=first.run_id)
+        with pytest.raises(AgentGatewayError, match="Source run is terminal"):
+            await gateway.send(
+                sender_run_id=first.run_id,
+                target_run_id=root_id,
+                message_type="message",
+                payload={"text": "payload is much too large"},
+            )
+    finally:
+        release.set()
+        await gateway.close_session("session-validation-order")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("close_action", ["session", "all"])
+async def test_runner_cannot_reap_its_own_task(close_action):
+    gateway = InProcessSubagentGateway()
+    session_id = f"session-self-reap-{close_action}"
+    root_id = gateway.ensure_root(session_id)
+    rejection: dict[str, str] = {}
+
+    async def runner(_run_id: str) -> str:
+        try:
+            if close_action == "session":
+                await gateway.close_session(session_id)
+            else:
+                await gateway.close_all()
+        except AgentGatewayError as error:
+            rejection["reason"] = error.reason
+            return "self reap rejected"
+        return "unexpected success"
+
+    run = await gateway.spawn(
+        session_id=session_id,
+        parent_run_id=root_id,
+        agent_name="child",
+        description="self reap",
+        runner=runner,
+    )
+
+    waited = await gateway.wait(
+        requester_run_id=root_id,
+        target_run_id=run.run_id,
+        timeout=1,
+    )
+
+    assert waited.status == "completed"
+    assert waited.result == {"result": "self reap rejected"}
+    assert rejection == {"reason": "self_reap"}
+    assert gateway.lookup_run(root_id) is not None
+    assert gateway.lookup_run(run.run_id) is not None
+    await gateway.close_session(session_id)
+
+
+@pytest.mark.asyncio
+async def test_child_self_cancel_is_rejected_by_control_route():
+    gateway = InProcessSubagentGateway()
+    root_id = gateway.ensure_root("session-self-cancel")
+    rejection: dict[str, str] = {}
+
+    async def runner(run_id: str) -> str:
+        try:
+            await gateway.cancel(
+                requester_run_id=run_id,
+                target_run_id=run_id,
+            )
+        except AgentGatewayError as error:
+            rejection["reason"] = error.reason
+            return "self cancel rejected"
+        return "unexpected success"
+
+    run = await gateway.spawn(
+        session_id="session-self-cancel",
+        parent_run_id=root_id,
+        agent_name="child",
+        description="self cancel",
+        runner=runner,
+    )
+    waited = await gateway.wait(
+        requester_run_id=root_id,
+        target_run_id=run.run_id,
+        timeout=1,
+    )
+
+    assert waited.status == "completed"
+    assert rejection == {"reason": "route_not_allowed"}
+    await gateway.close_session("session-self-cancel")

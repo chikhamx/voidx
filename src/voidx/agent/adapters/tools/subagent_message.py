@@ -13,7 +13,7 @@ from voidx.tooling.domain.schema import model_to_json_schema
 class MessageInput(BaseModel):
     action: Literal["send", "receive"]
     target_run_id: str | None = None
-    message_type: Literal["message", "question", "answer", "progress", "result"] = "message"
+    message_type: Literal["message", "question", "answer", "result"] = "message"
     payload: str = Field(
         default="{}",
         description="JSON object string containing the message payload, for example {\"text\": \"Need input\"}.",

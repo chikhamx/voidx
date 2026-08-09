@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from voidx.agent.domain.user_profile import UserProfile
 from voidx.config.enums import PermissionMode
@@ -28,6 +28,25 @@ class CompactionConfig(BaseModel):
         le=300.0,
         allow_inf_nan=False,
     )
+
+
+class SubagentBudgetConfig(BaseModel):
+    step_limit: int = Field(default=100, ge=1, le=1000)
+    wall_clock_seconds: float = Field(
+        default=1800.0,
+        ge=1.0,
+        le=86400.0,
+        allow_inf_nan=False,
+    )
+    soft_warn_ratio: float = Field(default=0.80, ge=0.1, le=0.95)
+    context_soft_ratio: float = Field(default=0.75, ge=0.1, le=0.90)
+    context_hard_ratio: float = Field(default=0.90, ge=0.5, le=0.98)
+
+    @model_validator(mode="after")
+    def validate_context_ratios(self) -> "SubagentBudgetConfig":
+        if self.context_soft_ratio >= self.context_hard_ratio:
+            raise ValueError("context_soft_ratio must be less than context_hard_ratio")
+        return self
 
 
 class Profile(BaseModel):
@@ -86,6 +105,7 @@ class Config(BaseModel):
     compaction_soft_ratio: float = Field(default=0.75, ge=0.1, le=0.95)
     compaction_post_target_ratio: float = Field(default=0.10, ge=0.05, le=0.80)
     inline_compaction_enabled: bool = False
+    subagent_budget: SubagentBudgetConfig = Field(default_factory=SubagentBudgetConfig)
     user_profile: UserProfile = Field(default_factory=UserProfile)
     log_llm_exchange: bool = Field(
         default=False,

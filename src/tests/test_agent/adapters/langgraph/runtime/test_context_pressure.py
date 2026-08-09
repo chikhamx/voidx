@@ -58,6 +58,27 @@ def test_evaluate_context_pressure_uses_llm_tokens_and_semantic_turn_selection()
     assert hard.reason == "hard_threshold"
 
 
+
+
+def test_evaluate_context_pressure_keeps_disabled_context_limit_inactive() -> None:
+    service = CompactionService(
+        context_limit=0,
+        output_token_max=0,
+        token_counter=lambda messages, model: len(messages),
+    )
+
+    decision = evaluate_context_pressure(
+        [HumanMessage(id="turn-1", content="request")],
+        0,
+        compaction_service=service,
+    )
+
+    assert decision.over_soft is False
+    assert decision.over_hard is False
+    assert decision.pressure_level == "none"
+    assert decision.should_inject is False
+
+
 def test_evaluate_context_pressure_does_not_inject_when_whole_turn_compaction_is_available() -> None:
     messages = [
         HumanMessage(id="turn-1", content="one"),
@@ -76,6 +97,39 @@ def test_evaluate_context_pressure_does_not_inject_when_whole_turn_compaction_is
     assert decision.should_inject is False
     assert decision.turn_id == "turn-3"
     assert decision.turn_count == 3
+
+
+
+
+def test_evaluate_context_pressure_delegates_threshold_classification(monkeypatch) -> None:
+    import voidx.agent.adapters.langgraph.runtime.context_pressure as pressure_module
+    from voidx.agent.adapters.langgraph.runtime.budget_convergence import ConvergenceDecision
+
+    captured: dict[str, object] = {}
+
+    def fake_decide(readings, state):
+        captured["readings"] = readings
+        captured["state"] = state
+        return ConvergenceDecision(
+            level="soft",
+            triggered_dimensions=frozenset({"context"}),
+        )
+
+    monkeypatch.setattr(pressure_module, "decide_convergence", fake_decide)
+    decision = pressure_module.evaluate_context_pressure(
+        [HumanMessage(id="turn-1", content="request")],
+        90_000,
+        compaction_service=_service(),
+    )
+
+    reading = captured["readings"][0]
+    assert reading.dimension == "context"
+    assert reading.current == 90_000
+    assert reading.soft_limit == 75_000
+    assert reading.hard_limit == 90_000
+    assert decision.pressure_level == "soft"
+    assert decision.over_soft is True
+    assert decision.over_hard is False
 
 
 def test_evaluate_context_pressure_skips_synthetic_hints_and_derives_stable_missing_turn_id() -> None:

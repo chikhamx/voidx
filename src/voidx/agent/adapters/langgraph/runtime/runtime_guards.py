@@ -268,8 +268,8 @@ class WallClockGuardState(BaseModel):
     latest_action: str = ""
 
     @classmethod
-    def for_subagent(cls) -> WallClockGuardState:
-        return cls(limit_seconds=1800.0)
+    def for_subagent(cls, *, limit_seconds: float = 1800.0) -> WallClockGuardState:
+        return cls(started_at=time.monotonic(), limit_seconds=limit_seconds)
 
     def record_check(
         self,

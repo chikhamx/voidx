@@ -32,6 +32,13 @@
     "sandbox_readable_files": [],
     "sandbox_writable_dirs": [],
     "sandbox_writable_files": [],
+    "subagent_budget": {
+      "context_hard_ratio": 0.9,
+      "context_soft_ratio": 0.75,
+      "soft_warn_ratio": 0.8,
+      "step_limit": 100,
+      "wall_clock_seconds": 1800.0
+    },
     "user_profile": {
       "language": "",
       "tone": ""
@@ -62,6 +69,7 @@
     "sandbox_readable_files",
     "sandbox_writable_dirs",
     "sandbox_writable_files",
-    "skills"
+    "skills",
+    "subagent_budget"
   ]
 }

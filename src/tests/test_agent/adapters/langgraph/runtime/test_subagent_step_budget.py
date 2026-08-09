@@ -140,8 +140,106 @@ def _tree_nodes(root):
 @pytest.mark.asyncio
 async def test_run_subagent_wall_clock_guard_terminates_at_boundary(tmp_path, monkeypatch):
     import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
+    from voidx.config import SubagentBudgetConfig
+    from voidx.agent.adapters.langgraph.runtime.subagent_convergence import FINAL_CONVERGENCE_GUIDANCE
 
     executed_tools: list[str] = []
+    calls: list[tuple[object, list]] = []
+
+    class BoundModel:
+        pass
+
+    class FakeModel:
+        def __init__(self):
+            self.bound = BoundModel()
+
+        def bind_tools(self, _tool_defs):
+            return self.bound
+
+    model = FakeModel()
+
+    class FakeToolRegistry:
+        def filtered_copy(self, _allowed_ids):
+            return self
+
+        def ids(self):
+            return ["read"]
+
+        def serialize_definitions(self):
+            return [{"name": "read", "description": "read", "input_schema": {}}]
+
+        async def execute_tool(self, tid, _targs, _ctx):
+            executed_tools.append(tid)
+            return ToolResult(output=f"{tid} ok")
+
+    expired = False
+
+    async def fake_stream_llm(current_model, messages, _renderer, _protocol, **kwargs):
+        nonlocal expired
+        calls.append((current_model, list(messages)))
+        if len(calls) == 1:
+            expired = True
+            return AIMessage(
+                content="finding before timeout",
+                tool_calls=[{
+                    "name": "read",
+                    "args": {},
+                    "id": "call_read",
+                    "type": "tool_call",
+                }],
+            )
+        return AIMessage(content="status: partial\nfindings: finding before timeout")
+
+    def fake_monotonic():
+        return 2.0 if expired else 0.0
+
+    monkeypatch.setattr(subagent_module.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: model)
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+    monkeypatch.setattr(subagent_module, "ToolRegistry", FakeToolRegistry)
+
+    run_metadata: dict[str, object] = {}
+    output = await subagent_module.run_subagent(
+        AgentDef(
+            name="explore",
+            description="test",
+            when_to_use="test",
+            can_write=False,
+            can_delegate=False,
+        ),
+        "Inspect child path",
+        "test-key",
+        Config(
+            workspace=str(tmp_path),
+            subagent_budget=SubagentBudgetConfig(
+                wall_clock_seconds=2.0,
+                soft_warn_ratio=0.8,
+            ),
+        ),
+        runtime_persona="explore",
+        run_metadata=run_metadata,
+        **_subagent_contract_kwargs(desc="Inspect child path"),
+        debug=False,
+    )
+
+    assert executed_tools == []
+    assert len(calls) == 2
+    assert isinstance(calls[0][0], BoundModel)
+    assert calls[1][0] is model
+    assert FINAL_CONVERGENCE_GUIDANCE in calls[1][1][-1].content
+    assert output == "status: partial\nfindings: finding before timeout"
+    assert run_metadata["finish_reason"] == "time_limit"
+
+
+
+@pytest.mark.asyncio
+async def test_wall_clock_soft_crossing_after_llm_is_guided_on_next_request(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
+    from voidx.config import SubagentBudgetConfig
+    from voidx.agent.adapters.langgraph.runtime.subagent_convergence import SOFT_CONVERGENCE_GUIDANCE
+
+    calls: list[list] = []
+    expired_soft = False
 
     class FakeModel:
         def bind_tools(self, _tool_defs):
@@ -155,36 +253,40 @@ async def test_run_subagent_wall_clock_guard_terminates_at_boundary(tmp_path, mo
             return ["read"]
 
         def serialize_definitions(self):
-            return [{"name": "checkpoint", "description": "checkpoint", "input_schema": {}}]
+            return [{"name": "read", "description": "read", "input_schema": {}}]
 
-        async def execute_tool(self, tid, _targs, _ctx):
-            executed_tools.append(tid)
-            return ToolResult(output=f"{tid} ok")
+        async def execute_tool(self, _tid, _args, _ctx):
+            return ToolResult(output="finding")
 
-    async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
-        if not executed_tools:
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
+        nonlocal expired_soft
+        calls.append(list(messages))
+        if len(calls) == 1:
+            expired_soft = True
             return AIMessage(
                 content="",
                 tool_calls=[{
-                    "name": "checkpoint",
+                    "name": "read",
                     "args": {},
-                    "id": "call_plan",
+                    "id": "read-1",
                     "type": "tool_call",
                 }],
             )
-        return AIMessage(content="missed guard termination")
+        return AIMessage(content=(
+            "status: completed\n"
+            "files_changed: none\n"
+            "tests_run: none\n"
+            "risks: none\n"
+            "followups: none"
+        ))
 
+    def fake_monotonic():
+        return 8.0 if expired_soft else 0.0
+
+    monkeypatch.setattr(subagent_module.time, "monotonic", fake_monotonic)
     monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
     monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
     monkeypatch.setattr(subagent_module, "ToolRegistry", FakeToolRegistry)
-    monkeypatch.setattr(
-        subagent_module.WallClockGuardState,
-        "for_subagent",
-        classmethod(lambda cls: WallClockGuardState(
-            started_at=0.0,
-            limit_seconds=2.0,
-        )),
-    )
 
     output = await subagent_module.run_subagent(
         AgentDef(
@@ -196,15 +298,25 @@ async def test_run_subagent_wall_clock_guard_terminates_at_boundary(tmp_path, mo
         ),
         "Inspect child path",
         "test-key",
-        Config(workspace=str(tmp_path)),
+        Config(
+            workspace=str(tmp_path),
+            subagent_budget=SubagentBudgetConfig(
+                wall_clock_seconds=10.0,
+                soft_warn_ratio=0.8,
+            ),
+        ),
         runtime_persona="explore",
         **_subagent_contract_kwargs(desc="Inspect child path"),
         debug=False,
     )
 
-    assert executed_tools == ["checkpoint"]
-    assert "This turn has been running" in output
-
+    assert output.startswith("status: completed")
+    assert len(calls) == 2
+    assert any(
+        isinstance(message, HumanMessage)
+        and SOFT_CONVERGENCE_GUIDANCE in str(message.content)
+        for message in calls[1]
+    )
 
 @pytest.mark.asyncio
 async def test_run_subagent_repetitive_guard_runs_before_authorization(tmp_path, monkeypatch):
@@ -269,7 +381,11 @@ async def test_run_subagent_repetitive_guard_runs_before_authorization(tmp_path,
         debug=False,
     )
 
-    assert "Runtime guard stopped this turn" in output
+    assert "Runtime guard" not in output
+    assert "task could not be fully completed" in output
+    final_contents = [str(message.content) for message in stream_calls[-1]]
+    assert not any("Runtime guard" in content for content in final_contents)
+    assert not any("repeated" in content.lower() for content in final_contents)
     assert executed_tools == ["todo", "todo"]
     assert authorized_batches == [["todo"], ["todo"]]
 

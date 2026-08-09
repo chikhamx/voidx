@@ -250,6 +250,7 @@ async def test_run_subagent_persists_tool_results_to_subagent_jsonl(tmp_path, mo
 @pytest.mark.asyncio
 async def test_run_subagent_injects_failure_loop_guidance(tmp_path, monkeypatch):
     import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
+    from voidx.agent.adapters.langgraph.runtime.subagent_convergence import SOFT_CONVERGENCE_GUIDANCE
 
     stream_calls: list[list] = []
     tool_calls = 0
@@ -289,7 +290,9 @@ async def test_run_subagent_injects_failure_loop_guidance(tmp_path, monkeypatch)
                     "type": "tool_call",
                 }],
             )
-        assert any("failed twice" in str(message.content) for message in messages)
+        contents = [str(message.content) for message in messages]
+        assert any(SOFT_CONVERGENCE_GUIDANCE in content for content in contents)
+        assert not any("failed twice" in content for content in contents)
         return AIMessage(content="done")
 
     monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
@@ -319,13 +322,26 @@ async def test_run_subagent_injects_failure_loop_guidance(tmp_path, monkeypatch)
 @pytest.mark.asyncio
 async def test_run_subagent_terminates_after_no_progress_cycles(tmp_path, monkeypatch):
     import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
+    from voidx.agent.adapters.langgraph.runtime.subagent_convergence import (
+        FINAL_CONVERGENCE_GUIDANCE,
+        SOFT_CONVERGENCE_GUIDANCE,
+    )
+    from voidx.config import SubagentBudgetConfig
 
-    stream_calls: list[list] = []
+    stream_calls: list[tuple[object, list]] = []
     executed_tools: list[str] = []
 
+    class BoundModel:
+        pass
+
     class FakeModel:
+        def __init__(self):
+            self.bound = BoundModel()
+
         def bind_tools(self, _tool_defs):
-            return self
+            return self.bound
+
+    model = FakeModel()
 
     class FakeToolRegistry:
         def filtered_copy(self, _allowed_ids):
@@ -344,10 +360,12 @@ async def test_run_subagent_terminates_after_no_progress_cycles(tmp_path, monkey
             executed_tools.append(tid)
             return ToolResult(output=f"{tid} ok")
 
-    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
-        stream_calls.append(list(messages))
+    async def fake_stream_llm(current_model, messages, _renderer, _protocol, **kwargs):
+        stream_calls.append((current_model, list(messages)))
         if len(stream_calls) == 4:
-            assert any("No meaningful progress" in str(message.content) for message in messages)
+            contents = [str(message.content) for message in messages]
+            assert any(SOFT_CONVERGENCE_GUIDANCE in content for content in contents)
+            assert not any("No meaningful progress" in content for content in contents)
         if len(stream_calls) <= 5:
             tool_name = "checkpoint" if len(stream_calls) % 2 else "todo"
             tool_args = {} if tool_name == "checkpoint" else {"op": "read"}
@@ -360,12 +378,13 @@ async def test_run_subagent_terminates_after_no_progress_cycles(tmp_path, monkey
                     "type": "tool_call",
                 }],
             )
-        return AIMessage(content="missed guard termination")
+        return AIMessage(content="status: partial\nfindings: no verified progress")
 
-    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: model)
     monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
     monkeypatch.setattr(subagent_module, "ToolRegistry", FakeToolRegistry)
 
+    run_metadata: dict[str, object] = {}
     output = await subagent_module.run_subagent(
         AgentDef(
             name="explore",
@@ -376,13 +395,26 @@ async def test_run_subagent_terminates_after_no_progress_cycles(tmp_path, monkey
         ),
         "Inspect child path",
         "test-key",
-        Config(workspace=str(tmp_path)),
+        Config(
+            workspace=str(tmp_path),
+            subagent_budget=SubagentBudgetConfig(step_limit=5, soft_warn_ratio=0.8),
+        ),
         runtime_persona="explore",
+        run_metadata=run_metadata,
         **_subagent_contract_kwargs(desc="Inspect child path"),
         debug=False,
     )
 
-    assert "No meaningful progress" in output
+    assert output == "status: partial\nfindings: no verified progress"
+    assert stream_calls[-1][0] is model
+    assert FINAL_CONVERGENCE_GUIDANCE in stream_calls[-1][1][-1].content
+    assert "No meaningful progress" not in output
+    assert sum(
+        SOFT_CONVERGENCE_GUIDANCE in str(message.content)
+        for _model, messages in stream_calls
+        for message in messages
+    ) == 1
+    assert run_metadata["finish_reason"] == "guard_terminated"
     assert executed_tools == [
         "checkpoint",
         "todo",

@@ -523,3 +523,82 @@ def test_set_ai_approval_profile_preserves_timeout(tmp_path):
     config = settings.get_ai_approval_config()
     assert config.profile_name == "new"
     assert config.timeout_seconds == 27.5
+
+
+
+def test_subagent_budget_defaults_and_ratio_validation():
+    from pydantic import ValidationError
+
+    from voidx.config import SubagentBudgetConfig
+
+    config = SubagentBudgetConfig()
+
+    assert config.step_limit == 100
+    assert config.wall_clock_seconds == 1800.0
+    assert config.soft_warn_ratio == 0.8
+    assert config.context_soft_ratio == 0.75
+    assert config.context_hard_ratio == 0.9
+
+    with pytest.raises(ValidationError, match="context_soft_ratio"):
+        SubagentBudgetConfig(context_soft_ratio=0.9, context_hard_ratio=0.9)
+
+
+def test_subagent_budget_is_workspace_scoped_and_round_trips(tmp_path):
+    from voidx.config import SubagentBudgetConfig
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    settings = Settings(str(workspace))
+    expected = SubagentBudgetConfig(
+        step_limit=40,
+        wall_clock_seconds=600,
+        soft_warn_ratio=0.7,
+        context_soft_ratio=0.6,
+        context_hard_ratio=0.85,
+    )
+
+    saved = settings.set_subagent_budget_config(expected)
+
+    assert saved == workspace / ".voidx" / "settings.json"
+    assert settings.get_subagent_budget_config() == expected
+    data = json.loads(saved.read_text(encoding="utf-8"))
+    assert data["subagent_budget"] == expected.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_build_config_includes_subagent_budget(tmp_path):
+    from voidx.config import SubagentBudgetConfig
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    settings = Settings(str(workspace))
+    expected = SubagentBudgetConfig(step_limit=25, wall_clock_seconds=300)
+    settings.set_subagent_budget_config(expected)
+
+    config = await settings.build_config(profile=None)
+
+    assert config.subagent_budget == expected
+
+
+def test_invalid_subagent_budget_settings_fall_back_to_defaults(tmp_path, caplog):
+    from voidx.config import SubagentBudgetConfig
+
+    workspace = tmp_path / "workspace"
+    settings_path = workspace / ".voidx" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        json.dumps({
+            "subagent_budget": {
+                "step_limit": 0,
+                "context_soft_ratio": 0.95,
+                "context_hard_ratio": 0.9,
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    with caplog.at_level("WARNING", logger="voidx.config.settings_agent"):
+        actual = Settings(str(workspace)).get_subagent_budget_config()
+
+    assert actual == SubagentBudgetConfig()
+    assert "Invalid subagent budget settings" in caplog.text

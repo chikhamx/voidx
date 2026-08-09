@@ -38,7 +38,7 @@ class _RunRecord:
 
 
 class InProcessSubagentGateway:
-    def __init__(self, *, inbox_capacity: int = 100, max_payload_bytes: int = 65536) -> None:
+    def __init__(self, *, inbox_capacity: int = 256, max_payload_bytes: int = 65536) -> None:
         self._inbox_capacity = inbox_capacity
         self._max_payload_bytes = max_payload_bytes
         self._runs: dict[str, _RunRecord] = {}
@@ -145,13 +145,18 @@ class InProcessSubagentGateway:
                 payload=payload,
                 created_at=time.time(),
             )
-            await self._put_message(target, message)
             if message_type == "result":
-                await self._finish(
-                    sender_run_id,
+                source.run = finish_run(
+                    source.run,
                     status="completed",
                     result=payload,
+                    now=time.time(),
                 )
+                source.done.set()
+                await self._put_message(target, message, lifecycle=True)
+                await self._send_lifecycle(source)
+            else:
+                await self._put_message(target, message)
             return message
 
     async def receive(self, *, run_id: str, limit: int = 1, timeout: float = 0) -> list[AgentMessage]:
@@ -199,22 +204,8 @@ class InProcessSubagentGateway:
         requester = self._require_run(requester_run_id)
         target = self._require_run(target_run_id)
         ensure_control_route(requester.run, target.run)
+        await self._reap_tasks([target])
         if target.run.status not in TERMINAL_STATUSES:
-            if target.task is not None:
-                target.task.cancel()
-                done, _pending = await asyncio.wait(
-                    {target.task},
-                    timeout=_CANCEL_ACK_TIMEOUT,
-                )
-                if not done:
-                    raise AgentGatewayError(
-                        "Child cancellation was not acknowledged",
-                        reason="cancel_timeout",
-                    )
-                try:
-                    await target.task
-                except asyncio.CancelledError:
-                    pass
             await self._finish(target_run_id, status="cancelled")
         return self._copy_run(target.run)
 
@@ -244,17 +235,33 @@ class InProcessSubagentGateway:
         ]
 
     async def _close_records(self, records: list[_RunRecord]) -> None:
-        for record in records:
-            if record.run.status not in TERMINAL_STATUSES and record.task is not None:
-                record.task.cancel()
-        for record in records:
-            if record.task is not None:
-                try:
-                    await record.task
-                except asyncio.CancelledError:
-                    pass
+        await self._reap_tasks(records)
         for record in records:
             self._runs.pop(record.run.run_id, None)
+
+    async def _reap_tasks(self, records: list[_RunRecord]) -> None:
+        tasks = {
+            record.task
+            for record in records
+            if record.task is not None and not record.task.done()
+        }
+        if not tasks:
+            return
+        current_task = asyncio.current_task()
+        if current_task in tasks:
+            raise AgentGatewayError(
+                "A child runner cannot reap its own task",
+                reason="self_reap",
+            )
+        for task in tasks:
+            task.cancel()
+        done, pending = await asyncio.wait(tasks, timeout=_CANCEL_ACK_TIMEOUT)
+        if pending:
+            raise AgentGatewayError(
+                "Child cancellation was not acknowledged",
+                reason="cancel_timeout",
+            )
+        await asyncio.gather(*done, return_exceptions=True)
 
     async def _finish(
         self,
@@ -276,23 +283,29 @@ class InProcessSubagentGateway:
             now=time.time(),
         )
         record.done.set()
-        if send_lifecycle and not record.terminal_sent and record.run.parent_run_id:
-            record.terminal_sent = True
-            parent = self._runs.get(record.run.parent_run_id)
-            if parent is not None:
-                payload: dict[str, Any] = {"run_id": run_id}
-                if error is not None:
-                    payload["error"] = error
-                message = AgentMessage(
-                    message_id=f"msg_{uuid.uuid4().hex}",
-                    session_id=record.run.session_id,
-                    source_run_id=run_id,
-                    target_run_id=parent.run.run_id,
-                    type=status,
-                    payload=payload,
-                    created_at=time.time(),
-                )
-                await self._put_message(parent, message, lifecycle=True)
+        if send_lifecycle:
+            await self._send_lifecycle(record)
+
+    async def _send_lifecycle(self, record: _RunRecord) -> None:
+        if record.terminal_sent or not record.run.parent_run_id:
+            return
+        record.terminal_sent = True
+        parent = self._runs.get(record.run.parent_run_id)
+        if parent is None:
+            return
+        payload: dict[str, Any] = {"run_id": record.run.run_id}
+        if record.run.error is not None:
+            payload["error"] = record.run.error
+        message = AgentMessage(
+            message_id=f"msg_{uuid.uuid4().hex}",
+            session_id=record.run.session_id,
+            source_run_id=record.run.run_id,
+            target_run_id=parent.run.run_id,
+            type=record.run.status,
+            payload=payload,
+            created_at=time.time(),
+        )
+        await self._put_message(parent, message, lifecycle=True)
 
     async def _get_one(self, record: _RunRecord, *, timeout: float) -> AgentMessage | None:
         if timeout <= 0:

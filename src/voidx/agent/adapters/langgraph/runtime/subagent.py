@@ -21,6 +21,16 @@ from voidx.agent.adapters.langgraph.runtime.runtime_guards import (
     build_failure_key,
     cycle_summary_from_tools,
 )
+from voidx.agent.adapters.langgraph.runtime.budget_convergence import (
+    BudgetConvergenceState,
+    BudgetReading,
+    ConvergenceDecision,
+    decide_convergence,
+)
+from voidx.agent.adapters.langgraph.runtime.subagent_convergence import (
+    convergence_guidance,
+    subagent_convergence_action,
+)
 from voidx.agent.adapters.langgraph.runtime.streaming import extract_text, stream_llm
 from voidx.agent.adapters.langgraph.runtime.core.helpers import LLMErrorKind, _classify_llm_error, _LLM_MAX_RETRIES, _llm_retry_delay, _llm_retry_sleep_delay, _clean_error_message
 from voidx.agent.adapters.langgraph.runtime.todo_events import todo_updated_event
@@ -48,7 +58,7 @@ from voidx.agent.adapters.langgraph.runtime.tool_surface import (
     ToolSurfaceContext,
     resolve_tool_surface,
 )
-from voidx.llm.domain.provider import resolve_protocol
+from voidx.llm.domain.provider import get_context_limit, resolve_protocol
 from voidx.agent.application.instruction import WorkflowRuntimeContext
 from voidx.llm.usage import (
     UsageStats,
@@ -73,7 +83,6 @@ create_chat_model = None
 bind_scoped_tools = None
 
 
-_SAFETY_STEP_LIMIT = 100
 _RESULT_CONTRACT_RETRY_LIMIT = 2
 _BLOCKED_CHILD_TOOLS = {"agent", "clarify", "checkpoint"}
 _CHILD_WORKFLOW_MODE_BY_JOIN = {
@@ -97,6 +106,7 @@ class SubagentConfig(Protocol):
     workspace: str
     user_profile: Any
     lsp_format_after_edit: bool
+    subagent_budget: Any
     sandbox_readable_files: list[str]
     sandbox_readable_dirs: list[str]
     sandbox_writable_files: list[str]
@@ -153,7 +163,10 @@ async def run_subagent(
         agent_tools = ToolRegistry()
     if hasattr(agent_tools, "register"):
         message_tool = MessageTool(
-            description="Report results or progress to your parent agent, and read messages from your parent."
+            description=(
+                "Send a message, question, answer, or final result to your parent agent, "
+                "or read messages from your parent."
+            )
         )
         if agent_tools.get(message_tool.id) is None:
             agent_tools.register_plugin(message_tool)
@@ -172,7 +185,7 @@ async def run_subagent(
             runtime_profile=RuntimeProfile(profile_id="coding", revision=1, name="Coding"),
             child_agent=True,
             lsp_manager=lsp_manager,
-            model_protocol=resolve_protocol(config.model),
+            model_protocol=resolve_protocol(model_cfg),
         ),
     ).definitions
 
@@ -193,9 +206,20 @@ async def run_subagent(
         workflow_route=WorkflowRoute(join=plan.join, leave=plan.leave) if plan is not None else None,
         workflow_runs={run.name: run for run in workflow_context.runs},
     )
+    budget = config.subagent_budget
+    context_limit = get_context_limit(
+        model_cfg.provider,
+        resolve_protocol(model_cfg),
+        model_cfg.context_window,
+    )
+    convergence_state = BudgetConvergenceState()
+    started_at = time.monotonic()
     guard_state = RuntimeGuardState(
         no_progress=NoProgressState(for_subagent=True),
-        wall_clock=WallClockGuardState.for_subagent(),
+        wall_clock=WallClockGuardState(
+            started_at=started_at,
+            limit_seconds=budget.wall_clock_seconds,
+        ),
     )
     pending_guard_guidance: list[str] = []
     contract_retry_count = 0
@@ -418,37 +442,193 @@ async def run_subagent(
 
 
     def drain_guard_guidance() -> list[HumanMessage]:
-        drained: list[HumanMessage] = []
-        while pending_guard_guidance:
-            text = pending_guard_guidance.pop(0)
-            drained.append(
-                HumanMessage(
-                    content=text,
-                    additional_kwargs={GUIDANCE_MARKER: True},
-                )
+        if not pending_guard_guidance:
+            return []
+        pending_guard_guidance.clear()
+        if convergence_state.soft_prompted:
+            return []
+        convergence_state.soft_prompted = True
+        return [
+            HumanMessage(
+                content=convergence_guidance(
+                    final=False,
+                    language=str(getattr(config.user_profile, "language", "") or ""),
+                ),
+                additional_kwargs={GUIDANCE_MARKER: True},
             )
-        return drained
+        ]
+
+    def record_convergence(decision: ConvergenceDecision) -> str:
+        action = subagent_convergence_action(decision)
+        if action != "continue" and run_metadata is not None:
+            events = run_metadata.setdefault("convergence_events", [])
+            if isinstance(events, list):
+                events.append({
+                    "action": action,
+                    "level": decision.level,
+                    "dimensions": sorted(decision.triggered_dimensions),
+                    "metadata": dict(decision.metadata),
+                })
+        return action
+
+    def hard_wall_clock_decision() -> ConvergenceDecision | None:
+        elapsed = max(0.0, time.monotonic() - started_at)
+        if elapsed < budget.wall_clock_seconds:
+            return None
+        return decide_convergence(
+            [
+                BudgetReading(
+                    dimension="wall_clock",
+                    current=elapsed,
+                    soft_limit=budget.wall_clock_seconds * budget.soft_warn_ratio,
+                    hard_limit=budget.wall_clock_seconds,
+                )
+            ],
+            convergence_state,
+        )
+
+    def finish_reason_for(decision: ConvergenceDecision) -> str:
+        if "context" in decision.triggered_dimensions:
+            return "context_limit"
+        if "wall_clock" in decision.triggered_dimensions:
+            return "time_limit"
+        return "step_limit"
+
+    async def finalize(finish_reason: str) -> str:
+        guidance = HumanMessage(
+            content=convergence_guidance(
+                final=True,
+                language=str(getattr(config.user_profile, "language", "") or ""),
+            ),
+            additional_kwargs={GUIDANCE_MARKER: True},
+        )
+        final_messages = [*messages, guidance]
+        renderer = ui_factories.streaming_renderer(
+            ui_port.console,
+            debug=debug,
+            agent_id=agent_id,
+            headless=True,
+        )
+        try:
+            assistant_msg = await stream_llm(
+                model,
+                final_messages,
+                renderer,
+                resolve_protocol(model_cfg),
+                ui_port=ui_port,
+            )
+            text = extract_text(assistant_msg).strip()
+            if usage_stats is not None:
+                final_context_tokens = estimate_context_tokens_with_tools(
+                    final_messages,
+                    [],
+                    model_cfg.model,
+                )
+                usage_stats.record_call(
+                    extract_token_usage(assistant_msg),
+                    fallback_input_tokens=final_context_tokens,
+                    fallback_output_tokens=estimate_message_tokens(assistant_msg, model_cfg.model),
+                    messages=final_messages,
+                    model=model_cfg.model,
+                    cache_key=f"{model_cfg.provider}/{model_cfg.model}",
+                )
+            if text:
+                messages.append(assistant_msg)
+                sub_messages.append(assistant_msg)
+        except Exception as exc:
+            if _classify_llm_error(exc) == LLMErrorKind.UNKNOWN:
+                raise
+            text = ""
+        if not text:
+            text = _partial_result_from_messages(messages)
+        if tracker:
+            tracker.update(task_id, last_output=text[:200])
+            tracker.finish(task_id, "completed")
+        await report_result(text, finish_reason=finish_reason)
+        mark_finished(finish_reason)
+        return text
 
     try:
         step = 0
-        while step < _SAFETY_STEP_LIMIT:
-            step += 1
-
+        while True:
             if capture_tree and parent_node is not None:
                 capture = ui_factories.capture_console(capture_tree, parent_node, agent_id=agent_id)
                 capture.step_header(persona)
             else:
                 ui_port.ui.step_header(persona)
 
-            ctx = ctx.model_copy(update={"turn_count": step})
+            next_step = step + 1
+            ctx = ctx.model_copy(update={"turn_count": next_step})
             llm_messages = [*messages, *drain_guard_guidance()]
-            model_with_tools = model.bind_tools(tool_defs) if tool_defs else model
-            renderer = ui_factories.streaming_renderer(ui_port.console, debug=debug, agent_id=agent_id, headless=True)
+            renderer = ui_factories.streaming_renderer(
+                ui_port.console,
+                debug=debug,
+                agent_id=agent_id,
+                headless=True,
+            )
             context_tokens = estimate_context_tokens_with_tools(
                 llm_messages,
                 tool_defs,
-                config.model.model,
+                model_cfg.model,
             )
+            elapsed = max(0.0, time.monotonic() - started_at)
+            decision = decide_convergence(
+                [
+                    BudgetReading(
+                        dimension="step",
+                        current=step,
+                        soft_limit=budget.step_limit * budget.soft_warn_ratio,
+                        hard_limit=budget.step_limit,
+                    ),
+                    BudgetReading(
+                        dimension="wall_clock",
+                        current=elapsed,
+                        soft_limit=budget.wall_clock_seconds * budget.soft_warn_ratio,
+                        hard_limit=budget.wall_clock_seconds,
+                    ),
+                    BudgetReading(
+                        dimension="context",
+                        current=context_tokens,
+                        soft_limit=context_limit * budget.context_soft_ratio,
+                        hard_limit=context_limit * budget.context_hard_ratio,
+                    ),
+                ],
+                convergence_state,
+            )
+            action = record_convergence(decision)
+            if action == "finalize":
+                return await finalize(finish_reason_for(decision))
+            if action == "guide":
+                llm_messages.append(
+                    HumanMessage(
+                        content=convergence_guidance(
+                            final=False,
+                            language=str(getattr(config.user_profile, "language", "") or ""),
+                        ),
+                        additional_kwargs={GUIDANCE_MARKER: True},
+                    )
+                )
+                context_tokens = estimate_context_tokens_with_tools(
+                    llm_messages,
+                    tool_defs,
+                    model_cfg.model,
+                )
+                if context_tokens >= context_limit * budget.context_hard_ratio:
+                    hard_context = decide_convergence(
+                        [
+                            BudgetReading(
+                                dimension="context",
+                                current=context_tokens,
+                                soft_limit=context_limit * budget.context_soft_ratio,
+                                hard_limit=context_limit * budget.context_hard_ratio,
+                            )
+                        ],
+                        convergence_state,
+                    )
+                    if record_convergence(hard_context) == "finalize":
+                        return await finalize("context_limit")
+            step = next_step
+            model_with_tools = model.bind_tools(tool_defs) if tool_defs else model
             if usage_stats is not None:
                 usage_stats.update_context(context_tokens)
             if session_id:
@@ -456,8 +636,8 @@ async def run_subagent(
                     session_id=session_id,
                     frame_kind="worker",
                     agent_persona=persona,
-                    provider=config.model.provider,
-                    model=config.model.model,
+                    provider=model_cfg.provider,
+                    model=model_cfg.model,
                     messages=llm_messages,
                     token_estimate=context_tokens,
                     metadata={
@@ -474,7 +654,7 @@ async def run_subagent(
                         model_with_tools,
                         llm_messages,
                         renderer,
-                        resolve_protocol(config.model),
+                        resolve_protocol(model_cfg),
                         ui_port=ui_port,
                     )
                     if retry_status_active and ui_port.via_events():
@@ -482,9 +662,27 @@ async def run_subagent(
                     break
                 except Exception as e:
                     kind = _classify_llm_error(e)
+                    if kind == LLMErrorKind.UNKNOWN:
+                        raise
                     if kind in {LLMErrorKind.NON_RETRYABLE, LLMErrorKind.CONTEXT_OVERFLOW}:
                         if retry_status_active and ui_port.via_events():
                             await ui_port.events.emit(StatusFinished(status_id="llm:retry"))
+                        partial = _partial_result_from_messages(messages, require_findings=True)
+                        if kind == LLMErrorKind.CONTEXT_OVERFLOW:
+                            text = partial or _partial_result_from_messages(messages)
+                            if tracker:
+                                tracker.update(task_id, last_output=text[:200])
+                                tracker.finish(task_id, "completed")
+                            await report_result(text, finish_reason="context_limit")
+                            mark_finished("context_limit")
+                            return text
+                        if partial:
+                            if tracker:
+                                tracker.update(task_id, last_output=partial[:200])
+                                tracker.finish(task_id, "completed")
+                            await report_result(partial, finish_reason="error_recovered")
+                            mark_finished("error_recovered")
+                            return partial
                         raise
                     if llm_failed_attempts < _LLM_MAX_RETRIES:
                         llm_failed_attempts += 1
@@ -504,15 +702,29 @@ async def run_subagent(
                         continue
                     if retry_status_active and ui_port.via_events():
                         await ui_port.events.emit(StatusFinished(status_id="llm:retry"))
+                    partial = _partial_result_from_messages(messages, require_findings=True)
+                    if partial:
+                        if tracker:
+                            tracker.update(task_id, last_output=partial[:200])
+                            tracker.finish(task_id, "completed")
+                        await report_result(partial, finish_reason="error_recovered")
+                        mark_finished("error_recovered")
+                        return partial
                     raise
+            post_llm_decision = hard_wall_clock_decision()
+            if (
+                post_llm_decision is not None
+                and record_convergence(post_llm_decision) == "finalize"
+            ):
+                return await finalize("time_limit")
             if usage_stats is not None:
                 usage_stats.record_call(
                     extract_token_usage(assistant_msg),
                     fallback_input_tokens=context_tokens,
-                    fallback_output_tokens=estimate_message_tokens(assistant_msg, config.model.model),
+                    fallback_output_tokens=estimate_message_tokens(assistant_msg, model_cfg.model),
                     messages=llm_messages,
-                    model=config.model.model,
-                    cache_key=f"{config.model.provider}/{config.model.model}",
+                    model=model_cfg.model,
+                    cache_key=f"{model_cfg.provider}/{model_cfg.model}",
                 )
             messages.append(assistant_msg)
             sub_messages.append(assistant_msg)
@@ -535,7 +747,6 @@ async def run_subagent(
                 if has_successful_tool_work and not _satisfies_result_contract(text, result_contract):
                     if contract_retry_count < _RESULT_CONTRACT_RETRY_LIMIT:
                         contract_retry_count += 1
-                        step -= 1
                         guidance = _result_contract_retry_message(result_contract)
                         messages.append(HumanMessage(content=guidance))
                         continue
@@ -561,7 +772,13 @@ async def run_subagent(
             if repetitive_decision.action in {"skip", "terminate"}:
                 guard_tool_msgs = [
                     ToolMessage(
-                        content=sanitize_tool_message_content(repetitive_decision.message, workspace=ctx.workspace),
+                        content=sanitize_tool_message_content(
+                            convergence_guidance(
+                                final=False,
+                                language=str(getattr(config.user_profile, "language", "") or ""),
+                            ),
+                            workspace=ctx.workspace,
+                        ),
                         tool_call_id=tc.get("id", ""),
                         status="error",
                     )
@@ -570,13 +787,7 @@ async def run_subagent(
                 messages.extend(guard_tool_msgs)
                 sub_messages.extend(guard_tool_msgs)
                 if repetitive_decision.action == "terminate":
-                    final_text = _guard_termination_result(messages, repetitive_decision.message)
-                    if tracker:
-                        tracker.update(task_id, last_output=final_text[:200])
-                        tracker.finish(task_id, "completed")
-                    await report_result(final_text, finish_reason="guard_terminated")
-                    mark_finished("guard_terminated")
-                    return final_text
+                    return await finalize("guard_terminated")
                 continue
 
             if authorize_tools:
@@ -691,6 +902,13 @@ async def run_subagent(
             )
             workflow_changed = apply_state_update(state_update)
 
+            post_tool_decision = hard_wall_clock_decision()
+            if (
+                post_tool_decision is not None
+                and record_convergence(post_tool_decision) == "finalize"
+            ):
+                return await finalize("time_limit")
+
             for item in executed:
                 metadata = getattr(item["result"], "metadata", {}) or {}
                 if (
@@ -748,30 +966,7 @@ async def run_subagent(
                 pending_guard_guidance.append(guidance.message)
             no_progress_decision = guard_state.no_progress.decision()
             if no_progress_decision.action == "terminate":
-                final_text = _guard_termination_result(messages, no_progress_decision.message)
-                if tracker:
-                    tracker.update(task_id, last_output=final_text[:200])
-                    tracker.finish(task_id, "completed")
-                await report_result(final_text, finish_reason="guard_terminated")
-                mark_finished("guard_terminated")
-                return final_text
-            wall_clock_decision = guard_state.wall_clock.record_check(
-                label=agent_def.name or persona,
-                latest_action=summary.only_tool or ", ".join(summary.tool_names[:3]),
-            )
-            if wall_clock_decision.action == "terminate":
-                final_text = _guard_termination_result(messages, wall_clock_decision.message)
-                if tracker:
-                    tracker.update(task_id, last_output=final_text[:200])
-                    tracker.finish(task_id, "completed")
-                await report_result(final_text, finish_reason="guard_terminated")
-                mark_finished("guard_terminated")
-                return final_text
-
-        if tracker:
-            tracker.finish(task_id, "completed")
-        mark_finished("safety_limit")
-        return extract_text(messages[-1]) if messages else "Safety step limit reached."
+                return await finalize("guard_terminated")
 
     except Exception as e:
         if tracker:
@@ -808,28 +1003,28 @@ def _is_message_result_tool_call(tool_call: dict) -> bool:
 
 
 
-def _guard_termination_result(messages: list, guard_message: str) -> str:
-    """Compose the child result when a runtime guard terminates the run.
 
-    The parent receives this text as the run result, so it must carry the
-    findings gathered before termination, not just the guard message.
-    """
+
+def _partial_result_from_messages(messages: list, *, require_findings: bool = False) -> str:
     findings: list[str] = []
     for message in reversed(messages):
-        if isinstance(message, AIMessage):
-            text = extract_text(message).strip()
-            if text and text not in findings:
-                findings.append(text)
+        if not isinstance(message, AIMessage):
+            continue
+        text = extract_text(message).strip()
+        if text and text not in findings:
+            findings.append(text)
         if len(findings) >= 3:
             break
-    parts = [guard_message]
-    if findings:
-        parts.append("Findings gathered before termination:\n" + "\n---\n".join(reversed(findings)))
-    parts.append(
-        "Blocker: recent tool cycles made no progress (blocked or failing actions); "
-        "the runtime stopped this subagent before the task completed."
+    if not findings and require_findings:
+        return ""
+    if not findings:
+        return "The task could not be fully completed. No verified findings were available."
+    return (
+        "\n---\n".join(reversed(findings))
+        + "\n\nThe task may be incomplete. Review the findings, verification, and remaining work."
     )
-    return "\n\n".join(parts)
+
+
 
 
 def _result_text(result: dict | None) -> str:

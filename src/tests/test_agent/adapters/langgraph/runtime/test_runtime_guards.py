@@ -320,8 +320,10 @@ def test_no_progress_guard_counts_repeated_same_evidence_as_stalled():
 
 def test_wall_clock_guard_has_subagent_preset():
     guard = WallClockGuardState.for_subagent()
+    custom = WallClockGuardState.for_subagent(limit_seconds=45.0)
 
     assert guard.limit_seconds == 1800.0
+    assert custom.limit_seconds == 45.0
 
 
 def test_wall_clock_guard_default_is_disabled():

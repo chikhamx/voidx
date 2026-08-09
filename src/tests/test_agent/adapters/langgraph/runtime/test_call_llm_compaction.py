@@ -70,6 +70,199 @@ async def test_call_llm_resolves_protocol_for_mimo_provider(tmp_path, monkeypatc
     assert result["messages"][0].content == "answer"
 
 
+
+
+@pytest.mark.asyncio
+async def test_main_agent_hard_context_pressure_keeps_tools_and_does_not_force_final(
+    tmp_path,
+    monkeypatch,
+):
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
+    from voidx.agent.adapters.langgraph.runtime.context_pressure import ContextPressureDecision
+    from voidx.llm.message_markers import is_context_pressure_message
+
+    class ToolRecordingModel(FakeStreamingModel):
+        def __init__(self) -> None:
+            super().__init__()
+            self.bound_tools = None
+
+        def bind_tools(self, tool_defs):
+            self.bound_tools = list(tool_defs)
+            return self
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+    monkeypatch.setattr(
+        graph_module,
+        "evaluate_context_pressure",
+        lambda *_args, **_kwargs: ContextPressureDecision(
+            over_soft=True,
+            over_hard=True,
+            can_compact=False,
+            pressure_level="hard",
+            should_inject=True,
+            turn_id="turn-1",
+            turn_count=1,
+            pre_tokens=90_000,
+            soft_threshold=75_000,
+            hard_threshold=90_000,
+            reason="hard_threshold",
+        ),
+    )
+    graph = make_langgraph_execution(
+        Config(
+            model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+            workspace=str(tmp_path),
+        ),
+        api_key="test",
+    )
+    graph.model = ToolRecordingModel()
+
+    result = await graph._call_llm({
+        "messages": [HumanMessage(id="turn-1", content="finish the task")],
+        "step_count": 10,
+        "persona": "coordinate",
+    })
+
+    assert graph.model.bound_tools
+    pressure_hints = [
+        message for message in graph.model.messages
+        if is_context_pressure_message(message)
+    ]
+    assert len(pressure_hints) == 1
+    assert pressure_hints[0].additional_kwargs["pressure_level"] == "hard"
+    assert result["convergence_forced"] is False
+
+
+
+
+@pytest.mark.asyncio
+async def test_main_hard_compaction_failure_injects_hint_and_keeps_tools(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
+    from voidx.agent.adapters.langgraph.runtime.context_pressure import ContextPressureDecision
+    from voidx.llm.message_markers import is_context_pressure_message
+
+    class ToolRecordingModel(FakeStreamingModel):
+        def __init__(self) -> None:
+            super().__init__()
+            self.bound_tools = None
+
+        def bind_tools(self, tool_defs):
+            self.bound_tools = list(tool_defs)
+            return self
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+    monkeypatch.setattr(
+        graph_module,
+        "evaluate_context_pressure",
+        lambda *_args, **_kwargs: ContextPressureDecision(
+            over_soft=True,
+            over_hard=True,
+            can_compact=True,
+            pressure_level="hard",
+            should_inject=False,
+            turn_id="turn-hard",
+            turn_count=2,
+            pre_tokens=90_000,
+            soft_threshold=75_000,
+            hard_threshold=90_000,
+            reason="hard_threshold",
+        ),
+    )
+    graph = make_langgraph_execution(
+        Config(
+            model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+            workspace=str(tmp_path),
+        ),
+        api_key="test-key",
+    )
+    graph.model = ToolRecordingModel()
+    graph._compaction.is_overflow = lambda _tokens: True
+
+    async def failed_preflight(*_args, **_kwargs):
+        return None, None
+
+    graph._preflight_compact_if_needed = failed_preflight
+
+    result = await graph._call_llm({
+        "messages": [HumanMessage(id="turn-hard", content="finish the task")],
+        "step_count": 10,
+        "persona": "coordinate",
+    })
+
+    pressure_hints = [
+        message for message in graph.model.messages
+        if is_context_pressure_message(message)
+    ]
+    assert len(pressure_hints) == 1
+    assert pressure_hints[0].additional_kwargs["pressure_level"] == "hard"
+    assert graph.model.bound_tools
+    assert result["convergence_forced"] is False
+
+
+@pytest.mark.asyncio
+async def test_provider_overflow_hard_hint_saves_retry_context_frame(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
+    from voidx.llm.message_markers import is_context_pressure_message
+
+    class OverflowOnceModel(FakeStreamingModel):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
+            self.messages_by_call = []
+
+        async def astream(self, messages):
+            self.calls += 1
+            self.messages_by_call.append(list(messages))
+            if self.calls == 1:
+                if False:
+                    yield AIMessageChunk(content="")
+                error = RuntimeError("context length exceeded")
+                error.status_code = 400  # type: ignore[attr-defined]
+                raise error
+            async for chunk in super().astream(messages):
+                yield chunk
+
+    saved_frames: list[dict] = []
+
+    async def capture_frame(**kwargs):
+        saved_frames.append(kwargs)
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+    monkeypatch.setattr(graph_module, "save_main_context_frame", capture_frame)
+    monkeypatch.setattr(
+        graph_module,
+        "estimate_context_tokens_with_tools",
+        lambda messages, _tools, _model: (
+            222 if any(is_context_pressure_message(message) for message in messages) else 111
+        ),
+    )
+    graph = make_langgraph_execution(
+        Config(
+            model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+            workspace=str(tmp_path),
+        ),
+        api_key="test-key",
+    )
+    graph.model = OverflowOnceModel()
+    graph._compaction.is_overflow = lambda _tokens: False
+
+    async def failed_preflight(*_args, **_kwargs):
+        return None, None
+
+    graph._preflight_compact_if_needed = failed_preflight
+
+    await graph._call_llm({
+        "messages": [HumanMessage(id="turn-overflow", content="finish the task")],
+        "step_count": 0,
+        "persona": "coordinate",
+    })
+
+    assert graph.model.calls == 2
+    assert len(saved_frames) == 2
+    assert saved_frames[1]["messages"] == graph.model.messages_by_call[1]
+    assert saved_frames[1]["token_estimate"] == 222
+    assert any(is_context_pressure_message(message) for message in saved_frames[1]["messages"])
+    assert saved_frames[1]["convergence_forced"] is False
 @pytest.mark.asyncio
 async def test_call_llm_injects_current_todo_runtime_context(tmp_path, monkeypatch):
     import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
@@ -767,6 +960,41 @@ async def test_classify_llm_error_unknown(tmp_path, monkeypatch):
     kind = helpers._classify_llm_error(exc)
     assert kind == helpers.LLMErrorKind.UNKNOWN
 
+
+
+@pytest.mark.asyncio
+async def test_call_llm_unknown_programming_error_is_raised_without_retry(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
+
+    class ProgrammingErrorModel(FakeStreamingModel):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
+
+        async def astream(self, _messages):
+            self.calls += 1
+            if False:
+                yield AIMessageChunk(content="")
+            raise ValueError("programming defect")
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+    graph = make_langgraph_execution(
+        Config(
+            model=ModelConfig(provider="openai", model="gpt-4o"),
+            workspace=str(tmp_path),
+        ),
+        api_key="test-key",
+    )
+    graph.model = ProgrammingErrorModel()
+
+    with pytest.raises(ValueError, match="programming defect"):
+        await graph._call_llm({
+            "messages": [HumanMessage(content="hi")],
+            "step_count": 0,
+            "persona": "voidx",
+        })
+
+    assert graph.model.calls == 1
 @pytest.mark.asyncio
 async def test_call_llm_non_retryable_404_fail_fast(tmp_path, monkeypatch):
     """A 404 error should fail-fast without retrying."""

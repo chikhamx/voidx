@@ -7,6 +7,11 @@ from typing import Literal
 
 from langchain_core.messages import BaseMessage, HumanMessage
 
+from voidx.agent.adapters.langgraph.runtime.budget_convergence import (
+    BudgetConvergenceState,
+    BudgetReading,
+    decide_convergence,
+)
 from voidx.llm.compaction.service import CompactionService
 from voidx.llm.message_markers import (
     CONTEXT_PRESSURE_MARKER,
@@ -51,11 +56,26 @@ def evaluate_context_pressure(
     if not selection.should_compact:
         selection = compaction_service.select_details(semantic_messages)
     can_compact = selection.should_compact
-    over_soft = compaction_service.is_soft_overflow({"total": llm_context_tokens})
-    over_hard = compaction_service.is_overflow({"total": llm_context_tokens})
-    level: PressureLevel = "hard" if over_hard else "soft" if over_soft else "none"
-    reason = "hard_threshold" if over_hard else "soft_threshold" if over_soft else ""
+    soft_threshold = compaction_service.soft_threshold()
+    hard_threshold = int(compaction_service.context_limit * 0.90)
     turn_id = turns[-1].id if turns else ""
+    readings = (
+        [
+            BudgetReading(
+                dimension="context",
+                current=llm_context_tokens,
+                soft_limit=soft_threshold,
+                hard_limit=hard_threshold,
+            )
+        ]
+        if soft_threshold > 0 and hard_threshold > 0
+        else []
+    )
+    signal = decide_convergence(readings, BudgetConvergenceState())
+    level: PressureLevel = signal.level
+    over_soft = level in {"soft", "hard"}
+    over_hard = level == "hard"
+    reason = "hard_threshold" if over_hard else "soft_threshold" if over_soft else ""
     return ContextPressureDecision(
         over_soft=over_soft,
         over_hard=over_hard,
@@ -65,8 +85,8 @@ def evaluate_context_pressure(
         turn_id=turn_id,
         turn_count=len(turns),
         pre_tokens=llm_context_tokens,
-        soft_threshold=compaction_service.soft_threshold(),
-        hard_threshold=int(compaction_service.context_limit * 0.90),
+        soft_threshold=soft_threshold,
+        hard_threshold=hard_threshold,
         reason=reason,
     )
 

@@ -61,6 +61,7 @@ WORKSPACE_ONLY_KEYS = frozenset({
     "compaction",
     "skills",
     "lsp",
+    "subagent_budget",
 })
 
 
@@ -476,6 +477,7 @@ class Settings(
                 "askCompact",
                 self._effective_data().get("ask_compact", False),
             )),
+            subagent_budget=self.get_subagent_budget_config(),
             user_profile=self.get_user_profile(),
         )
 

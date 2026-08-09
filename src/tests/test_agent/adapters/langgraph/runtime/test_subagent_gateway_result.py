@@ -149,8 +149,8 @@ async def test_run_subagent_result_tool_call_suppresses_same_batch_followups(tmp
                     "name": "message",
                     "args": {
                         "action": "send",
-                        "message_type": "progress",
-                        "payload": {"step": "should not send"},
+                        "message_type": "message",
+                        "payload": {"text": "should not send"},
                     },
                     "id": "call-progress",
                 },
@@ -319,10 +319,10 @@ def test_root_tool_registry_does_not_register_message_by_default():
     assert "message" not in registry.ids()
 
 
-def test_guard_termination_result_includes_findings_and_blocker():
+def test_partial_result_includes_findings_without_runtime_reason():
     from langchain_core.messages import HumanMessage, ToolMessage
 
-    from voidx.agent.adapters.langgraph.runtime.subagent import _guard_termination_result
+    from voidx.agent.adapters.langgraph.runtime.subagent import _partial_result_from_messages
 
     messages = [
         HumanMessage(content="review the edit-window change"),
@@ -331,11 +331,12 @@ def test_guard_termination_result_includes_findings_and_blocker():
         AIMessage(content="", tool_calls=[{"name": "bash", "args": {"command": "python x.py"}, "id": "c1"}]),
     ]
 
-    result = _guard_termination_result(messages, "No meaningful progress has been detected across 5 model/tool cycles.")
+    result = _partial_result_from_messages(messages)
 
-    assert result.startswith("No meaningful progress")
     assert "关键发现" in result
-    assert "Blocker" in result
+    assert "task may be incomplete" in result
+    assert "runtime" not in result.lower()
+    assert "guard" not in result.lower()
 
 
 @pytest.mark.asyncio
@@ -418,4 +419,6 @@ async def test_run_subagent_guard_terminated_returns_findings_fallback(tmp_path,
     assert run_metadata.get("finish_reason") == "guard_terminated"
     result_text = str((run.result or {}).get("result") or "")
     assert "关键发现" in result_text
-    assert "Blocker" in result_text
+    assert "task may be incomplete" in result_text
+    assert "runtime" not in result_text.lower()
+    assert "guard" not in result_text.lower()

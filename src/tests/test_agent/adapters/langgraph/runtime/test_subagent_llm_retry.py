@@ -126,20 +126,48 @@ async def test_run_subagent_retries_transient_llm_errors_and_cleans_retry_status
 
 
 @pytest.mark.asyncio
-async def test_run_subagent_does_not_retry_context_overflow(tmp_path, monkeypatch):
+async def test_run_subagent_recovers_context_overflow_with_partial_result(tmp_path, monkeypatch):
     import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
     attempts = 0
     sleep_delays: list[int] = []
+    executed_tools: list[str] = []
+
+    class FakeToolRegistry:
+        def filtered_copy(self, _allowed_ids):
+            return self
+
+        def ids(self):
+            return ["read"]
+
+        def serialize_definitions(self):
+            return [{"name": "read", "description": "read", "input_schema": {}}]
+
+        async def execute_tool(self, tool_id, _args, _ctx):
+            executed_tools.append(tool_id)
+            from voidx.tooling.domain.result import ToolResult
+
+            return ToolResult(output="tool evidence")
 
     async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
         nonlocal attempts
         attempts += 1
+        if attempts == 1:
+            return AIMessage(
+                content="confirmed finding",
+                tool_calls=[{
+                    "name": "read",
+                    "args": {},
+                    "id": "read-1",
+                    "type": "tool_call",
+                }],
+            )
         raise ProviderError("context_length_exceeded", status_code=400)
 
     async def fake_sleep(delay):
         sleep_delays.append(delay)
 
+    monkeypatch.setattr(subagent_module, "ToolRegistry", FakeToolRegistry)
     monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
     monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
     monkeypatch.setattr(subagent_module.asyncio, "sleep", fake_sleep)
@@ -147,23 +175,24 @@ async def test_run_subagent_does_not_retry_context_overflow(tmp_path, monkeypatc
     ui_port = FakeUiPort(events=True)
     run_metadata: dict[str, object] = {}
 
-    with pytest.raises(ProviderError):
-        await subagent_module.run_subagent(
-            _agent_def(),
-            "Inspect child path",
-            "test-key",
-            Config(workspace=str(tmp_path)),
-            runtime_persona="explore",
-            goal_resolution=_goal_resolution(),
-            result_contract=_result_contract(),
-            run_metadata=run_metadata,
-            debug=False,
-            ui_port=ui_port,
-        )
+    output = await subagent_module.run_subagent(
+        _agent_def(),
+        "Inspect child path",
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        runtime_persona="explore",
+        goal_resolution=_goal_resolution(),
+        result_contract=_result_contract(),
+        run_metadata=run_metadata,
+        debug=False,
+        ui_port=ui_port,
+    )
 
-    assert attempts == 1
+    assert attempts == 2
+    assert executed_tools == ["read"]
     assert sleep_delays == []
-    assert run_metadata["finish_reason"] == "error"
+    assert "confirmed finding" in output
+    assert run_metadata["finish_reason"] == "context_limit"
     assert [event for event in ui_port.events.emitted if getattr(event, "status_id", None) == "llm:retry"] == []
 
 
@@ -276,7 +305,7 @@ async def test_run_subagent_retry_uses_text_fallback_without_events(tmp_path, mo
         nonlocal attempts
         attempts += 1
         if attempts == 1:
-            raise ProviderError("temporary network failure")
+            raise ConnectionError("temporary network failure")
         return AIMessage(content="child answer")
 
     async def fake_sleep(delay):
@@ -305,3 +334,99 @@ async def test_run_subagent_retry_uses_text_fallback_without_events(tmp_path, mo
     assert sleep_delays == [0.002]
     assert ui_port.events.emitted == []
     assert any("Retrying" in line for line in ui_port.ui.lines)
+
+
+@pytest.mark.asyncio
+async def test_subagent_final_call_does_not_swallow_unknown_runtime_errors(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
+    from voidx.config import SubagentBudgetConfig
+
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
+        raise AssertionError("connection state invariant violated")
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+    monkeypatch.setattr(subagent_module, "estimate_context_tokens_with_tools", lambda *_args: 95)
+
+    run_metadata: dict[str, object] = {}
+    with pytest.raises(AssertionError, match="connection state invariant violated"):
+        await subagent_module.run_subagent(
+            _agent_def(),
+            "Inspect child path",
+            "test-key",
+            Config(
+                workspace=str(tmp_path),
+                model={"context_window": 100},
+                subagent_budget=SubagentBudgetConfig(
+                    context_soft_ratio=0.75,
+                    context_hard_ratio=0.9,
+                ),
+            ),
+            runtime_persona="explore",
+            goal_resolution=_goal_resolution(),
+            result_contract=_result_contract(),
+            run_metadata=run_metadata,
+            debug=False,
+        )
+
+    assert run_metadata["finish_reason"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_subagent_regular_call_does_not_recover_programming_errors_from_prior_findings(
+    tmp_path,
+    monkeypatch,
+):
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
+    from voidx.tooling.domain.result import ToolResult
+
+    attempts = 0
+
+    class FakeToolRegistry:
+        def filtered_copy(self, _allowed_ids):
+            return self
+
+        def ids(self):
+            return ["read"]
+
+        def serialize_definitions(self):
+            return [{"name": "read", "description": "read", "input_schema": {}}]
+
+        async def execute_tool(self, _tool_id, _args, _ctx):
+            return ToolResult(output="tool evidence")
+
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return AIMessage(
+                content="confirmed finding",
+                tool_calls=[{
+                    "name": "read",
+                    "args": {},
+                    "id": "read-1",
+                    "type": "tool_call",
+                }],
+            )
+        raise RuntimeError("programming failure")
+
+    monkeypatch.setattr(subagent_module, "ToolRegistry", FakeToolRegistry)
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    run_metadata: dict[str, object] = {}
+    with pytest.raises(RuntimeError, match="programming failure"):
+        await subagent_module.run_subagent(
+            _agent_def(),
+            "Inspect child path",
+            "test-key",
+            Config(workspace=str(tmp_path)),
+            runtime_persona="explore",
+            goal_resolution=_goal_resolution(),
+            result_contract=_result_contract(),
+            run_metadata=run_metadata,
+            debug=False,
+        )
+
+    assert attempts == 2
+    assert run_metadata["finish_reason"] == "error"

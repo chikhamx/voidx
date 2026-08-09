@@ -267,6 +267,39 @@ class LlmTurn:
             compaction_service=host._compaction,
         )
         active_pressure = current_context_pressure(state_messages, pressure_decision.turn_id)
+
+        async def apply_hard_pressure_fallback() -> None:
+            nonlocal state_messages, pending_pressure_delta, active_pressure
+            nonlocal llm_messages, convergence_messages, convergence_forced
+            hard_update = upsert_context_pressure_hint(
+                state_messages,
+                hard_pressure_decision(pressure_decision),
+            )
+            state_messages = hard_update.state_messages
+            if hard_update.message_delta:
+                pending_pressure_delta = hard_update.message_delta
+            active_pressure = current_context_pressure(
+                state_messages,
+                pressure_decision.turn_id,
+            )
+            llm_messages, convergence_messages, convergence_forced = rebuild_llm_messages(
+                state_messages,
+                allow_inline_compaction=False,
+            )
+            loop.context_tokens = estimate_llm_context_tokens(llm_messages)
+            host._usage_stats.update_context(loop.context_tokens)
+            if hard_update.outcome in {"hint_injected", "hint_upgraded"} and host._ui.via_events():
+                await host._ui.events.emit(ContextPressureUpdated(
+                    pressure_id=hard_update.pressure_id,
+                    level="hard",
+                    outcome=hard_update.outcome,
+                    reason="hard_threshold",
+                    can_compact=False,
+                    turn_count=pressure_decision.turn_count,
+                    pre_tokens=loop.context_tokens,
+                    soft_threshold=pressure_decision.soft_threshold,
+                    hard_threshold=pressure_decision.hard_threshold,
+                ))
         if pressure_decision.should_inject:
             pressure_update = upsert_context_pressure_hint(state_messages, pressure_decision)
             state_messages = pressure_update.state_messages
@@ -309,6 +342,8 @@ class LlmTurn:
                         level=active_pressure[1],
                         outcome="compacted",
                     ))
+            elif pressure_decision.over_hard:
+                await apply_hard_pressure_fallback()
 
         await save_context_frame(llm_messages, loop.context_tokens, convergence_messages, convergence_forced)
         max_retries = _LLM_MAX_RETRIES
@@ -434,6 +469,8 @@ class LlmTurn:
                 from voidx.agent.adapters.langgraph.runtime.core.helpers import _classify_llm_error
 
                 kind = _classify_llm_error(e)
+                if kind.value == "unknown":
+                    raise
 
                 retry_result = await handle_llm_exception(
                     ui=host._ui,
@@ -468,35 +505,13 @@ class LlmTurn:
                             convergence_forced,
                         )
                         continue
-                    hard_update = upsert_context_pressure_hint(
-                        state_messages,
-                        hard_pressure_decision(pressure_decision),
+                    await apply_hard_pressure_fallback()
+                    await save_context_frame(
+                        llm_messages,
+                        loop.context_tokens,
+                        convergence_messages,
+                        convergence_forced,
                     )
-                    state_messages = hard_update.state_messages
-                    if hard_update.message_delta:
-                        pending_pressure_delta = hard_update.message_delta
-                    active_pressure = current_context_pressure(
-                        state_messages,
-                        pressure_decision.turn_id,
-                    )
-                    llm_messages, convergence_messages, convergence_forced = rebuild_llm_messages(
-                        state_messages,
-                        allow_inline_compaction=False,
-                    )
-                    loop.context_tokens = estimate_llm_context_tokens(llm_messages)
-                    host._usage_stats.update_context(loop.context_tokens)
-                    if hard_update.outcome in {"hint_injected", "hint_upgraded"} and host._ui.via_events():
-                        await host._ui.events.emit(ContextPressureUpdated(
-                            pressure_id=hard_update.pressure_id,
-                            level="hard",
-                            outcome=hard_update.outcome,
-                            reason="hard_threshold",
-                            can_compact=False,
-                            turn_count=pressure_decision.turn_count,
-                            pre_tokens=loop.context_tokens,
-                            soft_threshold=pressure_decision.soft_threshold,
-                            hard_threshold=pressure_decision.hard_threshold,
-                        ))
                 if retry_result.action == "retry":
                     continue
                 if retry_result.action == "fail":

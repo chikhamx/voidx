@@ -9,6 +9,7 @@ from voidx.config.models import (
     McpServerConfig,
     Profile,
     RetryConfig,
+    SubagentBudgetConfig,
 )
 from voidx.config.settings import SETTINGS_FILE, SKILLS_STATE_FILE, Settings
 
@@ -23,5 +24,6 @@ __all__ = [
     "PermissionMode",
     "Profile",
     "RetryConfig",
+    "SubagentBudgetConfig",
     "Settings",
 ]
