@@ -23,6 +23,16 @@ class RecordingUi:
         self.errors.append(str(text))
 
 
+class StubPromptUi:
+    def __init__(self, result: str | None) -> None:
+        self.result = result
+        self.calls: list[tuple[str, list]] = []
+
+    async def ask_choice(self, prompt: str, choices: list, **kwargs) -> str | None:
+        self.calls.append((prompt, choices))
+        return self.result
+
+
 async def _handler(tmp_path, *, profiles: set[str] | None = None):
     settings = Settings(str(tmp_path))
     ui = RecordingUi()
@@ -121,3 +131,76 @@ async def test_compact_model_invalid_input_does_not_persist(tmp_path, command: s
     assert path.read_bytes() == before
     assert ui.errors
     assert json.loads(before)["compaction"]["profile_name"] == "existing/profile"
+
+
+@pytest.mark.asyncio
+async def test_compact_model_interactive_selects_configured_profile(tmp_path, monkeypatch) -> None:
+    from unittest.mock import PropertyMock
+
+    from voidx.agent.adapters.slash_host import PreferencesSlashAdapter
+
+    prompt_ui = StubPromptUi("openai/gpt-5")
+    monkeypatch.setattr(PreferencesSlashAdapter, "prompt_ui", PropertyMock(return_value=prompt_ui))
+    handler, settings, _ui = await _handler(tmp_path)
+    settings.set_compaction_config(CompactionConfig(timeout_seconds=7))
+
+    async def list_profiles():
+        return [
+            SimpleNamespace(name="openai/gpt-5", api_key="configured"),
+            SimpleNamespace(name="anthropic/sonnet", api_key=None),
+        ]
+
+    settings.list_profiles = list_profiles
+
+    assert await handler.dispatch("/compact-model") is True
+
+    configured = settings.get_compaction_config()
+    assert configured.profile_name == "openai/gpt-5"
+    assert configured.timeout_seconds == 7
+    prompt, choices = prompt_ui.calls[0]
+    assert prompt == "Compaction model profile"
+    labels = [choice[0] for choice in choices]
+    assert "Current main profile (default)" in labels
+    assert "openai/gpt-5" in labels
+    assert "anthropic/sonnet" not in labels
+
+
+@pytest.mark.asyncio
+async def test_compact_model_interactive_default_clears_profile(tmp_path, monkeypatch) -> None:
+    from unittest.mock import PropertyMock
+
+    from voidx.agent.adapters.slash_host import PreferencesSlashAdapter
+
+    prompt_ui = StubPromptUi("")
+    monkeypatch.setattr(PreferencesSlashAdapter, "prompt_ui", PropertyMock(return_value=prompt_ui))
+    handler, settings, _ui = await _handler(tmp_path)
+    settings.set_compaction_config(CompactionConfig(profile_name="openai/gpt-5"))
+
+    async def list_profiles():
+        return [SimpleNamespace(name="openai/gpt-5", api_key="sk-1")]
+
+    settings.list_profiles = list_profiles
+
+    assert await handler.dispatch("/compact-model") is True
+    assert settings.get_compaction_config().profile_name == ""
+
+
+@pytest.mark.asyncio
+async def test_compact_model_interactive_cancel_shows_config(tmp_path, monkeypatch) -> None:
+    from unittest.mock import PropertyMock
+
+    from voidx.agent.adapters.slash_host import PreferencesSlashAdapter
+
+    prompt_ui = StubPromptUi(None)
+    monkeypatch.setattr(PreferencesSlashAdapter, "prompt_ui", PropertyMock(return_value=prompt_ui))
+    handler, settings, ui = await _handler(tmp_path)
+    settings.set_compaction_config(CompactionConfig(timeout_seconds=42))
+
+    async def list_profiles():
+        return []
+
+    settings.list_profiles = list_profiles
+
+    assert await handler.dispatch("/compact-model") is True
+    assert settings.get_compaction_config().profile_name == ""
+    assert "timeout: 42" in "\n".join(ui.output)

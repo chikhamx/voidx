@@ -215,9 +215,8 @@ class TestInteractiveTools:
 
         spawn_result, wait_result = await self._spawn_and_wait_agent(tool, self._agent_args(), tmp_path)
 
-        assert "Agent run status: completed" in wait_result.output
-        assert "Wait outcome: terminal_reached_during_wait" in wait_result.output
-        assert "Final result:\nchild result" in wait_result.output
+        assert "[completed]" in wait_result.output
+        assert "Result:\nchild result" in wait_result.output
         assert set(spawn_result.metadata) == {"agent", "run_id", "status"}
         assert "Scope: src/voidx/tools/agent.py" in captured["description"]
         assert "Result contract:" not in captured["description"]
@@ -242,9 +241,8 @@ class TestInteractiveTools:
         assert "model" not in schema.get("properties", {})
 
         spawn_result, wait_result = await self._spawn_and_wait_agent(tool, self._agent_args(), tmp_path)
-        assert "Agent run status: completed" in wait_result.output
-        assert "Wait outcome: terminal_reached_during_wait" in wait_result.output
-        assert "Final result:\nchild result" in wait_result.output
+        assert "[completed]" in wait_result.output
+        assert "Result:\nchild result" in wait_result.output
         assert "model" not in spawn_result.metadata
     @pytest.mark.asyncio
     async def test_agent_tool_normalizes_implement_mode_to_tdd_verify_route(self, tmp_path):
@@ -274,9 +272,8 @@ class TestInteractiveTools:
             tmp_path,
         )
 
-        assert "Agent run status: completed" in wait_result.output
-        assert "Wait outcome: terminal_reached_during_wait" in wait_result.output
-        assert "Final result:\nchild result" in wait_result.output
+        assert "[completed]" in wait_result.output
+        assert "Result:\nchild result" in wait_result.output
         goal_resolution = captured["goal_resolution"]
         assert goal_resolution.goal.desc == "审查 agent 工具"
         assert goal_resolution.plan.join == "tdd"
@@ -322,7 +319,7 @@ async def test_agent_tool_spawn_uses_gateway_when_available(tmp_path):
 
     assert result.metadata["run_id"]
     assert result.metadata["status"] == "running"
-    assert "spawned" in result.output
+    assert "[running]" in result.output
     assert result.metadata["run_id"] in result.output
     assert "agent_control" not in result.output
     assert "agent_control" in (result.next_step_hint or "")
@@ -332,7 +329,7 @@ async def test_agent_tool_spawn_uses_gateway_when_available(tmp_path):
         {
             "action": "wait",
             "run_id": result.metadata["run_id"],
-            "wait": "brief",
+            "wait": "standard",
         },
         ToolContext(
             workspace=str(tmp_path),
@@ -341,9 +338,12 @@ async def test_agent_tool_spawn_uses_gateway_when_available(tmp_path):
         ),
     )
 
-    assert "Agent run status: completed" in wait_result.output
-    assert "Final result:\ngateway child result" in wait_result.output
-    assert wait_result.metadata["wait_outcome"] == "terminal_reached_during_wait"
+    assert "[completed]" in wait_result.output
+    assert "Result:\ngateway child result" in wait_result.output
+    assert wait_result.metadata["wait_outcome"] in {
+        "terminal_reached_during_wait",
+        "already_terminal",
+    }
     assert captured["agent_run_id"] == result.metadata["run_id"]
     assert gateway.get_run(
         requester_run_id=root_id,
@@ -380,18 +380,20 @@ async def test_agent_tool_wait_returns_child_error(tmp_path):
     )
 
     failed = await AgentControlTool().execute(
-        {"action": "wait", "run_id": spawned.metadata["run_id"], "wait": "brief"},
+        {"action": "wait", "run_id": spawned.metadata["run_id"], "wait": "standard"},
         ctx,
     )
 
-    assert "Agent run status: failed" in failed.output
-    assert "Final result:\nprovider schema rejected tool definitions" in failed.output
-    assert "Wait outcome: terminal_reached_during_wait" in failed.output
+    assert "[failed]" in failed.output
+    assert "Error: provider schema rejected tool definitions" in failed.output
     assert failed.metadata["status"] == "failed"
     assert failed.metadata["run"]["error"] == "provider schema rejected tool definitions"
 
 @pytest.mark.asyncio
-async def test_agent_tool_wait_timeout_returns_running_without_error(tmp_path):
+async def test_agent_tool_wait_timeout_returns_running_without_error(tmp_path, monkeypatch):
+    import voidx.agent.adapters.tools.subagent_control as control_module
+
+    monkeypatch.setitem(control_module._WAIT_TIMEOUTS, "standard", 0.01)
     gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
     release = asyncio.Event()
@@ -425,26 +427,25 @@ async def test_agent_tool_wait_timeout_returns_running_without_error(tmp_path):
         {
             "action": "wait",
             "run_id": spawn_result.metadata["run_id"],
-            "wait": "brief",
+            "wait": "standard",
         },
         ctx,
     )
 
     assert wait_result.metadata.get("error") is not True
     assert wait_result.metadata["status"] == "running"
-    assert wait_result.metadata["status"] == "running"
-    assert "Agent run status: running" in wait_result.output
-    assert "Wait outcome: timed_out_still_running" in wait_result.output
-    assert "Terminal: false" in wait_result.output
+    assert "[running]" in wait_result.output
     release.set()
     await AgentControlTool().execute(
-        {"action": "wait", "run_id": spawn_result.metadata["run_id"], "wait": "brief"},
+        {"action": "wait", "run_id": spawn_result.metadata["run_id"], "wait": "standard"},
         ctx,
     )
 
 
 @pytest.mark.asyncio
-async def test_agent_tool_wait_timeout_zero_waits_until_terminal(tmp_path):
+async def test_agent_tool_default_wait_is_finite(tmp_path, monkeypatch):
+    import voidx.agent.adapters.tools.subagent_control as control_module
+
     gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
     release = asyncio.Event()
@@ -463,32 +464,30 @@ async def test_agent_tool_wait_timeout_zero_waits_until_terminal(tmp_path):
         session_id="session-1",
         runtime=AgentToolRuntime(subagent_transport=gateway, run_id=root_id),
     )
-
     spawn_result = await tool.execute(
         {
             "mode": "review",
-            "goal": "Review the timeout handling",
+            "goal": "Review finite wait handling",
             "detail": "Execute this delegated task and report concrete findings.",
             "scope": "src/voidx/tools/agent.py",
         },
         ctx,
     )
+    monkeypatch.setitem(control_module._WAIT_TIMEOUTS, "standard", 0.01)
 
-    async def wait_zero():
-        return await AgentControlTool().execute(
-            {"action": "wait", "run_id": spawn_result.metadata["run_id"], "wait": "until_complete"},
-            ctx,
-        )
+    wait_result = await AgentControlTool().execute(
+        {"action": "wait", "run_id": spawn_result.metadata["run_id"]},
+        ctx,
+    )
 
-    wait_task = asyncio.create_task(wait_zero())
-    await asyncio.sleep(0.05)
-    assert not wait_task.done()
+    assert wait_result.metadata["wait_outcome"] == "timed_out_still_running"
+    assert wait_result.metadata["status"] == "running"
     release.set()
-    wait_result = await asyncio.wait_for(wait_task, timeout=1)
-    assert "Agent run status: completed" in wait_result.output
-    assert "Final result:\nlate result" in wait_result.output
-    assert wait_result.metadata["wait_outcome"] == "terminal_reached_during_wait"
-    assert wait_result.metadata["status"] == "completed"
+    await gateway.wait(
+        requester_run_id=root_id,
+        target_run_id=spawn_result.metadata["run_id"],
+        timeout=1,
+    )
 
 
 @pytest.mark.asyncio
@@ -514,3 +513,193 @@ async def test_agent_tool_spawn_requires_gateway(tmp_path):
 
     assert result.metadata["error"] is True
     assert result.metadata["reason"] == "gateway_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_agent_spawn_result_uses_stable_display_name_contract(tmp_path):
+    from voidx.agent.domain.subagent_display import subagent_display_name
+
+    gateway = InProcessSubagentGateway()
+    root_id = gateway.ensure_root("spawn-contract-session")
+
+    async def runner(*args, **kwargs):
+        return "done"
+
+    result = await AgentTool(
+        runner,
+        agent_resolver=lambda name: type("Agent", (), {"name": name})(),
+        available_agents=["voidx"],
+    ).execute(
+        {
+            "mode": "review",
+            "goal": "Review spawn contract",
+            "detail": "Review the complete spawn result contract.",
+            "scope": "src/voidx/agent/adapters/tools/subagent.py",
+        },
+        ToolContext(
+            workspace=str(tmp_path),
+            session_id="spawn-contract-session",
+            runtime=AgentToolRuntime(subagent_transport=gateway, run_id=root_id),
+        ),
+    )
+
+    run_id = result.metadata["run_id"]
+    display_name = subagent_display_name(run_id)
+    assert result.output == f"{display_name} [running]\nrun_id: {run_id}"
+    assert result.title == f"{display_name}: Review spawn contract"
+    assert result.summary == f"{display_name} spawned"
+    assert result.display == ""
+    assert result.metadata == {"agent": "voidx", "run_id": run_id, "status": "running"}
+    assert result.next_step_hint == (
+        "Use agent_control(action='wait', wait='standard') when the result is needed, "
+        "or continue with other independent work."
+    )
+    assert run_id not in result.next_step_hint
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_factory", "args", "runtime", "expected_hint"),
+    [
+        (
+            lambda: AgentTool(None, agent_resolver=None),
+            {"mode": "review"},
+            AgentToolRuntime(),
+            "Correct the arguments before retrying.",
+        ),
+        (
+            lambda: AgentTool(None, agent_resolver=None),
+            {
+                "mode": "review",
+                "goal": " ",
+                "detail": "A sufficiently complete execution brief.",
+                "scope": "",
+            },
+            AgentToolRuntime(),
+            "Correct the arguments before retrying.",
+        ),
+        (
+            lambda: AgentTool(None, agent_resolver=None),
+            {
+                "mode": "review",
+                "goal": "Review unavailable resolver",
+                "detail": "A sufficiently complete execution brief.",
+                "scope": "",
+            },
+            AgentToolRuntime(),
+            "Restore child-agent execution availability before retrying.",
+        ),
+        (
+            lambda: AgentTool(None, agent_resolver=lambda name: None),
+            {
+                "mode": "review",
+                "goal": "Review unknown runner",
+                "detail": "A sufficiently complete execution brief.",
+                "scope": "",
+            },
+            AgentToolRuntime(),
+            "Restore child-agent execution availability before retrying.",
+        ),
+        (
+            lambda: AgentTool(
+                lambda *args, **kwargs: None,
+                agent_resolver=lambda name: type("Agent", (), {"name": name})(),
+            ),
+            {
+                "mode": "review",
+                "goal": "Review unavailable gateway",
+                "detail": "A sufficiently complete execution brief.",
+                "scope": "",
+            },
+            AgentToolRuntime(),
+            "Restore agent gateway availability before retrying.",
+        ),
+    ],
+)
+async def test_agent_spawn_errors_include_specific_recovery_hints(
+    tmp_path, tool_factory, args, runtime, expected_hint
+):
+    result = await tool_factory().execute(
+        args,
+        ToolContext(workspace=str(tmp_path), session_id="error-session", runtime=runtime),
+    )
+
+    assert result.metadata["error"] is True
+    assert result.next_step_hint == expected_hint
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exception", [TimeoutError("slow spawn"), RuntimeError("broken spawn")])
+async def test_agent_spawn_runtime_errors_include_inspection_hint(tmp_path, exception):
+    class FailingGateway:
+        async def spawn(self, **kwargs):
+            raise exception
+
+    async def runner(*args, **kwargs):
+        return "unused"
+
+    result = await AgentTool(
+        runner,
+        agent_resolver=lambda name: type("Agent", (), {"name": name})(),
+    ).execute(
+        {
+            "mode": "review",
+            "goal": "Review failed spawn",
+            "detail": "A sufficiently complete execution brief.",
+            "scope": "",
+        },
+        ToolContext(
+            workspace=str(tmp_path),
+            session_id="error-session",
+            runtime=AgentToolRuntime(subagent_transport=FailingGateway(), run_id="root"),
+        ),
+    )
+
+    assert result.metadata["error"] is True
+    assert result.next_step_hint == "Inspect the error before starting a replacement run."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("timeout", "expected_wait"),
+    [
+        (None, "maximum"),
+        (0, "maximum"),
+        (0.1, "standard"),
+        (64, "standard"),
+        (64.1, "extended"),
+        (128, "extended"),
+        (128.1, "maximum"),
+    ],
+)
+async def test_agent_legacy_timeout_maps_to_finite_wait_tiers(
+    tmp_path, monkeypatch, timeout, expected_wait
+):
+    captured = {}
+
+    class CapturingControlTool:
+        async def execute(self, args, ctx):
+            captured.update(args)
+            return ToolResult(output="captured")
+
+    monkeypatch.setattr("voidx.agent.adapters.tools.subagent.AgentControlTool", CapturingControlTool)
+    args = {"action": "wait", "target_run_id": "run_legacy"}
+    if timeout is not None:
+        args["timeout"] = timeout
+
+    result = await AgentTool().execute(args, ToolContext(workspace=str(tmp_path)))
+
+    assert result.output == "captured"
+    assert captured == {"action": "wait", "run_id": "run_legacy", "wait": expected_wait}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("timeout", [-1, "not-a-number"])
+async def test_agent_legacy_timeout_rejects_invalid_values_without_raising(tmp_path, timeout):
+    result = await AgentTool().execute(
+        {"action": "wait", "target_run_id": "run_legacy", "timeout": timeout},
+        ToolContext(workspace=str(tmp_path)),
+    )
+
+    assert result.metadata == {"error": True, "validation_error": True}
+    assert result.next_step_hint == "Correct the arguments before retrying."

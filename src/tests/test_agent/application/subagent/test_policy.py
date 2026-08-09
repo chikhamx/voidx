@@ -85,3 +85,24 @@ def test_finish_run_copies_result_payload():
     payload["result"] = "after"
 
     assert finished.result == {"result": "before"}
+
+
+def test_gateway_error_preserves_message_and_defaults_reason():
+    error = AgentGatewayError("Readable gateway failure")
+
+    assert str(error) == "Readable gateway failure"
+    assert error.reason == "gateway_error"
+
+
+def test_route_errors_expose_stable_reasons():
+    child = _run("child", parent_run_id="root")
+    sibling = _run("sibling", parent_run_id="root")
+    other = _run("other", session_id="s2", parent_run_id="root2")
+
+    with pytest.raises(AgentGatewayError, match="Route not allowed") as route_error:
+        ensure_control_route(child, sibling)
+    assert route_error.value.reason == "route_not_allowed"
+
+    with pytest.raises(AgentGatewayError, match="same session") as session_error:
+        ensure_control_route(child, other)
+    assert session_error.value.reason == "cross_session"

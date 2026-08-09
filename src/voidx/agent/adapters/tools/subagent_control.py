@@ -1,33 +1,66 @@
-"""Control an existing child-agent run."""
+"""Control existing child-agent runs."""
 
+from __future__ import annotations
+
+import asyncio
 from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext
+from voidx.agent.domain.subagent import AgentGatewayError
+from voidx.agent.domain.subagent_display import subagent_display_name
 from voidx.tooling.domain.result import ToolResult
 from voidx.tooling.domain.schema import model_to_json_schema
-from voidx.agent.domain.subagent_display import subagent_display_name
 
 
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
-_WAIT_TIMEOUTS = {"brief": 5.0, "extended": 30.0, "until_complete": 0.0}
+_WAIT_TIMEOUTS = {"standard": 64.0, "extended": 128.0, "maximum": 256.0}
+_TIMEOUT_HINTS = {
+    "standard": "Use wait='extended' if the result is still needed; otherwise continue with other work.",
+    "extended": "Use wait='maximum' only if the result is still needed; otherwise cancel the unfinished work or continue without it.",
+    "maximum": "Do not wait again; cancel the unfinished work or continue without it.",
+}
+_CONTROL_ERROR_HINTS = {
+    "unknown_run": "Verify the run IDs and parent-child control relationship before retrying.",
+    "route_not_allowed": "Verify the run IDs and parent-child control relationship before retrying.",
+    "cross_session": "Verify the run IDs and parent-child control relationship before retrying.",
+    "cancel_timeout": "Cancellation was not acknowledged; do not retry automatically, and report that the run may still be active.",
+    "gateway_error": "Inspect the control error before retrying.",
+}
+_CHILD_FAILURE_HINT = "Inspect the error and start a replacement run if the task is still needed."
+_INCOMPLETE_HINT = "Use the partial result if sufficient; otherwise start a narrower replacement task."
 
 
 class AgentControlInput(BaseModel):
     action: Literal["wait", "cancel"]
-    run_id: str
-    wait: Literal["brief", "extended", "until_complete"] = Field(
-        default="until_complete",
-        description="Wait strategy; ignored for cancel.",
+    run_id: str | list[str]
+    wait: Literal["standard", "extended", "maximum"] = Field(
+        default="standard",
+        description="Finite wait tier; ignored for cancel.",
     )
+
+    @field_validator("run_id", mode="before")
+    @classmethod
+    def _normalize_run_ids(cls, value):
+        values = [value] if isinstance(value, str) else value
+        if not isinstance(values, list) or not values:
+            raise ValueError("run_id must be a non-empty string or list of strings")
+        normalized: list[str] = []
+        for item in values:
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError("every run_id must be a non-empty string")
+            run_id = item.strip()
+            if run_id not in normalized:
+                normalized.append(run_id)
+        return normalized
 
 
 class AgentControlTool:
     id = "agent_control"
     description = (
-        "Wait for or cancel an existing child-agent run. "
-        "A terminal wait result must not be polled again."
+        "Wait for or cancel one or more existing child-agent runs. "
+        "All wait tiers are finite."
     )
 
     def parameters_schema(self) -> dict:
@@ -40,96 +73,157 @@ class AgentControlTool:
             return ToolResult(
                 output=f"Agent control rejected: {exc.errors()[0].get('msg', 'invalid arguments')}",
                 metadata={"error": True, "validation_error": True},
+                next_step_hint="Correct the arguments before retrying.",
             )
         if ctx.runtime.subagent_transport is None or not ctx.runtime.run_id:
             return ToolResult(
                 output="Agent gateway is unavailable for agent_control.",
                 metadata={"error": True, "reason": "gateway_unavailable"},
+                next_step_hint="Restore agent gateway availability before retrying.",
             )
+
+        run_ids = list(inp.run_id)
+        items = await asyncio.gather(*(
+            self._execute_one(inp.action, run_id, inp.wait, ctx)
+            for run_id in run_ids
+        ))
+        if len(items) == 1:
+            return _single_result(inp.action, inp.wait, items[0])
+        return _batch_result(inp.action, inp.wait, items)
+
+    async def _execute_one(
+        self,
+        action: str,
+        run_id: str,
+        wait: str,
+        ctx: ToolContext,
+    ) -> dict:
         try:
-            if inp.action == "wait":
+            if action == "wait":
                 run = await ctx.runtime.subagent_transport.wait(
                     requester_run_id=ctx.runtime.run_id,
-                    target_run_id=inp.run_id,
-                    timeout=_WAIT_TIMEOUTS[inp.wait],
+                    target_run_id=run_id,
+                    timeout=_WAIT_TIMEOUTS[wait],
                 )
             else:
                 run = await ctx.runtime.subagent_transport.cancel(
                     requester_run_id=ctx.runtime.run_id,
-                    target_run_id=inp.run_id,
+                    target_run_id=run_id,
                 )
         except Exception as exc:
             detail = str(exc).strip() or exc.__class__.__name__
-            return ToolResult(
-                output=f"agent_control({inp.action}) failed: {detail}",
-                metadata={"error": True, "reason": "gateway_error", "detail": detail[:200]},
-            )
-        display_name = subagent_display_name(run.run_id)
-        if inp.action == "wait":
-            return _wait_result(run, display_name)
-        return ToolResult(
-            output=_result_output(run.result) or run.error or run.status,
-            display=f"{display_name} {run.status}.",
-            summary=f"{display_name} {run.status}",
-            metadata={"run": run.model_dump(mode="json"), "status": run.status},
-        )
+            reason = exc.reason if isinstance(exc, AgentGatewayError) else "gateway_error"
+            return {
+                "run_id": run_id,
+                "status": "error",
+                "error": True,
+                "reason": reason,
+                "detail": detail[:200],
+            }
+        return _success_item(action, run)
 
 
-def _wait_result(run, display_name: str) -> ToolResult:
-    status = run.status
-    terminal = status in _TERMINAL_STATUSES
-    outcome = run.wait_outcome or (
-        "already_terminal" if terminal else "timed_out_still_running"
-    )
-    result_quality = _result_quality(run)
-    finish_reason = _finish_reason(run)
-    result_text = _result_output(run.result) or run.error or "No final result is available yet."
-    lines = [
-        f"Agent run status: {status}",
-        f"Wait outcome: {outcome}",
-        f"Terminal: {str(terminal).lower()}",
-        f"Result quality: {result_quality}",
-    ]
-    if finish_reason:
-        lines.append(f"Finish reason: {finish_reason}")
-    lines.extend(["", "Final result:", result_text])
-    if terminal:
-        if outcome == "already_terminal":
-            lines.extend([
-                "",
-                "This wait returned the cached terminal result; no new work was performed.",
-            ])
-        if result_quality == "incomplete_contract":
-            lines.extend([
-                "",
-                "The child run is terminal and cannot produce a new result by waiting.",
-            ])
-        lines.extend([
-            "",
-            "Do not call agent_control(wait) again for this run.",
-        ])
-        next_step_hint = "This run is terminal; do not call agent_control(wait) again."
-    else:
-        lines.extend([
-            "",
-            "The wait window expired while the child was still running.",
-            "Do not call wait repeatedly in a tight loop; take another concrete action or check again only when necessary.",
-        ])
-        next_step_hint = f"Run {run.run_id} is still active; do not poll in a tight loop."
-    return ToolResult(
-        output="\n".join(lines),
-        display=f"{display_name} {status}.",
-        summary=f"{display_name} {status} ({outcome})",
-        metadata={
-            "run": run.model_dump(mode="json"),
-            "status": status,
-            "wait_outcome": outcome,
+def _success_item(action: str, run) -> dict:
+    item = {
+        "run_id": run.run_id,
+        "run": run.model_dump(mode="json"),
+        "status": run.status,
+    }
+    if action == "wait":
+        terminal = run.status in _TERMINAL_STATUSES
+        item.update({
+            "wait_outcome": run.wait_outcome or (
+                "already_terminal" if terminal else "timed_out_still_running"
+            ),
             "terminal": terminal,
-            "result_quality": result_quality,
-            "finish_reason": finish_reason,
-        },
-        next_step_hint=next_step_hint,
+            "result_quality": _result_quality(run),
+            "finish_reason": _finish_reason(run),
+        })
+    return item
+
+
+def _single_result(action: str, wait: str, item: dict) -> ToolResult:
+    output = _render_item(item)
+    name = subagent_display_name(item["run_id"])
+    if item["status"] == "error":
+        metadata = dict(item)
+        metadata.pop("status")
+        return ToolResult(
+            output=output,
+            display=f"{name} error.",
+            summary=f"{name} error",
+            metadata=metadata,
+            next_step_hint=_hints(action, wait, [item]),
+        )
+    metadata = {key: value for key, value in item.items() if key != "run_id"}
+    return ToolResult(
+        output=output,
+        display=f"{name} {item['status']}.",
+        summary=f"{name} {item['status']}",
+        metadata=metadata,
+        next_step_hint=_hints(action, wait, [item]),
     )
+
+
+def _batch_result(action: str, wait: str, items: list[dict]) -> ToolResult:
+    counts: dict[str, int] = {}
+    for item in items:
+        status = item["status"]
+        counts[status] = counts.get(status, 0) + 1
+    error_count = counts.get("error", 0)
+    metadata: dict = {"action": action, "items": items, "counts": counts}
+    if error_count == len(items):
+        metadata["error"] = True
+    elif error_count:
+        metadata["partial_error"] = True
+    summary = ", ".join(f"{count} {status}" for status, count in counts.items())
+    return ToolResult(
+        output="\n\n".join(_render_item(item) for item in items),
+        display=f"{len(items)} agents",
+        summary=summary,
+        metadata=metadata,
+        next_step_hint=_hints(action, wait, items),
+    )
+
+
+def _render_item(item: dict) -> str:
+    name = subagent_display_name(item["run_id"])
+    status = item["status"]
+    if status == "error":
+        return f"{name} [error]\nError: {item['detail']}"
+    run = item["run"]
+    finish_reason = item.get("finish_reason") or ""
+    suffix = f"; finish_reason={finish_reason}" if finish_reason else ""
+    lines = [f"{name} [{status}{suffix}]"]
+    result_text = _result_output(run.get("result"))
+    if status == "failed":
+        error = str(run.get("error") or result_text).strip()
+        if error:
+            lines.append(f"Error: {error}")
+    elif result_text:
+        lines.extend(["Result:", result_text])
+    return "\n".join(lines)
+
+
+def _hints(action: str, wait: str, items: list[dict]) -> str:
+    hints: list[str] = []
+    if action == "wait" and any(
+        item.get("wait_outcome") == "timed_out_still_running" for item in items
+    ):
+        hints.append(_TIMEOUT_HINTS[wait])
+    for item in items:
+        if item["status"] == "error":
+            _append_unique(hints, _CONTROL_ERROR_HINTS.get(item.get("reason"), _CONTROL_ERROR_HINTS["gateway_error"]))
+    if action == "wait" and any(item["status"] == "failed" for item in items):
+        _append_unique(hints, _CHILD_FAILURE_HINT)
+    if action == "wait" and any(item.get("finish_reason") for item in items):
+        _append_unique(hints, _INCOMPLETE_HINT)
+    return "\n".join(hints)
+
+
+def _append_unique(values: list[str], value: str) -> None:
+    if value not in values:
+        values.append(value)
 
 
 def _finish_reason(run) -> str:

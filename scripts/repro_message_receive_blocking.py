@@ -12,9 +12,8 @@ Hypothesis:
   - Therefore the tool SHOULD return within `timeout` seconds even if the inbox
     is empty forever.
 
-If the hypothesis holds, Message receive is NOT the source of the hang; the
-hang is the next tool call (AgentControlTool.wait with default
-'until_complete' -> timeout=0.0 -> unbounded await on target.done.wait()).
+This script isolates the message receive deadline. Agent control waiting is
+verified separately by `scripts/repro_wait_blocking.py`.
 
 Run:
     ./python.py scripts/repro_message_receive_blocking.py

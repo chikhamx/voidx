@@ -136,16 +136,18 @@ class AgentTool:
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
         args = _normalize_agent_args(args)
         if isinstance(args, dict) and args.get("action") in {"wait", "cancel"}:
+            try:
+                wait = _legacy_wait_tier(args.get("timeout"))
+            except (TypeError, ValueError):
+                return ToolResult(
+                    output="Agent control rejected: invalid legacy timeout",
+                    metadata={"error": True, "validation_error": True},
+                    next_step_hint="Correct the arguments before retrying.",
+                )
             control_args = {
                 "action": args["action"],
                 "run_id": args.get("target_run_id", ""),
-                "wait": (
-                    "until_complete"
-                    if not args.get("timeout")
-                    else "brief"
-                    if float(args["timeout"]) <= 5
-                    else "extended"
-                ),
+                "wait": wait,
             }
             return await AgentControlTool().execute(control_args, ctx)
         try:
@@ -160,21 +162,31 @@ class AgentTool:
             return ToolResult(
                 output=f"Child agent delegation rejected.{detail}",
                 metadata={"error": True, "validation_error": True},
+                next_step_hint="Correct the arguments before retrying.",
             )
         rejection = _delegation_rejection(inp)
         if rejection:
-            return ToolResult(output=rejection, metadata={"error": True, "delegation_rejected": True})
+            return ToolResult(
+                output=rejection,
+                metadata={"error": True, "delegation_rejected": True},
+                next_step_hint="Correct the arguments before retrying.",
+            )
         normalized = normalize_agent_input(inp)
 
         if self._agent_resolver is None:
             return ToolResult(
                 output=f"Child agent execution not available. Task: {normalized.description[:200]}",
                 metadata={"error": True, "reason": "no_resolver"},
+                next_step_hint="Restore child-agent execution availability before retrying.",
             )
 
         agent_def = self._agent_resolver("voidx") if self._agent_resolver else None
         if not agent_def:
-            return ToolResult(output="Unknown child agent: voidx.", metadata={"error": True, "reason": "unknown_agent"})
+            return ToolResult(
+                output="Unknown child agent: voidx.",
+                metadata={"error": True, "reason": "unknown_agent"},
+                next_step_hint="Restore child-agent execution availability before retrying.",
+            )
 
         agent_def_name = str(getattr(agent_def, "name", "voidx"))
 
@@ -182,6 +194,7 @@ class AgentTool:
             return ToolResult(
                 output=f"Child agent execution not available. Task: {normalized.description[:200]}",
                 metadata={"error": True, "reason": "no_runner"},
+                next_step_hint="Restore child-agent execution availability before retrying.",
             )
 
         try:
@@ -189,6 +202,7 @@ class AgentTool:
                 return ToolResult(
                     output="Agent gateway is required for agent(spawn).",
                     metadata={"agent": agent_def_name, "error": True, "reason": "gateway_unavailable"},
+                    next_step_hint="Restore agent gateway availability before retrying.",
                 )
 
             async def gateway_runner(agent_run_id: str) -> str | dict[str, Any]:
@@ -222,14 +236,16 @@ class AgentTool:
                 "run_id": run.run_id,
                 "status": run.status,
             }
+            display_name = subagent_display_name(run.run_id)
             return ToolResult(
-                title=f"{agent_def_name}: {normalized.description[:60]}",
-                output=f"Child agent '{agent_def_name}' spawned with run_id {run.run_id}.",
-                summary=f"{agent_def_name} spawned",
+                title=f"{display_name}: {inp.goal.strip()[:60]}",
+                output=f"{display_name} [running]\nrun_id: {run.run_id}",
+                summary=f"{display_name} spawned",
+                display="",
                 metadata=metadata,
                 next_step_hint=(
-                    f"Use agent_control with run_id={run.run_id} to collect the result, "
-                    "or cancel the run."
+                    "Use agent_control(action='wait', wait='standard') when the result is needed, "
+                    "or continue with other independent work."
                 ),
             )
         except TimeoutError as exc:
@@ -241,12 +257,29 @@ class AgentTool:
                     reason="timeout",
                     detail=str(exc)[:200],
                 ),
+                next_step_hint="Inspect the error before starting a replacement run.",
             )
         except Exception as exc:
             return ToolResult(
                 output=f"Child agent '{agent_def_name}' failed: {exc}",
                 metadata={"agent": agent_def_name, "error": True, "reason": "exception", "detail": str(exc)[:200]},
+                next_step_hint="Inspect the error before starting a replacement run.",
             )
+
+
+def _legacy_wait_tier(value: object) -> str:
+    if value is None:
+        return "maximum"
+    timeout = float(value)
+    if timeout < 0:
+        raise ValueError("timeout must be non-negative")
+    if timeout == 0:
+        return "maximum"
+    if timeout <= 64:
+        return "standard"
+    if timeout <= 128:
+        return "extended"
+    return "maximum"
 
 
 def _result_output(result: dict[str, Any] | None) -> str:

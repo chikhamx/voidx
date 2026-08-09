@@ -84,7 +84,10 @@ def extract_tool_display_value(
 def _agent_display_value(raw_args: dict[str, Any]) -> object:
     action = str(raw_args.get("action") or "spawn").strip().lower()
     if action in {"wait", "cancel"}:
-        run_id = str(raw_args.get("run_id") or raw_args.get("target_run_id") or "").strip()
+        value = raw_args.get("run_id") or raw_args.get("target_run_id") or ""
+        if isinstance(value, list):
+            return f"{len(value)} agents" if value else ""
+        run_id = str(value).strip()
         return subagent_display_name(run_id) if run_id else ""
     return raw_args.get("name") or raw_args.get("description") or ""
 

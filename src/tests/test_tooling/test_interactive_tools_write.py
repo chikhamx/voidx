@@ -188,7 +188,7 @@ class TestInteractiveTools:
             {
                 "action": "wait",
                 "run_id": spawn_result.metadata["run_id"],
-                "wait": "brief",
+                "wait": "standard",
             },
             ctx,
         )
@@ -214,9 +214,8 @@ class TestInteractiveTools:
 
         spawn_result, wait_result = await self._spawn_and_wait_agent(tool, self._agent_args(), tmp_path)
 
-        assert "Agent run status: completed" in wait_result.output
-        assert "Wait outcome: terminal_reached_during_wait" in wait_result.output
-        assert "Final result:\nchild result" in wait_result.output
+        assert "[completed]" in wait_result.output
+        assert "Result:\nchild result" in wait_result.output
         assert set(spawn_result.metadata) == {"agent", "run_id", "status"}
         assert "Scope: src/voidx/tools/agent.py" in captured["description"]
         assert "Result contract:" not in captured["description"]
@@ -251,9 +250,8 @@ class TestInteractiveTools:
             tmp_path,
         )
 
-        assert "Agent run status: completed" in wait_result.output
-        assert "Wait outcome: terminal_reached_during_wait" in wait_result.output
-        assert "Final result:\nchild result" in wait_result.output
+        assert "[completed]" in wait_result.output
+        assert "Result:\nchild result" in wait_result.output
         goal_resolution = captured["goal_resolution"]
         assert goal_resolution.goal.desc == "Review one changed file"
         assert goal_resolution.plan.join == "tdd"

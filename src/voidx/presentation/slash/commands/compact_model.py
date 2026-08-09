@@ -17,7 +17,20 @@ class CompactModelCommandsMixin:
         value = args.strip()
         config = settings.get_compaction_config()
         if not value:
-            self._show_compact_model(config)
+            app = getattr(self.preferences_port, "prompt_ui", None)
+            if app is None:
+                self._show_compact_model(config)
+                return
+            profiles = [profile for profile in await settings.list_profiles() if profile.api_key]
+            choices = [
+                ("Current main profile (default)", "", "Follow the active model profile."),
+                *((profile.name, profile.name, "") for profile in profiles),
+            ]
+            selected = await app.ask_choice("Compaction model profile", choices)
+            if selected is None:
+                self._show_compact_model(config)
+                return
+            settings.set_compaction_config(config.model_copy(update={"profile_name": selected}))
             return
 
         parts = value.split()

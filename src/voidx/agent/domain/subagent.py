@@ -31,7 +31,9 @@ AgentType = Literal["root", "sub"]
 
 
 class AgentGatewayError(ValueError):
-    pass
+    def __init__(self, message: str, *, reason: str = "gateway_error") -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 class AgentMessage(BaseModel):
@@ -65,14 +67,14 @@ def ensure_send_route(source: AgentRun, target: AgentRun) -> None:
         return
     if target.run_id == source.parent_run_id:
         return
-    raise AgentGatewayError("Route not allowed")
+    raise AgentGatewayError("Route not allowed", reason="route_not_allowed")
 
 
 def ensure_control_route(source: AgentRun, target: AgentRun) -> None:
     _ensure_same_session(source, target)
     if source.agent_type == "root" and target.parent_run_id == source.run_id:
         return
-    raise AgentGatewayError("Route not allowed")
+    raise AgentGatewayError("Route not allowed", reason="route_not_allowed")
 
 
 def ensure_open_send(source: AgentRun, target: AgentRun) -> None:
@@ -105,7 +107,10 @@ def finish_run(
 
 def _ensure_same_session(source: AgentRun, target: AgentRun) -> None:
     if source.session_id != target.session_id:
-        raise AgentGatewayError("Runs must belong to the same session")
+        raise AgentGatewayError(
+            "Runs must belong to the same session",
+            reason="cross_session",
+        )
 
 
 def _result_payload(result: dict[str, Any] | str) -> dict[str, Any]:

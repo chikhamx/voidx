@@ -42,11 +42,11 @@ async def test_agent_spawn_accepts_current_schema(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_agent_rejects_unknown_control_fields(tmp_path) -> None:
     result = await AgentTool().execute(
-        {"action": "wait", "run_id": "run_123", "wait": "brief"},
+        {"action": "wait", "run_id": "run_123", "wait": "standard"},
         ToolContext(workspace=str(tmp_path)),
     )
 
-    assert result.metadata.get("reason") == "gateway_unavailable"
+    assert result.metadata.get("validation_error") is True
     assert result.metadata.get("error") is True
 
 

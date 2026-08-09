@@ -1,8 +1,9 @@
 # Agent Spawn and Control Results
 
 Date: 2026-08-06
+Revised: 2026-08-09
 
-> **Status: Approved design; awaiting implementation**
+> **Status: Approved design; revised after technical review; awaiting implementation**
 
 ## Goal
 
@@ -12,6 +13,7 @@ Make `agent` spawn results and `agent_control` operations concise, consistent, a
 - expose the spawned `run_id` exactly once in LLM-visible output;
 - accept one or multiple run IDs for `wait` and `cancel`;
 - replace unbounded waiting with three finite tiers: 64, 128, and 256 seconds;
+- bound cancellation acknowledgement so a non-cooperative child cannot block control forever;
 - keep visible output compact while preserving diagnostics in metadata;
 - emit `next_step_hint` only when the caller needs actionable guidance.
 
@@ -20,7 +22,9 @@ Make `agent` spawn results and `agent_control` operations concise, consistent, a
 The implementation is centered in:
 
 - `src/voidx/agent/adapters/tools/subagent_control.py` — input schema, wait/cancel execution, output, metadata, and hints;
-- `src/voidx/agent/gateway/gateway.py` — single-run `wait` and `cancel` primitives;
+- `src/voidx/agent/adapters/subagent/inprocess_gateway.py` — single-run `wait` and `cancel` primitives;
+- `src/voidx/agent/domain/subagent.py` — run states, route policy, and gateway error contract;
+- `src/voidx/agent/ports/subagent.py` — subagent transport protocol;
 - `src/voidx/agent/adapters/tools/subagent.py` — legacy control-argument normalization;
 - `src/voidx/presentation/output/tool_display.py` — tool header display values;
 - `src/tests/test_tooling/test_agent_control.py` — focused control-tool behavior;
@@ -33,6 +37,8 @@ Current limitations:
 - visible wait output repeats status and diagnostic fields already available in metadata;
 - terminal success still emits a hint telling the model not to wait again;
 - one gateway exception terminates the whole tool call;
+- `cancel` awaits the child task without a deadline and can block forever if the child suppresses cancellation;
+- gateway control errors expose only message text, so the adapter cannot classify recovery guidance reliably;
 - successful `agent` spawn output uses the internal agent name rather than the stable child display name;
 - a spawned `run_id` is repeated in visible output, metadata, and `next_step_hint`.
 
@@ -41,7 +47,7 @@ Current limitations:
 This change does not:
 
 - add status-only polling or run discovery;
-- change gateway routing or authorization rules;
+- change gateway routing or authorization decisions;
 - change child-agent lifecycle statuses;
 - add an unbounded wait mode;
 - retry failed control operations automatically;
@@ -66,7 +72,7 @@ Rules:
 
 - show the stable child display name rather than the internal agent definition name;
 - expose `run_id` once in LLM-visible content so a later control call can reference it;
-- keep `run_id` and the full run record in metadata for programmatic consumers;
+- preserve the existing spawn metadata fields exactly: `agent`, `run_id`, and `status`;
 - do not repeat `run_id` in `next_step_hint`;
 - do not add explanatory prose such as `Child agent ... spawned with ...`.
 
@@ -76,7 +82,7 @@ Result fields:
 title: Athena: <goal>
 summary: Athena spawned
 display: ""
-metadata: unchanged existing spawn metadata
+metadata: {"agent": "<internal definition name>", "run_id": "run_xxx", "status": "running"}
 ```
 
 A successful asynchronous spawn is the one normal outcome that retains a hint because follow-up control is still available:
@@ -140,16 +146,43 @@ Rules:
 
 ### Single and batch behavior
 
-Single-run and batch calls use one internal execution path. Batch operations start concurrently with `asyncio.gather`; the wall-clock wait is bounded by the selected tier rather than multiplied by the number of runs.
+Single-run and batch calls use one internal execution path. Each per-item coroutine converts its own exception into an item result before `asyncio.gather` returns the ordered list. Batch operations start concurrently; the wall-clock wait is bounded by the selected tier rather than multiplied by the number of runs.
 
-The tool composes the existing gateway `wait` and `cancel` methods. No new gateway API is required.
+The adapter composes the transport's existing single-run `wait` and `cancel` methods. No `wait_many` or `cancel_many` API is added.
 
 Each item is isolated:
 
 - one invalid, inaccessible, or unknown run does not prevent other items from completing;
 - results are rendered in normalized input order, regardless of completion order;
-- cancellation is also concurrent;
-- a batch may therefore contain completed, running, failed, cancelled, and control-error items.
+- cancellation requests also start concurrently;
+- a batch may therefore contain pending, running, completed, failed, cancelled, and control-error items;
+- `pending` follows the same nonterminal rendering and hint rules as `running`.
+
+### Bounded cancellation
+
+A cancel call must not wait indefinitely for the child task to acknowledge cancellation. Define `_CANCEL_ACK_TIMEOUT = 5.0` in `inprocess_gateway.py` and apply it after requesting task cancellation. The implementation must use a bounded primitive such as `asyncio.wait`; it must not use bare `await target.task` or `asyncio.wait_for(target.task, ...)`, because a task that suppresses cancellation can keep `wait_for` pending past its nominal timeout:
+
+- if the child reaches a terminal state before the deadline, return that terminal run;
+- if the child is still non-terminal when the deadline expires, raise `AgentGatewayError("Child cancellation was not acknowledged", reason="cancel_timeout")` for that item;
+- do not force the run to `cancelled` unless task termination is observed;
+- the adapter isolates this item error so sibling cancellation requests can still complete;
+- the fixed cancellation deadline is internal and is not selected through the public `wait` field.
+
+This changes cancellation completion mechanics only; it does not add a lifecycle status or weaken route checks.
+
+### Structured gateway control errors
+
+Extend `AgentGatewayError` with a stable `reason` attribute while preserving its human-readable message. Gateway control paths use these reasons:
+
+| Reason | Meaning |
+|---|---|
+| `unknown_run` | A referenced requester or target run does not exist. |
+| `route_not_allowed` | The requester is not allowed to control the target. |
+| `cross_session` | Requester and target belong to different sessions. |
+| `cancel_timeout` | The child did not acknowledge cancellation before the internal deadline. |
+| `gateway_error` | Unexpected transport failure without a more specific reason. |
+
+`AgentGatewayError(message, *, reason="gateway_error")` keeps existing one-argument call sites compatible. For `AgentGatewayError`, the adapter uses `exc.reason`; any non-`AgentGatewayError` exception is classified as `gateway_error`. It never derives a category by parsing exception text. Existing exception messages remain readable and route validation decisions remain unchanged.
 
 ### Error classification
 
@@ -157,7 +190,8 @@ A child run with status `failed` is a child execution failure, not a gateway con
 
 For batch metadata:
 
-- set `error=true` only when no item could be controlled;
+- an item is “controlled” only when its transport call returns an `AgentRun` without exception;
+- set `error=true` only when no item was controlled;
 - set `partial_error=true` when at least one item has a control error and at least one item was controlled;
 - child status `failed` remains represented by its item status and does not by itself set top-level `error=true`.
 
@@ -211,7 +245,7 @@ Rendering rules:
 
 ### Single item
 
-Preserve the existing successful single-run fields:
+A successful single-item `wait` preserves the existing fields:
 
 ```text
 run
@@ -222,7 +256,14 @@ result_quality
 finish_reason
 ```
 
-A single control error preserves:
+A successful single-item `cancel` preserves its existing fields:
+
+```text
+run
+status
+```
+
+A single per-item control error returns:
 
 ```text
 error=true
@@ -244,15 +285,15 @@ Return:
             "run": {...},
             "status": "...",
             "wait_outcome": "...",       # wait only
-            "terminal": True | False,
-            "result_quality": "...",
-            "finish_reason": "...",
+            "terminal": True | False,      # wait only
+            "result_quality": "...",      # wait only
+            "finish_reason": "...",       # wait only
         },
         {
             "run_id": "...",
             "status": "error",
             "error": True,
-            "reason": "gateway_error",
+            "reason": "unknown_run" | "route_not_allowed" | "cross_session" | "cancel_timeout" | "gateway_error",
             "detail": "...",
         },
     ],
@@ -303,9 +344,13 @@ When one or more runs time out:
   ```text
   Restore agent gateway availability before retrying.
   ```
-- unknown, inaccessible, or unauthorized run:
+- `unknown_run`, `route_not_allowed`, or `cross_session`:
   ```text
   Verify the run IDs and parent-child control relationship before retrying.
+  ```
+- `cancel_timeout`:
+  ```text
+  Cancellation was not acknowledged; do not retry automatically, and report that the run may still be active.
   ```
 - child execution failure:
   ```text
@@ -349,14 +394,16 @@ Update `src/voidx/presentation/output/tool_display.py` so that:
 
 ## Implementation Constraints
 
-- Keep gateway route validation unchanged.
-- Do not add `AgentGateway.wait_many` or `cancel_many`; concurrency belongs in the adapter for this scope.
+- Keep gateway route validation decisions unchanged.
+- Add stable reasons to existing gateway errors; do not infer categories from message text.
+- Do not add transport-level `wait_many` or `cancel_many`; concurrency belongs in the adapter for this scope.
 - Do not serialize batch waits or cancellations.
-- Do not let one per-item exception cancel sibling operations.
+- Bound both wait and cancel paths; one per-item exception or cancellation timeout must not block sibling operations.
 - Do not retain aliases for `brief` or `until_complete` in the public schema.
 - Keep output rendering deterministic and in input order.
 - Keep metadata structured; consumers must not need to parse visible output.
 - Preserve the public `AgentInput` schema.
+- Preserve spawn metadata as exactly `agent`, `run_id`, and `status`.
 - Use the same stable display-name helper for spawn and control output.
 - Expose a spawned run ID once in LLM-visible output and retain it in metadata.
 - Preserve unrelated work in the currently dirty tree.
@@ -365,31 +412,42 @@ Update `src/voidx/presentation/output/tool_display.py` so that:
 
 Modify:
 
+- `src/voidx/agent/domain/subagent.py`
+- `src/voidx/agent/adapters/subagent/inprocess_gateway.py`
 - `src/voidx/agent/adapters/tools/subagent_control.py`
 - `src/voidx/agent/adapters/tools/subagent.py`
 - `src/voidx/presentation/output/tool_display.py`
+- `src/tests/test_agent/adapters/subagent/test_inprocess_gateway.py`
+- `src/tests/test_agent/application/subagent/test_policy.py`
+- `src/tests/test_agent/adapters/langgraph/runtime/test_execute_tools_guard.py`
 - `src/tests/test_tooling/test_agent_control.py`
 - `src/tests/test_tooling/test_interactive_tools.py`
+- `src/tests/test_tooling/test_tool_schemas.py`
 - `src/tests/test_tooling/permission/test_permission_phase4.py`
-- `src/tests/test_infrastructure/runtime/test_execute_tools_guard.py`
 - `src/tests/test_presentation/output/test_tool_display.py`
+- `scripts/repro_wait_blocking.py`
+- `scripts/repro_message_receive_blocking.py`
 
-Do not modify `src/voidx/agent/gateway/gateway.py` unless implementation evidence proves an adapter-only solution cannot satisfy the concurrency contract.
+Do not create `src/voidx/agent/gateway/`; architecture tests require the transport implementation to remain in the adapter package.
 
 ## TDD Plan
 
-1. Add failing spawn-result tests for stable display names, a single LLM-visible `run_id`, preserved metadata, and exact success/error hints.
-2. Implement the minimal `agent` spawn result changes without changing `AgentInput`.
-3. Add failing schema and normalization tests for `str | list[str]`, the three tiers, empty lists, blank IDs, and stable deduplication.
-4. Add failing behavior tests for concurrent batch wait and cancel, deterministic ordering, partial control errors, and top-level error classification.
-5. Add failing output tests for completed, running, failed, cancelled, incomplete, and control-error items.
-6. Add failing hint tests proving hints are absent on normal control outcomes and exact on timeout/error outcomes, including mixed-batch deduplication.
-7. Implement the minimal control adapter changes to make those tests pass.
-8. Add failing legacy-timeout mapping tests, then replace the old tier mapping.
-9. Add failing batch display tests, then implement `<N> agents` rendering.
-10. Update integrated tests and remove all repository references to the retired public values `brief` and `until_complete`.
+1. Add failing spawn-result tests for stable display names, a single LLM-visible `run_id`, the exact existing three-field metadata contract, and exact success/error hints.
+2. Implement the minimal `agent` spawn result changes without changing `AgentInput` or adding spawn metadata fields.
+3. Add failing `AgentGatewayError.reason` tests for unknown run, disallowed route, and cross-session control while preserving existing messages and decisions.
+4. Implement structured gateway error reasons without changing route authorization policy.
+5. Add a failing gateway test with a child that suppresses `CancelledError`; patch `_CANCEL_ACK_TIMEOUT` to a short value and prove `cancel` returns `cancel_timeout` within the deadline without reporting the run as cancelled.
+6. Implement the minimal bounded-cancel gateway change, then test normal and already-terminal cancellation regressions.
+7. Add failing schema and normalization tests for `str | list[str]`, the three wait tiers, empty lists, blank IDs, and stable deduplication.
+8. Add failing behavior tests for concurrent batch wait and cancel, deterministic ordering, partial control errors, cancel timeouts, and top-level error classification.
+9. Add failing output tests for completed, running, failed, cancelled, incomplete, and control-error items.
+10. Add failing hint tests proving hints are absent on normal control outcomes and exact on wait timeout, cancel timeout, structured gateway error, and mixed-batch outcomes.
+11. Implement the minimal control adapter changes to make those tests pass.
+12. Add failing legacy-timeout mapping tests, then replace the old tier mapping.
+13. Add failing batch display tests, then implement `<N> agents` rendering.
+14. Update integrated tests and live scripts; remove all live repository references to retired public values and removed verbose output.
 
-Timeout tests must replace the timeout mapping or use a controlled fake gateway; they must not sleep for 64, 128, or 256 seconds.
+Timeout tests must patch timeout constants or use controlled fake transports; they must not sleep for 5, 64, 128, or 256 seconds.
 
 ## Verification
 
@@ -397,33 +455,44 @@ Focused verification:
 
 ```bash
 ./test.py --backend -- \
+  src/tests/test_agent/adapters/subagent/test_inprocess_gateway.py \
+  src/tests/test_agent/application/subagent/test_policy.py \
+  src/tests/test_agent/adapters/langgraph/runtime/test_execute_tools_guard.py \
   src/tests/test_tooling/test_agent_control.py \
   src/tests/test_tooling/test_interactive_tools.py \
+  src/tests/test_tooling/test_tool_schemas.py \
   src/tests/test_tooling/permission/test_permission_phase4.py \
-  src/tests/test_infrastructure/runtime/test_execute_tools_guard.py \
   src/tests/test_presentation/output/test_tool_display.py \
   -v
+```
+
+Architecture verification:
+
+```bash
+./test.py --backend -- src/tests/test_architecture/test_p5_boundaries.py -v
 ```
 
 Repository reference check:
 
 ```bash
-rg -n 'brief|until_complete|Agent run status:|Do not call agent_control\(wait\) again' \
-  src/voidx src/tests
+grep -RInE 'brief|until_complete|Agent run status:|Do not call agent_control\(wait\) again' \
+  src/voidx src/tests scripts
 ```
 
-Expected result: no live `agent_control` schema, call site, or output assertion retains the retired tiers or removed verbose output. Unrelated uses, if any, must be reviewed rather than changed mechanically.
+Expected result: no live `agent_control` schema, call site, output assertion, or diagnostic script retains the retired tiers or removed verbose output. Unrelated natural-language uses of the word `brief` must be reviewed rather than changed mechanically.
 
 ## Acceptance Criteria
 
 - Successful spawn output uses the stable child display name and exposes `run_id` exactly once to the LLM.
-- Spawn metadata remains compatible, and spawn hints contain only actionable guidance.
+- Spawn metadata remains exactly `agent`, `run_id`, and `status`, and spawn hints contain only actionable guidance.
 - `run_id` accepts one non-empty string or a non-empty list of non-empty strings.
-- Wait and cancel operate concurrently for multiple IDs and isolate per-item errors.
+- Wait and cancel start concurrently for multiple IDs and isolate per-item errors.
 - Wait tiers are exactly `standard=64`, `extended=128`, and `maximum=256` seconds.
-- No `agent_control` call can wait indefinitely.
+- No `agent_control` wait can block indefinitely.
+- Cancellation acknowledgement is bounded by 5 seconds; a non-acknowledging child yields `cancel_timeout` and is not falsely reported as cancelled.
+- Gateway control failures carry stable reasons, and the adapter does not classify them by parsing messages.
 - Visible output follows the compact per-item format and preserves input order.
 - Existing successful single-run metadata remains compatible; batch metadata follows the `items` contract.
 - `next_step_hint` is empty for normal outcomes and contains only actionable guidance for timeout or error/incomplete outcomes.
 - Batch display does not expose raw run IDs.
-- The focused backend verification command passes.
+- Focused and architecture verification commands pass.

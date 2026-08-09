@@ -1,137 +1,274 @@
 """Tests for child-agent run control."""
 
+from __future__ import annotations
+
+import asyncio
+import time
+
+import pytest
+from pydantic import ValidationError
+
+from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext, AgentToolRuntime
 from voidx.agent.adapters.tools.subagent_control import AgentControlInput, AgentControlTool, _WAIT_TIMEOUTS
+from voidx.agent.domain.subagent import AgentGatewayError, AgentRun
+from voidx.agent.domain.subagent_display import subagent_display_name
 from voidx.tooling.domain.schema import model_to_json_schema
+
+
+def _run(
+    run_id: str,
+    *,
+    status: str = "running",
+    result: dict | None = None,
+    error: str | None = None,
+    wait_outcome: str | None = None,
+) -> AgentRun:
+    return AgentRun(
+        run_id=run_id,
+        session_id="session-control",
+        parent_run_id="root",
+        agent_type="sub",
+        agent_name="voidx",
+        description=run_id,
+        status=status,
+        result=result,
+        error=error,
+        created_at=1.0,
+        updated_at=2.0,
+        wait_outcome=wait_outcome,
+    )
+
+
+class FakeTransport:
+    def __init__(self, runs: dict[str, AgentRun | Exception]):
+        self.runs = runs
+        self.calls: list[tuple[str, str, float | None]] = []
+        self.active = 0
+        self.max_active = 0
+
+    async def wait(self, *, requester_run_id: str, target_run_id: str, timeout: float):
+        self.calls.append(("wait", target_run_id, timeout))
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        await asyncio.sleep(0.01)
+        self.active -= 1
+        value = self.runs[target_run_id]
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    async def cancel(self, *, requester_run_id: str, target_run_id: str):
+        self.calls.append(("cancel", target_run_id, None))
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        await asyncio.sleep(0.01)
+        self.active -= 1
+        value = self.runs[target_run_id]
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+
+def _ctx(transport=None) -> ToolContext:
+    return ToolContext(
+        workspace=".",
+        session_id="session-control",
+        runtime=AgentToolRuntime(subagent_transport=transport, run_id="root"),
+    )
 
 
 def test_agent_control_schema_and_timeout_mapping():
     schema = model_to_json_schema(AgentControlInput)
     assert set(schema["properties"]) == {"action", "run_id", "wait"}
     assert set(schema["properties"]["action"]["enum"]) == {"wait", "cancel"}
-    assert set(schema["properties"]["wait"]["enum"]) == {"brief", "extended", "until_complete"}
-    assert _WAIT_TIMEOUTS == {"brief": 5.0, "extended": 30.0, "until_complete": 0.0}
+    assert set(schema["properties"]["wait"]["enum"]) == {"standard", "extended", "maximum"}
+    assert schema["properties"]["run_id"]["type"] == ["string", "array"]
+    assert _WAIT_TIMEOUTS == {"standard": 64.0, "extended": 128.0, "maximum": 256.0}
 
 
-def test_agent_control_required_fields_are_explicit():
-    assert set(AgentControlInput.model_json_schema()["required"]) >= {"action", "run_id"}
+def test_agent_control_normalizes_and_deduplicates_run_ids():
+    assert AgentControlInput(action="wait", run_id=" run_a ").run_id == ["run_a"]
+    assert AgentControlInput(
+        action="cancel",
+        run_id=[" run_a ", "run_b", "run_a"],
+        wait="maximum",
+    ).run_id == ["run_a", "run_b"]
 
-
-def test_agent_control_cancel_ignores_wait_strategy():
-    inp = AgentControlInput(action="cancel", run_id="run_123", wait="extended")
-    assert inp.action == "cancel"
-    assert inp.run_id == "run_123"
-    assert inp.wait == "extended"
-
-
-import asyncio
-
-import pytest
-
-from voidx.agent.adapters.subagent import InProcessSubagentGateway
-from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext, AgentToolRuntime
+    for run_id in (" ", [], ["run_a", " "]):
+        with pytest.raises(ValidationError):
+            AgentControlInput(action="wait", run_id=run_id)
 
 
 @pytest.mark.asyncio
-async def test_agent_control_wait_exposes_timeout_while_child_is_still_running():
-    gateway = InProcessSubagentGateway()
-    root_id = gateway.ensure_root("session-control-timeout")
-    started = asyncio.Event()
-
-    async def runner(_run_id: str) -> str:
-        started.set()
-        await asyncio.sleep(10)
-        return "late"
-
-    run = await gateway.spawn(
-        session_id="session-control-timeout",
-        parent_run_id=root_id,
-        agent_name="voidx",
-        description="slow child",
-        runner=runner,
-    )
-    await started.wait()
-
-    result = await AgentControlTool().execute(
-        {"action": "wait", "run_id": run.run_id, "wait": "brief"},
-        ToolContext(
-            workspace=".",
-            session_id="session-control-timeout",
-            runtime=AgentToolRuntime(subagent_transport=gateway, run_id=root_id),
-        ),
-    )
-
-    assert "Agent run status: running" in result.output
-    assert "Wait outcome: timed_out_still_running" in result.output
-    assert "Terminal: false" in result.output
-    assert "Do not call wait repeatedly in a tight loop" in result.output
-    assert result.next_step_hint == f"Run {run.run_id} is still active; do not poll in a tight loop."
-    await gateway.cancel(requester_run_id=root_id, target_run_id=run.run_id)
-
-
-@pytest.mark.asyncio
-async def test_agent_control_wait_stops_polling_after_terminal_result():
-    gateway = InProcessSubagentGateway()
-    root_id = gateway.ensure_root("session-control-terminal")
-
-    async def runner(_run_id: str) -> str:
-        return "verdict: PASS\nfindings: none"
-
-    run = await gateway.spawn(
-        session_id="session-control-terminal",
-        parent_run_id=root_id,
-        agent_name="voidx",
-        description="fast child",
-        runner=runner,
-    )
-    context = ToolContext(
-        workspace=".",
-        session_id="session-control-terminal",
-        runtime=AgentToolRuntime(subagent_transport=gateway, run_id=root_id),
-    )
-
-    first = await AgentControlTool().execute(
-        {"action": "wait", "run_id": run.run_id, "wait": "brief"},
-        context,
-    )
-    second = await AgentControlTool().execute(
-        {"action": "wait", "run_id": run.run_id, "wait": "brief"},
-        context,
-    )
-
-    assert "Wait outcome: terminal_reached_during_wait" in first.output
-    assert "Do not call agent_control(wait) again" in first.output
-    assert "Wait outcome: already_terminal" in second.output
-    assert "This wait returned the cached terminal result" in second.output
-    assert "Do not call agent_control(wait) again" in second.output
-
-
-@pytest.mark.asyncio
-async def test_agent_control_wait_marks_contract_unsatisfied_as_terminal_incomplete_result():
-    gateway = InProcessSubagentGateway()
-    root_id = gateway.ensure_root("session-control-contract")
-
-    async def runner(_run_id: str) -> dict:
-        return {
-            "result": "findings: tests passed, but verdict is missing",
-            "finish_reason": "contract_unsatisfied",
-        }
-
-    run = await gateway.spawn(
-        session_id="session-control-contract",
-        parent_run_id=root_id,
-        agent_name="voidx",
-        description="incomplete review",
-        runner=runner,
+async def test_wait_single_completed_uses_compact_output_and_compatible_metadata():
+    run = _run(
+        "run_done",
+        status="completed",
+        result={"result": "verdict: PASS"},
+        wait_outcome="terminal_reached_during_wait",
     )
     result = await AgentControlTool().execute(
-        {"action": "wait", "run_id": run.run_id, "wait": "brief"},
-        ToolContext(
-            workspace=".",
-            session_id="session-control-contract",
-            runtime=AgentToolRuntime(subagent_transport=gateway, run_id=root_id),
-        ),
+        {"action": "wait", "run_id": run.run_id},
+        _ctx(FakeTransport({run.run_id: run})),
     )
 
-    assert "Result quality: incomplete_contract" in result.output
-    assert "The child run is terminal and cannot produce a new result by waiting" in result.output
-    assert "Do not call agent_control(wait) again" in result.output
+    name = subagent_display_name(run.run_id)
+    assert result.output == f"{name} [completed]\nResult:\nverdict: PASS"
+    assert result.display == f"{name} completed."
+    assert result.summary == f"{name} completed"
+    assert result.next_step_hint == ""
+    assert set(result.metadata) == {
+        "run", "status", "wait_outcome", "terminal", "result_quality", "finish_reason"
+    }
+
+
+@pytest.mark.asyncio
+async def test_wait_timeout_uses_selected_tier_and_exact_hint(monkeypatch):
+    monkeypatch.setitem(_WAIT_TIMEOUTS, "standard", 0.01)
+    run = _run("run_slow", wait_outcome="timed_out_still_running")
+    transport = FakeTransport({run.run_id: run})
+
+    result = await AgentControlTool().execute(
+        {"action": "wait", "run_id": run.run_id},
+        _ctx(transport),
+    )
+
+    assert result.output == f"{subagent_display_name(run.run_id)} [running]"
+    assert transport.calls == [("wait", run.run_id, 0.01)]
+    assert result.next_step_hint == (
+        "Use wait='extended' if the result is still needed; otherwise continue with other work."
+    )
+
+
+@pytest.mark.asyncio
+async def test_wait_failed_and_incomplete_results_emit_recovery_hints():
+    failed = _run("run_failed", status="failed", error="provider failed", wait_outcome="already_terminal")
+    incomplete = _run(
+        "run_incomplete",
+        status="completed",
+        result={"result": "partial", "finish_reason": "contract_unsatisfied"},
+        wait_outcome="already_terminal",
+    )
+
+    failed_result = await AgentControlTool().execute(
+        {"action": "wait", "run_id": failed.run_id},
+        _ctx(FakeTransport({failed.run_id: failed})),
+    )
+    incomplete_result = await AgentControlTool().execute(
+        {"action": "wait", "run_id": incomplete.run_id},
+        _ctx(FakeTransport({incomplete.run_id: incomplete})),
+    )
+
+    assert failed_result.output.endswith("[failed]\nError: provider failed")
+    assert failed_result.next_step_hint == (
+        "Inspect the error and start a replacement run if the task is still needed."
+    )
+    assert "[completed; finish_reason=contract_unsatisfied]" in incomplete_result.output
+    assert incomplete_result.next_step_hint == (
+        "Use the partial result if sufficient; otherwise start a narrower replacement task."
+    )
+
+
+@pytest.mark.asyncio
+async def test_batch_wait_is_concurrent_ordered_and_reports_partial_error():
+    first = _run("run_first", status="completed", result={"result": "one"}, wait_outcome="already_terminal")
+    third = _run("run_third", wait_outcome="timed_out_still_running")
+    denied = AgentGatewayError("Route not allowed", reason="route_not_allowed")
+    transport = FakeTransport({first.run_id: first, "run_denied": denied, third.run_id: third})
+
+    result = await AgentControlTool().execute(
+        {
+            "action": "wait",
+            "run_id": [first.run_id, "run_denied", third.run_id],
+            "wait": "extended",
+        },
+        _ctx(transport),
+    )
+
+    headings = [line for line in result.output.splitlines() if line and "[" in line]
+    assert headings == [
+        f"{subagent_display_name(first.run_id)} [completed]",
+        f"{subagent_display_name('run_denied')} [error]",
+        f"{subagent_display_name(third.run_id)} [running]",
+    ]
+    assert transport.max_active == 3
+    assert result.display == "3 agents"
+    assert result.metadata["partial_error"] is True
+    assert "error" not in result.metadata
+    assert result.metadata["counts"] == {"completed": 1, "error": 1, "running": 1}
+    assert [item["run_id"] for item in result.metadata["items"]] == [
+        first.run_id, "run_denied", third.run_id
+    ]
+    assert result.next_step_hint == "\n".join([
+        "Use wait='maximum' only if the result is still needed; otherwise cancel the unfinished work or continue without it.",
+        "Verify the run IDs and parent-child control relationship before retrying.",
+    ])
+
+
+@pytest.mark.asyncio
+async def test_batch_all_control_errors_sets_top_level_error_and_deduplicates_guidance():
+    transport = FakeTransport({
+        "run_a": AgentGatewayError("Unknown run", reason="unknown_run"),
+        "run_b": AgentGatewayError("Route not allowed", reason="route_not_allowed"),
+    })
+
+    result = await AgentControlTool().execute(
+        {"action": "cancel", "run_id": ["run_a", "run_b"]},
+        _ctx(transport),
+    )
+
+    assert result.metadata["error"] is True
+    assert "partial_error" not in result.metadata
+    assert result.next_step_hint == (
+        "Verify the run IDs and parent-child control relationship before retrying."
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_success_and_timeout_metadata_and_hints():
+    cancelled = _run("run_cancelled", status="cancelled")
+    timeout = AgentGatewayError(
+        "Child cancellation was not acknowledged",
+        reason="cancel_timeout",
+    )
+
+    success = await AgentControlTool().execute(
+        {"action": "cancel", "run_id": cancelled.run_id, "wait": "maximum"},
+        _ctx(FakeTransport({cancelled.run_id: cancelled})),
+    )
+    failed = await AgentControlTool().execute(
+        {"action": "cancel", "run_id": "run_timeout"},
+        _ctx(FakeTransport({"run_timeout": timeout})),
+    )
+
+    assert success.output == f"{subagent_display_name(cancelled.run_id)} [cancelled]"
+    assert set(success.metadata) == {"run", "status"}
+    assert success.next_step_hint == ""
+    assert failed.metadata == {
+        "error": True,
+        "reason": "cancel_timeout",
+        "detail": "Child cancellation was not acknowledged",
+        "run_id": "run_timeout",
+    }
+    assert failed.next_step_hint == (
+        "Cancellation was not acknowledged; do not retry automatically, and report that the run may still be active."
+    )
+
+
+@pytest.mark.asyncio
+async def test_invalid_input_and_gateway_unavailable_have_exact_recovery_hints():
+    invalid = await AgentControlTool().execute(
+        {"action": "wait", "run_id": []},
+        _ctx(FakeTransport({})),
+    )
+    unavailable = await AgentControlTool().execute(
+        {"action": "wait", "run_id": "run_a"},
+        _ctx(None),
+    )
+
+    assert invalid.metadata["error"] is True
+    assert invalid.next_step_hint == "Correct the arguments before retrying."
+    assert unavailable.metadata == {"error": True, "reason": "gateway_unavailable"}
+    assert unavailable.next_step_hint == (
+        "Restore agent gateway availability before retrying."
+    )

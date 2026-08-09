@@ -584,3 +584,86 @@ async def test_wait_distinguishes_terminal_transition_from_cached_terminal_resul
     assert second.status == "completed"
     assert second.wait_outcome == "already_terminal"
     assert second.result == first.result
+
+
+@pytest.mark.asyncio
+async def test_unknown_run_exposes_stable_reason():
+    gateway = InProcessSubagentGateway()
+
+    with pytest.raises(AgentGatewayError, match="Unknown run") as error:
+        await gateway.receive(run_id="missing", limit=1, timeout=0)
+
+    assert error.value.reason == "unknown_run"
+
+
+@pytest.mark.asyncio
+async def test_cancel_times_out_when_child_suppresses_cancellation(monkeypatch):
+    gateway = InProcessSubagentGateway()
+    root_id = gateway.ensure_root("session-1")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def runner(_run_id: str) -> str:
+        started.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            await release.wait()
+        return "eventually done"
+
+    run = await gateway.spawn(
+        session_id="session-1",
+        parent_run_id=root_id,
+        agent_name="stubborn",
+        description="suppress cancellation",
+        runner=runner,
+    )
+    await started.wait()
+    monkeypatch.setattr(
+        "voidx.agent.adapters.subagent.inprocess_gateway._CANCEL_ACK_TIMEOUT",
+        0.01,
+    )
+
+    try:
+        with pytest.raises(
+            AgentGatewayError,
+            match="Child cancellation was not acknowledged",
+        ) as error:
+            await gateway.cancel(requester_run_id=root_id, target_run_id=run.run_id)
+
+        assert error.value.reason == "cancel_timeout"
+        current = gateway.lookup_run(run.run_id)
+        assert current is not None
+        assert current.status == "running"
+    finally:
+        release.set()
+        await gateway.wait(requester_run_id=root_id, target_run_id=run.run_id, timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_cancel_returns_cancelled_and_preserves_already_terminal_run():
+    gateway = InProcessSubagentGateway()
+    root_id = gateway.ensure_root("session-1")
+    started = asyncio.Event()
+
+    async def runner(_run_id: str) -> str:
+        started.set()
+        await asyncio.Future()
+
+    running = await gateway.spawn(
+        session_id="session-1",
+        parent_run_id=root_id,
+        agent_name="running",
+        description="cancel normally",
+        runner=runner,
+    )
+    await started.wait()
+
+    cancelled = await gateway.cancel(requester_run_id=root_id, target_run_id=running.run_id)
+    cancelled_again = await gateway.cancel(
+        requester_run_id=root_id,
+        target_run_id=running.run_id,
+    )
+
+    assert cancelled.status == "cancelled"
+    assert cancelled_again == cancelled

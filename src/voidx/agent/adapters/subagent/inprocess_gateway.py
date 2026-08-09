@@ -8,6 +8,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+_CANCEL_ACK_TIMEOUT = 5.0
+
+
 from voidx.agent.domain.subagent import (
     USER_MESSAGE_TYPES,
     TERMINAL_STATUSES,
@@ -199,6 +202,15 @@ class InProcessSubagentGateway:
         if target.run.status not in TERMINAL_STATUSES:
             if target.task is not None:
                 target.task.cancel()
+                done, _pending = await asyncio.wait(
+                    {target.task},
+                    timeout=_CANCEL_ACK_TIMEOUT,
+                )
+                if not done:
+                    raise AgentGatewayError(
+                        "Child cancellation was not acknowledged",
+                        reason="cancel_timeout",
+                    )
                 try:
                     await target.task
                 except asyncio.CancelledError:
@@ -309,7 +321,10 @@ class InProcessSubagentGateway:
     def _require_run(self, run_id: str) -> _RunRecord:
         record = self._runs.get(run_id)
         if record is None:
-            raise AgentGatewayError(f"Unknown run: {run_id}")
+            raise AgentGatewayError(
+                f"Unknown run: {run_id}",
+                reason="unknown_run",
+            )
         return record
 
     def _validate_payload(self, payload: dict[str, Any]) -> None:
