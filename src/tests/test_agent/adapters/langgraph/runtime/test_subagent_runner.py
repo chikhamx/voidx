@@ -311,6 +311,60 @@ async def test_subagent_runner_persists_lifecycle_jsonl(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_subagent_runner_persists_failure_error_to_jsonl(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.execution as core_module
+
+    graph = _graph(tmp_path)
+    graph._session = await create_session(workspace=str(tmp_path))
+    goal_resolution = _child_goal_resolution(
+        "inspect",
+        desc="Inspect failing storage",
+        join="review",
+        leave="review",
+    )
+
+    async def fake_workflow_context_for(*_args, **_kwargs):
+        return WorkflowRuntimeContext(
+            instructions=[],
+            active=[],
+            content="",
+            runs=[
+                WorkflowRunState(
+                    name="review",
+                    status=WorkflowRunStatus.ACTIVE,
+                    goal_type="inspect",
+                    scope="Inspect failing storage",
+                    personas=["review"],
+                )
+            ],
+        )
+
+    async def fail_run_subagent(*_args, **_kwargs):
+        raise RuntimeError("child execution failed")
+
+    graph._instruction.workflow_context_for = fake_workflow_context_for
+    monkeypatch.setattr(core_module, "_run_subagent", fail_run_subagent)
+
+    try:
+        with pytest.raises(RuntimeError, match="child execution failed"):
+            await graph._subagent_runner(
+                get_agent("voidx"),
+                "Inspect failing storage",
+                goal_resolution,
+                _child_result_contract("inspection_result"),
+            )
+
+        path = store.DATA_DIR / "sessions" / graph._session.id / "subagents" / "agent_0.jsonl"
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        finish = rows[-1]
+        assert finish["type"] == "subagent_finish"
+        assert finish["ok"] is False
+        assert finish["finish_reason"] == "error"
+        assert finish["error"] == "child execution failed"
+    finally:
+        await delete_session(graph._session.id)
+
+@pytest.mark.asyncio
 async def test_subagent_runner_authorizes_with_child_interaction_mode(tmp_path, monkeypatch):
     import voidx.agent.adapters.langgraph.execution as core_module
 

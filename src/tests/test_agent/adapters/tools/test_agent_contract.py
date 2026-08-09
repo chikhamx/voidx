@@ -6,8 +6,8 @@ from voidx.agent.adapters.tools.subagent import AgentInput, AgentTool, normalize
 def test_agent_schema_exposes_spawn_only_contract():
     schema = AgentTool().parameters_schema()
     assert set(schema["properties"]) == {"mode", "goal", "detail", "scope"}
-    assert set(schema["required"]) == {"mode", "goal", "detail"}
-    assert schema["properties"]["scope"].get("nullable") is True or "null" in str(schema["properties"]["scope"])
+    assert set(schema["required"]) == {"mode", "goal", "detail", "scope"}
+    assert schema["properties"]["scope"]["type"] == "string"
     assert set(schema["properties"]["mode"]["enum"]) == {"review", "debug", "implement"}
 
 
@@ -15,7 +15,7 @@ def test_agent_schema_exposes_spawn_only_contract():
 def test_agent_input_accepts_omitted_scope():
     inp = AgentInput(mode="review", goal="Review the change", detail="Report findings.")
 
-    assert inp.scope is None
+    assert inp.scope == ""
 
 
 def test_normalize_agent_input_uses_goal_and_mode_route():

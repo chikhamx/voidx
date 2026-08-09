@@ -1007,13 +1007,16 @@ class LangGraphExecution:
                     error=error,
                 ))
             if self._session:
-                await append_subagent_event(session_id, agent_run_id, {
+                finish_event = {
                     "type": "subagent_finish",
                     "agent_id": agent_id,
                     "ok": ok,
                     "elapsed": time.monotonic() - started_at,
                     "finish_reason": str(run_metadata.get("finish_reason") or ("final_answer" if ok else "error")),
-                })
+                }
+                if not ok and error:
+                    finish_event["error"] = error
+                await append_subagent_event(session_id, agent_run_id, finish_event)
 
     def set_debug(self, value: bool) -> None:
         self._debug = value

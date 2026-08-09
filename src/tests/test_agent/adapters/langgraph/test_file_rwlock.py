@@ -10,6 +10,7 @@ import pytest
 from voidx.agent.adapters.langgraph.runtime.tool_executor.helpers import (
     _FileRWLock,
     _acquire_file_locks,
+    _execute_file_isolated_batch,
     _extract_file_paths,
 )
 
@@ -579,3 +580,28 @@ async def test_partial_multi_path_cancellation_releases_only_acquired_locks_in_r
     await first.release_write()
     await second.acquire_read()
     await second.release_read()
+
+
+@pytest.mark.asyncio
+async def test_execute_file_isolated_batch_runs_different_files_in_parallel():
+    both_started = asyncio.Event()
+    first_started = asyncio.Event()
+    second_started = asyncio.Event()
+
+    async def execute_one(tool_call):
+        event = first_started if tool_call["id"] == "first" else second_started
+        event.set()
+        if first_started.is_set() and second_started.is_set():
+            both_started.set()
+        await asyncio.wait_for(both_started.wait(), timeout=0.5)
+        return tool_call["id"]
+
+    results = await _execute_file_isolated_batch(
+        [
+            {"name": "replace", "id": "first", "args": {"file_path": "a.py", "bounds": []}},
+            {"name": "replace", "id": "second", "args": {"file_path": "b.py", "bounds": []}},
+        ],
+        execute_one,
+    )
+
+    assert results == ["first", "second"]

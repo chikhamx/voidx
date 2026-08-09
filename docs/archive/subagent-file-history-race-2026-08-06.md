@@ -1,8 +1,9 @@
 # Subagent File-History Race and Tool Isolation
 
+> **Status: Done** — Archived on 2026-08-09.
+
 Date: 2026-08-06
 
-> **Status: Approved design; awaiting implementation**
 
 ## Goal
 

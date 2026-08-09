@@ -26,6 +26,7 @@ from voidx.agent.adapters.langgraph.runtime.core.helpers import LLMErrorKind, _c
 from voidx.agent.adapters.langgraph.runtime.todo_events import todo_updated_event
 from voidx.agent.application.todo_state import todo_run_state_from_result
 from voidx.agent.domain.workflow_utils import active_workflow_names
+from voidx.agent.adapters.langgraph.runtime.tool_executor.helpers import _execute_file_isolated_batch
 from voidx.agent.adapters.langgraph.runtime.tool_executor.types import _ExecutedTool
 from voidx.agent.adapters.langgraph.runtime.tool_executor.workflow import (
     _state_update_from_executed_tools,
@@ -59,6 +60,7 @@ from voidx.agent.adapters.persistence.context_frame_repository import save_conte
 from voidx.agent.adapters.persistence.subagent_repository import append_subagent_event
 from voidx.tooling.application.execution import AuthorizationRuntime
 from voidx.tooling.domain.file_tracking import FileStateStore
+from voidx.tooling.domain.result import ToolResult
 from voidx.tooling.application.registry import ToolRegistry
 from voidx.agent.application.runtime.task_tracker import TaskTracker
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext, AgentToolRuntime
@@ -600,7 +602,16 @@ async def run_subagent(
                 cid = tc.get("id", "")
                 if capture_tree and parent_node is not None:
                     capture.tool_call(tid, targs, tool_call_id=cid)
-                result = await agent_tools.execute_tool(tid, targs, ctx)
+                try:
+                    result = await agent_tools.execute_tool(tid, targs, ctx)
+                except Exception as exc:
+                    result = ToolResult(
+                        output=f"Tool execution error: {exc}",
+                        metadata={
+                            "error": True,
+                            "exception": exc.__class__.__name__,
+                        },
+                    )
                 todo_state = todo_run_state_from_result(result) if tid == "todo" else None
                 if todo_state_sink is not None and todo_state is not None and todo_state.total > 0:
                     todo_state_sink(todo_state)
@@ -647,7 +658,7 @@ async def run_subagent(
             if result_tool_call is not None:
                 approved = [result_tool_call]
 
-            executed = await asyncio.gather(*[run_one(tc) for tc in approved])
+            executed = await _execute_file_isolated_batch(approved, run_one)
             executed = [item for item in executed if item is not None]
             denied_msgs = [
                 ToolMessage(

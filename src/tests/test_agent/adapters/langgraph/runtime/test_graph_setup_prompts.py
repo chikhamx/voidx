@@ -176,7 +176,7 @@ def test_agent_tool_description_owns_delegation_gate():
     assert "does not inherit the caller's conversation history" in tool_description
     assert "### Delegation Rules" not in prompt
     assert "Delegate only independent parallel work" not in prompt
-    assert set(schema["required"]) == {"mode", "goal", "detail"}
+    assert set(schema["required"]) == {"mode", "goal", "detail", "scope"}
     assert "goal_resolution" not in schema["required"]
     assert "result" not in schema["required"]
 
@@ -188,7 +188,7 @@ def test_orchestrator_prompt_matches_agent_workflow_schema():
 
     # Tool description is concise; parameter requirements are in the schema.
     assert "well-scoped subtask" in tool_description
-    assert set(schema["required"]) == {"mode", "goal", "detail"}
+    assert set(schema["required"]) == {"mode", "goal", "detail", "scope"}
     assert "success_criteria" not in schema["properties"]
     assert "result_preset" not in schema["properties"]
     assert "persona" not in child_descriptions

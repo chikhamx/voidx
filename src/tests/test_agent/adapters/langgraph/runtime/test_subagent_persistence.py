@@ -392,3 +392,169 @@ async def test_run_subagent_terminates_after_no_progress_cycles(tmp_path, monkey
     ]
 
 
+@pytest.mark.asyncio
+async def test_run_subagent_serializes_same_file_writes_by_descending_line(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
+
+    stream_calls: list[list] = []
+    started_lines: list[int] = []
+    active = 0
+    max_active = 0
+
+    class FakeModel:
+        def bind_tools(self, _tool_defs):
+            return self
+
+    class FakeToolRegistry:
+        def filtered_copy(self, _allowed_ids):
+            return self
+
+        def ids(self):
+            return ["replace"]
+
+        def serialize_definitions(self):
+            return [{"name": "replace", "description": "replace", "input_schema": {}}]
+
+        async def execute_tool(self, tid, targs, _ctx):
+            nonlocal active, max_active
+            assert tid == "replace"
+            line_no = targs["bounds"][0]["line_no"]
+            started_lines.append(line_no)
+            active += 1
+            max_active = max(max_active, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+            return ToolResult(output=f"replaced line {line_no}")
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
+        stream_calls.append(list(messages))
+        if len(stream_calls) == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "replace",
+                        "args": {"file_path": "hot.py", "bounds": [{"line_no": 10}]},
+                        "id": "call_low",
+                        "type": "tool_call",
+                    },
+                    {
+                        "name": "replace",
+                        "args": {"file_path": "hot.py", "bounds": [{"line_no": 20}]},
+                        "id": "call_high",
+                        "type": "tool_call",
+                    },
+                ],
+            )
+        return AIMessage(content="done")
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+    monkeypatch.setattr(subagent_module, "ToolRegistry", FakeToolRegistry)
+
+    output = await subagent_module.run_subagent(
+        AgentDef(
+            name="implement",
+            description="test",
+            when_to_use="test",
+            can_write=True,
+            can_delegate=False,
+        ),
+        "Edit the hot file",
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        runtime_persona="implement",
+        **_subagent_contract_kwargs(
+            goal_type="feature",
+            desc="Edit the hot file",
+            join="tdd",
+            leave="verify",
+        ),
+        debug=False,
+    )
+
+    assert output == "done"
+    assert max_active == 1
+    assert started_lines == [20, 10]
+    tool_messages = [message for message in stream_calls[1] if isinstance(message, ToolMessage)]
+    assert {message.tool_call_id for message in tool_messages} == {"call_low", "call_high"}
+
+
+@pytest.mark.asyncio
+async def test_run_subagent_converts_tool_exception_to_error_message(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
+
+    stream_calls: list[list] = []
+
+    class FakeModel:
+        def bind_tools(self, _tool_defs):
+            return self
+
+    class FakeToolRegistry:
+        def filtered_copy(self, _allowed_ids):
+            return self
+
+        def ids(self):
+            return ["read"]
+
+        def serialize_definitions(self):
+            return [{"name": "read", "description": "read", "input_schema": {}}]
+
+        async def execute_tool(self, tid, targs, _ctx):
+            assert tid == "read"
+            if targs["file_path"] == "broken.py":
+                raise FileNotFoundError("snapshot rename raced")
+            return ToolResult(output="healthy contents")
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
+        stream_calls.append(list(messages))
+        if len(stream_calls) == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "read",
+                        "args": {"file_path": "broken.py"},
+                        "id": "call_broken",
+                        "type": "tool_call",
+                    },
+                    {
+                        "name": "read",
+                        "args": {"file_path": "healthy.py"},
+                        "id": "call_healthy",
+                        "type": "tool_call",
+                    },
+                ],
+            )
+        return AIMessage(content="done")
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+    monkeypatch.setattr(subagent_module, "ToolRegistry", FakeToolRegistry)
+
+    output = await subagent_module.run_subagent(
+        AgentDef(
+            name="explore",
+            description="test",
+            when_to_use="test",
+            can_write=False,
+            can_delegate=False,
+        ),
+        "Read both files",
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        runtime_persona="explore",
+        **_subagent_contract_kwargs(desc="Read both files"),
+        debug=False,
+    )
+
+    assert output == "done"
+    tool_messages = {
+        message.tool_call_id: message
+        for message in stream_calls[1]
+        if isinstance(message, ToolMessage)
+    }
+    assert tool_messages["call_broken"].status == "error"
+    assert "Tool execution error: snapshot rename raced" in tool_messages["call_broken"].content
+    assert tool_messages["call_healthy"].status == "success"
+    assert tool_messages["call_healthy"].content == "healthy contents"

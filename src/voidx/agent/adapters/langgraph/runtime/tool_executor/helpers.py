@@ -573,6 +573,103 @@ def _infrastructure_skipped_tool(tool_call: dict, *, reason: str) -> _ExecutedTo
         tool_call=tool_call,
         runtime_guard_eligible=False,
     )
+
+
+async def _execute_file_isolated_batch(
+    tool_calls: list[dict],
+    execute_one_fn,
+    *,
+    skipped_result_factory=None,
+) -> list:
+    """Run file calls with per-path isolation while preserving result order."""
+    if not tool_calls:
+        return []
+
+    file_lock_manager: dict[str, _FileRWLock] = {}
+
+    def get_rwlock(path: str) -> _FileRWLock:
+        if path not in file_lock_manager:
+            file_lock_manager[path] = _FileRWLock()
+        return file_lock_manager[path]
+
+    async def execute_one_file_locked(tc):
+        paths = sorted(set(_extract_file_paths(tc)))
+        is_write = tc.get("name") in ("write", "replace", "manage")
+        acquired = await _acquire_file_locks(
+            paths,
+            is_write=is_write,
+            get_lock=get_rwlock,
+        )
+        try:
+            return await execute_one_fn(tc)
+        finally:
+            await _release_file_locks(acquired, is_write=is_write)
+
+    file_calls: list[dict] = []
+    other_calls: list[dict] = []
+    for tc in tool_calls:
+        if _extract_file_paths(tc):
+            file_calls.append(tc)
+        else:
+            other_calls.append(tc)
+    file_calls = _sort_file_calls_by_line_descending(file_calls)
+
+    call_index = {id(tc): index for index, tc in enumerate(tool_calls)}
+    results: list = [None] * len(tool_calls)
+
+    async def run_and_place(tool_group, executor_fn) -> bool:
+        if not tool_group:
+            return False
+        tasks = {
+            asyncio.create_task(executor_fn(tc)): tc
+            for tc in tool_group
+        }
+        try:
+            terminal_seen = False
+            while tasks:
+                done, _ = await asyncio.wait(
+                    tasks,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in done:
+                    tc = tasks.pop(task)
+                    result = task.result()
+                    results[call_index[id(tc)]] = result
+                    terminal_seen = terminal_seen or getattr(result, "terminal_reason", None) is not None
+                if not terminal_seen or skipped_result_factory is None:
+                    continue
+
+                pending = list(tasks.items())
+                for task, _ in pending:
+                    task.cancel()
+                if pending:
+                    await asyncio.gather(
+                        *(task for task, _ in pending),
+                        return_exceptions=True,
+                    )
+                for _, tc in pending:
+                    index = call_index[id(tc)]
+                    if results[index] is None:
+                        results[index] = skipped_result_factory(tc, "was cancelled")
+                return True
+            return False
+        except BaseException:
+            pending = [task for task in tasks if not task.done()]
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+            raise
+
+    terminal_seen = await run_and_place(file_calls, execute_one_file_locked)
+    if terminal_seen and skipped_result_factory is not None:
+        for tc in other_calls:
+            results[call_index[id(tc)]] = skipped_result_factory(tc, "was skipped")
+    else:
+        await run_and_place(other_calls, execute_one_fn)
+    return [result for result in results if result is not None]
+
+
 async def _execute_approved_batch(
     approved: list[dict],
     *,
@@ -599,109 +696,13 @@ async def _execute_approved_batch(
         restored = _restore_deduped_read_results(runnable, executed, duplicate_sources)
         return _restore_runtime_guard_blocked_results(approved, restored, blocked)
 
-    # --- file read-write lock manager (per-batch) ---
-
-    # --- file read-write lock manager (per-batch) ---
-    file_lock_manager: dict[str, _FileRWLock] = {}
-
-    def _get_rwlock(path: str) -> _FileRWLock:
-        if path not in file_lock_manager:
-            file_lock_manager[path] = _FileRWLock()
-        return file_lock_manager[path]
-
-    async def execute_one_file_locked(tc):
-        paths = sorted(set(_extract_file_paths(tc)))
-        is_write = tc.get("name") in ("write", "replace", "manage")
-        acquired = await _acquire_file_locks(
-            paths,
-            is_write=is_write,
-            get_lock=_get_rwlock,
-        )
-        try:
-            return await execute_one_fn(tc)
-        finally:
-            await _release_file_locks(acquired, is_write=is_write)
-
-    async def execute_one_no_file_lock(tc):
-        return await execute_one_fn(tc)
-
-    # Split into file ops (rwlock) and non-file ops (bash, etc.).
-    # Non-file ops must wait for all file ops to complete, so that
-    # a compile/test bash never runs before pending file writes.
-    file_calls: list[dict] = []
-    other_calls: list[dict] = []
-    for tc in unique_calls:
-        if _extract_file_paths(tc):
-            file_calls.append(tc)
-        else:
-            other_calls.append(tc)
-
-    # Reorder same-file writes by line number descending so that earlier edits
-    # don't shift line numbers for later edits on the same file.
-    file_calls = _sort_file_calls_by_line_descending(file_calls)
-
-    # Run file ops first (rwlock), then non-file ops (bash, etc.).
-    # Results are collected back into original unique_calls order.
-    call_index = {tc.get("id", id(tc)): i for i, tc in enumerate(unique_calls)}
-    results: list = [None] * len(unique_calls)
-
-    async def _run_and_place(tool_group, executor_fn) -> bool:
-        if not tool_group:
-            return False
-        tasks = {
-            asyncio.create_task(executor_fn(tc)): tc
-            for tc in tool_group
-        }
-        try:
-            terminal_seen = False
-            while tasks:
-                done, _ = await asyncio.wait(
-                    tasks,
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                for task in done:
-                    tc = tasks.pop(task)
-                    result = task.result()
-                    results[call_index[tc.get("id", id(tc))]] = result
-                    terminal_seen = terminal_seen or result.terminal_reason is not None
-                if not terminal_seen:
-                    continue
-
-                pending = list(tasks.items())
-                for task, _ in pending:
-                    task.cancel()
-                if pending:
-                    await asyncio.gather(
-                        *(task for task, _ in pending),
-                        return_exceptions=True,
-                    )
-                for _, tc in pending:
-                    index = call_index[tc.get("id", id(tc))]
-                    if results[index] is None:
-                        results[index] = _infrastructure_skipped_tool(
-                            tc,
-                            reason="was cancelled",
-                        )
-                return True
-            return False
-        except asyncio.CancelledError:
-            pending = [task for task in tasks if not task.done()]
-            for task in pending:
-                task.cancel()
-            if pending:
-                await asyncio.gather(*pending, return_exceptions=True)
-            raise
-
-    executed = []
-    terminal_seen = await _run_and_place(file_calls, execute_one_file_locked)
-    if terminal_seen:
-        for tc in other_calls:
-            results[call_index[tc.get("id", id(tc))]] = _infrastructure_skipped_tool(
-                tc,
-                reason="was skipped",
-            )
-    else:
-        await _run_and_place(other_calls, execute_one_no_file_lock)
-    executed = [r for r in results if r is not None]
+    executed = await _execute_file_isolated_batch(
+        unique_calls,
+        execute_one_fn,
+        skipped_result_factory=lambda tc, reason: _infrastructure_skipped_tool(
+            tc,
+            reason=reason,
+        ),
+    )
     restored = _restore_deduped_read_results(runnable, executed, duplicate_sources)
     return _restore_runtime_guard_blocked_results(approved, restored, blocked)

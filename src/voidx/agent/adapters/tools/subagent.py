@@ -47,8 +47,8 @@ class AgentInput(BaseModel):
     )
     goal: str = Field(description="One-sentence outcome to achieve.")
     detail: str = Field(description="Complete execution brief, constraints, and acceptance criteria.")
-    scope: str | None = Field(
-        default=None,
+    scope: str = Field(
+        default="",
         description="Optional file, module, directory, behavior, or issue scope.",
     )
 
@@ -129,9 +129,9 @@ class AgentTool:
             )
 
     def parameters_schema(self) -> dict:
-        schema = model_to_json_schema(AgentInput)
-        schema["required"] = [name for name in schema["required"] if name != "scope"]
-        return schema
+        # Strict tool catalogs require every property to be listed in `required`;
+        # optional fields stay nullable so the model must pass them explicitly.
+        return model_to_json_schema(AgentInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
         args = _normalize_agent_args(args)
