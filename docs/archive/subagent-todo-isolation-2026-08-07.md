@@ -1,5 +1,7 @@
 # Subagent Todo Isolation
 
+> **Status: Done** — Archived on 2026-08-10.
+
 Date: 2026-08-07
 
 > **Status: Approved design; awaiting implementation**

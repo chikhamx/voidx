@@ -269,7 +269,9 @@ class UiEventItemAdapter:
 
     # ── todo ─────────────────────────────────────────────────────────────
 
-    def _on_todo_updated(self, event: TodoUpdated) -> JsonRpcNotification:
+    def _on_todo_updated(self, event: TodoUpdated) -> JsonRpcNotification | None:
+        if event.agent_id >= 0:
+            return None
         return self._item_notification(
             _uid(),
             "todo",
@@ -559,7 +561,10 @@ class UiEventItemAdapter:
 
 
 # Handler dispatch table: UiEvent subclass → adapter method
-_HANDLERS: dict[type, Callable[[UiEventItemAdapter, UiEvent], JsonRpcNotification]] = {
+_HANDLERS: dict[
+    type,
+    Callable[[UiEventItemAdapter, UiEvent], JsonRpcNotification | None],
+] = {
     # tool
     ToolStarted: UiEventItemAdapter._on_tool_started,
     ToolFinished: UiEventItemAdapter._on_tool_finished,

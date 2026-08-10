@@ -13,6 +13,12 @@ from rich.markup import escape
 from voidx.presentation.output.agent_display import subagent_display_name
 from voidx.presentation.output.dock import BottomInputDock
 from voidx.presentation.output.dock.status import PERMISSION_REQUEST_STATUS_ID
+from voidx.presentation.output.dock.todo import (
+    render_todo_header,
+    render_todo_state_lines,
+    todo_state_from_items,
+    todo_state_payload,
+)
 from voidx.presentation.output.dock.formatting import short_path, short_value
 from voidx.presentation.output.manage_display import manage_display
 from voidx.presentation.output.tool_display import extract_tool_display_value, mcp_gateway_tool_name
@@ -320,6 +326,10 @@ class DockEventConsumer:
                     tool_call_id=e.tool_call_id or None,
                 )
             case TodoUpdated() as e:
+                if e.agent_id >= 0:
+                    if not e.items:
+                        return self._clear_subagent_todo_node(e.agent_id)
+                    return self._upsert_subagent_todo_node(e)
                 return self._dock.set_todo_state(e.summary, e.items)
             case TodoCommitted():
                 return self._dock.commit_todo_state()
@@ -347,66 +357,52 @@ class DockEventConsumer:
                     stage="agent step",
                 )
             case SubagentStarted() as e:
-                parent = self._tool_nodes.get(e.parent_tool_call_id)
+                fallback = self._agent_nodes.get(e.agent_id)
+                canonical = self._tool_nodes.get(e.parent_tool_call_id)
                 display_name = subagent_display_name(e.subagent_id or e.agent_id)
                 mode = _subagent_mode(e.description)
                 title = _subagent_title(display_name, e.description, mode=mode)
                 self._agents_with_specific_status.discard(e.agent_id)
-                if parent is not None and parent.payload.get("tool_name") == "agent":
-                    fallback = self._agent_nodes.get(e.agent_id)
-                    if fallback is not None and fallback is not parent:
+                if canonical is not None and canonical.payload.get("tool_name") == "agent":
+                    node = canonical
+                    if fallback is not None and fallback is not node:
+                        self._move_children(fallback, node)
                         self._dock._remove_node(fallback)
-                    self._reparent_status(f"agent:{e.agent_id}:progress", parent)
+                    self._reparent_status(f"agent:{e.agent_id}:progress", node)
                     self._tool_nodes.pop(e.parent_tool_call_id, None)
                     self._hidden_tool_ids.add(e.parent_tool_call_id)
-                    parent.node_type = "subagent"
-                    parent.header = f"[#B48EAD]●[/#B48EAD] [bold]{escape(title)}[/bold]"
-                    parent.body_lines = []
-                    parent.collapsed = False
-                    parent.agent_name = display_name
-                    parent.agent_run_id = e.subagent_id
-                    parent.meta = None
-                    parent.payload = {
-                        "role_name": display_name,
-                        "display_name": display_name,
-                        "name": display_name,
-                        "title": title,
-                        "agent_name": e.name,
-                        "mode": mode,
-                        "description": e.description,
-                        "agent_id": e.agent_id,
-                        "parent_tool_call_id": e.parent_tool_call_id,
-                    }
-                    self._agent_nodes[e.agent_id] = parent
-                    self._dock.mark_node_unsettled(parent)
-                    self._dock.tree.mark_dirty()
-                    self._dock.refresh()
-                    return parent
-                if parent is None and e.parent_agent_id >= 0:
-                    parent = self._agent_parent(e.parent_agent_id)
-                if parent is None:
-                    parent = self._dock.ensure_agent()
-                node = self._dock.tree.new_node(
-                    parent=parent,
-                    node_type="subagent",
-                    header=f"[#B48EAD]●[/#B48EAD] [bold]{escape(title)}[/bold]",
-                    body_lines=[],
-                    collapsed=False,
-                    agent_name=display_name,
-                    agent_run_id=e.subagent_id,
-                    payload={
-                        "role_name": display_name,
-                        "display_name": display_name,
-                        "name": display_name,
-                        "title": title,
-                        "agent_name": e.name,
-                        "mode": mode,
-                        "description": e.description,
-                        "agent_id": e.agent_id,
-                    },
-                )
+                elif fallback is not None:
+                    node = fallback
+                else:
+                    parent = self._agent_parent(e.parent_agent_id) if e.parent_agent_id >= 0 else None
+                    if parent is None:
+                        parent = self._dock.ensure_agent()
+                    node = self._dock.tree.new_node(
+                        parent=parent,
+                        node_type="subagent",
+                        collapsed=False,
+                    )
+                node.node_type = "subagent"
+                node.header = f"[#B48EAD]●[/#B48EAD] [bold]{escape(title)}[/bold]"
+                node.body_lines = []
+                node.collapsed = False
+                node.agent_name = display_name
+                node.agent_run_id = e.subagent_id
+                node.meta = None
+                node.payload = {
+                    "role_name": display_name,
+                    "display_name": display_name,
+                    "name": display_name,
+                    "title": title,
+                    "agent_name": e.name,
+                    "mode": mode,
+                    "description": e.description,
+                    "agent_id": e.agent_id,
+                    "parent_tool_call_id": e.parent_tool_call_id,
+                }
                 self._agent_nodes[e.agent_id] = node
                 self._dock.mark_node_unsettled(node)
+                self._dock.tree.mark_dirty()
                 self._dock.refresh()
                 return node
             case SubagentFinished() as e:
@@ -501,6 +497,51 @@ class DockEventConsumer:
                 return None
             case _:
                 raise TypeError(f"Unsupported UI event: {event!r}")
+
+    def _upsert_subagent_todo_node(self, event: TodoUpdated) -> OutputNode:
+        parent = self._agent_parent(event.agent_id)
+        if parent is None:
+            raise RuntimeError("subagent todo requires a child agent parent")
+        state = todo_state_from_items(event.summary, event.items)
+        node = next((child for child in parent.children if child.node_type == "todo"), None)
+        if node is None:
+            node = self._dock.tree.new_node(
+                parent=parent,
+                node_type="todo",
+                collapsed=False,
+                status="done",
+            )
+        node.header = render_todo_header(state)
+        node.body_lines = render_todo_state_lines(state)
+        node.payload = todo_state_payload(state)
+        node.status = "done"
+        self._dock.tree.mark_dirty(node.id)
+        self._dock.mark_node_settled(node)
+        self._dock.refresh()
+        return node
+
+    def _clear_subagent_todo_node(self, agent_id: int) -> None:
+        parent = self._agent_nodes.get(agent_id)
+        if parent is None:
+            return None
+        node = next((child for child in parent.children if child.node_type == "todo"), None)
+        if node is None:
+            return None
+        self._dock._remove_node(node)
+        self._dock.refresh()
+        return None
+
+    def _move_children(self, source: OutputNode, destination: OutputNode) -> None:
+        children = list(source.children)
+        source.children.clear()
+        for child in children:
+            child.parent = destination
+            child.depth = destination.depth + 1
+            destination.children.append(child)
+            self._recompute_depths(child)
+        for index, child in enumerate(destination.children):
+            child._is_last_sibling = index == len(destination.children) - 1
+        self._dock.tree.mark_dirty()
 
     def _status_parent(self, event: StatusUpdated) -> OutputNode | None:
         if event.parent_tool_call_id:

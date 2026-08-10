@@ -65,7 +65,6 @@ from voidx.agent.adapters.langgraph.runtime.turn_metrics import TurnControlMetri
 from voidx.agent.adapters.langgraph.runtime.turn_runner import TurnRunner
 from voidx.agent.adapters.langgraph.runtime.wiring import build_compaction_service
 from voidx.agent.domain.task.state import GoalResolution, TaskState, goal_type_from_join
-from voidx.agent.application.todo_state import apply_todo_state_to_host
 from voidx.tooling.application.ai_approval import AiApprovalService
 from voidx.agent.application.instruction import InstructionService
 from voidx.llm.message_markers import GUIDANCE_MARKER
@@ -965,7 +964,6 @@ class LangGraphExecution:
                 "lsp_manager": getattr(self, "_lsp_manager", None),
                 "parent_tools": self.tools,
                 "workflow_runtime_context": workflow_runtime_context,
-                "todo_state_sink": lambda todo_state: apply_todo_state_to_host(self, todo_state),
                 "run_metadata": run_metadata,
                 "permission_snapshot": permission_snapshot,
                 "agent_run_id": agent_run_id,

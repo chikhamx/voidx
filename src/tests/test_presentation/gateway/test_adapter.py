@@ -247,15 +247,26 @@ async def test_error_appended_to_item_started():
 
 
 @pytest.mark.asyncio
-async def test_todo_updated_to_item_started_full_replace():
+async def test_parent_todo_updated_to_item_started_full_replace():
     adapter = _adapter()
     msg = await adapter.handle(
-        TodoUpdated(items=[], summary="2 tasks", todo_op="write")
+        TodoUpdated(agent_id=-1, items=[], summary="2 tasks", todo_op="write")
     )
     assert _method(msg) == "item.started"
     params = _item_params(msg)
     assert params["kind"] == "todo"
     assert params["data"]["summary"] == "2 tasks"
+
+
+@pytest.mark.asyncio
+async def test_child_todo_updated_does_not_emit_global_todo_item():
+    adapter = _adapter()
+
+    msg = await adapter.handle(
+        TodoUpdated(agent_id=0, items=[], summary="child tasks", todo_op="write")
+    )
+
+    assert msg is None
 
 
 @pytest.mark.asyncio

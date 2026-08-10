@@ -186,7 +186,14 @@ async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, mo
         return expected_context
 
     async def fake_run_subagent(*_args, **kwargs):
+        from voidx.presentation.output.events import TodoItemPayload, TodoUpdated
+
         captured.update(kwargs)
+        await kwargs["ui_port"].events.emit(TodoUpdated(
+            agent_id=0,
+            items=[TodoItemPayload(id="child", content="child work", status="active")],
+            summary="0/1 done · 1 active · 0 pending",
+        ))
         return "child result"
 
     graph._instruction.workflow_context_for = fake_workflow_context_for
@@ -207,9 +214,14 @@ async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, mo
     assert captured["result_contract"] == result_contract
     assert captured["runtime_persona"] == "implement"
     assert captured["workflow_runtime_context"] is expected_context
+    assert "todo_state_sink" not in captured
     assert "skill_selection" not in captured
     assert ("parent" + "_messages") not in captured
-    assert emitted[-1].kind == "subagent.finished"
+    assert [event.kind for event in emitted] == [
+        "subagent.started",
+        "todo.updated",
+        "subagent.finished",
+    ]
     assert emitted[-1].summary == "child result"
     assert "agent" not in calls[0]["kwargs"]
     assert "task_intent" not in calls[0]["kwargs"]

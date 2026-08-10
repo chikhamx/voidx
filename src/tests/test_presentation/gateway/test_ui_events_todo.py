@@ -291,7 +291,7 @@ async def test_todo_updated_preserves_existing_root_order_until_commit(isolated_
 
 
 @pytest.mark.asyncio
-async def test_todo_updated_with_agent_id_updates_global_root_todo(isolated_dock):
+async def test_todo_updated_with_agent_id_stays_under_subagent(isolated_dock):
     isolated_dock.begin_capture()
     bus = UiEventBus()
     bus.start(DockEventConsumer(isolated_dock))
@@ -321,16 +321,213 @@ async def test_todo_updated_with_agent_id_updates_global_root_todo(isolated_dock
 
         assistant = next(node for node in isolated_dock.tree.root.children if node.node_type == "assistant")
         subagent = next(node for node in assistant.children if node.node_type == "subagent")
+        todo = next(node for node in subagent.children if node.node_type == "todo")
 
+        assert isolated_dock.todo_state() is None
         assert not any(node.node_type == "todo" for node in isolated_dock.tree.root.children)
+        assert todo.status == "done"
+        assert todo.payload["items"] == [{"id": "auth", "content": "inspect auth", "status": "active"}]
+
         await bus.emit(TodoCommitted())
         await bus.drain()
 
-        todo = next(node for node in isolated_dock.tree.root.children if node.node_type == "todo")
+        assert isolated_dock.todo_state() is None
+        assert not any(node.node_type == "todo" for node in isolated_dock.tree.root.children)
+        assert todo in subagent.children
+    finally:
+        await bus.stop()
 
-        assert isolated_dock.tree.root.children[-1] is todo
-        assert todo.payload["items"] == [{"id": "auth", "content": "inspect auth", "status": "active"}]
-        assert not any(node.node_type == "todo" for node in assistant.children)
-        assert not any(node.node_type == "todo" for node in subagent.children)
+
+@pytest.mark.asyncio
+async def test_child_todo_preserves_parent_pin_and_empty_write_clears_only_child(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.emit(TodoUpdated(
+            items=[TodoItemPayload(id="parent", content="parent work", status="active")],
+            summary="0/1 done · 1 active · 0 pending",
+        ))
+        await bus.emit(SubagentStarted(
+            agent_id=0,
+            subagent_id="agent_0",
+            name="explore",
+            description="inspect project",
+        ))
+        await bus.emit(TodoUpdated(
+            agent_id=0,
+            items=[TodoItemPayload(id="child", content="child work", status="pending")],
+            summary="0/1 done · 0 active · 1 pending",
+        ))
+        await bus.drain()
+
+        parent_state = isolated_dock.todo_state()
+        subagent = next(node for node in _tree_nodes(isolated_dock.tree.root) if node.node_type == "subagent")
+        assert parent_state is not None
+        assert parent_state.items[0].id == "parent"
+        assert [child.node_type for child in subagent.children].count("todo") == 1
+
+        await bus.emit(TodoUpdated(
+            agent_id=0,
+            items=[],
+            summary="0/0 done · 0 active · 0 pending",
+        ))
+        await bus.drain()
+
+        assert isolated_dock.todo_state() == parent_state
+        assert not any(child.node_type == "todo" for child in subagent.children)
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_two_children_keep_independent_todo_nodes(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    consumer = DockEventConsumer(isolated_dock)
+    bus.start(consumer)
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        for agent_id, item_id in ((0, "alpha"), (1, "beta")):
+            await bus.emit(SubagentStarted(
+                agent_id=agent_id,
+                subagent_id=f"agent_{agent_id}",
+                name="explore",
+                description=f"inspect {item_id}",
+            ))
+            await bus.emit(TodoUpdated(
+                agent_id=agent_id,
+                items=[TodoItemPayload(id=item_id, content=f"{item_id} work", status="active")],
+                summary="0/1 done · 1 active · 0 pending",
+            ))
+        await bus.drain()
+
+        subagents = {
+            node.payload["agent_id"]: node
+            for node in _tree_nodes(isolated_dock.tree.root)
+            if node.node_type == "subagent"
+        }
+        assert isolated_dock.todo_state() is None
+        assert set(subagents) == {0, 1}
+        assert subagents[0].children[0].payload["items"][0]["id"] == "alpha"
+        assert subagents[1].children[0].payload["items"][0]["id"] == "beta"
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_subagent_started_migrates_fallback_todo_to_canonical_tool_node(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.request(ToolStarted(
+            tool_call_id="task_call",
+            tool_name="agent",
+            label="Running",
+            args='agent="explore"',
+        ))
+        await bus.emit(TodoUpdated(
+            agent_id=0,
+            items=[TodoItemPayload(id="inspect", content="inspect project", status="active")],
+            summary="0/1 done · 1 active · 0 pending",
+        ))
+        await bus.drain()
+
+        fallback = next(node for node in _tree_nodes(isolated_dock.tree.root) if node.node_type == "subagent")
+        assert any(child.node_type == "todo" for child in fallback.children)
+
+        await bus.emit(SubagentStarted(
+            agent_id=0,
+            subagent_id="run-0",
+            name="explore",
+            description="inspect project",
+            parent_tool_call_id="task_call",
+        ))
+        await bus.drain()
+
+        subagents = [node for node in _tree_nodes(isolated_dock.tree.root) if node.node_type == "subagent"]
+        assert len(subagents) == 1
+        assert subagents[0].agent_run_id == "run-0"
+        assert subagents[0].payload["description"] == "inspect project"
+        assert [child.node_type for child in subagents[0].children] == ["todo"]
+        todo = subagents[0].children[0]
+        assert todo.payload["items"][0]["id"] == "inspect"
+        assert todo.parent is subagents[0]
+        assert todo.depth == subagents[0].depth + 1
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_subagent_started_recomputes_migrated_fallback_subtree_depths(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    consumer = DockEventConsumer(isolated_dock)
+    bus.start(consumer)
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.emit(TodoUpdated(
+            agent_id=0,
+            items=[TodoItemPayload(id="inspect", content="inspect project", status="active")],
+            summary="0/1 done · 1 active · 0 pending",
+        ))
+        await bus.drain()
+
+        fallback = next(
+            node
+            for node in _tree_nodes(isolated_dock.tree.root)
+            if node.node_type == "subagent" and node.agent_name == "agent 0"
+        )
+        todo = next(child for child in fallback.children if child.node_type == "todo")
+        todo_detail = isolated_dock.tree.new_node(
+            parent=todo,
+            node_type="message",
+            header="todo detail",
+            status="done",
+        )
+        assistant = fallback.parent
+        assert assistant is not None
+        canonical_parent = isolated_dock.tree.new_node(
+            parent=assistant,
+            node_type="subagent",
+            header="outer child",
+            payload={"agent_id": 9},
+        )
+        canonical = isolated_dock.tree.new_node(
+            parent=canonical_parent,
+            node_type="tool_call",
+            header="nested agent tool",
+            tool_call_id="nested_agent_call",
+            payload={"tool_name": "agent"},
+        )
+        existing = isolated_dock.tree.new_node(
+            parent=canonical,
+            node_type="message",
+            header="existing child",
+            status="done",
+        )
+        consumer._tool_nodes["nested_agent_call"] = canonical
+        assert todo.depth != canonical.depth + 1
+
+        await bus.emit(SubagentStarted(
+            agent_id=0,
+            subagent_id="run-0",
+            name="explore",
+            description="inspect project",
+            parent_tool_call_id="nested_agent_call",
+        ))
+        await bus.drain()
+
+        assert canonical.node_type == "subagent"
+        assert canonical.children == [existing, todo]
+        assert todo.parent is canonical
+        assert todo.depth == canonical.depth + 1
+        assert todo_detail.parent is todo
+        assert todo_detail.depth == todo.depth + 1
+        assert existing._is_last_sibling is False
+        assert todo._is_last_sibling is True
     finally:
         await bus.stop()

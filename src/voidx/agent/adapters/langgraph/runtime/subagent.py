@@ -75,7 +75,8 @@ from voidx.tooling.domain.result import ToolResult
 from voidx.tooling.application.registry import ToolRegistry
 from voidx.agent.application.runtime.task_tracker import TaskTracker
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext, AgentToolRuntime
-from voidx.agent.adapters.tools.plugins import bind_agent_tool_runtime
+from voidx.agent.adapters.tools.plugins import AgentToolPlugin, bind_agent_tool_runtime
+from voidx.agent.adapters.tools.todo import TodoWriteTool
 from voidx.agent.adapters.tools.subagent_message import MessageTool
 from voidx.agent.ports.ui import AgentUiPort, NullAgentUiPort
 
@@ -176,6 +177,20 @@ async def run_subagent(
     # Child constraints are fixed: delegation/interaction tools never reach a child,
     # regardless of AgentDef.can_delegate.
     agent_tools = agent_tools.filtered_copy(set(agent_tools.ids()) - _BLOCKED_CHILD_TOOLS)
+    copied_todo_plugin = agent_tools.get("todo") if hasattr(agent_tools, "get") else None
+    if copied_todo_plugin is not None:
+        if not isinstance(copied_todo_plugin, AgentToolPlugin):
+            raise RuntimeError("child todo tool must use AgentToolPlugin")
+        wrapped_todo_plugin = AgentToolPlugin(
+            TodoWriteTool(tracker=TaskTracker()),
+            copied_todo_plugin.runtime,
+        )
+        agent_tools.replace(
+            "todo",
+            wrapped_todo_plugin,
+            wrapped_todo_plugin.description,
+            wrapped_todo_plugin.parameters_schema(),
+        )
     resolved_model_factory = model_factory or create_chat_model
     if resolved_model_factory is None:
         raise RuntimeError("model_factory is required")
@@ -845,7 +860,7 @@ async def run_subagent(
                 if ui_port.via_events() and tid == "todo":
                     todo_event = todo_updated_event(result, agent_id=agent_id)
                     if todo_event is not None:
-                        ui_port.events.emit_direct(todo_event)
+                        await ui_port.events.emit(todo_event)
                 if session_id:
                     await append_subagent_event(session_id, run_identity, {
                         "type": "tool_result",

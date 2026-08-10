@@ -449,7 +449,13 @@ async def test_subagent_todo_updates_sink_with_current_tool_message(tmp_path, mo
 async def test_subagent_empty_todo_does_not_clear_parent_state(tmp_path, monkeypatch):
     import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
+    from voidx.agent.application.runtime.task_tracker import TaskTracker
+
     todo_states: list[object] = []
+    parent_tracker = TaskTracker()
+    parent_tracker.set_todos_from_dict({
+        "parent": {"content": "parent work", "status": "active"},
+    })
     calls = 0
 
     class FakeModel:
@@ -485,13 +491,103 @@ async def test_subagent_empty_todo_does_not_clear_parent_state(tmp_path, monkeyp
         "Inspect the workspace",
         "test-key",
         Config(workspace=str(tmp_path)),
+        parent_tracker,
         **_subagent_contract_kwargs(),
-        parent_tools=build_registry(),
+        parent_tools=build_registry(tracker=parent_tracker),
         todo_state_sink=todo_states.append,
         debug=False,
     )
 
     assert output == "done"
     assert todo_states == []
+    assert parent_tracker.get_todos() == {
+        "parent": {"content": "parent work", "status": "active"},
+    }
 
 
+
+
+@pytest.mark.asyncio
+async def test_subagent_todo_uses_local_tracker_and_queued_event(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
+    from voidx.agent.application.runtime.task_tracker import TaskTracker
+    from voidx.agent.domain.ui_events import TodoUpdated
+    from voidx.agent.ports.ui import NullAgentUiPort
+
+    stream_calls: list[list] = []
+    queued_events: list[object] = []
+    direct_events: list[object] = []
+
+    class FakeModel:
+        def bind_tools(self, _tool_defs):
+            return self
+
+    class RecordingEvents:
+        async def emit(self, event):
+            queued_events.append(event)
+            return True
+
+        def emit_direct(self, event):
+            direct_events.append(event)
+            return True
+
+    class RecordingUiPort(NullAgentUiPort):
+        def __init__(self):
+            super().__init__()
+            self._events = RecordingEvents()
+
+        def via_events(self) -> bool:
+            return True
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
+        stream_calls.append(list(messages))
+        if len(stream_calls) == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "todo",
+                    "args": {
+                        "op": "write",
+                        "todos": [{"id": "child", "content": "child work", "status": "active"}],
+                    },
+                    "id": "call_todo",
+                    "type": "tool_call",
+                }],
+            )
+        return AIMessage(content="done")
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+    parent_tracker = TaskTracker()
+    parent_tracker.set_todos_from_dict({
+        "parent": {"content": "parent work", "status": "active"},
+    })
+
+    output = await subagent_module.run_subagent(
+        AgentDef(
+            name="explore",
+            description="test",
+            when_to_use="test",
+            can_write=False,
+            can_delegate=False,
+        ),
+        "Inspect the workspace",
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        parent_tracker,
+        **_subagent_contract_kwargs(),
+        parent_tools=build_registry(tracker=parent_tracker),
+        agent_id=7,
+        ui_port=RecordingUiPort(),
+        debug=False,
+    )
+
+    assert output == "done"
+    assert parent_tracker.get_todos() == {
+        "parent": {"content": "parent work", "status": "active"},
+    }
+    todo_events = [event for event in queued_events if isinstance(event, TodoUpdated)]
+    assert len(todo_events) == 1
+    assert todo_events[0].agent_id == 7
+    assert todo_events[0].items[0].id == "child"
+    assert direct_events == []
