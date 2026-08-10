@@ -38,7 +38,7 @@ class TestFileOpsCoverage:
         assert (tmp_path / "coverage.txt").read_text() == "ONE\nTWO\n"
 
     @pytest.mark.asyncio
-    async def test_replace_unread_range_uses_short_retry_hint(self, tmp_path):
+    async def test_replace_unread_unique_anchor_succeeds(self, tmp_path):
         f = tmp_path / "retry-hint.txt"
         f.write_text("one\ntwo\nthree\n")
         ctx = ToolContext(workspace=str(tmp_path))
@@ -51,8 +51,27 @@ class TestFileOpsCoverage:
             ctx,
         )
 
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "one\ntwo\nTHREE\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_rejects_tracked_external_modification(self, tmp_path):
+        f = tmp_path / "stale-replace.txt"
+        f.write_text("one\ntwo\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+        await r.execute_tool("read", {"file_path": "stale-replace.txt"}, ctx)
+        f.write_text("external contents\n", encoding="utf-8")
+
+        result = await r.execute_tool(
+            "replace",
+            {"file_path": "stale-replace.txt", "bounds": [{"line_no": 1, "anchor": "external"}], "new_string": "changed"},
+            ctx,
+        )
+
         assert result.metadata.get("error") is True
-        assert "Retry after reading lines 3-3." in result.output
+        assert "modified since last read" in result.output
+        assert f.read_text(encoding="utf-8") == "external contents\n"
 
     @pytest.mark.asyncio
     async def test_replace_does_not_mark_unseen_lines_as_read_after_partial_edit(self, tmp_path):
@@ -174,7 +193,7 @@ class TestFileOpsCoverage:
 
     @pytest.mark.asyncio
     @pytest.mark.asyncio
-    async def test_replace_after_partial_edit_still_rejects_unread_target(self, tmp_path):
+    async def test_replace_after_partial_edit_allows_unread_unique_target(self, tmp_path):
         f = tmp_path / "partial-edit.txt"
         f.write_text("\n".join(f"line {i}" for i in range(1, 13)) + "\n")
         ctx = ToolContext(workspace=str(tmp_path))
@@ -193,9 +212,8 @@ class TestFileOpsCoverage:
         )
 
         assert first.metadata.get("error") is not True
-        assert "read" in second.output.lower()
-        assert second.metadata.get("error")
-        assert (tmp_path / "partial-edit.txt").read_text().splitlines()[9] == "line 10"
+        assert second.metadata.get("error") is not True
+        assert f.read_text().splitlines()[9] == "LINE 10"
 
     @pytest.mark.asyncio
     async def test_replace_spans_small_unread_gap_allowed(self, tmp_path):
@@ -219,7 +237,7 @@ class TestFileOpsCoverage:
         assert result.metadata.get("error") is not True
 
     @pytest.mark.asyncio
-    async def test_replace_spans_large_unread_gap_rejected(self, tmp_path):
+    async def test_replace_spans_large_unread_gap_succeeds(self, tmp_path):
         f = tmp_path / "gap-rejected.txt"
         f.write_text("\n".join(f"line {i}" for i in range(1, 21)) + "\n")
         ctx = ToolContext(workspace=str(tmp_path))
@@ -237,5 +255,5 @@ class TestFileOpsCoverage:
             ctx,
         )
 
-        assert result.metadata.get("error") is True
-        assert "must be read" in result.output
+        assert result.metadata.get("error") is not True
+        assert "replaced" in f.read_text()

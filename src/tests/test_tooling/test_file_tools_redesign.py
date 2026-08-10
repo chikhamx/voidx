@@ -192,7 +192,7 @@ class TestWriteToolRedesign:
         assert (tmp_path / "pkg" / "app.py").read_text(encoding="utf-8") == "print('hi')\n"
 
     @pytest.mark.asyncio
-    async def test_write_op_write_requires_fresh_read_before_overwriting(self, tmp_path):
+    async def test_write_op_write_overwrites_existing_untracked_file(self, tmp_path):
         (tmp_path / "app.py").write_text("old\n", encoding="utf-8")
 
         result = await WriteTool().execute(
@@ -200,9 +200,8 @@ class TestWriteToolRedesign:
             _ctx(tmp_path),
         )
 
-        assert result.metadata.get("error") is True
-        assert "read" in result.output.lower()
-        assert (tmp_path / "app.py").read_text(encoding="utf-8") == "old\n"
+        assert result.metadata.get("error") is not True
+        assert (tmp_path / "app.py").read_text(encoding="utf-8") == "new\n"
 
 class TestManageAndWriteGaps:
     """Testing gaps identified in code review — manage + write edge cases."""

@@ -355,10 +355,13 @@ async def _execute_text_replace(
         display.lines, start_no, end_no, start_anchor, end_anchor, drift_maps
     )
     if fallback.match is None:
+        output = fallback.error or "text segment not found"
+        if check_read_coverage(ctx, path, start_no, end_no, display_path=file_path):
+            output = f"{output}\nHint: read lines {start_no}-{end_no} in {file_path}, then retry."
         _log_replace_failure(
             tool_name=tool_name,
             file_path=file_path,
-            reason=fallback.error or "text segment not found",
+            reason=output,
             ctx=ctx,
             start_no=start_no,
             end_no=end_no,
@@ -367,7 +370,7 @@ async def _execute_text_replace(
             new_string=new_string,
             lines=display.lines,
         )
-        return ToolResult(output=fallback.error, metadata={"error": True})
+        return ToolResult(output=output, metadata={"error": True})
 
     _, _, start_line, end_line = fallback.match
     drift_hint = ""
@@ -391,28 +394,29 @@ async def _execute_text_replace(
     actual_start_line = start_line - overlap.head
     actual_end_line = end_line + overlap.tail
 
-    coverage_error = check_read_coverage(
-        ctx,
-        path,
-        actual_start_line,
-        actual_end_line,
-        display_path=file_path,
-    )
-    if coverage_error:
-        output = f"{coverage_error}\nRetry after reading lines {actual_start_line}-{actual_end_line}."
-        _log_replace_failure(
-            tool_name=tool_name,
-            file_path=file_path,
-            reason=output,
-            ctx=ctx,
-            start_no=actual_start_line,
-            end_no=actual_end_line,
-            start_anchor=start_anchor,
-            end_anchor=end_anchor,
-            new_string=new_string,
-            lines=display.lines,
+    if start_anchor == "" and end_anchor == "":
+        coverage_error = check_read_coverage(
+            ctx,
+            path,
+            actual_start_line,
+            actual_end_line,
+            display_path=file_path,
         )
-        return ToolResult(output=output, metadata={"error": True})
+        if coverage_error:
+            output = f"{coverage_error}\nRetry after reading lines {actual_start_line}-{actual_end_line}."
+            _log_replace_failure(
+                tool_name=tool_name,
+                file_path=file_path,
+                reason=output,
+                ctx=ctx,
+                start_no=actual_start_line,
+                end_no=actual_end_line,
+                start_anchor=start_anchor,
+                end_anchor=end_anchor,
+                new_string=new_string,
+                lines=display.lines,
+            )
+            return ToolResult(output=output, metadata={"error": True})
 
     old_ranges = coverage_ranges_snapshot(ctx, path)
 
@@ -515,7 +519,6 @@ async def _apply_resolved_edits(
     tool_name: str,
     hints: list[str],
     overlap: LineOverlap | None = None,
-    coverage_checked: bool = False,
 ) -> ToolResult:
     lines = list(display.lines)
     total_lines = len(lines)
@@ -529,33 +532,6 @@ async def _apply_resolved_edits(
             lines=display.lines,
         )
         return ToolResult(output=validation_error, metadata={"error": True})
-
-    if not coverage_checked:
-        for i, edit in enumerate(edits):
-            # (0, 0) is the convention for beginning-of-file insert/prepend —
-            # no prior read is required since there are no existing lines to verify.
-            # Similarly, insert at (total_lines, total_lines) is an append —
-            # no existing lines are modified.
-            if (edit.start_line, edit.end_line) == (0, 0):
-                continue
-            if edit.operation == "insert" and edit.start_line == total_lines and edit.end_line == total_lines:
-                continue
-            coverage_error = check_read_coverage(ctx, path, edit.start_line, edit.end_line, display_path=file_path)
-            if coverage_error:
-                output = (
-                    f"Edit {i}: {coverage_error}\n"
-                    f"Retry after reading lines {edit.start_line}-{edit.end_line}."
-                )
-                _log_replace_failure(
-                    tool_name=tool_name,
-                    file_path=file_path,
-                    reason=output,
-                    ctx=ctx,
-                    start_no=edit.start_line,
-                    end_no=edit.end_line,
-                    lines=display.lines,
-                )
-                return ToolResult(output=output, metadata={"error": True})
 
     old_ranges = coverage_ranges_snapshot(ctx, path)
 

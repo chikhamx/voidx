@@ -73,14 +73,13 @@ async def test_file_not_found_auto_creates_without_logging(tmp_path):
     assert (tmp_path / "nope.py").read_text() == "y\n"
 
 
-# ── coverage error: editing without reading first ──────────────────────────
+# ── unique unread match succeeds without failure logging ─────────────────────
 
 @pytest.mark.asyncio
-async def test_coverage_error_logs_failure(tmp_path):
+async def test_unique_unread_match_does_not_log_failure(tmp_path):
     target = tmp_path / "app.py"
     target.write_text("line one\nline two\n", encoding="utf-8")
     ctx = _ctx(tmp_path)
-    # deliberately do NOT read the file first → coverage check fails
 
     with patch.object(edit_execute, "log_tool_event") as mock_log:
         result = await FileReplaceTool().execute(
@@ -91,12 +90,10 @@ async def test_coverage_error_logs_failure(tmp_path):
             },
             ctx,
         )
-    assert result.metadata.get("error") is True
-    assert mock_log.called
-    kw = _calls(mock_log)[0]
-    assert kw["tool_name"] == "replace"
-    assert "app.py" in kw["message"]
-    assert "read" in kw["message"].lower()
+
+    assert result.metadata.get("error") is not True
+    assert not mock_log.called
+    assert target.read_text(encoding="utf-8") == "replaced\nline two\n"
 
 
 # ── invalid args: pydantic validation failure ───────────────────────────────

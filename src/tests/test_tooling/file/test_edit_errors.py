@@ -15,29 +15,50 @@ import voidx.tooling.application.file_state as file_state
 
 
 class TestFileOpsErrors:
-    async def test_replace_coverage_error_has_no_edit_index_prefix(self, tmp_path):
-        """Coverage error should not be prefixed with 'Edit 0:' — it's a single replace op."""
+    async def test_replace_missing_anchor_on_unread_range_adds_hint(self, tmp_path):
         f = tmp_path / "coverage-prefix.txt"
         f.write_text("one\ntwo\nthree\n")
         ctx = ToolContext(workspace=str(tmp_path))
         r = build_registry()
-        # Read only line 1, then try to replace line 3 (uncovered)
         await r.execute_tool("read", {"file_path": "coverage-prefix.txt", "offset": 1, "limit": 1}, ctx)
 
         result = await r.execute_tool(
             "replace",
             {
                 "file_path": "coverage-prefix.txt",
-                "bounds": [{"line_no": 3, "anchor": "three"}],
+                "bounds": [{"line_no": 3, "anchor": "missing"}],
                 "new_string": "THREE",
             },
             ctx,
         )
 
         assert result.metadata.get("error")
-        assert "must be read before editing" in result.output
-        assert "Retry after reading lines 3-3." in result.output
-        assert "Edit 0:" not in result.output
+        assert "not found" in result.output
+        assert "Hint: read lines 3-3 in coverage-prefix.txt, then retry." in result.output
+        assert f.read_text() == "one\ntwo\nthree\n"
+
+    @pytest.mark.asyncio
+    async def test_replace_missing_anchor_on_covered_range_has_no_read_hint(self, tmp_path):
+        f = tmp_path / "covered-missing.txt"
+        f.write_text("one\ntwo\nthree\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+        await r.execute_tool("read", {"file_path": "covered-missing.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "covered-missing.txt",
+                "bounds": [{"line_no": 3, "anchor": "missing"}],
+                "new_string": "THREE",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is True
+        assert "not found" in result.output
+        assert "Hint: read lines" not in result.output
+        assert f.read_text() == "one\ntwo\nthree\n"
 
     @pytest.mark.asyncio
     async def test_replace_validation_error_for_end_no_lt_start_no_names_field(self, tmp_path):

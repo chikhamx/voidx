@@ -65,6 +65,26 @@ class TestFileOpsAnchors:
         assert f.read_text() == "top\nreplacement\nend\n"
 
     @pytest.mark.asyncio
+    async def test_replace_single_line_empty_anchor_without_read_coverage_fails(self, tmp_path):
+        f = tmp_path / "empty-unread.txt"
+        f.write_text("top\nbody\nend\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+
+        result = await build_registry().execute_tool(
+            "replace",
+            {
+                "file_path": "empty-unread.txt",
+                "bounds": [{"line_no": 2, "anchor": ""}],
+                "new_string": "replacement",
+            },
+            ctx,
+        )
+
+        assert result.metadata.get("error") is True
+        assert "must be read before editing" in result.output
+        assert f.read_text() == "top\nbody\nend\n"
+
+    @pytest.mark.asyncio
     async def test_replace_single_line_empty_end_anchor_trusts_line_no(self, tmp_path):
         """Single-line replace (start_no==end_no) with empty end_anchor should
         trust the line number instead of requiring an empty line."""

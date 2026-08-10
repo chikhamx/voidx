@@ -141,7 +141,7 @@ class TestFileOps:
         assert (tmp_path / "insert-paragraph-correct.py").read_text() == "top\ninserted\ntarget\nafter target\nbottom\n"
 
     @pytest.mark.asyncio
-    async def test_replace_still_requires_read_coverage(self, tmp_path):
+    async def test_replace_unique_anchor_bypasses_read_coverage(self, tmp_path):
         f = tmp_path / "paragraph-coverage.py"
         f.write_text("top\nmiddle\ntarget\n")
         ctx = ToolContext(workspace=str(tmp_path))
@@ -154,9 +154,8 @@ class TestFileOps:
             ctx,
         )
 
-        assert "read" in result.output.lower()
-        assert result.metadata.get("error")
-        assert (tmp_path / "paragraph-coverage.py").read_text() == "top\nmiddle\ntarget\n"
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "top\nmiddle\nTARGET\n"
 
     @pytest.mark.asyncio
     async def test_sequential_replace_on_same_file(self, tmp_path):

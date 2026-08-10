@@ -34,7 +34,7 @@ class TestFileOpsLineInsert:
         assert (tmp_path / "insert-tool.txt").read_text() == "one\nmiddle\ntwo\n"
 
     @pytest.mark.asyncio
-    async def test_line_insert_requires_read_coverage_for_target_line(self, tmp_path):
+    async def test_line_insert_without_read_coverage_succeeds(self, tmp_path):
         f = tmp_path / "insert-unread.txt"
         f.write_text("one\ntwo\n")
         ctx = ToolContext(workspace=str(tmp_path))
@@ -46,9 +46,8 @@ class TestFileOpsLineInsert:
             ctx,
         )
 
-        assert "read" in result.output.lower()
-        assert result.metadata.get("error")
-        assert f.read_text() == "one\ntwo\n"
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "one\nmiddle\ntwo\n"
 
     @pytest.mark.asyncio
     async def test_line_insert_at_beginning_of_file(self, tmp_path):
@@ -100,7 +99,7 @@ class TestFileOpsLineInsert:
         assert result.metadata.get("error") is not True
 
     @pytest.mark.asyncio
-    async def test_non_adjacent_ranges_not_covered(self, tmp_path):
+    async def test_non_adjacent_ranges_do_not_block_unique_replace(self, tmp_path):
         f = tmp_path / "gap.txt"
         f.write_text("\n".join(str(i) for i in range(1, 31)) + "\n")
         ctx = ToolContext(workspace=str(tmp_path))
@@ -113,8 +112,9 @@ class TestFileOpsLineInsert:
             {"file_path": "gap.txt", "bounds": [{"line_no": 15, "anchor": "15"}], "new_string": "GAP"},
             ctx,
         )
-        assert "read" in result.output.lower()
-        assert result.metadata.get("error")
+
+        assert result.metadata.get("error") is not True
+        assert f.read_text().splitlines()[14] == "GAP"
 
     @pytest.mark.asyncio
     @pytest.mark.asyncio
@@ -289,10 +289,9 @@ class TestWriteInsertOverlap:
         assert f.read_text() == "keep\nhead\nnew\ntail\nafter\n"
 
     @pytest.mark.asyncio
-    async def test_insert_tail_overlap_requires_consumed_line_coverage(self, tmp_path):
+    async def test_insert_tail_overlap_allows_unread_consumed_lines(self, tmp_path):
         f = tmp_path / "tail-coverage.txt"
-        original = "before\ntail-1\ntail-2\nafter\n"
-        f.write_text(original)
+        f.write_text("before\ntail-1\ntail-2\nafter\n")
         ctx = ToolContext(workspace=str(tmp_path))
         r = build_registry()
         await r.execute_tool("read", {"file_path": "tail-coverage.txt", "offset": 2, "limit": 1}, ctx)
@@ -308,15 +307,14 @@ class TestWriteInsertOverlap:
             ctx,
         )
 
-        assert result.metadata.get("error") is True
-        assert "lines 2-3" in result.output
-        assert f.read_text() == original
+        assert result.metadata.get("error") is not True
+        assert result.metadata["overlap"] == {"head": 0, "tail": 2}
+        assert f.read_text() == "before\nnew\ntail-1\ntail-2\nafter\n"
 
     @pytest.mark.asyncio
-    async def test_insert_head_overlap_requires_consumed_line_coverage(self, tmp_path):
+    async def test_insert_head_overlap_allows_unread_consumed_lines(self, tmp_path):
         f = tmp_path / "head-coverage.txt"
-        original = "head-1\nhead-2\ntarget\n"
-        f.write_text(original)
+        f.write_text("head-1\nhead-2\ntarget\n")
         ctx = ToolContext(workspace=str(tmp_path))
         r = build_registry()
         await r.execute_tool("read", {"file_path": "head-coverage.txt", "offset": 3, "limit": 1}, ctx)
@@ -332,9 +330,9 @@ class TestWriteInsertOverlap:
             ctx,
         )
 
-        assert result.metadata.get("error") is True
-        assert "lines 1-3" in result.output
-        assert f.read_text() == original
+        assert result.metadata.get("error") is not True
+        assert result.metadata["overlap"] == {"head": 2, "tail": 0}
+        assert f.read_text() == "head-1\nhead-2\nnew\ntarget\n"
 
     @pytest.mark.asyncio
     async def test_fully_overlapping_insert_returns_no_changes_without_write(self, tmp_path, monkeypatch):

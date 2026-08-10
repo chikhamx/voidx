@@ -271,7 +271,7 @@ class TestFileOps:
         assert (tmp_path / "short.txt").read_text() == "one\n"
 
     @pytest.mark.asyncio
-    async def test_replace_requires_read_coverage(self, tmp_path):
+    async def test_replace_unique_anchor_without_read_coverage_succeeds(self, tmp_path):
         f = tmp_path / "unread.txt"
         f.write_text("one\n")
         ctx = ToolContext(workspace=str(tmp_path))
@@ -283,9 +283,8 @@ class TestFileOps:
             ctx,
         )
 
-        assert "read" in result.output.lower()
-        assert result.metadata.get("error")
-        assert (tmp_path / "unread.txt").read_text() == "one\n"
+        assert result.metadata.get("error") is not True
+        assert f.read_text() == "two\n"
 
     @pytest.mark.asyncio
     async def test_line_insert_at_bof_and_eof(self, tmp_path):

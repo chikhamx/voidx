@@ -13,7 +13,6 @@ from voidx.tooling.domain.schema import model_to_json_schema
 from voidx.tooling.application.authorization import authorized_path as _resolve_tool_path_for_access
 from voidx.tooling.adapters.persistence.file_snapshot import save_file_version
 from voidx.tooling.application.file_state import (
-    check_read_coverage,
     check_staleness,
     clear_file_tracking,
     coverage_ranges_snapshot,
@@ -114,6 +113,9 @@ async def _execute_write_insert(ctx: ToolContext, inp: WriteInput) -> ToolResult
     assert path is not None
     if not path.exists():
         return ToolResult(output=f"File not found: {inp.file_path}", metadata={"error": True})
+    stale = check_staleness(ctx, path)
+    if stale:
+        return ToolResult(output=stale, metadata={"error": True})
     original, read_error = _safe_read_text(path)
     if read_error is not None:
         return ToolResult(output=read_error, metadata={"error": True})
@@ -121,7 +123,10 @@ async def _execute_write_insert(ctx: ToolContext, inp: WriteInput) -> ToolResult
     total_lines = len(display.lines)
     assert inp.lineno is not None
     if inp.lineno > total_lines + 1:
-        return ToolResult(output=f"Cannot insert before line {inp.lineno}: file has {total_lines} lines.", metadata={"error": True})
+        output = f"Cannot insert before line {inp.lineno}: file has {total_lines} lines."
+        if not coverage_ranges_snapshot(ctx, path):
+            output = f"{output}\nHint: read the file first, then retry the edit."
+        return ToolResult(output=output, metadata={"error": True})
     resolved_lineno = inp.lineno - 1
     new_lines = _split_edit_lines(inp.new_string)
     overlap = resolve_overlap(
@@ -130,38 +135,12 @@ async def _execute_write_insert(ctx: ToolContext, inp: WriteInput) -> ToolResult
         display.lines[resolved_lineno:],
     )
 
-    required_start: int | None = None
-    required_end: int | None = None
-    if total_lines > 0 and inp.lineno <= total_lines:
-        required_start = inp.lineno
-        required_end = inp.lineno
-    if overlap.head:
-        required_start = min(required_start or inp.lineno, inp.lineno - overlap.head)
-        required_end = max(required_end or 0, inp.lineno - 1)
-    if overlap.tail:
-        required_start = min(required_start or inp.lineno, inp.lineno)
-        required_end = max(required_end or 0, inp.lineno + overlap.tail - 1)
-
-    if required_start is not None and required_end is not None:
-        coverage_error = check_read_coverage(
-            ctx,
-            path,
-            required_start,
-            required_end,
-            display_path=inp.file_path,
-        )
-        if coverage_error:
-            return ToolResult(
-                output=f"{coverage_error}\nRetry after reading lines {required_start}-{required_end}.",
-                metadata={"error": True},
-            )
     result = await _apply_single_write_edit(
         ctx,
         inp.file_path,
         ResolvedEdit("insert", resolved_lineno, resolved_lineno, inp.new_string),
         resolved_path=path,
         overlap=overlap,
-        coverage_checked=True,
     )
     if inp.lineno == total_lines + 1 and total_lines > 0 and overlap == LineOverlap(head=0, tail=0):
         result.next_step_hint = 'Insert at EOF is append; use write op="append" next time.'
@@ -219,11 +198,6 @@ async def _execute_write_full(ctx: ToolContext, inp: WriteInput) -> ToolResult:
     original = ""
     old_ranges: list[dict] = []
     if path.exists():
-        if str(path.resolve()) not in ctx.file_state.mtimes:
-            return ToolResult(
-                output=f"File must be read before full overwrite: {inp.file_path}. Please read the file first.",
-                metadata={"error": True},
-            )
         stale = check_staleness(ctx, path)
         if stale:
             return ToolResult(output=stale, metadata={"error": True})
@@ -280,7 +254,6 @@ async def _apply_single_write_edit(
     *,
     resolved_path=None,
     overlap: LineOverlap | None = None,
-    coverage_checked: bool = False,
 ) -> ToolResult:
     if resolved_path is None:
         path, error = await _resolve_edit_target(ctx, file_path)
@@ -306,5 +279,4 @@ async def _apply_single_write_edit(
         tool_name="write",
         hints=[],
         overlap=overlap,
-        coverage_checked=coverage_checked,
     )

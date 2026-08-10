@@ -133,29 +133,75 @@ class TestFileTool:
 
 class TestWriteTool:
     @pytest.mark.asyncio
-    async def test_line_insert_requires_read_coverage_for_non_empty_bof(self, tmp_path):
+    async def test_line_insert_without_read_coverage_at_non_empty_bof(self, tmp_path):
         target = tmp_path / "target.txt"
         target.write_text("one\ntwo\n", encoding="utf-8")
         ctx = ToolContext(workspace=str(tmp_path))
         r = build_registry()
 
-        blocked = await r.execute_tool(
-            "write",
-            {"file_path": "target.txt", "op": "insert", "lineno": 1, "new_string": "zero\n"},
-            ctx,
-        )
-        await r.execute_tool("read", {"file_path": "target.txt", "offset": 1, "limit": 1}, ctx)
-        inserted = await r.execute_tool(
+        result = await r.execute_tool(
             "write",
             {"file_path": "target.txt", "op": "insert", "lineno": 1, "new_string": "zero\n"},
             ctx,
         )
 
-        assert blocked.metadata.get("error") is True
-        assert "read" in blocked.output.lower()
-        assert "Retry after reading lines 1-1." in blocked.output
-        assert inserted.metadata.get("error") is not True
+        assert result.metadata.get("error") is not True
         assert target.read_text(encoding="utf-8") == "zero\none\ntwo\n"
+
+    @pytest.mark.asyncio
+    async def test_invalid_insert_on_unread_file_adds_read_hint(self, tmp_path):
+        target = tmp_path / "invalid-unread.txt"
+        target.write_text("one\ntwo\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+
+        result = await build_registry().execute_tool(
+            "write",
+            {"file_path": "invalid-unread.txt", "op": "insert", "lineno": 5, "new_string": "x\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is True
+        assert "Cannot insert before line 5" in result.output
+        assert "Hint: read the file first, then retry the edit." in result.output
+        assert target.read_text(encoding="utf-8") == "one\ntwo\n"
+
+    @pytest.mark.asyncio
+    async def test_invalid_insert_on_read_file_has_no_read_hint(self, tmp_path):
+        target = tmp_path / "invalid-read.txt"
+        target.write_text("one\ntwo\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+        await r.execute_tool("read", {"file_path": "invalid-read.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "write",
+            {"file_path": "invalid-read.txt", "op": "insert", "lineno": 5, "new_string": "x\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is True
+        assert "Cannot insert before line 5" in result.output
+        assert "Hint: read the file first" not in result.output
+        assert target.read_text(encoding="utf-8") == "one\ntwo\n"
+
+    @pytest.mark.asyncio
+    async def test_insert_rejects_tracked_external_modification(self, tmp_path):
+        target = tmp_path / "stale-insert.txt"
+        target.write_text("one\ntwo\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+        await r.execute_tool("read", {"file_path": "stale-insert.txt"}, ctx)
+        target.write_text("external contents\n", encoding="utf-8")
+
+        result = await r.execute_tool(
+            "write",
+            {"file_path": "stale-insert.txt", "op": "insert", "lineno": 1, "new_string": "zero\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is True
+        assert "modified since last read" in result.output
+        assert target.read_text(encoding="utf-8") == "external contents\n"
 
     @pytest.mark.asyncio
     async def test_line_insert_appends_at_end(self, tmp_path):
@@ -198,6 +244,48 @@ class TestWriteFullOverwriteCoverage:
 
         assert overwritten.metadata.get("error") is not True
         assert edit.metadata.get("error") is not True
+
+    @pytest.mark.asyncio
+    async def test_existing_untracked_full_overwrite_saves_version_and_tracks_file(self, tmp_path):
+        target = tmp_path / "untracked-overwrite.txt"
+        target.write_text("old contents\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path), session_id="sid-untracked")
+
+        result = await build_registry().execute_tool(
+            "write",
+            {"file_path": "untracked-overwrite.txt", "op": "write", "new_string": "new contents\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is not True
+        assert target.read_text(encoding="utf-8") == "new contents\n"
+        rows = _history_rows("sid-untracked")
+        assert rows[0]["path"] == "untracked-overwrite.txt"
+        snapshot = tmp_path / ".voidx" / "sessions" / "sid-untracked" / "file-history" / rows[0]["snapshot"]
+        assert snapshot.read_text(encoding="utf-8") == "old contents\n"
+        key = str(target.resolve())
+        assert key in ctx.file_state.mtimes
+        assert ctx.file_state.read_coverage[key]["ranges"] == [{"start_line": 1, "end_line": 1}]
+
+    @pytest.mark.asyncio
+    async def test_full_overwrite_rejects_tracked_external_modification(self, tmp_path):
+        target = tmp_path / "stale-overwrite.txt"
+        target.write_text("original\n", encoding="utf-8")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+        await r.execute_tool("read", {"file_path": "stale-overwrite.txt"}, ctx)
+        target.write_text("external contents\n", encoding="utf-8")
+
+        result = await r.execute_tool(
+            "write",
+            {"file_path": "stale-overwrite.txt", "op": "write", "new_string": "replacement\n"},
+            ctx,
+        )
+
+        assert result.metadata.get("error") is True
+        assert "modified since last read" in result.output
+        assert target.read_text(encoding="utf-8") == "external contents\n"
+
 
     @pytest.mark.asyncio
     async def test_new_file_written_is_editable_without_read(self, tmp_path):

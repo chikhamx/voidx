@@ -619,7 +619,7 @@ class TestReplaceOverlapIntegration:
         assert f.read_text() == "before\nnew_test = True\n\n@pytest.mark.asyncio\nasync def existing():\n    pass\n"
 
     @pytest.mark.asyncio
-    async def test_replace_overlap_requires_coverage_for_consumed_tail(self, tmp_path):
+    async def test_replace_overlap_allows_unread_consumed_tail(self, tmp_path):
         f = tmp_path / "coverage.py"
         original = "before\nold\ntail-1\ntail-2\nafter\n"
         f.write_text(original)
@@ -637,9 +637,9 @@ class TestReplaceOverlapIntegration:
             ctx,
         )
 
-        assert result.metadata.get("error") is True
-        assert "lines 2-4" in result.output
-        assert f.read_text() == original
+        assert result.metadata.get("error") is not True
+        assert result.metadata["overlap"] == {"head": 0, "tail": 2}
+        assert f.read_text() == "before\nnew\ntail-1\ntail-2\nafter\n"
 
     @pytest.mark.asyncio
     async def test_replace_overlap_succeeds_with_effective_range_coverage(self, tmp_path):
