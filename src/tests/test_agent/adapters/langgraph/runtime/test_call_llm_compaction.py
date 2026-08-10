@@ -1,5 +1,6 @@
 """Tests for call_llm compaction and retry."""
 
+import asyncio
 import sys
 import warnings
 from pathlib import Path
@@ -670,6 +671,76 @@ async def test_call_llm_repairs_malformed_tool_call_once(tmp_path, monkeypatch):
     )
 
 
+
+@pytest.mark.asyncio
+async def test_call_llm_resamples_child_runs_before_malformed_retry(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+    async def no_save_context_frame(**_kwargs):
+        return None
+
+    monkeypatch.setattr(graph_module, "save_main_context_frame", no_save_context_frame)
+    graph = make_langgraph_execution(
+        Config(
+            model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+            workspace=str(tmp_path),
+        ),
+        api_key="test-key",
+    )
+    graph._session = SimpleNamespace(id="session-main-retry-sampling")
+    graph._last_context_builder = RuntimeContextBuilder(
+        config=graph.config,
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="coordinate",
+        interaction_mode="auto",
+    )
+    root_id = graph.agent_gateway.ensure_root(graph._session.id)
+    release = asyncio.Event()
+    child_run_id = ""
+
+    class SpawnsChildAfterFirstRequest(RepairsMalformedToolCallStreamingModel):
+        async def astream(self, messages):
+            nonlocal child_run_id
+            async for chunk in super().astream(messages):
+                yield chunk
+            if self.calls == 1:
+                async def runner(_run_id: str) -> str:
+                    await release.wait()
+                    return "done"
+
+                child = await graph.agent_gateway.spawn(
+                    session_id=graph._session.id,
+                    parent_run_id=root_id,
+                    agent_name="voidx",
+                    description="Goal: retry-visible child",
+                    runner=runner,
+                )
+                child_run_id = child.run_id
+
+    graph.model = SpawnsChildAfterFirstRequest()
+
+    result = await graph._call_llm({
+        "messages": [HumanMessage(content="read the file")],
+        "step_count": 0,
+        "persona": "voidx",
+    })
+
+    assert result["messages"][0].content == "repaired answer"
+    retry_prompt = "\n".join(
+        str(message.content) for message in graph.model.messages_by_call[1]
+    )
+    assert "Child agents: 1 running · 0 recent terminal" in retry_prompt
+    assert f"{child_run_id} [running] Goal: retry-visible child" in retry_prompt
+
+    release.set()
+    await graph.agent_gateway.wait(
+        requester_run_id=root_id,
+        target_run_id=child_run_id,
+        timeout=1,
+    )
+
 @pytest.mark.asyncio
 async def test_call_llm_returns_explicit_error_when_malformed_tool_call_repair_fails(tmp_path, monkeypatch):
     import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
@@ -933,6 +1004,17 @@ async def test_classify_llm_error_connection_error(tmp_path, monkeypatch):
     import voidx.agent.adapters.langgraph.runtime.core.helpers as helpers
 
     exc = ConnectionError("Connection refused")
+
+    kind = helpers._classify_llm_error(exc)
+    assert kind == helpers.LLMErrorKind.NETWORK
+
+
+@pytest.mark.asyncio
+async def test_classify_llm_error_upstream_http2_stream_failure(tmp_path, monkeypatch):
+    """HTTP/2 upstream stream failures are transient network errors."""
+    import voidx.agent.adapters.langgraph.runtime.core.helpers as helpers
+
+    exc = RuntimeError("Upstream HTTP/2 stream failed")
 
     kind = helpers._classify_llm_error(exc)
     assert kind == helpers.LLMErrorKind.NETWORK

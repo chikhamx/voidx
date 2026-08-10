@@ -68,14 +68,14 @@ async def test_compact_model_query_shows_stored_and_effective_values(tmp_path) -
 @pytest.mark.asyncio
 async def test_compact_model_profile_and_clear_preserve_reasoning(tmp_path) -> None:
     profile = "openai/gpt-5"
-    handler, settings, _ui = await _handler(tmp_path, profiles={profile})
+    handler, settings, ui = await _handler(tmp_path, profiles={profile})
     settings.set_compaction_config(
         CompactionConfig(reasoning_effort=ReasoningEffort.NONE, timeout_seconds=25)
     )
-
     await handler.dispatch(f"/compact-model {profile}")
     configured = settings.get_compaction_config()
     assert configured.profile_name == profile
+    assert f"Compaction model set to [cyan]{profile}[/cyan]" in "\n".join(ui.output)
     assert configured.reasoning_effort is ReasoningEffort.NONE
     assert configured.timeout_seconds == 25
 

@@ -31,6 +31,7 @@ class CompactModelCommandsMixin:
                 self._show_compact_model(config)
                 return
             settings.set_compaction_config(config.model_copy(update={"profile_name": selected}))
+            ui.print(f"[dim]Compaction model set to [cyan]{selected}[/cyan][/dim]")
             return
 
         parts = value.split()
@@ -73,6 +74,7 @@ class CompactModelCommandsMixin:
             ui.error(f"Unknown model profile: {value}")
             return
         settings.set_compaction_config(config.model_copy(update={"profile_name": value}))
+        ui.print(f"[dim]Compaction model set to [cyan]{value}[/cyan][/dim]")
 
     def _show_compact_model(self, config) -> None:
         main = self.preferences_port.model_config

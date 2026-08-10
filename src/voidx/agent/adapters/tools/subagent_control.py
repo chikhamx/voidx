@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext
-from voidx.agent.domain.subagent import AgentGatewayError
+from voidx.agent.domain.subagent import AgentGatewayError, AgentRun
 from voidx.agent.domain.subagent_display import subagent_display_name
+from voidx.agent.application.subagent_status import render_child_run_metrics
 from voidx.tooling.domain.result import ToolResult
 from voidx.tooling.domain.schema import model_to_json_schema
 
@@ -202,6 +204,11 @@ def _render_item(item: dict) -> str:
             lines.append(f"Error: {error}")
     elif result_text:
         lines.extend(["Result:", result_text])
+    if status == "running" and item.get("wait_outcome") == "timed_out_still_running":
+        agent_run = AgentRun.model_validate(run)
+        lines.append(
+            f"Status: {render_child_run_metrics(agent_run, sampled_at=time.time())}"
+        )
     return "\n".join(lines)
 
 

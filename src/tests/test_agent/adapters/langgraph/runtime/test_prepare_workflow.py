@@ -262,6 +262,50 @@ async def test_prepare_syncs_triggered_workflow_to_status_state(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_prepare_samples_direct_child_runs_into_current_task_state(tmp_path):
+    graph = _graph(tmp_path)
+    graph._session = SimpleNamespace(id="session-child-context")
+    root_id = graph.agent_gateway.ensure_root(graph._session.id)
+    release = asyncio.Event()
+
+    async def runner(_run_id: str) -> str:
+        await release.wait()
+        return "done"
+
+    child = await graph.agent_gateway.spawn(
+        session_id=graph._session.id,
+        parent_run_id=root_id,
+        agent_name="voidx",
+        description="Goal: inspect child context",
+        runner=runner,
+    )
+    messages = [HumanMessage(content="continue parent work")]
+
+    await graph._prepare_with_stream({
+        "messages": messages,
+        "workspace": str(tmp_path),
+        "persona": "coordinate",
+        "plan_mode": False,
+        "interaction_mode": "auto",
+        "task_state": TaskState(current_intent=TaskIntent.CODING).model_dump(mode="json"),
+        "tool_results": {},
+        "step_count": 0,
+        "should_continue": True,
+    })
+
+    rendered = str(messages[-1].content)
+    assert "Child agents: 1 running · 0 recent terminal" in rendered
+    assert f"{child.run_id} [running] Goal: inspect child context" in rendered
+
+    release.set()
+    await graph.agent_gateway.wait(
+        requester_run_id=root_id,
+        target_run_id=child.run_id,
+        timeout=1,
+    )
+
+
+@pytest.mark.asyncio
 async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
     from voidx.agent.application.agents import get_agent
     import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module

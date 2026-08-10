@@ -1,8 +1,10 @@
+import asyncio
 import pytest
 from langchain_core.messages import AIMessage
 
 from voidx.agent.application.agents import AgentDef
 from voidx.config import Config
+from voidx.agent.adapters.subagent import InProcessSubagentGateway
 from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
 from voidx.agent.domain.task.intent import TaskIntent
 from voidx.agent.adapters.tools.subagent import AgentResultContract
@@ -430,3 +432,82 @@ async def test_subagent_regular_call_does_not_recover_programming_errors_from_pr
 
     assert attempts == 2
     assert run_metadata["finish_reason"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_run_subagent_resamples_child_runs_before_transient_retry(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
+
+    gateway = InProcessSubagentGateway()
+    root_id = gateway.ensure_root("session-child-retry-sampling")
+    parent_run_id = ""
+    nested_run_id = ""
+    release = asyncio.Event()
+    attempts = 0
+    prompts: list[str] = []
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
+        nonlocal attempts, nested_run_id
+        attempts += 1
+        prompts.append("\n".join(str(message.content) for message in messages))
+        if attempts == 1:
+            async def nested_runner(_run_id: str) -> str:
+                await release.wait()
+                return "done"
+
+            nested = await gateway.spawn(
+                session_id="session-child-retry-sampling",
+                parent_run_id=parent_run_id,
+                agent_name="voidx",
+                description="Goal: nested retry-visible child",
+                runner=nested_runner,
+            )
+            nested_run_id = nested.run_id
+            raise ProviderError("rate limited", status_code=429)
+        return AIMessage(content="child answer")
+
+    async def fake_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+    monkeypatch.setattr(subagent_module.asyncio, "sleep", fake_sleep)
+
+    async def parent_runner(run_id: str) -> str:
+        nonlocal parent_run_id
+        parent_run_id = run_id
+        return await subagent_module.run_subagent(
+            _agent_def(),
+            "Inspect child retry sampling",
+            "test-key",
+            Config(workspace=str(tmp_path)),
+            runtime_persona="explore",
+            goal_resolution=_goal_resolution(),
+            result_contract=_result_contract(),
+            debug=False,
+            agent_gateway=gateway,
+            agent_run_id=run_id,
+            ui_port=FakeUiPort(events=False),
+        )
+
+    parent = await gateway.spawn(
+        session_id="session-child-retry-sampling",
+        parent_run_id=root_id,
+        agent_name="voidx",
+        description="Goal: parent retry",
+        runner=parent_runner,
+    )
+    parent = await gateway.wait(
+        requester_run_id=root_id,
+        target_run_id=parent.run_id,
+        timeout=1,
+    )
+
+    assert parent.status == "completed"
+    assert "Child agents: 1 running · 0 recent terminal" in prompts[1]
+    assert f"{nested_run_id} [running] Goal: nested retry-visible child" in prompts[1]
+
+    release.set()
+    nested_task = gateway._runs[nested_run_id].task
+    assert nested_task is not None
+    await asyncio.wait_for(nested_task, timeout=1)

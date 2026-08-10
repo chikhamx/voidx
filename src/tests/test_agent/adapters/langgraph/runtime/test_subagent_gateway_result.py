@@ -1,4 +1,5 @@
 from tests.tool_registry import build_registry
+import asyncio
 import pytest
 from langchain_core.messages import AIMessage
 
@@ -9,6 +10,7 @@ from voidx.config import Config
 from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
 from voidx.agent.domain.task.intent import TaskIntent
 from voidx.agent.adapters.tools.subagent import AgentResultContract
+from voidx.tooling.domain.result import ToolResult
 
 
 class FakeModel:
@@ -422,3 +424,106 @@ async def test_run_subagent_guard_terminated_returns_findings_fallback(tmp_path,
     assert "task may be incomplete" in result_text
     assert "runtime" not in result_text.lower()
     assert "guard" not in result_text.lower()
+
+
+@pytest.mark.asyncio
+async def test_run_subagent_reports_tool_activity_and_refreshes_child_context_each_step(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
+
+    gateway = InProcessSubagentGateway()
+    root_id = gateway.ensure_root("session-activity-context")
+    tool_started = asyncio.Event()
+    release_tool = asyncio.Event()
+    child_created = asyncio.Event()
+    captured_prompts: list[str] = []
+
+    class BlockingTool:
+        id = "blocking"
+        description = "Block until the test releases the tool."
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, _args, _ctx):
+            tool_started.set()
+            await release_tool.wait()
+            return ToolResult(output="tool done")
+
+    parent_tools = build_registry()
+    parent_tools.register_plugin(BlockingTool())
+    calls = 0
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
+        nonlocal calls
+        calls += 1
+        captured_prompts.append("\n".join(str(message.content) for message in messages))
+        if calls == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[{"name": "blocking", "args": {}, "id": "call-blocking"}],
+            )
+        assert child_created.is_set()
+        return AIMessage(content="final result")
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    async def runner(run_id: str) -> str:
+        return await run_subagent(
+            _agent_def(),
+            "Review tool activity",
+            "test-key",
+            Config(workspace=str(tmp_path)),
+            runtime_persona="review",
+            goal_resolution=_goal_resolution(),
+            result_contract=_result_contract(),
+            debug=False,
+            agent_gateway=gateway,
+            agent_run_id=run_id,
+            parent_tools=parent_tools,
+            ui_port=FakeUiPort(),
+        )
+
+    parent = await gateway.spawn(
+        session_id="session-activity-context",
+        parent_run_id=root_id,
+        agent_name="voidx",
+        description="Goal: review activity",
+        runner=runner,
+    )
+    await tool_started.wait()
+    running = gateway.lookup_run(parent.run_id)
+    assert running is not None
+    assert [(item.tool_name, item.status) for item in running.active_tools] == [
+        ("blocking", "running"),
+    ]
+
+    nested_release = asyncio.Event()
+
+    async def nested_runner(_run_id: str) -> str:
+        await nested_release.wait()
+        return "nested done"
+
+    nested = await gateway.spawn(
+        session_id="session-activity-context",
+        parent_run_id=parent.run_id,
+        agent_name="voidx",
+        description="Goal: nested review",
+        runner=nested_runner,
+    )
+    child_created.set()
+    release_tool.set()
+
+    parent = await gateway.wait(requester_run_id=root_id, target_run_id=parent.run_id, timeout=1)
+    assert parent.status == "completed"
+    assert parent.active_tools == []
+    assert parent.last_tool is not None
+    assert parent.last_tool.tool_name == "blocking"
+    assert parent.last_tool.status == "succeeded"
+    assert "Child agents: 1 running · 0 recent terminal" in captured_prompts[1]
+    assert f"{nested.run_id} [running] Goal: nested review" in captured_prompts[1]
+
+    nested_release.set()
+    nested_task = gateway._runs[nested.run_id].task
+    assert nested_task is not None
+    await asyncio.wait_for(nested_task, timeout=1)

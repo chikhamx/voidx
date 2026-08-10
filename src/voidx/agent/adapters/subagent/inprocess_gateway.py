@@ -19,6 +19,7 @@ from voidx.agent.domain.subagent import (
     UserMessageType,
     AgentRun,
     AgentRunStatus,
+    AgentToolActivity,
     ensure_control_route,
     ensure_open_send,
     ensure_send_route,
@@ -233,6 +234,58 @@ class InProcessSubagentGateway:
             for record in self._runs.values()
             if session_id is None or record.run.session_id == session_id
         ]
+    def list_child_runs(self, parent_run_id: str) -> list[AgentRun]:
+        return [
+            self._copy_run(record.run)
+            for record in self._runs.values()
+            if record.run.parent_run_id == parent_run_id
+        ]
+
+    def start_tool_activity(self, run_id: str, *, tool_name: str, tool_call_id: str) -> None:
+        record = self._require_run(run_id)
+        if record.run.status in TERMINAL_STATUSES:
+            return
+        now = time.time()
+        activity = AgentToolActivity(
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            status="running",
+            started_at=now,
+        )
+        active_tools = [
+            item for item in record.run.active_tools
+            if item.tool_call_id != tool_call_id
+        ]
+        active_tools.append(activity)
+        record.run = record.run.model_copy(update={
+            "active_tools": active_tools,
+            "updated_at": now,
+        })
+
+    def finish_tool_activity(self, run_id: str, *, tool_call_id: str, succeeded: bool) -> None:
+        record = self._require_run(run_id)
+        active_tools = list(record.run.active_tools)
+        activity = next(
+            (item for item in active_tools if item.tool_call_id == tool_call_id),
+            None,
+        )
+        if activity is None:
+            return
+        now = time.time()
+        active_tools = [
+            item for item in active_tools
+            if item.tool_call_id != tool_call_id
+        ]
+        last_tool = activity.model_copy(update={
+            "status": "succeeded" if succeeded else "failed",
+            "finished_at": now,
+        })
+        record.run = record.run.model_copy(update={
+            "active_tools": active_tools,
+            "last_tool": last_tool,
+            "updated_at": now,
+        })
+
 
     async def _close_records(self, records: list[_RunRecord]) -> None:
         await self._reap_tasks(records)

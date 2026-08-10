@@ -30,6 +30,7 @@ from voidx.llm.compaction import (
 from voidx.llm.domain.model import ModelConfig, ReasoningEffort
 from voidx.llm.domain.provider import resolve_protocol
 from voidx.observability.tool_log import log_tool_event
+from voidx.observability.request_log import log_llm_exchange
 from voidx.llm.usage import estimate_context_tokens, estimate_message_tokens, extract_token_usage
 from voidx.agent.adapters.persistence.context_frame_repository import save_context_frame_from_messages
 from voidx.agent.application.automation.workflow.service import is_workflow_context_content
@@ -389,6 +390,15 @@ class CompactionCoordinator:
                 failure_detail = "compaction agent returned no summary"
             else:
                 failure_detail = "compaction agent did not produce a summary"
+            log_tool_event(
+                "compaction_failed",
+                message=(
+                    f"{failure_detail} "
+                    f"stage={used_stage or 'none'} attempt={used_attempt} "
+                    f"model={host.config.model.model}"
+                ),
+                session_id=host._session.id if host._session is not None else None,
+            )
             if host._ui.via_events():
                 await host._ui.events.emit(StatusUpdated(
                     status_id="compaction",
@@ -675,6 +685,15 @@ class CompactionCoordinator:
                 },
             )
         assistant_msg = await stream_llm(model, messages, renderer, resolve_protocol(model_config), ui_port=host._ui)
+        log_llm_exchange(
+            messages,
+            assistant_msg,
+            model=model_config.model,
+            provider=model_config.provider,
+            step=0,
+            session_id=host._session.id if host._session is not None else None,
+            enabled=getattr(host.config, "log_llm_exchange", False),
+        )
         host._usage_stats.record_call(
             extract_token_usage(assistant_msg),
             fallback_input_tokens=context_tokens,

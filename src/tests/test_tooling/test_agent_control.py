@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext, AgentToolRuntime
 from voidx.agent.adapters.tools.subagent_control import AgentControlInput, AgentControlTool, _WAIT_TIMEOUTS
-from voidx.agent.domain.subagent import AgentGatewayError, AgentRun
+from voidx.agent.domain.subagent import AgentGatewayError, AgentRun, AgentToolActivity
 from voidx.agent.domain.subagent_display import subagent_display_name
 from voidx.tooling.domain.schema import model_to_json_schema
 
@@ -22,6 +22,8 @@ def _run(
     result: dict | None = None,
     error: str | None = None,
     wait_outcome: str | None = None,
+    active_tools: list[AgentToolActivity] | None = None,
+    last_tool: AgentToolActivity | None = None,
 ) -> AgentRun:
     return AgentRun(
         run_id=run_id,
@@ -35,6 +37,8 @@ def _run(
         error=error,
         created_at=1.0,
         updated_at=2.0,
+        active_tools=active_tools or [],
+        last_tool=last_tool,
         wait_outcome=wait_outcome,
     )
 
@@ -125,6 +129,7 @@ async def test_wait_single_completed_uses_compact_output_and_compatible_metadata
 @pytest.mark.asyncio
 async def test_wait_timeout_uses_selected_tier_and_exact_hint(monkeypatch):
     monkeypatch.setitem(_WAIT_TIMEOUTS, "standard", 0.01)
+    monkeypatch.setattr(time, "time", lambda: 11.0)
     run = _run("run_slow", wait_outcome="timed_out_still_running")
     transport = FakeTransport({run.run_id: run})
 
@@ -133,10 +138,38 @@ async def test_wait_timeout_uses_selected_tier_and_exact_hint(monkeypatch):
         _ctx(transport),
     )
 
-    assert result.output == f"{subagent_display_name(run.run_id)} [running]"
+    assert result.output == (
+        f"{subagent_display_name(run.run_id)} [running]\nStatus: elapsed 10s"
+    )
     assert transport.calls == [("wait", run.run_id, 0.01)]
     assert result.next_step_hint == (
         "Use wait='extended' if the result is still needed; otherwise continue with other work."
+    )
+
+
+@pytest.mark.asyncio
+async def test_wait_timeout_reports_elapsed_and_active_tool(monkeypatch):
+    monkeypatch.setitem(_WAIT_TIMEOUTS, "standard", 0.01)
+    monkeypatch.setattr(time, "time", lambda: 11.0)
+    run = _run(
+        "run_active",
+        wait_outcome="timed_out_still_running",
+        active_tools=[AgentToolActivity(
+            tool_name="search",
+            tool_call_id="call-search",
+            status="running",
+            started_at=8.0,
+        )],
+    )
+
+    result = await AgentControlTool().execute(
+        {"action": "wait", "run_id": run.run_id},
+        _ctx(FakeTransport({run.run_id: run})),
+    )
+
+    assert result.output == (
+        f"{subagent_display_name(run.run_id)} [running]\n"
+        "Status: elapsed 10s · active: search (3s)"
     )
 
 

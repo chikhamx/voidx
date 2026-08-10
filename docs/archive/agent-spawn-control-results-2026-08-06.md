@@ -1,5 +1,7 @@
 # Agent Spawn and Control Results
 
+> **Status: Done** — Archived on 2026-08-09.
+
 Date: 2026-08-06
 Revised: 2026-08-09
 

@@ -66,7 +66,11 @@ def _classify_llm_error(exc: Exception) -> LLMErrorKind:
     # 2. No status_code — check exception type
     if isinstance(exc, asyncio.TimeoutError):
         return LLMErrorKind.TIMEOUT
-    if isinstance(exc, ConnectionError) or "connection" in type(exc).__name__.lower():
+    if (
+        isinstance(exc, ConnectionError)
+        or "connection" in type(exc).__name__.lower()
+        or "upstream http/2 stream failed" in str(exc).lower()
+    ):
         return LLMErrorKind.NETWORK
 
     # 3. String fallback for context overflow

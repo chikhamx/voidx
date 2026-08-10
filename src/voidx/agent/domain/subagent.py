@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 AgentRunStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
@@ -45,6 +45,17 @@ class AgentMessage(BaseModel):
     created_at: float
 
 
+ToolActivityStatus = Literal["running", "succeeded", "failed"]
+
+
+class AgentToolActivity(BaseModel):
+    tool_name: str
+    tool_call_id: str
+    status: ToolActivityStatus
+    started_at: float
+    finished_at: float | None = None
+
+
 class AgentRun(BaseModel):
     run_id: str
     session_id: str
@@ -57,6 +68,8 @@ class AgentRun(BaseModel):
     error: str | None = None
     created_at: float
     updated_at: float
+    active_tools: list[AgentToolActivity] = Field(default_factory=list)
+    last_tool: AgentToolActivity | None = None
     wait_outcome: AgentWaitOutcome | None = None
 
 

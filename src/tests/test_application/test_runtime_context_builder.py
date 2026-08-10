@@ -27,6 +27,7 @@ from voidx.skills.context import (
     SKILL_TOOL_CONTEXT_STRIPPED_MARKER,
 )
 from voidx.agent.application.automation.workflow.runtime import WorkflowActivationSource, WorkflowRunState, WorkflowRunStatus
+from voidx.agent.domain.subagent import AgentRun, AgentToolActivity
 
 def _runtime_state_human_messages(messages):
     return [
@@ -167,9 +168,13 @@ def test_runtime_context_applies_task_context_before_current_user(tmp_path):
     assert "## Runtime State" in messages[0].content
     assert _runtime_state_human_messages(messages) == []
     assert all(not isinstance(message, SystemMessage) for message in messages[1:])
-    assert isinstance(messages[-1], ToolMessage)
-    assert messages[1].content == "old question"
-    assert messages[3].content == "current request"
+    tool_message = next(
+        message
+        for message in messages
+        if isinstance(message, ToolMessage) and message.tool_call_id == "call_1"
+    )
+    assert tool_message.content == "tool result"
+    assert isinstance(messages[-1], HumanMessage)
     assert "Active Skills" not in messages[-1].content
     assert "Current DateTime" not in messages[-1].content
     assert "## Runtime State" not in messages[-1].content
@@ -178,8 +183,6 @@ def test_runtime_context_applies_task_context_before_current_user(tmp_path):
     assert "  - active ctx: update runtime context" in messages[-1].content
     assert "Active/Pending" not in messages[-1].content
     assert "Call todo with op=read" not in messages[-1].content
-    assert "## Task Context" in messages[-1].content
-    assert messages[-1].content.endswith("tool result")
 
 
 def test_current_task_state_todo_omits_active_when_all_pending(tmp_path):
@@ -538,9 +541,9 @@ def test_runtime_context_migrates_task_overlay_from_ai_message_to_latest_message
     assistant_message = next(message for message in messages if isinstance(message, AIMessage))
     latest_tool = next(message for message in messages if isinstance(message, ToolMessage))
     assert assistant_message.content == "assistant visible text"
-    assert isinstance(latest_tool.content, str)
-    assert latest_tool.content.startswith("VOIDX_RUNTIME_CONTEXT")
-    assert latest_tool.content.endswith("latest tool result")
+    assert latest_tool.content == "latest tool result"
+    assert isinstance(messages[-1], HumanMessage)
+    assert str(messages[-1].content).startswith("VOIDX_RUNTIME_CONTEXT")
 
 
 def test_runtime_context_migrates_task_overlay_from_ai_list_content_to_latest_message(tmp_path):
@@ -575,9 +578,9 @@ def test_runtime_context_migrates_task_overlay_from_ai_list_content_to_latest_me
         {"type": "text", "text": "assistant visible text"},
         {"type": "text", "text": "assistant second block"},
     ]
-    assert isinstance(latest_tool.content, str)
-    assert latest_tool.content.startswith("VOIDX_RUNTIME_CONTEXT")
-    assert latest_tool.content.endswith("latest tool result")
+    assert latest_tool.content == "latest tool result"
+    assert isinstance(messages[-1], HumanMessage)
+    assert str(messages[-1].content).startswith("VOIDX_RUNTIME_CONTEXT")
 
 
 def test_runtime_context_migrates_task_overlay_from_tool_message_to_latest_message(tmp_path):
@@ -635,3 +638,111 @@ def test_apply_to_messages_does_not_trim_state(tmp_path):
     tool_ids = {m.tool_call_id for m in messages if isinstance(m, ToolMessage)}
     assert "old" in tool_ids
     assert "new" in tool_ids
+
+
+def _child_run(
+    run_id: str,
+    *,
+    status: str,
+    created_at: float,
+    updated_at: float,
+    description: str | None = None,
+    active_tools: list[AgentToolActivity] | None = None,
+    last_tool: AgentToolActivity | None = None,
+) -> AgentRun:
+    return AgentRun(
+        run_id=run_id,
+        session_id="session-context",
+        parent_run_id="root:session-context",
+        agent_type="sub",
+        agent_name="voidx",
+        description=description or f"Goal: {run_id}",
+        status=status,
+        created_at=created_at,
+        updated_at=updated_at,
+        active_tools=active_tools or [],
+        last_tool=last_tool,
+    )
+
+
+def test_current_task_state_renders_running_and_three_recent_terminal_child_agents(tmp_path):
+    active_tool = AgentToolActivity(
+        tool_name="search",
+        tool_call_id="call-search",
+        status="running",
+        started_at=190.0,
+    )
+    last_tool = AgentToolActivity(
+        tool_name="read",
+        tool_call_id="call-read",
+        status="succeeded",
+        started_at=170.0,
+        finished_at=180.0,
+    )
+    child_runs = [
+        _child_run(
+            "run_active",
+            status="running",
+            created_at=100.0,
+            updated_at=190.0,
+            description="Goal: inspect cache\n\nDetails:\nlong detail omitted",
+            active_tools=[active_tool],
+            last_tool=last_tool,
+        ),
+        *[
+            _child_run(
+                f"run_done_{index}",
+                status="completed",
+                created_at=100.0 + index,
+                updated_at=150.0 + index,
+            )
+            for index in range(4)
+        ],
+    ]
+
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="coordinate",
+        interaction_mode=InteractionMode.AUTO,
+        child_runs=child_runs,
+        child_runs_sampled_at=200.0,
+    ).build()
+
+    rendered = context.render_task_context()
+    assert "Child agents: 1 running · 3 recent terminal" in rendered
+    assert "run_active [running] Goal: inspect cache · elapsed 1m40s · active: search (10s)" in rendered
+    assert "run_done_3 [completed] Goal: run_done_3 · elapsed 50s" in rendered
+    assert "run_done_2 [completed]" in rendered
+    assert "run_done_1 [completed]" in rendered
+    assert "run_done_0" not in rendered
+    assert "long detail omitted" not in rendered
+    assert "call-search" not in rendered
+
+
+def test_current_task_state_renders_last_tool_when_no_tool_is_active(tmp_path):
+    child = _child_run(
+        "run_idle",
+        status="running",
+        created_at=100.0,
+        updated_at=180.0,
+        last_tool=AgentToolActivity(
+            tool_name="read",
+            tool_call_id="call-read",
+            status="failed",
+            started_at=160.0,
+            finished_at=180.0,
+        ),
+    )
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="coordinate",
+        interaction_mode=InteractionMode.AUTO,
+        child_runs=[child],
+        child_runs_sampled_at=200.0,
+    ).build()
+
+    assert "last: read failed 20s ago" in context.render_task_context()

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 StreamingRenderer = None
 
 from voidx.agent.domain.ui_events import (
@@ -33,7 +35,7 @@ from voidx.agent.application.prompts import (
     build_base_system,
     persona_prompt,
 )
-from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
+from voidx.agent.application.runtime_context import ContextCompiler, InteractionMode, RuntimeContextBuilder
 from voidx.agent.adapters.langgraph.state import AgentState
 from voidx.agent.domain.task.state import TaskState, goal_label, goal_type_from_join
 from voidx.agent.domain.task.todo import TodoRunState
@@ -217,6 +219,17 @@ class LlmTurn:
                 task_state,
             )
 
+        def refresh_child_run_context(messages: list[BaseMessage]) -> list[BaseMessage]:
+            builder = getattr(host, "_last_context_builder", None)
+            session = getattr(host, "_session", None)
+            agent_gateway = getattr(host, "agent_gateway", None)
+            if builder is None or session is None or agent_gateway is None:
+                return messages
+            root_run_id = agent_gateway.ensure_root(session.id)
+            builder.child_runs = agent_gateway.list_child_runs(root_run_id)
+            builder.child_runs_sampled_at = time.time()
+            return ContextCompiler(builder.build()).compile_messages(messages)
+
         def estimate_llm_context_tokens(messages: list[BaseMessage]) -> int:
             return estimate_context_tokens_with_tools(
                 messages,
@@ -345,10 +358,17 @@ class LlmTurn:
             elif pressure_decision.over_hard:
                 await apply_hard_pressure_fallback()
 
-        await save_context_frame(llm_messages, loop.context_tokens, convergence_messages, convergence_forced)
         max_retries = _LLM_MAX_RETRIES
         while True:
             try:
+                llm_messages = refresh_child_run_context(llm_messages)
+                loop.context_tokens = estimate_llm_context_tokens(llm_messages)
+                await save_context_frame(
+                    llm_messages,
+                    loop.context_tokens,
+                    convergence_messages,
+                    convergence_forced,
+                )
                 renderer_factory = StreamingRenderer or host._ui.streaming_renderer
                 renderer = renderer_factory(
                     host._ui.console,
@@ -415,12 +435,6 @@ class LlmTurn:
                             ]
                             loop.context_tokens = estimate_llm_context_tokens(llm_messages)
                             host._usage_stats.update_context(loop.context_tokens)
-                            await save_context_frame(
-                                llm_messages,
-                                loop.context_tokens,
-                                convergence_messages,
-                                convergence_forced,
-                            )
                             continue
                     failure_msg = AIMessage(
                         content="LLM call failed: model returned an invalid or incomplete tool call."
@@ -498,20 +512,8 @@ class LlmTurn:
                                 level=active_pressure[1],
                                 outcome="compacted",
                             ))
-                        await save_context_frame(
-                            llm_messages,
-                            loop.context_tokens,
-                            convergence_messages,
-                            convergence_forced,
-                        )
                         continue
                     await apply_hard_pressure_fallback()
-                    await save_context_frame(
-                        llm_messages,
-                        loop.context_tokens,
-                        convergence_messages,
-                        convergence_forced,
-                    )
                 if retry_result.action == "retry":
                     continue
                 if retry_result.action == "fail":
@@ -625,6 +627,14 @@ class LlmTurn:
         summary = host._pending_summary or host._compaction_summary
         host._pending_summary = None
 
+        child_runs = []
+        child_runs_sampled_at = time.time()
+        session = getattr(host, "_session", None)
+        agent_gateway = getattr(host, "agent_gateway", None)
+        if session is not None and agent_gateway is not None:
+            root_run_id = agent_gateway.ensure_root(session.id)
+            child_runs = agent_gateway.list_child_runs(root_run_id)
+
         host._last_context_builder = RuntimeContextBuilder(
             config=host.config,
             workspace=state.get("workspace", "."),
@@ -643,6 +653,8 @@ class LlmTurn:
             task_state=task_state,
             session_date=host._session_date,
             turn_state=state.get("turn_state", "initial"),
+            child_runs=child_runs,
+            child_runs_sampled_at=child_runs_sampled_at,
             profile_sections=profile_sections_value,
             suppress_sections=suppress_sections_value,
             historical_tool_context_stripper=host._historical_tool_context_stripper,

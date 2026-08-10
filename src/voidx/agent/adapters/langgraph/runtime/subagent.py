@@ -44,6 +44,7 @@ from voidx.agent.adapters.langgraph.runtime.tool_executor.workflow import (
 from voidx.agent.domain.task.intent import PersonaName, TaskIntent
 from voidx.llm.message_markers import GUIDANCE_MARKER
 from voidx.agent.application.runtime_context import (
+    ContextCompiler,
     ContextCompilerCache,
     InteractionMode,
     RuntimeContextBuilder,
@@ -225,22 +226,15 @@ async def run_subagent(
     contract_retry_count = 0
     has_successful_tool_work = False
 
-    context, context_cache = RuntimeContextBuilder(
-        config=context_config,
-        workspace=config.workspace,
-        base_system_prompt=build_base_system(context_config.user_profile.language),
-        workflow_runtime=child_workflow_runtime(_child_workflow_mode(sub_task_state.workflow_route)),
-        persona_prompt=persona_prompt(),
-        persona=persona,
-        interaction_mode=interaction_mode,
-        workflow_runs=workflow_context.runs,
-        active_workflow_summaries=workflow_context.active,
-        task_state=sub_task_state,
-    ).build_incremental(context_cache)
-    context.apply_to_messages(messages)
 
-    def refresh_context() -> None:
-        nonlocal context, context_cache
+    def compile_context(source_messages: list) -> list:
+        child_runs = (
+            agent_gateway.list_child_runs(run_identity)
+            if agent_gateway is not None and run_identity
+            else []
+        )
+        child_runs_sampled_at = time.time()
+        nonlocal context_cache
         active_names = [
             name
             for name in active_workflow_names(sub_task_state.workflow_runs)
@@ -267,8 +261,10 @@ async def run_subagent(
             workflow_runs=list(sub_task_state.workflow_runs.values()),
             active_workflow_summaries=active_summaries,
             task_state=sub_task_state,
+            child_runs=child_runs,
+            child_runs_sampled_at=child_runs_sampled_at,
         ).build_incremental(context_cache)
-        context.apply_to_messages(messages)
+        return ContextCompiler(context).compile_messages(source_messages)
 
     def apply_state_update(update: dict) -> bool:
         nonlocal ctx, persona
@@ -317,7 +313,7 @@ async def run_subagent(
             if sub_task_state.workflow_route is not None
             else None
         )
-        refresh_context()
+        compile_context(messages)
         return any(
             field in update
             for field in (
@@ -330,7 +326,6 @@ async def run_subagent(
             )
         )
 
-    refresh_context()
 
     snapshot_grants = None
     if permission_snapshot is not None:
@@ -502,7 +497,7 @@ async def run_subagent(
             ),
             additional_kwargs={GUIDANCE_MARKER: True},
         )
-        final_messages = [*messages, guidance]
+        final_messages = compile_context([*messages, guidance])
         renderer = ui_factories.streaming_renderer(
             ui_port.console,
             debug=debug,
@@ -559,7 +554,7 @@ async def run_subagent(
 
             next_step = step + 1
             ctx = ctx.model_copy(update={"turn_count": next_step})
-            llm_messages = [*messages, *drain_guard_guidance()]
+            llm_messages = compile_context([*messages, *drain_guard_guidance()])
             renderer = ui_factories.streaming_renderer(
                 ui_port.console,
                 debug=debug,
@@ -629,27 +624,33 @@ async def run_subagent(
                         return await finalize("context_limit")
             step = next_step
             model_with_tools = model.bind_tools(tool_defs) if tool_defs else model
-            if usage_stats is not None:
-                usage_stats.update_context(context_tokens)
-            if session_id:
-                await save_context_frame_from_messages(
-                    session_id=session_id,
-                    frame_kind="worker",
-                    agent_persona=persona,
-                    provider=model_cfg.provider,
-                    model=model_cfg.model,
-                    messages=llm_messages,
-                    token_estimate=context_tokens,
-                    metadata={
-                        "step": step,
-                        "tool_count": len(tool_defs),
-                        "agent_id": agent_id,
-                    },
-                )
             llm_failed_attempts = 0
             retry_status_active = False
             while True:
                 try:
+                    llm_messages = compile_context(llm_messages)
+                    context_tokens = estimate_context_tokens_with_tools(
+                        llm_messages,
+                        tool_defs,
+                        model_cfg.model,
+                    )
+                    if usage_stats is not None:
+                        usage_stats.update_context(context_tokens)
+                    if session_id:
+                        await save_context_frame_from_messages(
+                            session_id=session_id,
+                            frame_kind="worker",
+                            agent_persona=persona,
+                            provider=model_cfg.provider,
+                            model=model_cfg.model,
+                            messages=llm_messages,
+                            token_estimate=context_tokens,
+                            metadata={
+                                "step": step,
+                                "tool_count": len(tool_defs),
+                                "agent_id": agent_id,
+                            },
+                        )
                     assistant_msg = await stream_llm(
                         model_with_tools,
                         llm_messages,
@@ -813,16 +814,31 @@ async def run_subagent(
                 cid = tc.get("id", "")
                 if capture_tree and parent_node is not None:
                     capture.tool_call(tid, targs, tool_call_id=cid)
-                try:
-                    result = await agent_tools.execute_tool(tid, targs, ctx)
-                except Exception as exc:
-                    result = ToolResult(
-                        output=f"Tool execution error: {exc}",
-                        metadata={
-                            "error": True,
-                            "exception": exc.__class__.__name__,
-                        },
+                if agent_gateway is not None and run_identity:
+                    agent_gateway.start_tool_activity(
+                        run_identity,
+                        tool_name=tid,
+                        tool_call_id=cid,
                     )
+                result = None
+                try:
+                    try:
+                        result = await agent_tools.execute_tool(tid, targs, ctx)
+                    except Exception as exc:
+                        result = ToolResult(
+                            output=f"Tool execution error: {exc}",
+                            metadata={
+                                "error": True,
+                                "exception": exc.__class__.__name__,
+                            },
+                        )
+                finally:
+                    if agent_gateway is not None and run_identity:
+                        agent_gateway.finish_tool_activity(
+                            run_identity,
+                            tool_call_id=cid,
+                            succeeded=result is not None and result_ok(result),
+                        )
                 todo_state = todo_run_state_from_result(result) if tid == "todo" else None
                 if todo_state_sink is not None and todo_state is not None and todo_state.total > 0:
                     todo_state_sink(todo_state)

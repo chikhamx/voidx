@@ -15,6 +15,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from voidx.agent.application.prompts import BaseSystemPrompt, WorkflowRuntimePrompt
 from voidx.agent.domain.prompt_contracts import ContextSection
 from voidx.agent.domain.task.state import GoalSpec
+from voidx.agent.domain.subagent import AgentRun
+from voidx.agent.application.subagent_status import render_child_run_lines
 from voidx.agent.domain.task.todo import TodoRunState
 from voidx.agent.domain.user_profile import UserProfile
 from voidx.agent.domain.task.intent import InteractionMode, TaskIntent
@@ -32,6 +34,7 @@ _CONTEXT_MARKER = "VOIDX_RUNTIME_CONTEXT"
 _GOAL_RESOLUTION_GUIDE_MARKER = "VOIDX_GOAL_RESOLUTION_GUIDE"
 COMPACTION_GUIDE_MARKER = "VOIDX_COMPACTION_GUIDE"
 _TASK_CONTEXT_DELIMITER = "\n\n## Task Context\n"
+_GUIDANCE_MARKER = "_voidx_guidance"
 _LEGACY_USER_MESSAGE_DELIMITER = "\n\n## User Message\n"
 
 
@@ -149,6 +152,10 @@ class ContextCompiler:
         if task_context:
             if not semantic_messages:
                 semantic_messages.append(HumanMessage(content=task_context))
+            elif isinstance(semantic_messages[-1], ToolMessage):
+                semantic_messages.append(HumanMessage(content=task_context))
+            elif semantic_messages[-1].additional_kwargs.get(_GUIDANCE_MARKER):
+                semantic_messages.insert(-1, HumanMessage(content=task_context))
             else:
                 semantic_messages[-1] = _prepend_task_context(semantic_messages[-1], task_context)
 
@@ -180,6 +187,8 @@ class RuntimeContextBuilder:
         session_date: str | None = None,
         turn_state: str = "initial",
         profile_sections: Iterable[ContextSection] = (),
+        child_runs: Iterable[AgentRun] = (),
+        child_runs_sampled_at: float | None = None,
         suppress_sections: Iterable[str] = (),
         historical_tool_context_stripper: ContextStripper = strip_known_external_context,
     ) -> None:
@@ -207,6 +216,8 @@ class RuntimeContextBuilder:
         self.user_profile = config.user_profile
         self.turn_state = turn_state.strip() or "initial"
         self.profile_sections = list(profile_sections)
+        self.child_runs = list(child_runs)
+        self.child_runs_sampled_at = child_runs_sampled_at
         now = datetime.now().astimezone()
         self.session_date = (session_date or now.strftime("%Y-%m-%d %Z")).strip()
 
@@ -315,6 +326,11 @@ class RuntimeContextBuilder:
         todo_lines = _render_task_state_todo_lines(self.todo_state)
         if todo_lines:
             lines.extend(todo_lines)
+        if self.child_runs:
+            sampled_at = self.child_runs_sampled_at
+            if sampled_at is None:
+                sampled_at = datetime.now().timestamp()
+            lines.extend(render_child_run_lines(self.child_runs, sampled_at=sampled_at))
         if self.interaction_mode == InteractionMode.PLAN:
             lines.append("- Constraint: plan mode blocks write/insert/replace/edit and write-capable bash.")
         return "\n".join(lines)

@@ -1266,3 +1266,94 @@ async def test_child_self_cancel_is_rejected_by_control_route():
     assert waited.status == "completed"
     assert rejection == {"reason": "route_not_allowed"}
     await gateway.close_session("session-self-cancel")
+
+
+@pytest.mark.asyncio
+async def test_list_child_runs_returns_only_direct_children():
+    gateway = InProcessSubagentGateway()
+    root_id = gateway.ensure_root("session-children")
+    release = asyncio.Event()
+
+    async def runner(_run_id: str) -> str:
+        await release.wait()
+        return "done"
+
+    child = await gateway.spawn(
+        session_id="session-children",
+        parent_run_id=root_id,
+        agent_name="child",
+        description="direct child",
+        runner=runner,
+    )
+    grandchild = await gateway.spawn(
+        session_id="session-children",
+        parent_run_id=child.run_id,
+        agent_name="grandchild",
+        description="nested child",
+        runner=runner,
+    )
+
+    assert [run.run_id for run in gateway.list_child_runs(root_id)] == [child.run_id]
+    assert [run.run_id for run in gateway.list_child_runs(child.run_id)] == [grandchild.run_id]
+
+    release.set()
+    await gateway.wait(requester_run_id=root_id, target_run_id=child.run_id, timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_tool_activity_tracks_parallel_calls_and_latest_completion(monkeypatch):
+    import voidx.agent.adapters.subagent.inprocess_gateway as gateway_module
+
+    now = [100.0]
+    monkeypatch.setattr(gateway_module.time, "time", lambda: now[0])
+    gateway = InProcessSubagentGateway()
+    root_id = gateway.ensure_root("session-activity")
+    release = asyncio.Event()
+
+    async def runner(_run_id: str) -> str:
+        await release.wait()
+        return "done"
+
+    child = await gateway.spawn(
+        session_id="session-activity",
+        parent_run_id=root_id,
+        agent_name="child",
+        description="track tools",
+        runner=runner,
+    )
+
+    now[0] = 110.0
+    gateway.start_tool_activity(child.run_id, tool_name="read", tool_call_id="call-read")
+    now[0] = 111.0
+    gateway.start_tool_activity(child.run_id, tool_name="search", tool_call_id="call-search")
+
+    active = gateway.lookup_run(child.run_id)
+    assert active is not None
+    assert [(item.tool_name, item.status) for item in active.active_tools] == [
+        ("read", "running"),
+        ("search", "running"),
+    ]
+    assert active.updated_at == 111.0
+
+    now[0] = 115.0
+    gateway.finish_tool_activity(child.run_id, tool_call_id="call-search", succeeded=False)
+    after_failure = gateway.lookup_run(child.run_id)
+    assert after_failure is not None
+    assert [item.tool_call_id for item in after_failure.active_tools] == ["call-read"]
+    assert after_failure.last_tool is not None
+    assert after_failure.last_tool.tool_name == "search"
+    assert after_failure.last_tool.status == "failed"
+    assert after_failure.last_tool.finished_at == 115.0
+
+    now[0] = 120.0
+    gateway.finish_tool_activity(child.run_id, tool_call_id="call-read", succeeded=True)
+    completed = gateway.lookup_run(child.run_id)
+    assert completed is not None
+    assert completed.active_tools == []
+    assert completed.last_tool is not None
+    assert completed.last_tool.tool_name == "read"
+    assert completed.last_tool.status == "succeeded"
+    assert completed.updated_at == 120.0
+
+    release.set()
+    await gateway.wait(requester_run_id=root_id, target_run_id=child.run_id, timeout=1)

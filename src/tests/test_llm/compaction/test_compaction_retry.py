@@ -490,3 +490,170 @@ class TestCompactionRetry:
             )
         ]
         assert "Compaction agent returned empty text" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_run_compaction_agent_logs_exchange_when_enabled(self, monkeypatch):
+        """Compaction LLM calls should be written to the request log when enabled."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        import voidx.agent.adapters.langgraph.runtime.compaction_coordinator as compaction_module
+        from voidx.agent.adapters.langgraph.runtime.compaction_coordinator import CompactionCoordinator
+
+        calls = []
+
+        async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
+            return AIMessage(content="## Goal\n- summarized")
+
+        async def fake_save_context_frame_from_messages(**kwargs):
+            return None
+
+        def fake_log_exchange(messages, response, *, model, provider, step, session_id=None, enabled=True):
+            calls.append(
+                {
+                    "model": model,
+                    "provider": provider,
+                    "step": step,
+                    "session_id": session_id,
+                    "enabled": enabled,
+                    "message_count": len(messages),
+                }
+            )
+
+        monkeypatch.setattr(compaction_module, "stream_llm", fake_stream_llm)
+        monkeypatch.setattr(compaction_module, "save_context_frame_from_messages", fake_save_context_frame_from_messages)
+        monkeypatch.setattr(compaction_module, "log_llm_exchange", fake_log_exchange)
+
+        head = [
+            HumanMessage(content="Fix the compaction fallback", id="1"),
+            AIMessage(content="I will update compaction."),
+        ]
+        host = SimpleNamespace(
+            _compaction=CompactionService(context_limit=128_000, output_token_max=8_192),
+            _debug=False,
+            _session=SimpleNamespace(id="session-1"),
+            _usage_stats=MagicMock(),
+            config=SimpleNamespace(
+                model=SimpleNamespace(provider="openai", model="gpt-4o", protocol=None),
+                log_llm_exchange=True,
+            ),
+            model=object(),
+            _ui=_FakeUiPort(via_events=False),
+        )
+
+        result = await CompactionCoordinator(host).run_compaction_agent(head, None)
+
+        assert result == "## Goal\n- summarized"
+        assert calls == [
+            {
+                "model": "gpt-4o",
+                "provider": "openai",
+                "step": 0,
+                "session_id": "session-1",
+                "enabled": True,
+                "message_count": len(head) + 1,
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_run_compaction_agent_skips_exchange_log_when_disabled(self, monkeypatch):
+        """Compaction LLM calls must not hit the request log when disabled."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        import voidx.agent.adapters.langgraph.runtime.compaction_coordinator as compaction_module
+        from voidx.agent.adapters.langgraph.runtime.compaction_coordinator import CompactionCoordinator
+
+        calls = []
+
+        async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
+            return AIMessage(content="## Goal\n- summarized")
+
+        async def fake_save_context_frame_from_messages(**kwargs):
+            return None
+
+        def fake_log_exchange(*_args, **kwargs):
+            calls.append(kwargs)
+
+        monkeypatch.setattr(compaction_module, "stream_llm", fake_stream_llm)
+        monkeypatch.setattr(compaction_module, "save_context_frame_from_messages", fake_save_context_frame_from_messages)
+        monkeypatch.setattr(compaction_module, "log_llm_exchange", fake_log_exchange)
+
+        host = SimpleNamespace(
+            _compaction=CompactionService(context_limit=128_000, output_token_max=8_192),
+            _debug=False,
+            _session=SimpleNamespace(id="session-1"),
+            _usage_stats=MagicMock(),
+            config=SimpleNamespace(
+                model=SimpleNamespace(provider="openai", model="gpt-4o", protocol=None),
+                log_llm_exchange=False,
+            ),
+            model=object(),
+            _ui=_FakeUiPort(via_events=False),
+        )
+
+        result = await CompactionCoordinator(host).run_compaction_agent(
+            [HumanMessage(content="old context", id="1")],
+            None,
+        )
+
+        assert result == "## Goal\n- summarized"
+        assert calls == [
+            {
+                "model": "gpt-4o",
+                "provider": "openai",
+                "step": 0,
+                "session_id": "session-1",
+                "enabled": False,
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_compaction_failure_logs_compaction_failed_event(self, monkeypatch):
+        """Final compaction failure must be recorded with the failure detail."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        import voidx.agent.adapters.langgraph.runtime.compaction_coordinator as compaction_module
+        from voidx.agent.adapters.langgraph.runtime.compaction_coordinator import CompactionCoordinator
+
+        captured = {}
+
+        async def fake_run_agent_always_fail(_head_msgs, _prev_summary):
+            raise ConnectionError("minimax gateway timeout")
+
+        def fake_log_tool_event(event, *, tool_name="", message="", session_id=None, log_dir=None, log_path=None):
+            captured["event"] = event
+            captured["message"] = message
+            captured["session_id"] = session_id
+
+        monkeypatch.setattr(compaction_module, "log_tool_event", fake_log_tool_event)
+        monkeypatch.setattr(compaction_module, "estimate_context_tokens", lambda *_args, **_kwargs: 200_000)
+
+        host = MagicMock()
+        host._compaction = CompactionService(context_limit=128_000, output_token_max=8_192)
+        host._pending_summary = None
+        host._compaction_summary = ""
+        host.config = MagicMock()
+        host.config.model.model = "test-model"
+        host.config.ask_compact = False
+        host._session = SimpleNamespace(id="session-1")
+        host._debug = False
+        host.model = MagicMock()
+        host._ui = _FakeUiPort(via_events=False)
+        coordinator = CompactionCoordinator(host)
+        coordinator.run_compaction_agent = fake_run_agent_always_fail
+        coordinator.persist_compaction = AsyncMock()
+
+        messages = []
+        for i in range(8):
+            messages.append(HumanMessage(content=f"Fix the auth bug {i}", id=str(i * 2 + 1)))
+            messages.append(AIMessage(content=f"Looking at it {i}"))
+
+        result = await coordinator.maybe_compact(messages, [], force=True, ask=False)
+
+        assert result is not None
+        assert captured["event"] == "compaction_failed"
+        assert "ConnectionError" in captured["message"]
+        assert "minimax gateway timeout" in captured["message"]
+        assert captured["session_id"] == "session-1"
