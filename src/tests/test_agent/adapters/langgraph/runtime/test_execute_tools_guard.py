@@ -433,7 +433,6 @@ async def test_subagent_full_output_reaches_orchestrator(tmp_path, monkeypatch):
                 "args": {
                     "action": "wait",
                     "run_id": child_run.run_id,
-                    "wait": "standard",
                 },
                 "id": "call_wait_agent",
                 "type": "tool_call",

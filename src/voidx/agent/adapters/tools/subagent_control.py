@@ -6,7 +6,7 @@ import asyncio
 import time
 from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, ValidationError, field_validator
 
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext
 from voidx.agent.domain.subagent import AgentGatewayError, AgentRun
@@ -17,12 +17,11 @@ from voidx.tooling.domain.schema import model_to_json_schema
 
 
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
-_WAIT_TIMEOUTS = {"standard": 64.0, "extended": 128.0, "maximum": 256.0}
-_TIMEOUT_HINTS = {
-    "standard": "Use wait='extended' if the result is still needed; otherwise continue with other work.",
-    "extended": "Use wait='maximum' only if the result is still needed; otherwise cancel the unfinished work or continue without it.",
-    "maximum": "Do not wait again; cancel the unfinished work or continue without it.",
-}
+_WAIT_TIMEOUT = 256.0
+_TIMEOUT_HINT = (
+    "The child agent is still running and may need more time; "
+    "wait again later if the result is still needed."
+)
 _CONTROL_ERROR_HINTS = {
     "unknown_run": "Verify the run IDs and parent-child control relationship before retrying.",
     "route_not_allowed": "Verify the run IDs and parent-child control relationship before retrying.",
@@ -37,10 +36,6 @@ _INCOMPLETE_HINT = "Use the partial result if sufficient; otherwise start a narr
 class AgentControlInput(BaseModel):
     action: Literal["wait", "cancel"]
     run_id: str | list[str]
-    wait: Literal["standard", "extended", "maximum"] = Field(
-        default="standard",
-        description="Finite wait tier; ignored for cancel.",
-    )
 
     @field_validator("run_id", mode="before")
     @classmethod
@@ -62,7 +57,7 @@ class AgentControlTool:
     id = "agent_control"
     description = (
         "Wait for or cancel one or more existing child-agent runs. "
-        "All wait tiers are finite."
+        "Wait is finite (up to 256 seconds per call)."
     )
 
     def parameters_schema(self) -> dict:
@@ -86,18 +81,17 @@ class AgentControlTool:
 
         run_ids = list(inp.run_id)
         items = await asyncio.gather(*(
-            self._execute_one(inp.action, run_id, inp.wait, ctx)
+            self._execute_one(inp.action, run_id, ctx)
             for run_id in run_ids
         ))
         if len(items) == 1:
-            return _single_result(inp.action, inp.wait, items[0])
-        return _batch_result(inp.action, inp.wait, items)
+            return _single_result(inp.action, items[0])
+        return _batch_result(inp.action, items)
 
     async def _execute_one(
         self,
         action: str,
         run_id: str,
-        wait: str,
         ctx: ToolContext,
     ) -> dict:
         try:
@@ -105,7 +99,7 @@ class AgentControlTool:
                 run = await ctx.runtime.subagent_transport.wait(
                     requester_run_id=ctx.runtime.run_id,
                     target_run_id=run_id,
-                    timeout=_WAIT_TIMEOUTS[wait],
+                    timeout=_WAIT_TIMEOUT,
                 )
             else:
                 run = await ctx.runtime.subagent_transport.cancel(
@@ -144,7 +138,7 @@ def _success_item(action: str, run) -> dict:
     return item
 
 
-def _single_result(action: str, wait: str, item: dict) -> ToolResult:
+def _single_result(action: str, item: dict) -> ToolResult:
     output = _render_item(item)
     name = subagent_display_name(item["run_id"])
     if item["status"] == "error":
@@ -155,7 +149,7 @@ def _single_result(action: str, wait: str, item: dict) -> ToolResult:
             display=f"{name} error.",
             summary=f"{name} error",
             metadata=metadata,
-            next_step_hint=_hints(action, wait, [item]),
+            next_step_hint=_hints(action, [item]),
         )
     metadata = {key: value for key, value in item.items() if key != "run_id"}
     return ToolResult(
@@ -163,11 +157,11 @@ def _single_result(action: str, wait: str, item: dict) -> ToolResult:
         display=f"{name} {item['status']}.",
         summary=f"{name} {item['status']}",
         metadata=metadata,
-        next_step_hint=_hints(action, wait, [item]),
+        next_step_hint=_hints(action, [item]),
     )
 
 
-def _batch_result(action: str, wait: str, items: list[dict]) -> ToolResult:
+def _batch_result(action: str, items: list[dict]) -> ToolResult:
     counts: dict[str, int] = {}
     for item in items:
         status = item["status"]
@@ -184,7 +178,7 @@ def _batch_result(action: str, wait: str, items: list[dict]) -> ToolResult:
         display=f"{len(items)} agents",
         summary=summary,
         metadata=metadata,
-        next_step_hint=_hints(action, wait, items),
+        next_step_hint=_hints(action, items),
     )
 
 
@@ -212,12 +206,12 @@ def _render_item(item: dict) -> str:
     return "\n".join(lines)
 
 
-def _hints(action: str, wait: str, items: list[dict]) -> str:
+def _hints(action: str, items: list[dict]) -> str:
     hints: list[str] = []
     if action == "wait" and any(
         item.get("wait_outcome") == "timed_out_still_running" for item in items
     ):
-        hints.append(_TIMEOUT_HINTS[wait])
+        hints.append(_TIMEOUT_HINT)
     for item in items:
         if item["status"] == "error":
             _append_unique(hints, _CONTROL_ERROR_HINTS.get(item.get("reason"), _CONTROL_ERROR_HINTS["gateway_error"]))
@@ -259,4 +253,4 @@ def _result_output(result: dict | None) -> str:
     return ""
 
 
-__all__ = ["AgentControlInput", "AgentControlTool", "_WAIT_TIMEOUTS"]
+__all__ = ["AgentControlInput", "AgentControlTool", "_WAIT_TIMEOUT"]

@@ -188,7 +188,6 @@ class TestInteractiveTools:
             {
                 "action": "wait",
                 "run_id": spawn_result.metadata["run_id"],
-                "wait": "standard",
             },
             ctx,
         )

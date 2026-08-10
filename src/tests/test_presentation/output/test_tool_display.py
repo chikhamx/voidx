@@ -67,7 +67,6 @@ def test_extract_tool_display_value_for_agent_wait_and_cancel():
     wait_args = {
         "action": "wait",
         "run_id": run_id,
-        "wait": "standard",
     }
     cancel_args = {
         "action": "cancel",
@@ -78,7 +77,7 @@ def test_extract_tool_display_value_for_agent_wait_and_cancel():
     assert run_id not in extract_tool_display_value(
         "agent_control",
         wait_args,
-        f'action="wait", run_id="{run_id}", wait="standard"',
+        f'action="wait", run_id="{run_id}"',
     )
 
 
@@ -92,7 +91,6 @@ def test_agent_tool_header_for_wait_and_cancel_is_clean():
     wait_args = {
         "action": "wait",
         "run_id": run_id,
-        "wait": "standard",
     }
     cancel_args = {
         "action": "cancel",
@@ -145,7 +143,7 @@ def test_agent_control_batch_headers_distinguish_action_without_exposing_ids():
         "run_8bf0d23519a843dd9213989e25427944",
         "run_a6e54320b6514def9f62cf02012db408",
     ]
-    wait_args = {"action": "wait", "run_id": run_ids, "wait": "standard"}
+    wait_args = {"action": "wait", "run_id": run_ids}
     cancel_args = {"action": "cancel", "run_id": run_ids}
 
     wait_header = _tool_header("agent_control", "Agent control", _fmt_args(wait_args), wait_args)

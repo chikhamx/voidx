@@ -189,7 +189,6 @@ class TestInteractiveTools:
             {
                 "action": "wait",
                 "run_id": spawn_result.metadata["run_id"],
-                "wait": "extended",
             },
             ctx,
         )
@@ -329,7 +328,6 @@ async def test_agent_tool_spawn_uses_gateway_when_available(tmp_path):
         {
             "action": "wait",
             "run_id": result.metadata["run_id"],
-            "wait": "standard",
         },
         ToolContext(
             workspace=str(tmp_path),
@@ -380,7 +378,7 @@ async def test_agent_tool_wait_returns_child_error(tmp_path):
     )
 
     failed = await AgentControlTool().execute(
-        {"action": "wait", "run_id": spawned.metadata["run_id"], "wait": "standard"},
+        {"action": "wait", "run_id": spawned.metadata["run_id"]},
         ctx,
     )
 
@@ -393,7 +391,7 @@ async def test_agent_tool_wait_returns_child_error(tmp_path):
 async def test_agent_tool_wait_timeout_returns_running_without_error(tmp_path, monkeypatch):
     import voidx.agent.adapters.tools.subagent_control as control_module
 
-    monkeypatch.setitem(control_module._WAIT_TIMEOUTS, "standard", 0.01)
+    monkeypatch.setattr(control_module, "_WAIT_TIMEOUT", 0.01)
     gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
     release = asyncio.Event()
@@ -427,7 +425,6 @@ async def test_agent_tool_wait_timeout_returns_running_without_error(tmp_path, m
         {
             "action": "wait",
             "run_id": spawn_result.metadata["run_id"],
-            "wait": "standard",
         },
         ctx,
     )
@@ -437,7 +434,7 @@ async def test_agent_tool_wait_timeout_returns_running_without_error(tmp_path, m
     assert "[running]" in wait_result.output
     release.set()
     await AgentControlTool().execute(
-        {"action": "wait", "run_id": spawn_result.metadata["run_id"], "wait": "standard"},
+        {"action": "wait", "run_id": spawn_result.metadata["run_id"]},
         ctx,
     )
 
@@ -473,7 +470,7 @@ async def test_agent_tool_default_wait_is_finite(tmp_path, monkeypatch):
         },
         ctx,
     )
-    monkeypatch.setitem(control_module._WAIT_TIMEOUTS, "standard", 0.01)
+    monkeypatch.setattr(control_module, "_WAIT_TIMEOUT", 0.01)
 
     wait_result = await AgentControlTool().execute(
         {"action": "wait", "run_id": spawn_result.metadata["run_id"]},
@@ -551,7 +548,7 @@ async def test_agent_spawn_result_uses_stable_display_name_contract(tmp_path):
     assert result.display == ""
     assert result.metadata == {"agent": "voidx", "run_id": run_id, "status": "running"}
     assert result.next_step_hint == (
-        "Use agent_control(action='wait', wait='standard') when the result is needed, "
+        "Use agent_control(action='wait') when the result is needed, "
         "or continue with other independent work."
     )
     assert run_id not in result.next_step_hint
@@ -660,21 +657,8 @@ async def test_agent_spawn_runtime_errors_include_inspection_hint(tmp_path, exce
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("timeout", "expected_wait"),
-    [
-        (None, "maximum"),
-        (0, "maximum"),
-        (0.1, "standard"),
-        (64, "standard"),
-        (64.1, "extended"),
-        (128, "extended"),
-        (128.1, "maximum"),
-    ],
-)
-async def test_agent_legacy_timeout_maps_to_finite_wait_tiers(
-    tmp_path, monkeypatch, timeout, expected_wait
-):
+@pytest.mark.parametrize("timeout", [None, 0, 0.1, 64, 128.1, -1, "not-a-number"])
+async def test_agent_legacy_timeout_is_ignored_for_wait(tmp_path, monkeypatch, timeout):
     captured = {}
 
     class CapturingControlTool:
@@ -690,16 +674,4 @@ async def test_agent_legacy_timeout_maps_to_finite_wait_tiers(
     result = await AgentTool().execute(args, ToolContext(workspace=str(tmp_path)))
 
     assert result.output == "captured"
-    assert captured == {"action": "wait", "run_id": "run_legacy", "wait": expected_wait}
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("timeout", [-1, "not-a-number"])
-async def test_agent_legacy_timeout_rejects_invalid_values_without_raising(tmp_path, timeout):
-    result = await AgentTool().execute(
-        {"action": "wait", "target_run_id": "run_legacy", "timeout": timeout},
-        ToolContext(workspace=str(tmp_path)),
-    )
-
-    assert result.metadata == {"error": True, "validation_error": True}
-    assert result.next_step_hint == "Correct the arguments before retrying."
+    assert captured == {"action": "wait", "run_id": "run_legacy"}

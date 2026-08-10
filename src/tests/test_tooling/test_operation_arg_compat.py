@@ -40,14 +40,13 @@ async def test_agent_spawn_accepts_current_schema(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_agent_rejects_unknown_control_fields(tmp_path) -> None:
+async def test_agent_control_ignores_removed_wait_field(tmp_path) -> None:
     result = await AgentTool().execute(
-        {"action": "wait", "run_id": "run_123", "wait": "standard"},
+        {"action": "wait", "target_run_id": "run_123", "wait": "standard"},
         ToolContext(workspace=str(tmp_path)),
     )
 
-    assert result.metadata.get("validation_error") is True
-    assert result.metadata.get("error") is True
+    assert result.metadata.get("validation_error") is not True
 
 
 @pytest.mark.asyncio

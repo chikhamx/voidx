@@ -268,13 +268,12 @@ class TestToolSchemas:
 
     def test_agent_control_uses_control_schema(self):
         inp = AgentControlInput.model_validate({
-            "action": "wait", "run_id": "run_123", "wait": "standard"
+            "action": "wait", "run_id": "run_123"
         })
         assert inp.action == "wait"
         assert inp.run_id == ["run_123"]
-        assert inp.wait == "standard"
         schema = AgentControlTool().parameters_schema()
-        assert set(schema["properties"]) == {"action", "run_id", "wait"}
+        assert set(schema["properties"]) == {"action", "run_id"}
 
     def test_interaction_tool_descriptions_are_precise_for_llms(self):
         agent_schema = AgentTool(runner=None).parameters_schema()

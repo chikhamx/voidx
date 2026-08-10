@@ -9,7 +9,8 @@ import pytest
 from pydantic import ValidationError
 
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext, AgentToolRuntime
-from voidx.agent.adapters.tools.subagent_control import AgentControlInput, AgentControlTool, _WAIT_TIMEOUTS
+import voidx.agent.adapters.tools.subagent_control as control_module
+from voidx.agent.adapters.tools.subagent_control import AgentControlInput, AgentControlTool, _WAIT_TIMEOUT
 from voidx.agent.domain.subagent import AgentGatewayError, AgentRun, AgentToolActivity
 from voidx.agent.domain.subagent_display import subagent_display_name
 from voidx.tooling.domain.schema import model_to_json_schema
@@ -83,11 +84,10 @@ def _ctx(transport=None) -> ToolContext:
 
 def test_agent_control_schema_and_timeout_mapping():
     schema = model_to_json_schema(AgentControlInput)
-    assert set(schema["properties"]) == {"action", "run_id", "wait"}
+    assert set(schema["properties"]) == {"action", "run_id"}
     assert set(schema["properties"]["action"]["enum"]) == {"wait", "cancel"}
-    assert set(schema["properties"]["wait"]["enum"]) == {"standard", "extended", "maximum"}
     assert schema["properties"]["run_id"]["type"] == ["string", "array"]
-    assert _WAIT_TIMEOUTS == {"standard": 64.0, "extended": 128.0, "maximum": 256.0}
+    assert _WAIT_TIMEOUT == 256.0
 
 
 def test_agent_control_normalizes_and_deduplicates_run_ids():
@@ -95,7 +95,6 @@ def test_agent_control_normalizes_and_deduplicates_run_ids():
     assert AgentControlInput(
         action="cancel",
         run_id=[" run_a ", "run_b", "run_a"],
-        wait="maximum",
     ).run_id == ["run_a", "run_b"]
 
     for run_id in (" ", [], ["run_a", " "]):
@@ -127,8 +126,8 @@ async def test_wait_single_completed_uses_compact_output_and_compatible_metadata
 
 
 @pytest.mark.asyncio
-async def test_wait_timeout_uses_selected_tier_and_exact_hint(monkeypatch):
-    monkeypatch.setitem(_WAIT_TIMEOUTS, "standard", 0.01)
+async def test_wait_timeout_uses_fixed_256s_and_short_hint(monkeypatch):
+    monkeypatch.setattr(control_module, "_WAIT_TIMEOUT", 0.01)
     monkeypatch.setattr(time, "time", lambda: 11.0)
     run = _run("run_slow", wait_outcome="timed_out_still_running")
     transport = FakeTransport({run.run_id: run})
@@ -143,13 +142,13 @@ async def test_wait_timeout_uses_selected_tier_and_exact_hint(monkeypatch):
     )
     assert transport.calls == [("wait", run.run_id, 0.01)]
     assert result.next_step_hint == (
-        "Use wait='extended' if the result is still needed; otherwise continue with other work."
+        "The child agent is still running and may need more time; wait again later if the result is still needed."
     )
 
 
 @pytest.mark.asyncio
 async def test_wait_timeout_reports_elapsed_and_active_tool(monkeypatch):
-    monkeypatch.setitem(_WAIT_TIMEOUTS, "standard", 0.01)
+    monkeypatch.setattr(control_module, "_WAIT_TIMEOUT", 0.01)
     monkeypatch.setattr(time, "time", lambda: 11.0)
     run = _run(
         "run_active",
@@ -213,7 +212,6 @@ async def test_batch_wait_is_concurrent_ordered_and_reports_partial_error():
         {
             "action": "wait",
             "run_id": [first.run_id, "run_denied", third.run_id],
-            "wait": "extended",
         },
         _ctx(transport),
     )
@@ -233,7 +231,7 @@ async def test_batch_wait_is_concurrent_ordered_and_reports_partial_error():
         first.run_id, "run_denied", third.run_id
     ]
     assert result.next_step_hint == "\n".join([
-        "Use wait='maximum' only if the result is still needed; otherwise cancel the unfinished work or continue without it.",
+        "The child agent is still running and may need more time; wait again later if the result is still needed.",
         "Verify the run IDs and parent-child control relationship before retrying.",
     ])
 
@@ -266,7 +264,7 @@ async def test_cancel_success_and_timeout_metadata_and_hints():
     )
 
     success = await AgentControlTool().execute(
-        {"action": "cancel", "run_id": cancelled.run_id, "wait": "maximum"},
+        {"action": "cancel", "run_id": cancelled.run_id},
         _ctx(FakeTransport({cancelled.run_id: cancelled})),
     )
     failed = await AgentControlTool().execute(

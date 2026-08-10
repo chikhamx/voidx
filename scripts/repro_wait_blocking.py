@@ -35,7 +35,7 @@ async def main() -> int:
         session_id="session-repro",
         runtime=AgentToolRuntime(subagent_transport=gateway, run_id=root_id),
     )
-    control_module._WAIT_TIMEOUTS["standard"] = TEST_TIMEOUT_SECS
+    control_module._WAIT_TIMEOUT = TEST_TIMEOUT_SECS
 
     start = time.monotonic()
     try:

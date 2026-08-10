@@ -30,7 +30,7 @@ from voidx.tooling.domain.arguments import (
 from voidx.tooling.domain.schema import model_to_json_schema
 from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 from voidx.agent.domain.subagent_display import subagent_display_name
-from voidx.agent.adapters.tools.subagent_control import AgentControlInput, AgentControlTool
+from voidx.agent.adapters.tools.subagent_control import AgentControlTool
 
 
 class AgentResultContract(BaseModel):
@@ -136,18 +136,9 @@ class AgentTool:
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
         args = _normalize_agent_args(args)
         if isinstance(args, dict) and args.get("action") in {"wait", "cancel"}:
-            try:
-                wait = _legacy_wait_tier(args.get("timeout"))
-            except (TypeError, ValueError):
-                return ToolResult(
-                    output="Agent control rejected: invalid legacy timeout",
-                    metadata={"error": True, "validation_error": True},
-                    next_step_hint="Correct the arguments before retrying.",
-                )
             control_args = {
                 "action": args["action"],
                 "run_id": args.get("target_run_id", ""),
-                "wait": wait,
             }
             return await AgentControlTool().execute(control_args, ctx)
         try:
@@ -244,7 +235,7 @@ class AgentTool:
                 display="",
                 metadata=metadata,
                 next_step_hint=(
-                    "Use agent_control(action='wait', wait='standard') when the result is needed, "
+                    "Use agent_control(action='wait') when the result is needed, "
                     "or continue with other independent work."
                 ),
             )
@@ -267,19 +258,6 @@ class AgentTool:
             )
 
 
-def _legacy_wait_tier(value: object) -> str:
-    if value is None:
-        return "maximum"
-    timeout = float(value)
-    if timeout < 0:
-        raise ValueError("timeout must be non-negative")
-    if timeout == 0:
-        return "maximum"
-    if timeout <= 64:
-        return "standard"
-    if timeout <= 128:
-        return "extended"
-    return "maximum"
 
 
 def _result_output(result: dict[str, Any] | None) -> str:

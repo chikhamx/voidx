@@ -195,7 +195,7 @@ async def test_agent_tool_passes_subagent_permission_snapshot(tmp_path):
 
     assert result.metadata.get("error") is not True
     await AgentControlTool().execute(
-        {"action": "wait", "run_id": result.metadata["run_id"], "wait": "standard"},
+        {"action": "wait", "run_id": result.metadata["run_id"]},
         ctx,
     )
     snapshot = captured["snapshot"]
