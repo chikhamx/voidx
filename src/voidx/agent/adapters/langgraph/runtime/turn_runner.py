@@ -15,7 +15,10 @@ from langgraph.errors import GraphRecursionError
 from voidx.agent.adapters.langgraph.runtime.convergence import generate_fallback_summary
 
 from voidx.agent.application.attachments import build_user_message_payload, serialize_message_content
-from voidx.agent.adapters.persistence.message_rows import messages_from_rows_incremental
+from voidx.agent.adapters.persistence.message_rows import (
+    is_user_turn_row,
+    messages_from_rows_incremental,
+)
 from voidx.agent.application.automation.goal.goal_resolver import build_goal_resolution, resolve_plan_mode
 from voidx.agent.application.runtime_context import TaskIntent
 from voidx.agent.domain.turn_context import TurnExecutionContext
@@ -194,7 +197,7 @@ class TurnRunner:
                         session_msgs = []
                     if host._session:
                         host._session_msg_cache = list(session_msgs)
-                is_first_user_message = not any(row.role == "user" for row in session_msgs)
+                is_first_user_message = not any(is_user_turn_row(row) for row in session_msgs)
 
                 context_cache = getattr(host, "_context_cache", None)
                 if context_cache is not None:
@@ -436,18 +439,23 @@ class TurnRunner:
             finally:
                 host._usage_stats.end_turn()
                 host._pending_turn_stop_commit = None
-                pending_guidance = getattr(host, "_pending_guidance", None)
-                if pending_guidance is not None:
-                    if pending_guidance:
-                        message = "Guidance discarded: no LLM call to inject into."
-                        log_tool_event("guidance_discarded", message=message)
-                        if host._ui.via_events():
-                            await host._ui.events.emit(GuidanceCommitted(source="system"))
-                        else:
-                            clear_guidance_preview = getattr(host._ui.dock, "clear_guidance_preview", None)
-                            if callable(clear_guidance_preview):
-                                clear_guidance_preview()
-                    pending_guidance.clear()
+                discard_guidance = getattr(host, "_discard_pending_guidance", None)
+                if callable(discard_guidance):
+                    guidance_discarded = discard_guidance()
+                else:
+                    pending_guidance = getattr(host, "_pending_guidance", None)
+                    guidance_discarded = bool(pending_guidance)
+                    if pending_guidance is not None:
+                        pending_guidance.clear()
+                if guidance_discarded:
+                    message = "Guidance discarded: no LLM call to inject into."
+                    log_tool_event("guidance_discarded", message=message)
+                    if host._ui.via_events():
+                        await host._ui.events.emit(GuidanceCommitted(source="system"))
+                    else:
+                        clear_guidance_preview = getattr(host._ui.dock, "clear_guidance_preview", None)
+                        if callable(clear_guidance_preview):
+                            clear_guidance_preview()
                 host._ui.session_tracker.finish_turn()
                 if host._ui.via_events():
                     await host._ui.events.emit(StatusFinished(status_id="turn:analyzing"))
@@ -575,7 +583,7 @@ def _rebuild_exchanges_from_session_msgs(
             i -= 1
             continue
         j = i - 1
-        while j >= 0 and session_msgs[j].role != "user":
+        while j >= 0 and not is_user_turn_row(session_msgs[j]):
             j -= 1
         if j < 0:
             break

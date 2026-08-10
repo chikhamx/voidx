@@ -57,7 +57,10 @@ from voidx.agent.adapters.langgraph.runtime.permission_flow import PermissionFlo
 from voidx.agent.adapters.langgraph.runtime.session_runtime import _sanitize_generated_title
 from voidx.agent.adapters.langgraph.runtime.tool_executor import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.adapters.langgraph.runtime.subagent import run_subagent as _run_subagent
-from voidx.agent.adapters.langgraph.runtime.thread_context import current_thread_execution_state
+from voidx.agent.adapters.langgraph.runtime.thread_context import (
+    GuidanceEntry,
+    current_thread_execution_state,
+)
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.adapters.langgraph.runtime.tool_executor import ToolExecutorAdapter
 from voidx.agent.adapters.langgraph.runtime.topology import build_graph, session_date
@@ -471,7 +474,7 @@ class LangGraphExecution:
         self._runtime_guards = RuntimeGuardState()
         self._turn_metrics = TurnControlMetrics()
         self._pending_turn_stop_commit: dict[str, Any] | None = None
-        self._pending_guidance: list[tuple[str, bool, Literal["user", "guard"]]] = []
+        self._pending_guidance: list[GuidanceEntry] = []
         self._clear_session_tasks: set[asyncio.Task[None]] = set()
         self._title_generation: int = 0
         self._title_task: asyncio.Task[None] | None = None
@@ -707,6 +710,8 @@ class LangGraphExecution:
         text: str,
         *,
         source: Literal["user", "guard"] = "user",
+        thread_id: str = "",
+        session_id: str = "",
     ) -> bool:
         guidance = " ".join(text.strip().split())
         if not guidance:
@@ -720,25 +725,90 @@ class LangGraphExecution:
                 GuidanceSubmitted(text=guidance, truncated=truncated)
             ):
                 return False
-        self._pending_guidance.append((guidance, truncated, source))
+        current_state = self._current_thread_state()
+        current_session = current_state.session if current_state is not None else self._session
+        entry = GuidanceEntry(
+            text=guidance,
+            truncated=truncated,
+            source=source,
+            thread_id=thread_id or (current_state.thread_id if current_state is not None else ""),
+            session_id=session_id or (current_session.id if current_session is not None else ""),
+        )
+        target_state = self._guidance_target_state(entry)
+        if target_state is not None:
+            target_state.pending_guidance.append(entry)
+        else:
+            self._pending_guidance.append(entry)
         return True
+
+    def _guidance_target_state(self, entry: GuidanceEntry):
+        current_state = self._current_thread_state()
+        if current_state is not None and self._guidance_matches_state(entry, current_state):
+            return current_state
+        if not entry.thread_id:
+            return None
+        states = getattr(self, "_thread_execution_states", {})
+        for state in states.values():
+            if self._guidance_matches_state(entry, state):
+                return state
+        return None
+
+    def _guidance_matches_state(self, entry: GuidanceEntry, state) -> bool:
+        if getattr(state, "host_id", None) not in (None, id(self)):
+            return False
+        if entry.thread_id and getattr(state, "thread_id", "") != entry.thread_id:
+            return False
+        state_session = getattr(state, "session", None)
+        state_session_id = state_session.id if state_session is not None else ""
+        if entry.session_id and state_session_id != entry.session_id:
+            return False
+        return bool(entry.thread_id or entry.session_id)
+
+    def _guidance_matches_current_thread(self, entry: GuidanceEntry) -> bool:
+        current_state = self._current_thread_state()
+        current_thread_id = current_state.thread_id if current_state is not None else ""
+        current_session = current_state.session if current_state is not None else self._session
+        current_session_id = current_session.id if current_session is not None else ""
+        if entry.thread_id and current_thread_id != entry.thread_id:
+            return False
+        if entry.session_id and current_session_id != entry.session_id:
+            return False
+        return True
+
+    def _pop_pending_guidance(self) -> list[GuidanceEntry]:
+        entries: list[GuidanceEntry] = []
+        current_state = self._current_thread_state()
+        if current_state is not None:
+            remaining_state_entries: list[GuidanceEntry] = []
+            for entry in current_state.pending_guidance:
+                if self._guidance_matches_current_thread(entry):
+                    entries.append(entry)
+                else:
+                    remaining_state_entries.append(entry)
+            current_state.pending_guidance = remaining_state_entries
+
+        remaining_entries: list[GuidanceEntry] = []
+        for entry in self._pending_guidance:
+            if self._guidance_matches_current_thread(entry):
+                entries.append(entry)
+            else:
+                remaining_entries.append(entry)
+        self._pending_guidance = remaining_entries
+        return entries
+
+    def _discard_pending_guidance(self) -> bool:
+        return bool(self._pop_pending_guidance())
 
     def _drain_pending_guidance(self) -> list[tuple[HumanMessage, bool, Literal["user", "guard"]]]:
         messages: list[tuple[HumanMessage, bool, Literal["user", "guard"]]] = []
-        while self._pending_guidance:
-            entry = self._pending_guidance.pop(0)
-            if len(entry) == 2:
-                text, truncated = entry
-                source: Literal["user", "guard"] = "user"
-            else:
-                text, truncated, source = entry
+        for entry in self._pop_pending_guidance():
             messages.append((
                 HumanMessage(
-                    content=text,
+                    content=entry.text,
                     additional_kwargs={GUIDANCE_MARKER: True},
                 ),
-                truncated,
-                source,
+                entry.truncated,
+                entry.source,
             ))
         return messages
 
@@ -1003,6 +1073,8 @@ class LangGraphExecution:
                     finish_reason=str(run_metadata.get("finish_reason") or ("final_answer" if ok else "error")),
                     summary=result if ok else "",
                     error=error,
+                    calls=int(run_metadata.get("calls") or 0),
+                    tokens=int(run_metadata.get("tokens") or 0),
                 ))
             if self._session:
                 finish_event = {

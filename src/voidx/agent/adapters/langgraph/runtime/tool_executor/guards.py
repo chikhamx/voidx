@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from langchain_core.messages import ToolMessage
 
+from voidx.agent.adapters.langgraph.runtime.thread_context import GuidanceEntry
 from voidx.agent.adapters.langgraph.runtime.runtime_guards import (
     GuardDecision,
     GuardGuidance,
@@ -148,4 +149,4 @@ def _submit_guard_guidance(host, guidance: GuardGuidance | None) -> None:
         return
     pending = getattr(host, "_pending_guidance", None)
     if isinstance(pending, list):
-        pending.append((guidance.message, False, "guard"))
+        pending.append(GuidanceEntry(text=guidance.message, source="guard"))

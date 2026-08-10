@@ -66,6 +66,7 @@ from voidx.agent.adapters.langgraph.runtime.context_pressure import (
     upsert_context_pressure_hint,
 )
 from voidx.agent.application.runtime_context import raw_semantic_messages
+from voidx.agent.adapters.persistence.session_repository import MessageRow, save_message
 from voidx.llm.message_markers import (
     CONTEXT_PRESSURE_MARKER,
     GUIDANCE_MARKER,
@@ -135,6 +136,19 @@ class LlmTurn:
 
         guidance_pairs = host._drain_pending_guidance()
         guidance_messages = [msg for msg, _, _ in guidance_pairs]
+        if host._session is not None:
+            for message, _, source in guidance_pairs:
+                if source != "user":
+                    continue
+                row = MessageRow(
+                    session_id=host._session.id,
+                    role="user",
+                    content=str(message.content),
+                    additional_kwargs={GUIDANCE_MARKER: True},
+                )
+                message_id = await save_message(row)
+                if host._session_msg_cache is not None:
+                    host._session_msg_cache.append(row.model_copy(update={"id": message_id}))
         if host._ui.via_events() and guidance_pairs:
             user_guidance = [
                 str(msg.content)

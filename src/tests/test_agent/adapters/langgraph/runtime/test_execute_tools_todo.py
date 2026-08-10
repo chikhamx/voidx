@@ -394,7 +394,7 @@ async def test_execute_tools_warns_then_skips_repeated_todo_without_progress(tmp
     assert graph._pending_guidance == []
 
     await run_todo("call_todo_3")
-    assert any("only called todo:read" in item[0] for item in graph._pending_guidance)
+    assert any("only called todo:read" in item.text for item in graph._pending_guidance)
 
     result = await run_todo("call_todo_4")
     assert calls == 3

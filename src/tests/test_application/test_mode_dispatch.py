@@ -146,6 +146,44 @@ async def test_goal_first_message_intake_failure_reports_and_consumes() -> None:
     assert service._goal_service.started == []
 
 
+
+
+@pytest.mark.asyncio
+async def test_persisted_guidance_does_not_block_autonomous_first_message(monkeypatch) -> None:
+    from voidx.agent.adapters.persistence.session_repository import MessageRow
+    from voidx.llm.message_markers import GUIDANCE_MARKER
+
+    async def fake_load_messages(_session_id: str):
+        return [MessageRow(
+            session_id="host-session",
+            role="user",
+            content="stay narrow",
+            additional_kwargs={GUIDANCE_MARKER: True},
+        )]
+
+    async def fake_save_message(_row: MessageRow) -> int:
+        return 2
+
+    monkeypatch.setattr(
+        "voidx.agent.adapters.persistence.session_repository.load_messages",
+        fake_load_messages,
+    )
+    monkeypatch.setattr(
+        "voidx.agent.adapters.persistence.session_repository.save_message",
+        fake_save_message,
+    )
+    service = _service("goal")
+    service._execution.session.message_count = 1
+    service._runtime.spec = {
+        "objective": "do it",
+        "acceptance_condition": "done",
+        "achievement_method": "",
+    }
+
+    handled = await service.route_first_message("do it", thread_id="")
+
+    assert handled is True
+    assert len(service._goal_service.started) == 1
 @pytest.mark.asyncio
 async def test_autonomous_first_message_only_fires_once() -> None:
     service = _service("goal")
@@ -231,6 +269,7 @@ async def test_goal_profile_followup_does_not_fall_through_to_coding(monkeypatch
     async def fake_status(_parent):
         return SimpleNamespace(
             active=True,
+            goal_thread_id="goal:host-session:active",
             objective_summary="ship the feature",
             attempt_count=1,
             max_attempts=20,
@@ -238,9 +277,21 @@ async def test_goal_profile_followup_does_not_fall_through_to_coding(monkeypatch
         )
 
     service._goal_service.status = fake_status  # type: ignore[method-assign]
+    guidance_calls: list[tuple[str, dict[str, str]]] = []
+    service._guidance = SimpleNamespace(
+        submit_guidance=lambda text, **kwargs: guidance_calls.append((text, kwargs)) or True,
+    )
     printed = service._events.messages
 
-    handled = await service.route_followup("please also cover edge cases", thread_id="")
+    handled = await service.route_followup("please also cover edge cases", thread_id="host-session")
 
     assert handled is True
+    assert guidance_calls == [(
+        "please also cover edge cases",
+        {
+            "source": "user",
+            "thread_id": "goal:host-session:active",
+            "session_id": "goal:host-session:active",
+        },
+    )]
     assert any("goal" in line.lower() for line in printed)

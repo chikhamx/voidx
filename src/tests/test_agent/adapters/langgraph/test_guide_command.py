@@ -30,7 +30,10 @@ def test_submit_user_guidance_emits_guidance_submitted_only():
 
     assert graph.submit_guidance("  use   TypeScript  ", source="user") is True
 
-    assert graph._pending_guidance == [("use TypeScript", False, "user")]
+    assert len(graph._pending_guidance) == 1
+    assert graph._pending_guidance[0].text == "use TypeScript"
+    assert graph._pending_guidance[0].truncated is False
+    assert graph._pending_guidance[0].source == "user"
     assert events.emitted == [
         GuidanceSubmitted(text="use TypeScript", truncated=False),
     ]
@@ -42,7 +45,10 @@ def test_submit_user_guidance_marks_truncated_display_without_polluting_llm_inpu
     assert graph.submit_guidance("x" * (GUIDANCE_MAX_CHARS + 1), source="user") is True
 
     guidance = "x" * GUIDANCE_MAX_CHARS
-    assert graph._pending_guidance == [(guidance, True, "user")]
+    assert len(graph._pending_guidance) == 1
+    assert graph._pending_guidance[0].text == guidance
+    assert graph._pending_guidance[0].truncated is True
+    assert graph._pending_guidance[0].source == "user"
     assert events.emitted == [
         GuidanceSubmitted(text=guidance, truncated=True),
     ]

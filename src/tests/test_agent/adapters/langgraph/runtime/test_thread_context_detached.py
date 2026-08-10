@@ -11,7 +11,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from voidx.agent.adapters.langgraph.runtime.thread_context import _state_for_context
+from voidx.agent.adapters.langgraph.runtime.thread_context import (
+    GuidanceEntry,
+    _state_for_context,
+)
 
 
 class _FakeSession:
@@ -42,3 +45,25 @@ async def test_state_for_context_empty_session_id_falls_back_to_host():
     state = await _state_for_context(host, "")
     assert state.session is not None
     assert state.session.id == "host-1"
+
+
+@pytest.mark.asyncio
+async def test_state_for_context_isolates_threads_within_one_session():
+    host = SimpleNamespace(
+        _session=_FakeSession("host-1"),
+        _thread_execution_states={},
+    )
+
+    state_a = await _state_for_context(host, "host-1", thread_id="thread-a")
+    state_a.pending_guidance.append(
+        GuidanceEntry(
+            text="only thread A",
+            thread_id="thread-a",
+            session_id="host-1",
+        )
+    )
+    state_b = await _state_for_context(host, "host-1", thread_id="thread-b")
+
+    assert state_b is not state_a
+    assert state_b.pending_guidance == []
+    assert [entry.text for entry in state_a.pending_guidance] == ["only thread A"]

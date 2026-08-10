@@ -93,7 +93,12 @@ class LangGraphAutonomousInputRouter:
             return False
         message_count = getattr(session, "message_count", 0) or 0
         if message_count > 0:
-            return False
+            from voidx.agent.adapters.persistence.message_rows import is_guidance_row
+            from voidx.agent.adapters.persistence.session_repository import load_messages
+
+            rows = await load_messages(session.id)
+            if any(not is_guidance_row(row) for row in rows):
+                return False
         if profile == "goal":
             return await self._handle_goal_first_message(user_input, thread_id=thread_id)
         return await self._handle_loop_first_message(user_input, thread_id=thread_id)
@@ -105,7 +110,6 @@ class LangGraphAutonomousInputRouter:
         treated as guidance when possible; otherwise the user is told how to
         inspect or stop the active goal/loop instead of starting a coding turn.
         """
-        del thread_id
         session = getattr(self._execution, "session", None)
         profile = getattr(session, "runtime_profile", "coding")
         if profile not in {"goal", "loop"}:
@@ -121,7 +125,18 @@ class LangGraphAutonomousInputRouter:
                 status = None
 
         if status is not None and getattr(status, "active", False):
-            if self._guidance.submit_guidance(user_input, source="user"):
+            target_thread_id = (
+                getattr(status, f"{profile}_thread_id", "")
+                or thread_id
+                or parent
+                or ""
+            )
+            if self._guidance.submit_guidance(
+                user_input,
+                source="user",
+                thread_id=target_thread_id,
+                session_id=target_thread_id,
+            ):
                 label = getattr(status, "objective_summary", None) or getattr(status, "prompt_summary", None) or profile
                 self._events.publish_message(
                     f"[dim]/{profile} guidance queued for [cyan]{label}[/cyan]. "

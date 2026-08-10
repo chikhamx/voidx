@@ -13,6 +13,15 @@ from voidx.agent.application.attachments import parse_structured_content
 from voidx.llm.message_status import message_status
 from voidx.agent.adapters.persistence.session_repository import MessageRow
 from voidx.agent.application.runtime_context import RowMessageCacheEntry
+from voidx.llm.message_markers import GUIDANCE_MARKER
+
+
+def is_guidance_row(row: MessageRow) -> bool:
+    return bool(row.additional_kwargs.get(GUIDANCE_MARKER))
+
+
+def is_user_turn_row(row: MessageRow) -> bool:
+    return row.role == "user" and not is_guidance_row(row)
 
 
 def messages_from_rows(rows: Iterable[MessageRow]) -> list[BaseMessage]:
@@ -56,6 +65,7 @@ def row_fingerprint(row: MessageRow) -> str:
         "tool_calls": row.tool_calls or [],
         "tool_call_id": row.tool_call_id or "",
         "status": message_status(row.status) if row.role == "tool" else "success",
+        "additional_kwargs": row.additional_kwargs,
     }
     return _stable_hash(payload)
 
@@ -67,12 +77,14 @@ def message_from_row(row: MessageRow) -> BaseMessage | None:
     if row.role == "user":
         return HumanMessage(
             content=parse_structured_content(row.content, row.content_format),
+            additional_kwargs=row.additional_kwargs,
             id=msg_id,
         )
     if row.role == "assistant":
         return AIMessage(
             content=parse_structured_content(row.content, row.content_format),
             tool_calls=row.tool_calls or [],
+            additional_kwargs=row.additional_kwargs,
             id=msg_id,
         )
     if row.role == "tool":

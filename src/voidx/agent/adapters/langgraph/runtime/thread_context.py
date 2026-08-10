@@ -5,7 +5,8 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, AsyncIterator
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any, AsyncIterator, Literal
 
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.tool_policy import ToolPolicy
@@ -25,6 +26,15 @@ if TYPE_CHECKING:
 
 
 @dataclass
+class GuidanceEntry:
+    text: str
+    truncated: bool = False
+    source: Literal["user", "guard"] = "user"
+    thread_id: str = ""
+    session_id: str = ""
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+@dataclass
 class ThreadExecutionState:
     """Mutable graph state that must not bleed across concurrent turns."""
 
@@ -36,6 +46,7 @@ class ThreadExecutionState:
     task_state: TaskState = field(default_factory=TaskState)
     compaction_summary: str = ""
     pending_summary: str | None = None
+    pending_guidance: list[GuidanceEntry] = field(default_factory=list)
     session_date: str = ""
     runtime_guards: RuntimeGuardState = field(default_factory=RuntimeGuardState)
     turn_context: TurnExecutionContext | None = None
@@ -109,8 +120,17 @@ def _apply_state(host: Any, state: ThreadExecutionState | _HostExecutionSnapshot
     host._runtime_guards = state.runtime_guards
 
 
-def _state_key(session_id: str, fallback_session: SessionInfo | None) -> str:
-    return session_id or (fallback_session.id if fallback_session is not None else "")
+def _state_key(
+    session_id: str,
+    thread_id: str,
+    fallback_session: SessionInfo | None,
+) -> str:
+    resolved_session_id = session_id or (
+        fallback_session.id if fallback_session is not None else ""
+    )
+    if not thread_id:
+        return resolved_session_id
+    return f"{resolved_session_id}\x1f{thread_id}"
 
 
 def thread_execution_states(host: Any) -> dict[str, ThreadExecutionState]:
@@ -121,10 +141,14 @@ def thread_execution_states(host: Any) -> dict[str, ThreadExecutionState]:
     return states
 
 
-async def _state_for_context(host: Any, session_id: str, *, detached: bool = False) -> ThreadExecutionState:
+async def _state_for_context(
+    host: Any,
+    session_id: str,
+    *,
+    thread_id: str = "",
+    detached: bool = False,
+) -> ThreadExecutionState:
     if detached:
-        # Detached turns (e.g. goal evaluator) must never bind the host session:
-        # no history loading, no message persistence, no host-state mutation.
         return ThreadExecutionState(
             session=None,
             session_msg_cache=None,
@@ -133,7 +157,7 @@ async def _state_for_context(host: Any, session_id: str, *, detached: bool = Fal
         )
     states = thread_execution_states(host)
     current_session = getattr(host, "_session", None)
-    key = _state_key(session_id, current_session)
+    key = _state_key(session_id, thread_id, current_session)
     if key and key in states:
         return states[key]
     if session_id and current_session is not None and current_session.id == session_id:
@@ -192,7 +216,12 @@ async def bind_thread_execution_context(
     """Bind host mutable state to one session for the duration of a turn."""
 
     detached = turn_context is not None and getattr(turn_context, "detached", False)
-    state = await _state_for_context(host, session_id, detached=detached)
+    state = await _state_for_context(
+        host,
+        session_id,
+        thread_id=thread_id,
+        detached=detached,
+    )
     if session_id and not (
         getattr(host, "_session", None) is not None
         and getattr(host._session, "id", "") == session_id

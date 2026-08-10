@@ -324,10 +324,13 @@ async def test_execute_tools_escalates_and_blocks_repeated_tool_failure(tmp_path
     assert graph._pending_guidance == []
 
     await run_read("call_2")
-    assert any("failed twice" in item[0] for item in graph._pending_guidance)
+    assert any("failed twice" in item.text for item in graph._pending_guidance)
 
     await run_read("call_3")
-    assert any("failed 3 times" in item[0] and "Stop retrying it now" in item[0] for item in graph._pending_guidance)
+    assert any(
+        "failed 3 times" in item.text and "Stop retrying it now" in item.text
+        for item in graph._pending_guidance
+    )
 
     result = await run_read("call_4")
     assert calls == [

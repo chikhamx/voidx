@@ -26,7 +26,10 @@ def test_submit_guard_guidance_stays_hidden_and_queues_when_event_bus_rejects():
 
     assert graph.submit_guidance("retry differently", source="guard") is True
 
-    assert graph._pending_guidance == [("retry differently", False, "guard")]
+    assert len(graph._pending_guidance) == 1
+    assert graph._pending_guidance[0].text == "retry differently"
+    assert graph._pending_guidance[0].truncated is False
+    assert graph._pending_guidance[0].source == "guard"
     assert events.emitted == []
 
 
@@ -67,4 +70,7 @@ def test_runtime_guard_fallback_queues_hidden_guard_source():
 
     _submit_guard_guidance(host, guidance)
 
-    assert pending == [("change approach", False, "guard")]
+    assert len(pending) == 1
+    assert pending[0].text == "change approach"
+    assert pending[0].truncated is False
+    assert pending[0].source == "guard"

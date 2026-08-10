@@ -17,6 +17,7 @@ from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
 from voidx.tooling.adapters.mcp import McpGatewayTool
 from voidx.agent.adapters.langgraph.runtime.convergence import is_step_hint_message
+from voidx.agent.adapters.langgraph.runtime.topology import latest_user_text
 from voidx.agent.application.runtime_context import RuntimeContextBuilder
 from voidx.agent.domain.task.state import TaskState
 from voidx.agent.domain.task.todo import TodoRunState
@@ -25,7 +26,14 @@ from voidx.llm.domain.model import ModelConfig
 from voidx.llm.compaction import CompactionSelection
 from voidx.llm.message_markers import is_guidance_message
 from voidx.agent.adapters.persistence.context_frame_repository import load_context_frames
-from voidx.agent.adapters.persistence.session_repository import MessageRow, create_session, delete_session, save_message
+from voidx.agent.adapters.persistence.message_rows import messages_from_rows
+from voidx.agent.adapters.persistence.session_repository import (
+    MessageRow,
+    create_session,
+    delete_session,
+    load_messages,
+    save_message,
+)
 from voidx.presentation.output.console import StreamingRenderer
 from voidx.presentation.output.dock import ANSI_LINE_PREFIX, BottomInputDock, set_dock
 from voidx.presentation.output.events import (
@@ -55,6 +63,7 @@ from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.adapters.langgraph.runtime.thread_context import (
     ThreadExecutionState,
     _CURRENT_THREAD_EXECUTION_STATE,
+    bind_thread_execution_context,
 )
 
 @pytest.mark.asyncio
@@ -191,6 +200,191 @@ async def test_call_llm_user_guidance_commits_preview_without_persistent_message
     assert events.emitted == [GuidanceCommitted(text="先写 spedc文档")]
 
 
+
+
+@pytest.mark.asyncio
+async def test_call_llm_user_guidance_persists_as_marked_human_message(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+    session = await create_session(workspace=str(tmp_path))
+    try:
+        graph = make_langgraph_execution(
+            Config(
+                model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+                workspace=str(tmp_path),
+            ),
+            api_key="test",
+            session=session,
+        )
+        graph.model = TrackingStreamingModel()
+
+        graph.submit_guidance("Keep the API backwards compatible", source="user")
+        await graph._call_llm({
+            "messages": [HumanMessage(content="finish the task")],
+            "step_count": 1,
+            "persona": "voidx",
+        })
+
+        rows = await load_messages(session.id)
+        assert len(rows) == 1
+        assert rows[0].role == "user"
+        assert rows[0].content == "Keep the API backwards compatible"
+        hydrated = messages_from_rows(rows)
+        assert len(hydrated) == 1
+        assert is_guidance_message(hydrated[0])
+        assert latest_user_text([HumanMessage(content="original request"), hydrated[0]]) == "original request"
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_call_llm_guidance_is_thread_scoped(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+    session_a = await create_session(workspace=str(tmp_path))
+    session_b = await create_session(workspace=str(tmp_path))
+    try:
+        graph = make_langgraph_execution(
+            Config(
+                model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+                workspace=str(tmp_path),
+            ),
+            api_key="test",
+            session=session_a,
+        )
+        model_b = TrackingStreamingModel()
+        graph.model = model_b
+
+        graph.submit_guidance(
+            "Only thread A should see this",
+            source="user",
+            thread_id="thread-a",
+            session_id=session_a.id,
+        )
+
+        async with bind_thread_execution_context(
+            graph,
+            session_id=session_b.id,
+            thread_id="thread-b",
+            turn_context=TurnExecutionContext(
+                thread_id="thread-b",
+                session_id=session_b.id,
+                workspace=str(tmp_path),
+            ),
+        ):
+            await graph._call_llm({
+                "messages": [HumanMessage(content="thread B request")],
+                "step_count": 1,
+                "persona": "voidx",
+            })
+
+        assert model_b.messages is not None
+        assert not any(
+            is_guidance_message(message)
+            and str(message.content) == "Only thread A should see this"
+            for message in model_b.messages
+        )
+
+        model_a = TrackingStreamingModel()
+        graph.model = model_a
+        async with bind_thread_execution_context(
+            graph,
+            session_id=session_a.id,
+            thread_id="thread-a",
+            turn_context=TurnExecutionContext(
+                thread_id="thread-a",
+                session_id=session_a.id,
+                workspace=str(tmp_path),
+            ),
+        ):
+            await graph._call_llm({
+                "messages": [HumanMessage(content="thread A request")],
+                "step_count": 1,
+                "persona": "voidx",
+            })
+
+        assert model_a.messages is not None
+        assert any(
+            is_guidance_message(message)
+            and str(message.content) == "Only thread A should see this"
+            for message in model_a.messages
+        )
+    finally:
+        await delete_session(session_a.id)
+        await delete_session(session_b.id)
+
+
+@pytest.mark.asyncio
+async def test_call_llm_guidance_isolated_between_threads_in_same_session(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+    session = await create_session(workspace=str(tmp_path))
+    try:
+        graph = make_langgraph_execution(
+            Config(
+                model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+                workspace=str(tmp_path),
+            ),
+            api_key="test-key",
+            session=session,
+        )
+        async with bind_thread_execution_context(
+            graph,
+            session_id=session.id,
+            thread_id="thread-a",
+        ):
+            pass
+        graph.submit_guidance(
+            "Only thread A should see this",
+            source="user",
+            thread_id="thread-a",
+            session_id=session.id,
+        )
+
+        model_b = TrackingStreamingModel()
+        graph.model = model_b
+        async with bind_thread_execution_context(
+            graph,
+            session_id=session.id,
+            thread_id="thread-b",
+        ):
+            await graph._call_llm({
+                "messages": [HumanMessage(content="thread B request")],
+                "step_count": 1,
+                "persona": "voidx",
+            })
+
+        assert model_b.messages is not None
+        assert not any(
+            is_guidance_message(message)
+            and str(message.content) == "Only thread A should see this"
+            for message in model_b.messages
+        )
+
+        model_a = TrackingStreamingModel()
+        graph.model = model_a
+        async with bind_thread_execution_context(
+            graph,
+            session_id=session.id,
+            thread_id="thread-a",
+        ):
+            await graph._call_llm({
+                "messages": [HumanMessage(content="thread A request")],
+                "step_count": 1,
+                "persona": "voidx",
+            })
+
+        assert model_a.messages is not None
+        assert any(
+            is_guidance_message(message)
+            and str(message.content) == "Only thread A should see this"
+            for message in model_a.messages
+        )
+    finally:
+        await delete_session(session.id)
 @pytest.mark.asyncio
 async def test_call_llm_context_frame_records_no_main_agent_convergence_hint(tmp_path, monkeypatch):
     import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module

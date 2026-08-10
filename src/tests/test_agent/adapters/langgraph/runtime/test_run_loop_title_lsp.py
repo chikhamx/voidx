@@ -26,6 +26,7 @@ from voidx.agent.domain.task.state import (
 )
 from voidx.config import Config
 from voidx.llm.usage import UsageStats
+from voidx.llm.message_markers import GUIDANCE_MARKER
 from voidx.agent.adapters.persistence.runtime_state_repository import RuntimeStateSnapshot, save_runtime_state
 from voidx.agent.adapters.persistence.session_repository import MessageRow, create_session, get_session, load_messages, save_message, update_title
 from voidx.update.service import UpdateCheckResult
@@ -162,3 +163,26 @@ async def test_exit_cleanup_keeps_session_with_messages_even_new_session_title(t
     assert execution._session.id == session.id
 
 
+
+
+@pytest.mark.asyncio
+async def test_title_auto_skips_persisted_guidance(tmp_path):
+    session = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
+    await save_message(MessageRow(
+        session_id=session.id,
+        role="user",
+        content="stay narrow",
+        additional_kwargs={GUIDANCE_MARKER: True},
+    ))
+    await save_message(MessageRow(
+        session_id=session.id,
+        role="user",
+        content="implement the parser",
+    ))
+    graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key="test-key", session=session)
+
+    assert await graph.regenerate_session_title() is True
+
+    loaded = await get_session(session.id)
+    assert loaded is not None
+    assert loaded.title == "implement the parser"

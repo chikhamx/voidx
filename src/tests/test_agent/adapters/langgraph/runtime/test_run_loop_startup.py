@@ -482,15 +482,27 @@ async def test_web_guide_submit_records_guidance_without_starting_turn():
         cancel_external_input=lambda: None,
     )
 
-    await graph._handle_web_command(app, UiSubmitCommand(text="/guide use TypeScript"))
+    await graph._handle_web_command(
+        app,
+        UiSubmitCommand(text="/guide use TypeScript", thread_id="thread-web"),
+    )
 
-    assert guidance == [("use TypeScript", {"source": "user"})]
+    assert guidance == [(
+        "use TypeScript",
+        {"source": "user", "thread_id": "thread-web", "session_id": "thread-web"},
+    )]
     assert queued_inputs == []
 
 
 @pytest.mark.asyncio
 async def test_web_direct_guide_command_records_guidance():
-    graph = _graph()
+    active_session = SimpleNamespace(
+        id="active-session",
+        title="Active session",
+        directory="",
+        runtime_profile="coding",
+    )
+    graph = _graph(session=active_session)
     guidance: list[tuple[str, dict[str, str]]] = []
     queued_inputs: list[str] = []
 
@@ -500,9 +512,15 @@ async def test_web_direct_guide_command_records_guidance():
         cancel_external_input=lambda: None,
     )
 
-    await graph._handle_web_command(app, {"kind": "guide", "text": "stay narrow"})
+    await graph._handle_web_command(
+        app,
+        {"kind": "guide", "text": "stay narrow", "thread_id": "thread-direct"},
+    )
 
-    assert guidance == [("stay narrow", {"source": "user"})]
+    assert guidance == [(
+        "stay narrow",
+        {"source": "user", "thread_id": "thread-direct", "session_id": "thread-direct"},
+    )]
     assert queued_inputs == []
 
 

@@ -27,15 +27,35 @@ class GatewayCommandHandler:
         self._thread_registry = thread_registry
 
     async def handle(self, app: GatewayFrontend, command: object) -> None:
+        status = self._status_reader.runtime_status()
         if isinstance(command, dict) and command.get("kind") == "guide":
-            self._guidance.submit_guidance(str(command.get("text", "")), source="user")
+            context = _guidance_context(
+                str(command.get("thread_id", "")),
+                status.session.session_id,
+                status.workspace,
+            )
+            self._guidance.submit_guidance(
+                str(command.get("text", "")),
+                source="user",
+                thread_id=context.thread_id,
+                session_id=context.session_id,
+            )
             return
         parsed = parse_ui_command(command)
-        status = self._status_reader.runtime_status()
         if isinstance(parsed, UiSubmitCommand):
             text = parsed.text
             if text.strip().startswith("/guide "):
-                self._guidance.submit_guidance(text.strip().removeprefix("/guide").strip(), source="user")
+                context = _guidance_context(
+                    parsed.thread_id,
+                    status.session.session_id,
+                    status.workspace,
+                )
+                self._guidance.submit_guidance(
+                    text.strip().removeprefix("/guide").strip(),
+                    source="user",
+                    thread_id=context.thread_id,
+                    session_id=context.session_id,
+                )
                 return
             self._thread_registry.ensure_thread(status.session)
             context = _turn_context(parsed.thread_id, status.session.session_id, status.workspace)
@@ -43,6 +63,18 @@ class GatewayCommandHandler:
         elif isinstance(parsed, UiCancelCommand):
             context = _turn_context(parsed.thread_id, status.session.session_id, status.workspace)
             app.cancel_external_input(context=context)
+
+
+
+
+def _guidance_context(
+    thread_id: str,
+    active_session_id: str,
+    workspace: str,
+) -> TurnExecutionContext:
+    if thread_id:
+        return _turn_context(thread_id, thread_id, workspace)
+    return _turn_context("", active_session_id, workspace)
 
 
 def _turn_context(thread_id: str, active_session_id: str, workspace: str) -> TurnExecutionContext:

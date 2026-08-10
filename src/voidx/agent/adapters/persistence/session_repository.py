@@ -10,6 +10,8 @@ import asyncio
 import shutil
 import uuid
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from voidx.llm.domain.model import DEFAULT_MODEL
@@ -55,6 +57,7 @@ class MessageRow(BaseModel):
     tool_calls: list[dict] | None = None
     tool_call_id: str | None = None
     status: str | None = None
+    additional_kwargs: dict[str, Any] = Field(default_factory=dict)
     created_at: str = Field(default_factory=now)
 
 
@@ -271,6 +274,8 @@ async def save_message(msg: MessageRow) -> int:
         "content_format": msg.content_format,
         "created_at": msg.created_at,
     }
+    if msg.additional_kwargs:
+        record["additional_kwargs"] = msg.additional_kwargs
     if msg.tool_calls:
         record["tool_calls"] = msg.tool_calls
     if msg.tool_call_id:
@@ -343,6 +348,7 @@ async def _load_messages_jsonl(session_id: str) -> list[MessageRow] | None:
             tool_calls=record.get("tool_calls") if isinstance(record.get("tool_calls"), list) else None,
             tool_call_id=record.get("tool_call_id") if isinstance(record.get("tool_call_id"), str) else None,
             status=record.get("status") if isinstance(record.get("status"), str) else None,
+            additional_kwargs=record.get("additional_kwargs") if isinstance(record.get("additional_kwargs"), dict) else {},
             created_at=str(record.get("created_at", "")) or now(),
         )
     return [messages[key] for key in sorted(messages)]

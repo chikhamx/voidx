@@ -27,6 +27,8 @@ from voidx.agent.domain.task.state import (
 )
 from voidx.config import Config
 from voidx.llm.usage import UsageStats
+from voidx.llm.message_markers import GUIDANCE_MARKER
+from voidx.agent.adapters.langgraph.runtime.turn_runner import _rebuild_exchanges_from_session_msgs
 from voidx.agent.adapters.persistence.runtime_state_repository import RuntimeStateSnapshot, save_runtime_state
 from voidx.agent.adapters.persistence.session_repository import MessageRow, create_session, get_session, load_messages, save_message, update_title
 from voidx.update.service import UpdateCheckResult
@@ -174,3 +176,22 @@ async def test_run_turn_does_not_preadvance_workflow_without_resolver_join(tmp_p
     assert initial["persona"] == "coordinate"
 
 
+
+
+def test_rebuild_exchanges_skips_persisted_guidance_rows():
+    rows = [
+        MessageRow(session_id="session-1", role="user", content="original request"),
+        MessageRow(
+            session_id="session-1",
+            role="user",
+            content="stay backwards compatible",
+            additional_kwargs={GUIDANCE_MARKER: True},
+        ),
+        MessageRow(session_id="session-1", role="assistant", content="completed"),
+    ]
+
+    exchanges = _rebuild_exchanges_from_session_msgs(rows)
+
+    assert len(exchanges) == 1
+    assert exchanges[0].user_text == "original request"
+    assert exchanges[0].assistant_text == "completed"
