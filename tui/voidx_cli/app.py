@@ -764,6 +764,9 @@ class PureTui(
                 self._current_submitted_text = ""
                 self._current_submitted_paste_entries = []
                 self._submit_cancel_requested = False
+                clear_guidance_preview = getattr(dock, "clear_guidance_preview", None)
+                if callable(clear_guidance_preview):
+                    clear_guidance_preview()
                 self.invalidate()
 
             if not keep_running:
