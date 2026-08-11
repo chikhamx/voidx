@@ -323,10 +323,14 @@ async def test_todo_updated_with_agent_id_stays_under_subagent(isolated_dock):
         subagent = next(node for node in assistant.children if node.node_type == "subagent")
         todo = next(node for node in subagent.children if node.node_type == "todo")
 
+        rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(120))
+
         assert isolated_dock.todo_state() is None
         assert not any(node.node_type == "todo" for node in isolated_dock.tree.root.children)
         assert todo.status == "done"
         assert todo.payload["items"] == [{"id": "auth", "content": "inspect auth", "status": "active"}]
+        assert "└─ Todo: 0/1 done · 1 active · 0 pending" in rendered
+        assert "◐ auth: inspect auth" in rendered
 
         await bus.emit(TodoCommitted())
         await bus.drain()

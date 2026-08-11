@@ -195,7 +195,7 @@ def test_transparent_subagent_spaces_ai_message_after_tools():
     assert search_index == message_index + 1
 
 
-def test_todo_nodes_stay_internal():
+def test_only_subagent_todo_nodes_render():
     tree = OutputTree()
     tree.new_node(
         tree.root,
@@ -228,7 +228,10 @@ def test_todo_nodes_stay_internal():
     assert _plain(lines[0]).startswith("visible turn")
     assert lines[1] == ""
     assert any("Reading" in line for line in lines)
-    assert not any("Todo:" in line for line in lines)
+    assert sum("Todo:" in line for line in lines) == 1
+    assert any("Todo: 0/5 done · 1 active · 4 pending" in line for line in lines)
+    assert not any("Todo: 4/6 done" in line for line in lines)
+    assert not any("Todo: 1/1 done" in line for line in lines)
 
 
 def test_regular_subagent_spaces_following_assistant_message():

@@ -457,7 +457,7 @@ class OutputTree:
         Depth 2+ (nested):   dim connector on the first header, spaces after that.
         """
 
-        if node.node_type == "todo":
+        if _is_hidden_todo_snapshot(node):
             self._node_ranges[node.id] = (len(lines), len(lines))
             self._node_prefixes[node.id] = list(prefix_parts)
             return
@@ -777,11 +777,18 @@ def _visible_children(node: OutputNode) -> list[OutputNode]:
 
 
 def _has_visible_output(node: OutputNode) -> bool:
-    if node.node_type == "todo":
+    if _is_hidden_todo_snapshot(node):
         return False
     if is_transparent_container(node):
         return any(_has_visible_output(child) for child in node.children)
     return True
+
+
+def _is_hidden_todo_snapshot(node: OutputNode) -> bool:
+    return (
+        node.node_type == "todo"
+        and (node.parent is None or node.parent.node_type != "subagent")
+    )
 
 
 def _is_clickable(node: OutputNode) -> bool:
