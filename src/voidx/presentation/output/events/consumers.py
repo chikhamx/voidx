@@ -10,6 +10,7 @@ from typing import Any
 from voidx.observability import log_internal_error
 from rich.markup import escape
 
+from voidx.platform.formatting import format_compact_count
 from voidx.presentation.output.agent_display import subagent_display_name
 from voidx.presentation.output.dock import BottomInputDock
 from voidx.presentation.output.dock.status import PERMISSION_REQUEST_STATUS_ID
@@ -239,7 +240,7 @@ class DockEventConsumer:
                     remove=e.remove,
                 )
             case ContextPressureUpdated() as e:
-                return self._dock.set_status(
+                return self._dock.record_status(
                     e.pressure_id,
                     f"Context pressure: converging current turn ({e.level})",
                     e.reason,
@@ -409,16 +410,21 @@ class DockEventConsumer:
                 node = self._agent_parent(e.agent_id)
                 label = "completed" if e.ok else "failed"
                 details: list[str] = []
-                if e.finish_reason:
-                    details.append(e.finish_reason.replace("_", " "))
-                if e.error:
-                    details.append(e.error)
+                if e.calls is not None:
+                    details.append(f"{e.calls} calls")
+                if e.tokens is not None:
+                    details.append(f"{format_compact_count(e.tokens)} tokens")
                 if e.elapsed is not None:
                     details.append(f"{e.elapsed:.1f}s")
                 suffix = f" ({', '.join(details)})" if details else ""
+                status_label = e.error or _subagent_finish_summary(
+                    e.summary,
+                    ok=e.ok,
+                    finish_reason=e.finish_reason,
+                )
                 self._dock.finish_status(
                     f"agent:{e.agent_id}:progress",
-                    label=_subagent_finish_summary(e.summary, ok=e.ok, finish_reason=e.finish_reason),
+                    label=status_label,
                     ok=e.ok,
                     remove=False,
                 )
@@ -621,7 +627,7 @@ def _subagent_finish_summary(summary: str, *, ok: bool, finish_reason: str = "")
             return clean[:69] + "…" if len(clean) > 72 else clean
         return "Completed"
     reason = " ".join(finish_reason.replace("_", " ").split())
-    if reason:
+    if reason and reason != "error":
         text = f"Failed: {reason}"
         return text[:69] + "…" if len(text) > 72 else text
     return "Failed"

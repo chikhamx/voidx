@@ -108,9 +108,9 @@ async def test_todo_updated_sets_pinned_state_until_committed(isolated_dock):
         assert isolated_dock.tree.root.children[-1] is todo_nodes[0]
         assert todo_nodes[0].payload["summary"] == "0/10 done · 0 active · 10 pending"
         assert len(todo_nodes[0].payload["items"]) == 10
-        assert "Todo: 0/10 done" in rendered
-        assert "task 7" in rendered
-        assert "2 more todos" in rendered
+        assert "Todo: 0/10 done" not in rendered
+        assert "task 7" not in rendered
+        assert "2 more todos" not in rendered
         assert "task 8" not in rendered
     finally:
         await bus.stop()

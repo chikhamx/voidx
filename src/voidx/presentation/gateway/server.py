@@ -171,17 +171,35 @@ class GatewayServer:
     async def start(self) -> None:
         if self._server is not None:
             return
-        self._server = await serve(self._handle, self._host, self._port)
-        socket = self._server.sockets[0]
-        self._bound_port = int(socket.getsockname()[1])
+        server: Server | None = None
+        try:
+            await self._session.initialize_provisional_lifecycle()
+            server = await serve(self._handle, self._host, self._port)
+            socket = server.sockets[0]
+            self._bound_port = int(socket.getsockname()[1])
+            self._server = server
+        except BaseException:
+            if server is not None:
+                server.close()
+                with contextlib.suppress(Exception):
+                    await server.wait_closed()
+            self._server = None
+            self._bound_port = None
+            with contextlib.suppress(Exception):
+                await self._session.close_provisional_lifecycle()
+            raise
 
     async def stop(self) -> None:
-        if self._server is None:
+        server = self._server
+        if server is None:
             return
-        self._server.close()
-        await self._server.wait_closed()
-        self._server = None
-        self._bound_port = None
+        try:
+            server.close()
+            await server.wait_closed()
+        finally:
+            self._server = None
+            self._bound_port = None
+            await self._session.close_provisional_lifecycle()
 
     async def _handle(self, websocket: ServerConnection) -> None:
         if not self._authorized(websocket):

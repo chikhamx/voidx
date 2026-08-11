@@ -26,7 +26,7 @@ function safeStorage(): Pick<Storage, "getItem" | "setItem"> {
 
 export function getThemePreference(): ThemePreference {
   const raw = safeStorage()?.getItem(STORAGE_KEY);
-  return raw === "light" || raw === "dark" || raw === "system" ? raw : "system";
+  return raw === "light" || raw === "dark" || raw === "system" ? raw : "dark";
 }
 
 export function systemTheme(): ResolvedTheme {
@@ -59,7 +59,8 @@ export function setThemePreference(pref: ThemePreference): ResolvedTheme {
 
 /** 在浅色/深色间快速切换（写入显式偏好）。 */
 export function toggleTheme(): ResolvedTheme {
-  const current = resolveTheme();
+  const applied = document.documentElement.dataset.theme;
+  const current = applied === "light" || applied === "dark" ? applied : resolveTheme();
   return setThemePreference(current === "dark" ? "light" : "dark");
 }
 

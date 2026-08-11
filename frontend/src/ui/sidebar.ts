@@ -10,6 +10,7 @@ export interface ThreadInfo {
   updated_at?: string;
   message_count?: number;
   runtime_profile?: string;
+  temporary?: boolean;
 }
 
 
@@ -32,11 +33,11 @@ let threadRenameCb: ThreadCallback | null = null;
 let currentThreads: ThreadInfo[] = [];
 let currentProjectName = "Project";
 let currentWorkspacePath = "";
-let newChatBtnBound = false;
+let newChatButton: HTMLElement | null = null;
 let projectExpanded = true;
 let projectHeaderBound = false;
-let chatExpanded = true;
-let chatHeaderBound = false;
+let projectHeaderEl: HTMLElement | null = null;
+let projectSectionHasSessions = false;
 const workspaceVisibleCounts = new Map<string, number>();
 
 const expandedWorkspaces = new Set<string>();
@@ -46,23 +47,39 @@ function _workspaceBasename(workspace: string): string {
   return _normalizeWorkspacePath(workspace).replace(/^.*[\\/]/, "") || workspace;
 }
 
+
+function _renderChatHeaderTitle(workspace: string, title: string): void {
+  const chatTitle = document.querySelector<HTMLElement>("#chat-header-title");
+  if (!chatTitle) return;
+
+  const workspaceEl = document.createElement("span");
+  workspaceEl.className = "vx-chat-header-workspace";
+  workspaceEl.textContent = workspace;
+  const separatorEl = document.createElement("span");
+  separatorEl.className = "vx-chat-header-separator";
+  separatorEl.textContent = " / ";
+  const titleEl = document.createElement("span");
+  titleEl.className = "vx-chat-header-session-title";
+  titleEl.textContent = title;
+  chatTitle.replaceChildren(workspaceEl, separatorEl, titleEl);
+}
+
 function _normalizeWorkspacePath(workspace: string): string {
   return (workspace || "").trim().replace(/[\\/]+$/, "");
 }
 
 function _workspaceGroupKey(workspace: string): string {
   const normalized = _normalizeWorkspacePath(workspace);
-  const label = _workspaceBasename(normalized);
-  if (label === currentProjectName || normalized === currentProjectName) {
-    return currentProjectName;
+  if (!normalized || normalized === ".") {
+    return currentWorkspacePath || currentProjectName;
   }
-  return normalized || label;
+  return normalized;
 }
 
 function _threadWorkspace(thread: ThreadInfo): string {
-  const workspace = (thread.workspace || "").trim();
+  const workspace = (thread.workspace || thread.directory || "").trim();
   if (workspace && workspace !== ".") return _normalizeWorkspacePath(workspace);
-  return currentProjectName || "Project";
+  return currentWorkspacePath || currentProjectName || "Project";
 }
 
 function _sameWorkspace(a: string, b: string): boolean {
@@ -73,18 +90,14 @@ function _isReusableEmptyThread(thread: ThreadInfo): boolean {
   if (thread.status === "running") return false;
   if (typeof thread.message_count === "number") return thread.message_count === 0;
   const title = (thread.title || "").trim();
-  return title === "" || title === "New session" || title === "新对话";
+  return title === "" || title === "New session" || title === "新对话" || title === "未命名会话";
 }
 
 function _isCurrentWorkspace(group: WorkspaceGroup): boolean {
-  return (
-    group.label === currentProjectName ||
-    group.workspace === currentProjectName ||
-    (
-      currentWorkspacePath !== "" &&
-      _workspaceGroupKey(group.workspace) === _workspaceGroupKey(currentWorkspacePath)
-    )
-  );
+  if (currentWorkspacePath) {
+    return _sameWorkspace(group.workspace, currentWorkspacePath);
+  }
+  return group.workspace === currentProjectName || group.label === currentProjectName;
 }
 
 function _visibleCountForWorkspace(workspace: string, total: number): number {
@@ -162,6 +175,22 @@ function _updateDocTitle(activeTitle: string | null): void {
   document.title = "";
 }
 
+function _renderProjectHeadingIcon(): void {
+  const folderSpan = projectHeaderEl?.querySelector<HTMLElement>(".vx-sidebar-row-icon");
+  if (!folderSpan) return;
+  const newIcon = _svgIcon(projectExpanded ? "folder-open" : "folder");
+  newIcon.className = "vx-sidebar-row-icon";
+  folderSpan.replaceWith(newIcon);
+}
+
+function _handleProjectHeadingClick(event: MouseEvent): void {
+  if ((event.target as HTMLElement).closest("#btn-open-workspace")) return;
+  projectExpanded = !projectExpanded;
+  const list = document.querySelector<HTMLElement>("#session-list");
+  if (list) list.hidden = !projectExpanded || !projectSectionHasSessions;
+  _renderProjectHeadingIcon();
+}
+
 export function renderSidebar(
   threads: ThreadInfo[],
   activeThreadId: string | null,
@@ -184,23 +213,15 @@ export function renderSidebar(
   const header = document.querySelector<HTMLElement>(".vx-project-name");
   if (header) header.textContent = currentProjectName;
 
-  const isTemporaryThread = (thread: ThreadInfo): boolean => {
-    if (thread.runtime_profile) return false;
-    if (thread.message_count === 0) return true;
-    const title = (thread.title || "").trim();
-    return title === "" || title === "New session" || title === "新对话" || title === "未命名会话";
-  };
-  const hasExplicitProfile = threads.some((thread) => Boolean(thread.runtime_profile));
-  const temporaryThreads = threads.filter((thread) =>
-    !thread.runtime_profile && (hasExplicitProfile || isTemporaryThread(thread))
+  const temporaryCandidates = threads.filter(
+    (thread) => thread.temporary === true && thread.status === "idle" && _isReusableEmptyThread(thread),
   );
-  const codingThreads = threads.filter((thread) =>
-    thread.runtime_profile === "coding" ||
-    (!hasExplicitProfile && !isTemporaryThread(thread))
-  );
-  const chatThreads = threads.filter((t) => t.runtime_profile === "chat");
-  const loopThreads = threads.filter((t) => t.runtime_profile === "loop");
-  const goalThreads = threads.filter((t) => t.runtime_profile === "goal");
+  const activeTemporaryThread = temporaryCandidates.find((thread) => thread.thread_id === activeThreadId);
+  const temporaryThreads = activeTemporaryThread
+    ? [activeTemporaryThread]
+    : temporaryCandidates.slice(0, 1);
+  const temporaryCandidateIds = new Set(temporaryCandidates.map((thread) => thread.thread_id));
+  const projectThreads = threads.filter((thread) => !temporaryCandidateIds.has(thread.thread_id));
 
   const temporarySection = document.querySelector<HTMLElement>("#temporary-session-section");
   const temporaryList = document.querySelector<HTMLElement>("#temporary-session-list");
@@ -209,65 +230,22 @@ export function renderSidebar(
   }
   if (temporarySection) temporarySection.hidden = temporaryThreads.length === 0;
 
-  const codingSection = document.querySelector<HTMLElement>("#coding-session-section");
-  if (codingSection) codingSection.hidden = codingThreads.length === 0;
-
-  const groups = groupByWorkspace(codingThreads);
+  const groups = groupByWorkspace(projectThreads);
   for (const group of groups) {
     list.append(_createWorkspaceGroup(group, activeThreadId));
   }
 
-  const chatList = document.querySelector<HTMLElement>("#chat-session-list");
-  const chatSection = document.querySelector<HTMLElement>("#chat-session-section");
-  if (chatList) {
-    chatList.replaceChildren(...chatThreads.map((thread) => _createSessionItem(thread, activeThreadId)));
-    chatList.hidden = !chatExpanded;
-  }
-  if (chatSection) chatSection.hidden = chatThreads.length === 0;
+  projectSectionHasSessions = projectThreads.length > 0;
+  list.hidden = !projectExpanded || !projectSectionHasSessions;
 
-  for (const [profile, profileThreads] of [["loop", loopThreads], ["goal", goalThreads]] as const) {
-    const modeList = document.querySelector<HTMLElement>(`#${profile}-session-list`);
-    const modeSection = document.querySelector<HTMLElement>(`#${profile}-session-section`);
-    if (modeList) {
-      modeList.replaceChildren(...profileThreads.map((thread) => _createSessionItem(thread, activeThreadId)));
-    }
-    if (modeSection) modeSection.hidden = profileThreads.length === 0;
-  }
-
-  list.hidden = !projectExpanded || codingThreads.length === 0;
-
-  const chatHeading = document.querySelector<HTMLElement>("#chat-heading");
-  if (chatHeading) {
-    if (!chatHeaderBound) {
-      chatHeading.addEventListener("click", () => {
-        chatExpanded = !chatExpanded;
-        if (chatList) chatList.hidden = !chatExpanded;
-      });
-      chatHeaderBound = true;
-    }
-  }
 
   const sidebarHeader = document.querySelector<HTMLElement>(".vx-project-heading");
   if (sidebarHeader) {
-    const folderSpan = sidebarHeader.querySelector<HTMLElement>(".vx-sidebar-row-icon");
-    if (folderSpan) {
-      const newIcon = _svgIcon(projectExpanded ? "folder-open" : "folder");
-      newIcon.className = "vx-sidebar-row-icon";
-      folderSpan.replaceWith(newIcon);
-    }
+    projectHeaderEl = sidebarHeader;
+    _renderProjectHeadingIcon();
     if (!projectHeaderBound) {
       sidebarHeader.style.cursor = "pointer";
-      sidebarHeader.addEventListener("click", (e: MouseEvent) => {
-        if ((e.target as HTMLElement).closest("#btn-open-workspace")) return;
-        projectExpanded = !projectExpanded;
-        list.hidden = !projectExpanded || codingThreads.length === 0;
-        const fs = sidebarHeader.querySelector<HTMLElement>(".vx-sidebar-row-icon");
-        if (fs) {
-          const newIcon = _svgIcon(projectExpanded ? "folder-open" : "folder");
-          newIcon.className = "vx-sidebar-row-icon";
-          fs.replaceWith(newIcon);
-        }
-      });
+      sidebarHeader.addEventListener("click", _handleProjectHeadingClick);
       projectHeaderBound = true;
     }
   }
@@ -276,14 +254,11 @@ export function renderSidebar(
   const activeTitle = activeThread ? (activeThread.title || activeThread.thread_id.slice(0, 8)) : (activeThreadId ? "New session" : null);
   _updateDocTitle(activeTitle);
 
-  const chatTitle = document.querySelector<HTMLElement>("#chat-header-title");
-  if (chatTitle) {
-    if (activeThreadId && activeTitle) {
-      const wsName = activeThread ? _workspaceBasename(_threadWorkspace(activeThread)) : currentProjectName;
-      chatTitle.innerHTML = `<span class="vx-chat-header-workspace">${wsName}</span><span class="vx-chat-header-separator"> / </span><span class="vx-chat-header-session-title">${activeTitle}</span>`;
-    } else {
-      chatTitle.textContent = "";
-    }
+  if (activeThreadId && activeTitle) {
+    const wsName = activeThread ? _workspaceBasename(_threadWorkspace(activeThread)) : currentProjectName;
+    _renderChatHeaderTitle(wsName, activeTitle);
+  } else {
+    document.querySelector<HTMLElement>("#chat-header-title")?.replaceChildren();
   }
 }
 
@@ -314,8 +289,10 @@ export function findReusableEmptyThread(directory: string, profile?: string): Th
   return (
     currentThreads.find((thread) =>
       _sameWorkspace(_threadWorkspace(thread), workspace) &&
+      thread.temporary === true &&
+      thread.status === "idle" &&
       _isReusableEmptyThread(thread) &&
-      (!profile || thread.runtime_profile === profile)
+      (profile ? thread.runtime_profile === profile : !thread.runtime_profile)
     ) || null
   );
 }
@@ -428,9 +405,6 @@ function _createWorkspaceGroup(group: WorkspaceGroup, activeThreadId: string | n
     folderIcon = newIcon;
 
     if (nextCollapsed) {
-      children.replaceChildren();
-      controlsEl?.remove();
-      controlsEl = null;
       return;
     }
     renderVisibleSessions();
@@ -485,15 +459,20 @@ function _createSessionItem(thread: ThreadInfo, activeThreadId: string | null): 
   item.dataset.threadId = thread.thread_id;
   if (thread.thread_id === activeThreadId) {
     item.classList.add("active");
-    const chatTitle = document.querySelector<HTMLElement>("#chat-header-title");
-    if (chatTitle) {
-      const wsName = _workspaceBasename(_threadWorkspace(thread));
-      const activeTitle = thread.title || thread.thread_id.slice(0, 8);
-      chatTitle.innerHTML = `<span class="vx-chat-header-workspace">${wsName}</span><span class="vx-chat-header-separator"> / </span><span class="vx-chat-header-session-title">${activeTitle}</span>`;
-    }
+    const wsName = _workspaceBasename(_threadWorkspace(thread));
+    const activeTitle = thread.title || thread.thread_id.slice(0, 8);
+    _renderChatHeaderTitle(wsName, activeTitle);
   }
   const iconName = thread.runtime_profile === "chat" ? "message" : "terminal";
-  item.append(_svgIcon(iconName));
+  const icon = _svgIcon(iconName);
+  if (thread.runtime_profile && ["chat", "coding", "goal", "loop"].includes(thread.runtime_profile)) {
+    const profileDot = document.createElement("span");
+    profileDot.className = "vx-session-profile-dot";
+    profileDot.dataset.profile = thread.runtime_profile;
+    profileDot.setAttribute("aria-label", `${thread.runtime_profile} mode`);
+    icon.append(profileDot);
+  }
+  item.append(icon);
 
 
   const title = document.createElement("span");
@@ -519,11 +498,8 @@ function _createSessionItem(thread: ThreadInfo, activeThreadId: string | null): 
     });
     item.classList.add("active");
     const activeTitle = thread.title || thread.thread_id.slice(0, 8);
-    const chatTitle = document.querySelector<HTMLElement>("#chat-header-title");
-    if (chatTitle) {
-      const wsName = _workspaceBasename(_threadWorkspace(thread));
-      chatTitle.innerHTML = `<span class="vx-chat-header-workspace">${wsName}</span><span class="vx-chat-header-separator"> / </span><span class="vx-chat-header-session-title">${activeTitle}</span>`;
-    }
+    const wsName = _workspaceBasename(_threadWorkspace(thread));
+    _renderChatHeaderTitle(wsName, activeTitle);
     _updateDocTitle(activeTitle);
     if (threadSelectCb) {
       threadSelectCb(thread.thread_id);
@@ -619,14 +595,17 @@ export function onThreadSelect(callback: ThreadCallback): void {
   threadSelectCb = callback;
 }
 
+function _handleNewChatClick(): void {
+  newThreadCb?.("");
+}
+
 export function onNewThread(callback: NewThreadCallback): void {
   newThreadCb = callback;
-  if (!newChatBtnBound) {
-    const btn = document.querySelector<HTMLElement>("#btn-new-chat");
-    btn?.addEventListener("click", () => {
-      if (newThreadCb) newThreadCb("");
-    });
-    newChatBtnBound = true;
+  const button = document.querySelector<HTMLElement>("#btn-new-chat");
+  if (button !== newChatButton) {
+    newChatButton?.removeEventListener("click", _handleNewChatClick);
+    button?.addEventListener("click", _handleNewChatClick);
+    newChatButton = button;
   }
 }
 
@@ -649,11 +628,13 @@ export function _resetForTest(): void {
   currentThreads = [];
   currentProjectName = "Project";
   currentWorkspacePath = "";
-  newChatBtnBound = false;
+  newChatButton?.removeEventListener("click", _handleNewChatClick);
+  newChatButton = null;
   projectExpanded = true;
+  projectHeaderEl?.removeEventListener("click", _handleProjectHeadingClick);
+  projectHeaderEl = null;
   projectHeaderBound = false;
-  chatExpanded = true;
-  chatHeaderBound = false;
+  projectSectionHasSessions = false;
   workspaceVisibleCounts.clear();
   expandedWorkspaces.clear();
 }

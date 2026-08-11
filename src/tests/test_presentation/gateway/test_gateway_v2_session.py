@@ -280,11 +280,22 @@ async def test_v2_broadcast_turn_terminal_events():
     await session.broadcast_event(TurnFailed(message="boom"))
     await session.broadcast_event(TurnCancelled())
 
-    methods = [_method(message) for message in client.messages[-3:]]
-    assert methods == ["turn.completed", "turn.failed", "turn.cancelled"]
-    params = [_params(message) for message in client.messages[-3:]]
+    methods = [_method(message) for message in client.messages[-6:]]
+    assert methods == [
+        "turn.completed",
+        "workspace.snapshot",
+        "turn.failed",
+        "workspace.snapshot",
+        "turn.cancelled",
+        "workspace.snapshot",
+    ]
+    terminal_messages = client.messages[-6::2]
+    params = [_params(message) for message in terminal_messages]
     assert [param["thread_id"] for param in params] == ["t1", "t1", "t1"]
     assert params[1]["message"] == "boom"
+    for message in client.messages[-5::2]:
+        snapshot = _params(message)
+        assert snapshot["threads"][0]["thread_id"] == "t1"
 
 
 @pytest.mark.asyncio

@@ -308,6 +308,11 @@
           "title": "Status",
           "type": "string"
         },
+        "temporary": {
+          "default": false,
+          "title": "Temporary",
+          "type": "boolean"
+        },
         "thread_id": {
           "title": "Thread Id",
           "type": "string"
@@ -745,6 +750,16 @@
           "title": "Kind",
           "type": "string"
         },
+        "runtime_profile": {
+          "default": "",
+          "title": "Runtime Profile",
+          "type": "string"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
         "text": {
           "title": "Text",
           "type": "string"
@@ -752,6 +767,11 @@
         "thread_id": {
           "default": "",
           "title": "Thread Id",
+          "type": "string"
+        },
+        "workspace": {
+          "default": "",
+          "title": "Workspace",
           "type": "string"
         }
       },

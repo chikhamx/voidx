@@ -429,7 +429,7 @@ class OutputTree:
 
         # Render children with box-drawing (like depth 1 nodes)
         new_parts = ["  "]
-        for child in node.children:
+        for child in _visible_children(node):
             self._walk_render(child, new_parts, lines, None)
 
         node.collapsed = was_collapsed
@@ -456,9 +456,15 @@ class OutputTree:
         Depth 1 (turns):     no box-drawing connector — header only.
         Depth 2+ (nested):   dim connector on the first header, spaces after that.
         """
+
+        if node.node_type == "todo":
+            self._node_ranges[node.id] = (len(lines), len(lines))
+            self._node_prefixes[node.id] = list(prefix_parts)
+            return
+
         if node is self.root:
             prev = None
-            for child in node.children:
+            for child in _visible_children(node):
                 if _needs_gap_between_root_blocks(prev, child):
                     lines.append("")
                 prev = child
@@ -469,7 +475,7 @@ class OutputTree:
 
         if is_transparent_container(node):
             prev_child = None
-            for child in node.children:
+            for child in _visible_children(node):
                 if _needs_gap_between_agent_blocks(node, prev_child, child):
                     lines.append("")
                 self._walk_render(child, prefix_parts, lines, line_map, click_map)
@@ -522,7 +528,7 @@ class OutputTree:
             # Children get box-drawing, indented under this node
             new_parts = [" "]
             prev_child = None
-            for child in node.children:
+            for child in _visible_children(node):
                 if _needs_gap_between_agent_blocks(node, prev_child, child):
                     lines.append("")
                 self._walk_render(child, new_parts, lines, line_map, click_map)
@@ -537,8 +543,7 @@ class OutputTree:
         connector = self.BOX_LAST if effectively_last else self.BOX_BRANCH
         is_first_sibling = (
             node.parent is not None
-            and bool(node.parent.children)
-            and node.parent.children[0] is node
+            and _visible_children(node.parent)[:1] == [node]
         )
         suppress_connector = (
             node.parent is not None
@@ -548,8 +553,10 @@ class OutputTree:
             )
         )
         prefix = indent + connector
-        aligned_prefix = indent + self.BOX_SPACE if suppress_connector else (
-            prefix if is_first_sibling else indent + self.BOX_SPACE
+        aligned_prefix = (
+            indent + self.BOX_SPACE if suppress_connector else (
+                prefix if is_first_sibling else indent + self.BOX_SPACE
+            )
         )
         inline_tool_result = (
             node.node_type == "tool_result"
@@ -632,7 +639,7 @@ class OutputTree:
         # Children
         new_parts = prefix_parts if inline_tool_result else prefix_parts + [cont_suffix]
         prev_child = None
-        for child in node.children:
+        for child in _visible_children(node):
             if _needs_gap_between_agent_blocks(node, prev_child, child):
                 lines.append("")
             self._walk_render(child, new_parts, lines, line_map, click_map)
@@ -709,11 +716,13 @@ def _is_visible_root_block(node: OutputNode) -> bool:
         return False
     if _is_empty_message_spacer(node):
         return False
-    return bool(node.header or node.body_lines or node.children)
+    return bool(node.header or node.body_lines or _visible_children(node))
 
 
 def _is_visible_root_assistant(node: OutputNode) -> bool:
-    return node.node_type == "assistant" and bool(node.header or node.body_lines or node.children)
+    return node.node_type == "assistant" and bool(
+        node.header or node.body_lines or _visible_children(node)
+    )
 
 
 def _needs_gap_between_agent_blocks(
@@ -763,6 +772,18 @@ def _subtree_ids(node: OutputNode) -> set[str]:
     return ids
 
 
+def _visible_children(node: OutputNode) -> list[OutputNode]:
+    return [child for child in node.children if _has_visible_output(child)]
+
+
+def _has_visible_output(node: OutputNode) -> bool:
+    if node.node_type == "todo":
+        return False
+    if is_transparent_container(node):
+        return any(_has_visible_output(child) for child in node.children)
+    return True
+
+
 def _is_clickable(node: OutputNode) -> bool:
     return node.node_type in {"subagent", "tool_call", "tool_result", "thought", "status"}
 
@@ -771,7 +792,7 @@ def _is_effectively_last_sibling(node: OutputNode) -> bool:
     parent = node.parent
     if parent is None:
         return True
-    siblings = parent.children
+    siblings = _visible_children(parent)
     try:
         index = siblings.index(node)
     except ValueError:

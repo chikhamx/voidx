@@ -15,8 +15,8 @@ describe("theme", () => {
     _resetThemeForTest();
   });
 
-  it("defaults to system preference", () => {
-    expect(getThemePreference()).toBe("system");
+  it("defaults to dark when no preference has been stored", () => {
+    expect(getThemePreference()).toBe("dark");
   });
 
   it("persists explicit preference to localStorage", () => {
@@ -30,9 +30,14 @@ describe("theme", () => {
     expect(resolveTheme("dark")).toBe("dark");
   });
 
-  it("resolves system preference to a concrete theme", () => {
-    const resolved = resolveTheme("system");
-    expect(["light", "dark"]).toContain(resolved);
+  it.each([
+    [true, "dark"],
+    [false, "light"],
+  ] as const)("resolves system dark=%s to %s", (matches, expected) => {
+    const original = window.matchMedia;
+    window.matchMedia = (() => ({ matches })) as typeof window.matchMedia;
+    expect(resolveTheme("system")).toBe(expected);
+    window.matchMedia = original;
   });
 
   it("applyTheme writes data-theme on documentElement", () => {
@@ -59,8 +64,8 @@ describe("theme", () => {
     expect(document.documentElement.dataset.theme).toBe("dark");
   });
 
-  it("ignores invalid stored values", () => {
+  it("falls back to dark for invalid stored values", () => {
     window.localStorage.setItem("voidx.theme", "neon");
-    expect(getThemePreference()).toBe("system");
+    expect(getThemePreference()).toBe("dark");
   });
 });

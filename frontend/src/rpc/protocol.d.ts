@@ -77,6 +77,7 @@ export type ModelName = string;
 export type ModelProvider = string;
 export type RuntimeProfile = string;
 export type Status1 = "idle" | "running" | "waiting_for_user" | "waiting_for_write_lock" | "cancelling" | "failed";
+export type Temporary = boolean;
 export type ThreadId1 = string;
 export type Title1 = string;
 export type UpdatedAt = string;
@@ -123,8 +124,11 @@ export type Risk = {
 } | null;
 export type Tools = PermissionToolDetail[];
 export type Kind4 = "submit";
+export type RuntimeProfile1 = string;
+export type SessionId1 = string;
 export type Text = string;
 export type ThreadId7 = string;
+export type Workspace2 = string;
 export type Kind5 = "cancel";
 export type ThreadId8 = string;
 
@@ -232,6 +236,7 @@ export interface ThreadInfo {
   model_provider?: ModelProvider;
   runtime_profile?: RuntimeProfile;
   status?: Status1;
+  temporary?: Temporary;
   thread_id: ThreadId1;
   title?: Title1;
   updated_at?: UpdatedAt;
@@ -309,8 +314,11 @@ export interface Args {
 }
 export interface UiSubmitCommand {
   kind?: Kind4;
+  runtime_profile?: RuntimeProfile1;
+  session_id?: SessionId1;
   text: Text;
   thread_id?: ThreadId7;
+  workspace?: Workspace2;
   [k: string]: unknown;
 }
 export interface UiCancelCommand {

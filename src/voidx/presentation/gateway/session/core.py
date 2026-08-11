@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
@@ -96,6 +97,7 @@ class GatewaySession(
         self._skills_api_factory = skills_api_factory
         self._skills_api_provider = skills_api_provider
         self._session_repository = session_repository
+        self._owner_id = uuid.uuid4().hex
         self._seq = 0
         self._thread_id_provider: Callable[[], str] | None = None
         self._persisted_sync_task: asyncio.Task[None] | None = None
@@ -121,6 +123,20 @@ class GatewaySession(
         self._register_default_methods()
 
     # ── properties ────────────────────────────────────────────────────────
+
+    async def initialize_provisional_lifecycle(self) -> list[str]:
+        if self._session_repository is None:
+            return []
+        return await self._session_repository.initialize_provisional_owner(self._owner_id)
+
+    async def close_provisional_lifecycle(self) -> int:
+        if self._session_repository is None:
+            return 0
+        return await self._session_repository.close_provisional_owner(self._owner_id)
+
+    @property
+    def owner_id(self) -> str:
+        return self._owner_id
 
     @property
     def workspace_write_lock(self):
@@ -162,21 +178,80 @@ class GatewaySession(
     async def handle_command(self, command: UiCommand) -> bool:
         thread_id = getattr(command, "thread_id", "") or self._active_thread_id or ""
         if command.kind == "submit":
-            try:
-                await self._run_manager.submit(thread_id, command.text)
-            except MethodParamsError as exc:
-                if exc.code != ERR_TURN_IN_PROGRESS:
-                    raise
-                if command.text.lstrip().startswith("/"):
-                    return await self._dispatch_command(command)
-                return await self._dispatch_command({"kind": "guide", "text": command.text, "thread_id": thread_id})
-            self._sync_thread_status(thread_id)
-            return True
+            async with self._run_manager.submission_lock(thread_id):
+                return await self._handle_submit(command, thread_id)
         if command.kind == "cancel":
             await self._run_manager.cancel(thread_id)
             self._sync_thread_status(thread_id)
             return True
         return await self._dispatch_command(command)
+
+
+    async def _handle_submit(self, command: UiCommand, thread_id: str) -> bool:
+        from voidx.presentation.gateway.session.temporary import is_work_submission
+
+        info = self._threads.get(thread_id)
+        if info is not None and info.temporary and not is_work_submission(command.text):
+            return await self._dispatch_command(command)
+        if self._run_manager.actor(thread_id).is_active:
+            if command.text.lstrip().startswith("/"):
+                return await self._dispatch_command(command)
+            return await self._dispatch_command(
+                {"kind": "guide", "text": command.text, "thread_id": thread_id}
+            )
+        staged = False
+        try:
+            staged = await self._stage_temporary_thread(thread_id)
+            if staged:
+                await self.broadcast_snapshot(sync_persisted=False)
+            info = self._threads.get(thread_id)
+            queued_command = command
+            if info is not None:
+                queued_command = command.model_copy(update={
+                    "thread_id": thread_id,
+                    "session_id": thread_id,
+                    "runtime_profile": info.runtime_profile,
+                    "workspace": info.workspace,
+                })
+            await self._run_manager.submit(queued_command)
+        except MethodParamsError as exc:
+            if staged:
+                await self._rollback_temporary_thread(thread_id)
+            if exc.code != ERR_TURN_IN_PROGRESS:
+                raise
+            if command.text.lstrip().startswith("/"):
+                return await self._dispatch_command(command)
+            return await self._dispatch_command(
+                {"kind": "guide", "text": command.text, "thread_id": thread_id}
+            )
+        except BaseException:
+            if staged:
+                await self._rollback_temporary_thread(thread_id)
+            raise
+        self._sync_thread_status(thread_id)
+        await self.broadcast_snapshot(sync_persisted=False)
+        return True
+    async def _stage_temporary_thread(self, thread_id: str) -> bool:
+        info = self._threads.get(thread_id)
+        repository = self._session_repository
+        if info is None or not info.temporary or repository is None:
+            return False
+        await repository.stage_provisional_session(
+            owner_id=self._owner_id,
+            session_id=thread_id,
+            workspace=info.workspace,
+            directory=info.directory,
+            title=info.title or "New session",
+            profile=info.runtime_profile,
+        )
+        return True
+
+    async def _rollback_temporary_thread(self, thread_id: str) -> None:
+        if self._session_repository is not None:
+            await self._session_repository.rollback_provisional_session(thread_id)
+        self._run_manager.complete_turn(thread_id)
+        self._sync_thread_status(thread_id)
+        await self.broadcast_snapshot(sync_persisted=False)
 
     async def _dispatch_command(self, command: UiCommand | dict[str, Any]) -> bool:
         if self._command_handler is None:
@@ -237,7 +312,7 @@ class GatewaySession(
             tid = self._thread_id_provider() or ""
         if not tid:
             return
-        self._apply_turn_terminal_event(event, tid)
+        await self._apply_turn_terminal_event(event, tid)
         if not self._clients:
             return
         adapter = self._adapters.get(tid)
@@ -248,24 +323,37 @@ class GatewaySession(
             self._adapters[tid] = adapter
             self._active_thread_id = tid
         notification = await adapter.handle(event)
-        if notification is None:
-            return
-        await self._broadcast(notification.model_dump_json())
+        if notification is not None:
+            await self._broadcast(notification.model_dump_json())
+        if getattr(event, "kind", "") in {"turn.completed", "turn.failed", "turn.cancelled"}:
+            await self.broadcast_snapshot(sync_persisted=False)
 
-    def _apply_turn_terminal_event(self, event: UiEvent, thread_id: str) -> None:
+    async def _apply_turn_terminal_event(self, event: UiEvent, thread_id: str) -> None:
         kind = getattr(event, "kind", "")
-        if kind in {"turn.completed", "turn.cancelled"}:
+        info = self._threads.get(thread_id)
+        if kind == "turn.completed":
+            if info is not None and info.temporary and self._session_repository is not None:
+                await self._session_repository.promote_provisional_session(thread_id)
+                self._threads[thread_id] = info.model_copy(update={"temporary": False})
             self._run_manager.complete_turn(thread_id)
             self._sync_thread_status(thread_id)
             return
-        if kind == "turn.failed":
-            self._run_manager.fail_turn(thread_id, getattr(event, "message", ""))
+        if kind in {"turn.failed", "turn.cancelled"}:
+            if info is not None and info.temporary:
+                await self._rollback_temporary_thread(thread_id)
+                return
+            if kind == "turn.cancelled":
+                self._run_manager.complete_turn(thread_id)
+            else:
+                self._run_manager.fail_turn(thread_id, getattr(event, "message", ""))
             self._sync_thread_status(thread_id)
 
-    async def broadcast_snapshot(self) -> None:
+    async def broadcast_snapshot(self, *, sync_persisted: bool = True) -> None:
         if not self._clients:
             return
-        await self._broadcast(await self._encode_snapshot())
+        await self._broadcast(
+            await self._encode_snapshot(sync_persisted=sync_persisted)
+        )
 
     # ── v2 JSON-RPC dispatch ──────────────────────────────────────────────
 
@@ -284,6 +372,7 @@ class GatewaySession(
         directory: str = "",
         workspace: str = "",
         runtime_profile: str = "coding",
+        temporary: bool = False,
     ) -> None:
         self._threads[thread_id] = ThreadInfo(
             thread_id=thread_id,
@@ -291,6 +380,7 @@ class GatewaySession(
             workspace=workspace or self._workspace or ".",
             directory=directory,
             runtime_profile=runtime_profile,
+            temporary=temporary,
         )
         self._adapters[thread_id] = UiEventItemAdapter(
             thread_id=thread_id, turn_id="",

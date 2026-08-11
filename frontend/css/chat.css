@@ -410,6 +410,51 @@
 .diff-hunk, .diff-meta { color: var(--vx-diff-hunk); }
 .diff-context { color: var(--vx-text-dim); }
 
+
+/* 上下文压缩是会话历史的一部分，用低干扰分隔线表达而非卡片。 */
+.compaction-divider {
+  align-items: center;
+  color: var(--vx-text-muted);
+  display: flex;
+  font-size: var(--vx-text-sm);
+  gap: var(--vx-space-3);
+  margin: var(--vx-space-5) 0;
+  width: 100%;
+}
+
+.compaction-divider::before,
+.compaction-divider::after {
+  background: var(--vx-border);
+  content: "";
+  flex: 1;
+  height: 1px;
+}
+
+.compaction-divider-detail {
+  color: var(--vx-text-dim);
+}
+
+
+.checkpoint-row {
+  border-top: 1px solid var(--vx-border);
+  color: var(--vx-text-muted);
+  font-size: var(--vx-text-sm);
+  margin: var(--vx-space-3) 0;
+  padding-top: var(--vx-space-2);
+}
+
+.checkpoint-row summary {
+  color: var(--vx-text-secondary);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.checkpoint-row-body {
+  line-height: 1.5;
+  padding: var(--vx-space-2) 0 0 var(--vx-space-4);
+  white-space: pre-wrap;
+}
+
 /* === Subagent 卡片 === */
 .subagent-card {
   background: var(--vx-bg-surface);

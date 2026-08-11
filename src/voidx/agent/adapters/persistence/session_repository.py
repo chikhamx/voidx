@@ -71,9 +71,10 @@ async def create_session(
     title: str = "New session",
     directory: str = "",
     profile: str = "coding",
+    session_id: str | None = None,
 ) -> SessionInfo:
     profile = validate_runtime_profile(profile)
-    sid = _uid()
+    sid = session_id or _uid()
     timestamp = now()
     await execute_commit(
         """INSERT INTO sessions (id, title, workspace, directory, model_provider, model_name, runtime_profile, created_at, updated_at)
@@ -93,15 +94,33 @@ async def ensure_session(
     *,
     profile: str = "coding",
     title: str = "Loop session",
+    root_session_id: str | None = None,
 ) -> None:
-    """Insert a session row if missing so FK references from loop threads hold."""
+    """Insert a session and inherit its provisional root when applicable."""
     profile = validate_runtime_profile(profile)
     timestamp = now()
-    await execute_commit(
-        """INSERT OR IGNORE INTO sessions (id, title, workspace, directory, model_provider, model_name, runtime_profile, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (session_id, title, workspace, workspace, "anthropic", DEFAULT_MODEL, profile, timestamp, timestamp),
-    )
+
+    def _ensure(conn) -> None:
+        conn.execute(
+            """INSERT OR IGNORE INTO sessions (id, title, workspace, directory, model_provider, model_name, runtime_profile, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (session_id, title, workspace, workspace, "anthropic", DEFAULT_MODEL, profile, timestamp, timestamp),
+        )
+        if not root_session_id:
+            return
+        root = conn.execute(
+            "SELECT root_session_id, owner_id FROM provisional_sessions WHERE session_id = ?",
+            (root_session_id,),
+        ).fetchone()
+        if root is not None:
+            conn.execute(
+                """INSERT OR IGNORE INTO provisional_sessions
+                   (session_id, root_session_id, owner_id, created_at)
+                   VALUES (?, ?, ?, ?)""",
+                (session_id, root["root_session_id"], root["owner_id"], timestamp),
+            )
+
+    await write_transaction(_ensure)
 
 
 async def get_session(session_id: str) -> SessionInfo | None:
@@ -122,7 +141,10 @@ async def get_session(session_id: str) -> SessionInfo | None:
 async def list_sessions(limit: int = 50) -> list[SessionInfo]:
     rows = await fetch_all(
         """SELECT *
-           FROM sessions
+           FROM sessions AS s
+           WHERE NOT EXISTS (
+               SELECT 1 FROM provisional_sessions AS p WHERE p.session_id = s.id
+           )
            ORDER BY updated_at DESC
            LIMIT ?""",
         (limit,),
@@ -144,6 +166,9 @@ async def latest_session_for_workspace(workspace: str) -> SessionInfo | None:
         """SELECT *
            FROM sessions
            WHERE workspace = ?
+             AND NOT EXISTS (
+                 SELECT 1 FROM provisional_sessions AS p WHERE p.session_id = sessions.id
+             )
            ORDER BY updated_at DESC
            LIMIT 1""",
         (workspace,),

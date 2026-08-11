@@ -35,17 +35,18 @@ describe("desktop runtime profile creation", () => {
   });
 
 
-  it("creates a temporary session without a preset runtime profile", async () => {
+  it("creates a temporary session with the active runtime profile", async () => {
     const socket = fakeSocket();
     _setSocket(socket);
     await import("../../src/main");
+    uiState.runtimeProfile = "chat";
 
     document.querySelector("#btn-new-chat").click();
 
     const message = socket.send.mock.calls
       .map(([data]) => JSON.parse(data))
       .find((entry) => entry.method === "session.create");
-    expect(message.params).toEqual({ directory: "" });
+    expect(message.params).toEqual({ directory: "", profile: "chat" });
   });
 });
 
@@ -74,6 +75,27 @@ describe("desktop runtime profile switching", () => {
 
     expect(uiState.sessionId).toBe("thread-goal");
     expect(uiState.runtimeProfile).toBe("goal");
+  });
+
+  it("creates the selected profile instead of submitting an unsupported slash command", async () => {
+    const socket = fakeSocket();
+    _setSocket(socket);
+    await import("../../src/main");
+    socket.send.mockClear();
+    uiState.sessionId = "";
+    uiState.runtimeProfile = "coding";
+
+    document.querySelector('[data-profile="goal"]').click();
+
+    const messages = socket.send.mock.calls.map(([data]) => JSON.parse(data));
+    expect(messages).toContainEqual(expect.objectContaining({
+      method: "session.create",
+      params: { directory: "", profile: "goal" },
+    }));
+    expect(messages).not.toContainEqual(expect.objectContaining({
+      method: "session.submit",
+      params: expect.objectContaining({ text: "/goal" }),
+    }));
   });
 });
 

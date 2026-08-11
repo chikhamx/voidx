@@ -21,7 +21,7 @@ class SettingsMethods:
     async def _method_settings_update(self, params: dict) -> dict:
         from voidx.config.enums import PermissionMode
         from voidx.platform.code_ide import CodeIde
-        from voidx.config.models import AiApprovalConfig, Profile
+        from voidx.config.models import AiApprovalConfig, CompactionConfig, Profile
 
         patch = params.get("patch", {})
         if not isinstance(patch, dict):
@@ -90,6 +90,26 @@ class SettingsMethods:
                 settings.set_code_ide(CodeIde(patch["code_ide"]))
             except ValueError as exc:
                 raise MethodParamsError("invalid code_ide") from exc
+
+        compaction_patch = patch.get("compaction")
+        if compaction_patch is not None:
+            if not isinstance(compaction_patch, dict):
+                raise MethodParamsError("invalid compaction")
+            current_compaction = settings.get_compaction_config()
+            try:
+                compaction_config = CompactionConfig(
+                    profile_name=str(compaction_patch.get("profile_name", current_compaction.profile_name) or ""),
+                    reasoning_effort=compaction_patch.get("reasoning_effort", current_compaction.reasoning_effort),
+                    timeout_seconds=compaction_patch.get("timeout_seconds", current_compaction.timeout_seconds),
+                )
+            except Exception as exc:
+                raise MethodParamsError("invalid compaction") from exc
+            if compaction_config.profile_name:
+                profiles = await settings.list_profiles()
+                profile = next((item for item in profiles if item.name == compaction_config.profile_name), None)
+                if profile is None or not profile.api_key:
+                    raise MethodParamsError("invalid compaction profile")
+            settings.set_compaction_config(compaction_config)
 
         # model reconfiguration
         model_patch = patch.get("model")
@@ -229,6 +249,7 @@ class SettingsMethods:
                 }
                 for profile_item in profiles
             ],
+            "compaction": settings.get_compaction_config().model_dump(mode="json"),
             "permissions": {
                 "permission_mode": settings.get_permission_mode().value,
                 "ai_approval": settings.get_ai_approval_config().model_dump(mode="json"),

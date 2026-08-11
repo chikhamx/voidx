@@ -189,6 +189,7 @@ async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, mo
         from voidx.presentation.output.events import TodoItemPayload, TodoUpdated
 
         captured.update(kwargs)
+        kwargs["run_metadata"].update({"calls": 2, "tokens": 1234})
         await kwargs["ui_port"].events.emit(TodoUpdated(
             agent_id=0,
             items=[TodoItemPayload(id="child", content="child work", status="active")],
@@ -223,6 +224,8 @@ async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, mo
         "subagent.finished",
     ]
     assert emitted[-1].summary == "child result"
+    assert emitted[-1].calls == 2
+    assert emitted[-1].tokens == 1234
     assert "agent" not in calls[0]["kwargs"]
     assert "task_intent" not in calls[0]["kwargs"]
     assert calls[0]["kwargs"]["goal_type"] == "feature"

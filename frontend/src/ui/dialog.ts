@@ -164,19 +164,29 @@ export function renderPermissionDetails(request: UiRequest): void {
     return;
   }
   for (const tool of request.tools) {
+    const riskLevel = tool.risk?.level || "default";
     const block = document.createElement("section");
-    block.className = "request-tool-detail";
+    block.className = `request-tool-detail request-tool-risk-${riskLevel}`;
 
+    const heading = document.createElement("div");
+    heading.className = "request-tool-heading";
     const title = document.createElement("div");
     title.className = "request-tool-title";
-    title.textContent = [tool.name, tool.pattern].filter(Boolean).join(" ");
-    block.append(title);
+    title.textContent = tool.name;
+    heading.append(title);
+    if (tool.pattern) {
+      const pattern = document.createElement("div");
+      pattern.className = "request-tool-pattern";
+      pattern.textContent = tool.pattern;
+      heading.append(pattern);
+    }
+    block.append(heading);
 
     if (tool.risk) {
       const risk = document.createElement("div");
-      risk.className = `request-risk request-risk-${tool.risk.level || "unknown"}`;
+      risk.className = `request-risk request-risk-${riskLevel}`;
       const tags = tool.risk.tags?.length ? ` · ${tool.risk.tags.join(", ")}` : "";
-      risk.textContent = `Risk: ${tool.risk.level || "unknown"}${tags}`;
+      risk.textContent = `Risk: ${riskLevel}${tags}`;
       block.append(risk);
       if (tool.risk.reason) {
         const reason = document.createElement("div");
@@ -186,7 +196,7 @@ export function renderPermissionDetails(request: UiRequest): void {
       }
     }
 
-    const isBlockedRisk = tool.risk?.level === "blocked";
+    const isBlockedRisk = riskLevel === "blocked";
     if (!isBlockedRisk && tool.allowed_scopes?.length) {
       const scopes = document.createElement("div");
       scopes.className = "request-approval-scopes";

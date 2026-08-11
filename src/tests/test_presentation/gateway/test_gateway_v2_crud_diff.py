@@ -69,8 +69,8 @@ async def test_v2_session_create_method_registers_thread(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("profile", ["chat", "coding", "loop", "goal"])
-async def test_v2_session_create_persists_all_runtime_profiles(tmp_path, profile):
-    """Every desktop runtime mode is accepted and survives the session round trip."""
+async def test_v2_session_create_keeps_all_runtime_profiles_temporary(tmp_path, profile):
+    """Every desktop runtime mode stays memory-only until its first successful turn."""
     import voidx.persistence.sqlite as store
     from voidx.agent.adapters.persistence.session_repository import get_session
 
@@ -85,8 +85,11 @@ async def test_v2_session_create_persists_all_runtime_profiles(tmp_path, profile
     assert isinstance(result, JsonRpcResult)
     thread_id = result.result["thread_id"]
     assert result.result["runtime_profile"] == profile
-    assert (await get_session(thread_id)).runtime_profile == profile
-    assert next(t for t in session.list_threads() if t.thread_id == thread_id).runtime_profile == profile
+    assert result.result["temporary"] is True
+    assert await get_session(thread_id) is None
+    thread = next(t for t in session.list_threads() if t.thread_id == thread_id)
+    assert thread.runtime_profile == profile
+    assert thread.temporary is True
     store._conn = None
 
 

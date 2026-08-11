@@ -81,13 +81,18 @@ class LangGraphAutonomousInputRouter:
         )
         return True
 
-    async def route_first_message(self, user_input: str, *, thread_id: str) -> bool:
-        """Start a goal/loop from the first message of a goal/loop-profile session.
+    async def _target_session(self, thread_id: str):
+        if thread_id:
+            from voidx.agent.adapters.persistence.session_repository import get_session
 
-        Only the first message (session has no messages yet) is consumed as the
-        prompt. Later messages are handled by `_route_autonomous_followup`.
-        """
-        session = getattr(self._execution, "session", None)
+            target = await get_session(thread_id)
+            if target is not None:
+                return target
+        return getattr(self._execution, "session", None)
+
+    async def route_first_message(self, user_input: str, *, thread_id: str) -> bool:
+        """Route the first Goal/Loop message using the selected target session."""
+        session = await self._target_session(thread_id)
         profile = getattr(session, "runtime_profile", "coding")
         if profile not in {"goal", "loop"}:
             return False
@@ -100,8 +105,12 @@ class LangGraphAutonomousInputRouter:
             if any(not is_guidance_row(row) for row in rows):
                 return False
         if profile == "goal":
-            return await self._handle_goal_first_message(user_input, thread_id=thread_id)
-        return await self._handle_loop_first_message(user_input, thread_id=thread_id)
+            return await self._handle_goal_first_message(
+                user_input, thread_id=thread_id, session=session,
+            )
+        return await self._handle_loop_first_message(
+            user_input, thread_id=thread_id, session=session,
+        )
 
     async def route_followup(self, user_input: str, *, thread_id: str) -> bool:
         """Keep goal/loop host sessions from silently falling back to coding.
@@ -165,20 +174,21 @@ class LangGraphAutonomousInputRouter:
         )
         return True
 
-    async def _run_goal_idle_turn(self, user_input: str, *, parent: str | None) -> None:
-        """Run a conversational goal-profile turn in the host session.
-
-        When no goal is active, the session is conversational: the turn may
-        answer directly, or submit a GoalSpec via goal(op="init") which starts
-        the autonomous loop. The session stays in goal mode after it ends.
-        """
+    async def _run_goal_idle_turn(
+        self,
+        user_input: str,
+        *,
+        parent: str | None,
+        session: Any | None = None,
+    ) -> None:
+        """Run a conversational goal-profile turn in the selected host session."""
         from voidx.agent.application.automation.goal.goal_idle import GoalIdleTurnService
         from voidx.agent.domain.thread import AgentThread
 
         goal_service = self._goal_service
         if goal_service is None:
             return
-        session = getattr(self._execution, "session", None)
+        session = session or getattr(self._execution, "session", None)
         workspace = (
             getattr(session, "workspace", None)
             or getattr(session, "directory", None)
@@ -198,20 +208,21 @@ class LangGraphAutonomousInputRouter:
                 f"attempt {status.attempt_count}/{status.max_attempts}[/dim]"
             )
 
-    async def _run_loop_idle_turn(self, user_input: str, *, parent: str | None) -> None:
-        """Run a conversational loop-profile turn in the host session.
-
-        When no loop is active, the session is conversational: the turn may
-        answer directly, or submit a LoopSpec via loop(op="init") which starts
-        the autonomous loop. The session stays in loop mode after it ends.
-        """
+    async def _run_loop_idle_turn(
+        self,
+        user_input: str,
+        *,
+        parent: str | None,
+        session: Any | None = None,
+    ) -> None:
+        """Run a conversational loop-profile turn in the selected host session."""
         from voidx.agent.application.automation.loop.loop_idle import LoopIdleTurnService
         from voidx.agent.domain.thread import AgentThread
 
         loop_service = self._loop_service
         if loop_service is None:
             return
-        session = getattr(self._execution, "session", None)
+        session = session or getattr(self._execution, "session", None)
         workspace = (
             getattr(session, "workspace", None)
             or getattr(session, "directory", None)
@@ -232,19 +243,12 @@ class LangGraphAutonomousInputRouter:
             )
 
 
-    async def _persist_first_message(self, user_input: str) -> None:
-        """Save the consumed first message to the host session.
-
-        The autonomous intake/start turns run with persist_user_input=False, so
-        this records the prompt in the host session and bumps message_count to
-        keep the first-message dispatch from firing again.
-        """
-        session = getattr(self._execution, "session", None)
+    async def _persist_first_message(self, user_input: str, *, session: Any) -> None:
+        """Save a consumed first message to its selected host session."""
         if session is None:
             return
         from datetime import datetime, timezone
-        from voidx.agent.adapters.persistence.session_repository import save_message
-        from voidx.agent.adapters.persistence.session_repository import MessageRow
+        from voidx.agent.adapters.persistence.session_repository import MessageRow, save_message
 
         await save_message(
             MessageRow(
@@ -257,36 +261,36 @@ class LangGraphAutonomousInputRouter:
         )
         session.message_count = (getattr(session, "message_count", 0) or 0) + 1
 
-    async def _handle_loop_first_message(self, user_input: str, *, thread_id: str) -> bool:
-        """Run the first message as an in-session loop idle turn.
-
-        The turn may start a loop via loop(op="init") or simply converse; either
-        way the session stays in loop mode. A persistent user-input record keeps
-        the first message in the host session history.
-        """
+    async def _handle_loop_first_message(
+        self,
+        user_input: str,
+        *,
+        thread_id: str,
+        session: Any,
+    ) -> bool:
         service = self._loop_service
         if service is None:
             return False
-        parent = thread_id or self._execution.session_id or ""
+        parent = thread_id or getattr(session, "id", "") or self._execution.session_id or ""
         if not parent:
             return False
-        await self._run_loop_idle_turn(user_input, parent=parent)
-        await self._persist_first_message(user_input)
+        await self._run_loop_idle_turn(user_input, parent=parent, session=session)
+        await self._persist_first_message(user_input, session=session)
         return True
 
-    async def _handle_goal_first_message(self, user_input: str, *, thread_id: str) -> bool:
-        """Run the first message as an in-session goal idle turn.
-
-        The turn may start a goal via goal(op="init") or simply converse; either
-        way the session stays in goal mode. A persistent user-input record keeps
-        the first message in the host session history.
-        """
+    async def _handle_goal_first_message(
+        self,
+        user_input: str,
+        *,
+        thread_id: str,
+        session: Any,
+    ) -> bool:
         goal_service = self._goal_service
         if goal_service is None:
             return False
-        parent = thread_id or self._execution.session_id or ""
+        parent = thread_id or getattr(session, "id", "") or self._execution.session_id or ""
         if not parent:
             return False
-        await self._run_goal_idle_turn(user_input, parent=parent)
-        await self._persist_first_message(user_input)
+        await self._run_goal_idle_turn(user_input, parent=parent, session=session)
+        await self._persist_first_message(user_input, session=session)
         return True

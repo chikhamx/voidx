@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "scripts": {
+    "test": ".tmp-knowledgebase-web/node_modules/.bin/vitest --root .tmp-knowledgebase-web",
+    "build": ".tmp-knowledgebase-web/node_modules/.bin/tsc -b .tmp-knowledgebase-web/tsconfig.json && .tmp-knowledgebase-web/node_modules/.bin/vite build .tmp-knowledgebase-web"
+  }
+}

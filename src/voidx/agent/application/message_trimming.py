@@ -1,12 +1,14 @@
-"""Sliding-window lazy trimming of superseded file tool messages.
+"""Token-bounded lazy trimming of superseded file tool messages.
 
 Applied at compile_messages stage; does not mutate state messages.
 """
 
 from __future__ import annotations
 
+import json
 import re
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
@@ -200,8 +202,11 @@ class EditRecord:
 
 
 # ---------------------------------------------------------------------------
-# Window bounds
+# Rewrite bounds
 # ---------------------------------------------------------------------------
+
+DEFAULT_CACHE_INVALIDATION_TOKEN_BUDGET = 4096
+
 
 def _message_line_count(msg: BaseMessage) -> int:
     content = getattr(msg, "content", "")
@@ -220,30 +225,64 @@ def _message_line_count(msg: BaseMessage) -> int:
     return 0
 
 
-def _compute_window_bounds(messages: list[BaseMessage], window_lines: int) -> int:
-    """Return start index of the window. AIMessage+ToolMessage pairs are kept together."""
+def _compute_line_window_start(messages: list[BaseMessage], window_lines: int) -> int:
+    """Return start index of the legacy line window without splitting tool pairs."""
     total = 0
     boundary = len(messages)
     for i in range(len(messages) - 1, -1, -1):
-        msg = messages[i]
-        total += _message_line_count(msg)
-        # If this is an AIMessage with tool_calls, extend to include all following
-        # ToolMessages that belong to it (they come immediately after).
-        if isinstance(msg, AIMessage) and msg.tool_calls:
-            # Already included the AIMessage; its ToolMessages are the following
-            # messages which we've already counted (we scan right-to-left).
-            pass
+        total += _message_line_count(messages[i])
         if total >= window_lines:
             boundary = i
-            # Extend forward to include any ToolMessages preceding this AIMessage
-            # that belong to a prior AIMessage — actually we want to ensure we don't
-            # split an AIMessage from its ToolMessages. Since ToolMessages follow
-            # their AIMessage, scanning right-to-left we encounter ToolMessages first.
-            # If boundary lands on a ToolMessage, move back to its AIMessage.
             while boundary > 0 and isinstance(messages[boundary], ToolMessage):
                 boundary -= 1
             return boundary
     return 0
+
+
+def _fallback_message_token_estimate(message: BaseMessage) -> int:
+    payload = {
+        "type": getattr(message, "type", ""),
+        "content": getattr(message, "content", ""),
+        "tool_calls": getattr(message, "tool_calls", None),
+    }
+    serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
+    return max(1, (len(serialized.encode("utf-8")) + 3) // 4)
+
+
+def _tool_group_end(messages: list[BaseMessage], ai_index: int) -> int:
+    call_ids = set(_collect_tool_call_info(messages[ai_index]))
+    end = ai_index
+    for index in range(ai_index + 1, len(messages)):
+        message = messages[index]
+        if not isinstance(message, ToolMessage):
+            break
+        if str(message.tool_call_id) not in call_ids:
+            break
+        end = index
+    return end
+
+
+def _message_token_prefix(
+    messages: list[BaseMessage],
+    token_estimator: Callable[[BaseMessage], int],
+) -> list[int]:
+    prefix = [0]
+    for message in messages:
+        try:
+            tokens = max(int(token_estimator(message)), 0)
+        except Exception:
+            tokens = _fallback_message_token_estimate(message)
+        prefix.append(prefix[-1] + tokens)
+    return prefix
+
+
+def _span_within_token_budget(
+    token_prefix: list[int],
+    start: int,
+    end: int,
+    token_budget: int,
+) -> bool:
+    return token_prefix[end + 1] - token_prefix[start] <= token_budget
 
 
 # ---------------------------------------------------------------------------
@@ -294,19 +333,41 @@ def _collect_tool_call_info(ai: AIMessage) -> dict[str, dict]:
 def trim_superseded_file_tools(
     messages: list[BaseMessage],
     *,
-    window_lines: int = 2000,
+    token_budget: int = DEFAULT_CACHE_INVALIDATION_TOKEN_BUDGET,
+    token_estimator: Callable[[BaseMessage], int] | None = None,
+    window_lines: int | None = None,
 ) -> list[BaseMessage]:
-    """Trim superseded read/edit tool messages within a sliding window.
+    """Trim superseded file tools within a bounded rewrite span.
 
     Rule 1: delete old read tool_call + ToolMessage when covered ≥60% by
             subsequent retained reads of the same file.
     Rule 2: summarize edit diff when covered ≥60% by subsequent retained reads.
+    The default token budget bounds the span from the rewritten tool group through
+    the triggering tool group, limiting how much cached history can be invalidated.
+    Explicit ``window_lines`` remains available for compatibility and focused tests.
     Does not mutate input; returns a new list.
     """
     if not messages:
         return list(messages)
 
-    window_start = _compute_window_bounds(messages, window_lines)
+    token_prefix: list[int] | None = None
+    if window_lines is not None:
+        window_start = _compute_line_window_start(messages, window_lines)
+    else:
+        window_start = 0
+        estimator = token_estimator or _fallback_message_token_estimate
+        token_prefix = _message_token_prefix(messages, estimator)
+    bounded_token_budget = max(token_budget, 0)
+
+    def rewrite_allowed(start: int, trigger: int) -> bool:
+        if token_prefix is None:
+            return True
+        return _span_within_token_budget(
+            token_prefix,
+            start,
+            _tool_group_end(messages, trigger),
+            bounded_token_budget,
+        )
 
     # Build pairing index within window.
     # tool_call_info: id → {ai_index, name, args}
@@ -385,7 +446,10 @@ def trim_superseded_file_tools(
                     if older.msg_index >= i:
                         continue
                     union = retained_union(file_path, after_msg_index=older.msg_index, exclude_id=older.tool_call_id)
-                    if coverage_ratio(older.ranges, union) >= COVERAGE_THRESHOLD:
+                    if (
+                        rewrite_allowed(older.msg_index, i)
+                        and coverage_ratio(older.ranges, union) >= COVERAGE_THRESHOLD
+                    ):
                         older.deleted = True
                         read_to_delete.add(older.tool_call_id)
 
@@ -396,7 +460,10 @@ def trim_superseded_file_tools(
                     if edit_rec.msg_index >= i:
                         continue
                     union = retained_union(file_path, after_msg_index=edit_rec.msg_index)
-                    if coverage_ratio(edit_rec.hunk_ranges, union) >= COVERAGE_THRESHOLD:
+                    if (
+                        rewrite_allowed(edit_rec.msg_index, i)
+                        and coverage_ratio(edit_rec.hunk_ranges, union) >= COVERAGE_THRESHOLD
+                    ):
                         edit_rec.summarized = True
                         edit_to_summarize.add(edit_rec.tool_call_id)
 
@@ -415,7 +482,7 @@ def trim_superseded_file_tools(
                         if older_read.deleted or older_read.msg_index >= i:
                             continue
                         remapped = remap_ranges(older_read.ranges, spans)
-                        if not remapped:
+                        if not remapped and rewrite_allowed(older_read.msg_index, i):
                             older_read.deleted = True
                             read_to_delete.add(older_read.tool_call_id)
                         else:

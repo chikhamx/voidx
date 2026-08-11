@@ -202,6 +202,49 @@ async def test_autonomous_first_message_only_fires_once() -> None:
     assert len(service._goal_service.started) == 1
 
 
+
+
+@pytest.mark.asyncio
+async def test_target_provisional_goal_profile_overrides_host_coding_session(monkeypatch) -> None:
+    from voidx.agent.adapters.persistence.session_repository import SessionInfo
+
+    service = _service("coding")
+    service._runtime.spec = {
+        "objective": "do the target work",
+        "acceptance_condition": "target work is done",
+        "achievement_method": "",
+    }
+    target = SessionInfo(
+        id="temporary-goal",
+        workspace="/target",
+        runtime_profile="goal",
+        message_count=0,
+    )
+    saved: list[str] = []
+
+    async def fake_get_session(session_id: str):
+        assert session_id == target.id
+        return target
+
+    async def fake_save_message(row):
+        saved.append(row.session_id)
+        return 1
+
+    monkeypatch.setattr(
+        "voidx.agent.adapters.persistence.session_repository.get_session",
+        fake_get_session,
+    )
+    monkeypatch.setattr(
+        "voidx.agent.adapters.persistence.session_repository.save_message",
+        fake_save_message,
+    )
+
+    handled = await service.route_first_message("do the target work", thread_id=target.id)
+
+    assert handled is True
+    assert service._goal_service.started[0][0] == target.id
+    assert saved == [target.id]
+    assert target.message_count == 1
 @pytest.mark.asyncio
 async def test_autonomous_first_message_coding_profile_falls_through() -> None:
     service = _service("coding")

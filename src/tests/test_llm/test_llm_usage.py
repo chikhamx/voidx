@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from voidx.llm.usage import (
     UsageStats,
     estimate_context_tokens,
     estimate_context_tokens_with_tools,
+    estimate_message_tokens,
     extract_token_usage,
     format_cache_hit_rate,
     format_token_count,
@@ -204,6 +206,116 @@ def test_estimate_context_tokens_ignores_image_payload_bytes():
 
     assert tokens < 20
 
+
+
+def test_estimate_message_tokens_includes_raw_additional_kwargs_tool_calls():
+    message = AIMessage(
+        content="",
+        tool_calls=[],
+        additional_kwargs={
+            "tool_calls": [{
+                "id": "edit-1",
+                "name": "replace",
+                "args": {"file_path": "f.py", "new_string": " token" * 5000},
+            }],
+        },
+    )
+
+    assert estimate_message_tokens(message, "test-model") > 4096
+
+
+def test_estimate_message_tokens_includes_content_tool_use_blocks():
+    message = AIMessage(
+        content=[{
+            "type": "tool_use",
+            "id": "edit-1",
+            "name": "replace",
+            "input": {"file_path": "f.py", "new_string": " token" * 5000},
+        }],
+        tool_calls=[],
+    )
+
+    assert estimate_message_tokens(message, "test-model") > 4096
+
+
+
+def test_estimate_message_tokens_uses_larger_raw_args_for_duplicate_id():
+    message = AIMessage(
+        content="",
+        tool_calls=[{
+            "id": "edit-1",
+            "name": "replace",
+            "args": {},
+            "type": "tool_call",
+        }],
+        additional_kwargs={
+            "tool_calls": [{
+                "id": "edit-1",
+                "type": "function",
+                "function": {
+                    "name": "replace",
+                    "arguments": json.dumps({
+                        "file_path": "f.py",
+                        "new_string": " token" * 5000,
+                    }),
+                },
+            }],
+        },
+    )
+
+    assert estimate_message_tokens(message, "test-model") > 4096
+
+
+def test_estimate_message_tokens_uses_larger_content_args_for_duplicate_id():
+    message = AIMessage(
+        content=[{
+            "type": "tool_use",
+            "id": "edit-1",
+            "name": "replace",
+            "input": {
+                "file_path": "f.py",
+                "new_string": " token" * 5000,
+            },
+        }],
+        tool_calls=[{
+            "id": "edit-1",
+            "name": "replace",
+            "args": {},
+            "type": "tool_call",
+        }],
+    )
+
+    assert estimate_message_tokens(message, "test-model") > 4096
+
+def test_estimate_message_tokens_deduplicates_tool_call_representations_by_id():
+    canonical = {
+        "id": "edit-1",
+        "name": "replace",
+        "args": {"file_path": "f.py", "new_string": "replacement"},
+        "type": "tool_call",
+    }
+    canonical_only = AIMessage(content="", tool_calls=[canonical])
+    duplicated = AIMessage(
+        content=[{
+            "type": "tool_use",
+            "id": "edit-1",
+            "name": "replace",
+            "input": {"file_path": "f.py", "new_string": "replacement"},
+        }],
+        tool_calls=[canonical],
+        additional_kwargs={
+            "tool_calls": [{
+                "id": "edit-1",
+                "name": "replace",
+                "args": {"file_path": "f.py", "new_string": "replacement"},
+            }],
+        },
+    )
+
+    assert estimate_message_tokens(duplicated, "test-model") == estimate_message_tokens(
+        canonical_only,
+        "test-model",
+    )
 
 def test_estimate_context_tokens_with_tools_includes_tool_schema():
     messages = [HumanMessage(content="hello")]

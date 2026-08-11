@@ -55,6 +55,7 @@ export interface StatusItemData {
   label?: string;
   detail?: string;
   ok?: boolean;
+  outcome?: string;
 }
 
 export interface TodoItem {

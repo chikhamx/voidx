@@ -319,7 +319,14 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
 
     async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
         captured["messages"] = messages
-        return AIMessage(content="done")
+        return AIMessage(
+            content="done",
+            usage_metadata={
+                "input_tokens": 1_200,
+                "output_tokens": 345,
+                "total_tokens": 1_545,
+            },
+        )
 
     monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
     monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
@@ -329,6 +336,7 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
         workflow_start="tdd",
     )
 
+    run_metadata: dict[str, object] = {}
     output = await subagent_module.run_subagent(
         get_agent("voidx"),
         "Implement the feature",
@@ -346,10 +354,13 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
             schema_name="implementation_result",
         ),
         workflow_runtime_context=workflow_context,
+        run_metadata=run_metadata,
         debug=False,
     )
 
     assert output == "done"
+    assert run_metadata["calls"] == 1
+    assert run_metadata["tokens"] == 1_545
     system_prompt = next(
         message.content
         for message in captured["messages"]

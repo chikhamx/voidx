@@ -42,6 +42,20 @@
 .composer textarea:focus { outline: none; }
 .composer textarea::placeholder { color: var(--vx-text-dim); }
 
+
+.composer textarea:disabled { cursor: wait; opacity: 0.65; }
+
+.vx-runtime-status-line {
+  color: var(--vx-text-muted);
+  font-size: var(--vx-text-sm);
+  line-height: 1.4;
+  min-height: 18px;
+  overflow: hidden;
+  padding: 0 var(--vx-space-4) var(--vx-space-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* === 操作行 === */
 .vx-composer-actions {
   align-items: center;
@@ -541,4 +555,8 @@
   align-items: center;
   justify-content: center;
   padding: 0;
+}
+
+@media (max-width: 720px) {
+  .vx-permission-selector-container { display: none; }
 }

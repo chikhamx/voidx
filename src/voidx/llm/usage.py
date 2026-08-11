@@ -270,12 +270,9 @@ def estimate_message_tokens(message: object, model: str = "") -> int:
 
 
 def format_token_count(value: int | None) -> str:
-    value = max(int(value or 0), 0)
-    if value >= 1_000_000:
-        return _format_scaled(value, 1_000_000, "m")
-    if value >= 1_000:
-        return _format_scaled(value, 1_000, "k")
-    return str(value)
+    from voidx.platform.formatting import format_compact_count
+
+    return format_compact_count(value)
 
 
 def format_cache_hit_rate(stats: UsageStats) -> str:
@@ -287,10 +284,6 @@ def format_cache_hit_rate(stats: UsageStats) -> str:
     return f"{prefix}{percent}%"
 
 
-def _format_scaled(value: int, divisor: int, suffix: str) -> str:
-    if value % divisor == 0:
-        return f"{value // divisor}{suffix}"
-    return f"{value / divisor:.1f}{suffix}"
 
 
 def _usage_sources(message: object) -> list[dict[str, Any]]:
@@ -362,15 +355,108 @@ def _common_prefix_context(
 def _message_for_count(message: object) -> dict[str, str]:
     role = getattr(message, "type", "") or message.__class__.__name__.removesuffix("Message").lower()
     parts = [str(_message_content_for_count(message))]
-    tool_calls = getattr(message, "tool_calls", None)
+    tool_calls = _tool_calls_for_count(message)
     if tool_calls:
-        parts.append(str(tool_calls))
+        parts.append(json.dumps(tool_calls, ensure_ascii=False, sort_keys=True, default=str))
     return {"role": role, "content": "\n".join(parts)}
+
+
+def _tool_calls_for_count(message: object) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    indexes_by_id: dict[str, int] = {}
+
+    def add(call: object) -> None:
+        if not isinstance(call, dict):
+            return
+        call_id = str(call.get("id") or "")
+        function = call.get("function")
+        function = function if isinstance(function, dict) else {}
+        name = call.get("name") or function.get("name") or ""
+        args = call.get("args")
+        if args is None:
+            args = call.get("input")
+        if args is None:
+            args = function.get("arguments")
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except (TypeError, ValueError):
+                pass
+        candidate = {"id": call_id, "name": name, "args": args or {}}
+        if call_id and call_id in indexes_by_id:
+            index = indexes_by_id[call_id]
+            normalized[index] = _merge_tool_call_for_count(
+                normalized[index],
+                candidate,
+            )
+            return
+        if call_id:
+            indexes_by_id[call_id] = len(normalized)
+        normalized.append(candidate)
+
+    canonical = (
+        message.get("tool_calls")
+        if isinstance(message, dict)
+        else getattr(message, "tool_calls", None)
+    )
+    if isinstance(canonical, list):
+        for call in canonical:
+            add(call)
+
+    additional_kwargs = (
+        message.get("additional_kwargs", {})
+        if isinstance(message, dict)
+        else getattr(message, "additional_kwargs", {})
+    )
+    if isinstance(additional_kwargs, dict):
+        raw_calls = additional_kwargs.get("tool_calls")
+        if isinstance(raw_calls, list):
+            for call in raw_calls:
+                add(call)
+
+    content = message.get("content", "") if isinstance(message, dict) else getattr(message, "content", "")
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                add(block)
+
+    return normalized
+
+
+def _merge_tool_call_for_count(
+    existing: dict[str, Any],
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "id": existing["id"],
+        "name": _larger_value_for_count(existing["name"], candidate["name"]),
+        "args": _merge_values_for_count(existing["args"], candidate["args"]),
+    }
+
+
+def _merge_values_for_count(existing: Any, candidate: Any) -> Any:
+    if isinstance(existing, dict) and isinstance(candidate, dict):
+        merged = dict(existing)
+        for key, value in candidate.items():
+            if key in merged:
+                merged[key] = _merge_values_for_count(merged[key], value)
+            else:
+                merged[key] = value
+        return merged
+    if existing == candidate:
+        return existing
+    return _larger_value_for_count(existing, candidate)
+
+
+def _larger_value_for_count(existing: Any, candidate: Any) -> Any:
+    existing_size = len(json.dumps(existing, ensure_ascii=False, sort_keys=True, default=str))
+    candidate_size = len(json.dumps(candidate, ensure_ascii=False, sort_keys=True, default=str))
+    return candidate if candidate_size > existing_size else existing
 
 
 def _message_content_for_count(message: object) -> object:
     if isinstance(message, dict):
-        return message.get("content", "")
+        return _content_for_count(message.get("content", ""))
     return _content_for_count(getattr(message, "content", str(message)))
 
 
@@ -387,7 +473,7 @@ def _content_for_count(content: object) -> str:
                     parts.append(str(item.get("text", "")))
                 elif item.get("type") in {"image", "image_url"}:
                     parts.append("[image]")
-                else:
+                elif item.get("type") != "tool_use":
                     parts.append(str(item))
             else:
                 parts.append(str(item))

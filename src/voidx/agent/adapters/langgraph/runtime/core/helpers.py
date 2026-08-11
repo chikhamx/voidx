@@ -2,6 +2,8 @@ from __future__ import annotations
 import asyncio
 from enum import Enum
 
+import httpx
+
 from voidx.agent.application.agents import AgentDef
 from voidx.agent.application.runtime_context import COMPACTION_GUIDE_MARKER, InteractionMode
 from voidx.agent.domain.task.intent import PersonaName
@@ -64,10 +66,10 @@ def _classify_llm_error(exc: Exception) -> LLMErrorKind:
         return LLMErrorKind.UNKNOWN
 
     # 2. No status_code — check exception type
-    if isinstance(exc, asyncio.TimeoutError):
+    if isinstance(exc, (asyncio.TimeoutError, httpx.TimeoutException)):
         return LLMErrorKind.TIMEOUT
     if (
-        isinstance(exc, ConnectionError)
+        isinstance(exc, (ConnectionError, httpx.TransportError))
         or "connection" in type(exc).__name__.lower()
         or "upstream http/2 stream failed" in str(exc).lower()
     ):

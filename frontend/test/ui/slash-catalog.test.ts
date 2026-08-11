@@ -34,6 +34,14 @@ describe("setCommandCatalog", () => {
     expect(matched.map((c) => c.command)).toEqual(["/mcp new", "/mcp del"]);
   });
 
+  it("exposes all runtime profiles as no-argument mode switches", () => {
+    _resetCommandCatalogForTest();
+    for (const command of ["/chat", "/coding", "/goal", "/loop"]) {
+      const entry = matchSlashCommands(command).find((item) => item.command === command);
+      expect(entry?.requiresArgs).toBe(false);
+    }
+  });
+
   it("falls back to builtin catalog after reset", () => {
     setCommandCatalog(REMOTE);
     _resetCommandCatalogForTest();

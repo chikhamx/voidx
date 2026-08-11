@@ -103,11 +103,47 @@ function updateStatusElapsed(el: HTMLElement): void {
   if (elapsedEl) elapsedEl.textContent = formatElapsedSeconds(seconds);
 }
 
+export function appendCompactionDivider(itemId: string, data: StatusItemData): void {
+  const transcriptEl = getTranscriptElement();
+  if (!transcriptEl) return;
+  const existing = transcriptEl.querySelector<HTMLElement>(`[data-compaction-item-id="${itemId}"]`);
+  if (existing) return;
+
+  const divider = document.createElement("div");
+  divider.className = "compaction-divider";
+  divider.dataset.compactionItemId = itemId;
+  divider.setAttribute("role", "note");
+
+  const label = document.createElement("span");
+  label.className = "compaction-divider-label";
+  label.textContent = "上下文已压缩";
+  divider.append(label);
+
+  if (data.detail) {
+    const detail = document.createElement("span");
+    detail.className = "compaction-divider-detail";
+    detail.textContent = data.detail;
+    divider.append(detail);
+  }
+
+  transcriptEl.append(divider);
+}
+
 export function handleStatusItem(method: string, itemId: string, data: StatusItemData): void {
   if (itemId === "turn:analyzing" || data.status_id === "turn:analyzing") {
     return;
   }
   const transcriptEl = getTranscriptElement();
+  if (method === "item.completed" && data.outcome === "compacted") {
+    const timer = statusElapsedTimers.get(itemId);
+    if (timer) {
+      clearInterval(timer);
+      statusElapsedTimers.delete(itemId);
+    }
+    document.querySelector<HTMLElement>(`[data-status-item-id="${itemId}"]`)?.remove();
+    appendCompactionDivider(itemId, data);
+    return;
+  }
   let el = document.querySelector<HTMLElement>(`[data-status-item-id="${itemId}"]`);
   if (method === "item.started") {
     if (!el) {

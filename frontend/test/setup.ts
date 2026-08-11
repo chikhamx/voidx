@@ -58,24 +58,18 @@ document.body.innerHTML = `
           <div class="vx-sidebar-heading"><span>临时会话</span></div>
           <div class="vx-session-list" id="temporary-session-list"></div>
         </div>
-        <div class="vx-sidebar-section" id="coding-session-section">
+        <nav class="vx-sidebar-mode-switcher" id="runtime-profile-switcher" aria-label="运行模式">
+          <button type="button" class="vx-sidebar-mode-entry" data-profile="chat" aria-pressed="false"><span class="vx-mode-dot"></span><span>聊天</span></button>
+          <button type="button" class="vx-sidebar-mode-entry" data-profile="coding" aria-pressed="true"><span class="vx-mode-dot"></span><span>编码</span></button>
+          <button type="button" class="vx-sidebar-mode-entry" data-profile="goal" aria-pressed="false"><span class="vx-mode-dot"></span><span>目标</span></button>
+          <button type="button" class="vx-sidebar-mode-entry" data-profile="loop" aria-pressed="false"><span class="vx-mode-dot"></span><span>循环</span></button>
+        </nav>
+        <div class="vx-sidebar-section vx-project-session-section" id="project-session-section">
           <div class="vx-sidebar-heading vx-project-heading">
             <span class="vx-sidebar-row-icon"><svg viewBox="0 0 20 20" aria-hidden="true"></svg></span><span class="vx-project-heading-label">项目</span>
             <button type="button" class="vx-project-add" id="btn-open-workspace"></button>
           </div>
           <div class="vx-session-list" id="session-list"></div>
-        </div>
-        <div class="vx-sidebar-section" id="loop-session-section" hidden>
-          <div class="vx-sidebar-heading"><span>循环模式</span></div>
-          <div class="vx-session-list" id="loop-session-list"></div>
-        </div>
-        <div class="vx-sidebar-section" id="goal-session-section" hidden>
-          <div class="vx-sidebar-heading"><span>目标模式</span></div>
-          <div class="vx-session-list" id="goal-session-list"></div>
-        </div>
-        <div class="vx-sidebar-section" id="chat-session-section" hidden>
-          <div class="vx-sidebar-heading vx-chat-heading" id="chat-heading"><span>聊天模式 (Chat)</span></div>
-          <div class="vx-session-list" id="chat-session-list"></div>
         </div>
         <div class="vx-sidebar-footer">
           <button type="button" class="vx-nav-item" id="btn-settings">设置</button>
@@ -103,8 +97,10 @@ document.body.innerHTML = `
             <label class="vx-select-label" for="model-select">
               <select id="model-select" aria-label="Model"></select>
             </label>
+            <div id="model-dropdown" hidden></div>
             <button type="submit" class="btn-send" id="btn-send" aria-label="Send"><svg class="vx-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></button>
           </div>
+          <div class="vx-runtime-status-line" id="runtime-status-line" role="status" aria-live="polite" hidden></div>
         </form>
         <div class="context-menu" id="context-menu" hidden>
           <div class="context-menu-title">添加</div>
@@ -155,6 +151,7 @@ document.body.innerHTML = `
           <span class="status-session" id="status-session"></span>
           <span id="strip-workspace">voidx</span>
           <span id="strip-provider-model"></span>
+          <span id="strip-ai-approval" hidden></span>
         </div>
         <div class="vx-dock-content" id="dock-content">
           <div class="vx-dock-pane" data-pane="todo">
@@ -174,6 +171,7 @@ document.body.innerHTML = `
               <div><dt>Model</dt><dd id="status-provider-model"></dd></div>
               <div><dt>Running</dt><dd id="status-running">idle</dd></div>
               <div><dt>Usage</dt><dd id="status-usage">—</dd></div>
+              <div id="status-ai-approval-row" hidden><dt>AI approvals</dt><dd id="status-ai-approval">0</dd></div>
             </dl>
           </div>
         </div>

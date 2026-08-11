@@ -7,6 +7,7 @@ export interface SettingsSnapshot {
   profiles?: ProfileSummary[];
   paths?: Record<string, string>;
   permissions?: Record<string, unknown>;
+  compaction?: Record<string, unknown>;
   user_profile?: { language?: string; tone?: string };
   code_ide?: string;
   update_check?: { enabled?: boolean; last_checked_at?: number; latest_version?: string };
@@ -18,6 +19,16 @@ type PermissionMode = "read_only" | "safe" | "ai_approval" | "project_trusted" |
 interface PermissionModeConfig {
   label: string;
   description: string;
+}
+
+const REASONING_EFFORTS = ["", "none", "low", "medium", "high", "xhigh", "max"] as const;
+
+function configuredProfileNames(snapshot: SettingsSnapshot): string[] {
+  return (snapshot.profiles || []).filter((profile) => profile.configured).map((profile) => profile.name);
+}
+
+function profileOptions(snapshot: SettingsSnapshot): string[] {
+  return ["", ...configuredProfileNames(snapshot)];
 }
 
 const PERMISSION_MODES: Record<PermissionMode, PermissionModeConfig> = {
@@ -175,15 +186,7 @@ export function collectSettingsPatch(): Record<string, unknown> {
 function collectPermissionsPatch(value: (name: string) => string): Record<string, unknown> {
   const raw = value("permission_mode") || "safe";
   const preset = raw in PERMISSION_MODES ? (raw as PermissionMode) : "safe";
-  const ai = (state.snapshot.permissions?.ai_approval || {}) as Record<string, unknown>;
-  const permissions: Record<string, unknown> = { permission_mode: preset };
-  if (preset === "ai_approval" || Object.keys(ai).length > 0) {
-    permissions.ai_approval = {
-      profile_name: value("ai_approval_profile"),
-      timeout_seconds: Number(value("ai_approval_timeout") || ai.timeout_seconds || 12),
-    };
-  }
-  return { permissions };
+  return { permissions: { permission_mode: preset } };
 }
 
 function inferPermissionMode(permissions: Record<string, unknown> = {}): PermissionMode {
@@ -198,31 +201,45 @@ function inferPermissionMode(permissions: Record<string, unknown> = {}): Permiss
 function collectModelPatch(value: (name: string) => string): Record<string, unknown> {
   const provider = value("new_provider").trim();
   const model = value("new_model").trim();
-  if (!provider || !model) return {};
-
   const baseUrl = value("new_base_url").trim();
   const protocol = value("new_protocol").trim();
   const apiKey = value("new_api_key").trim();
-  const profileName = `${provider}/${model}`;
-  const patch: Record<string, unknown> = {
-    model: {
-      provider,
-      model,
-      ...(baseUrl ? { base_url: baseUrl } : {}),
-      ...(protocol ? { protocol } : {}),
-    },
-  };
-  if (apiKey) {
+  const reasoningEffort = value("model_reasoning_effort").trim();
+
+  const modelPatch: Record<string, unknown> = {};
+  if (provider && model) {
+    modelPatch.provider = provider;
+    modelPatch.model = model;
+    if (baseUrl) modelPatch.base_url = baseUrl;
+    if (protocol) modelPatch.protocol = protocol;
+  }
+  if (reasoningEffort) modelPatch.reasoning_effort = reasoningEffort;
+
+  const patch: Record<string, unknown> = {};
+  if (Object.keys(modelPatch).length > 0) patch.model = modelPatch;
+
+  if (provider && model && apiKey) {
     patch.provider_secrets = {
       provider,
-      profile_name: profileName,
+      profile_name: `${provider}/${model}`,
       action: "set",
       api_key: apiKey,
     };
   }
+
+  patch.compaction = {
+    profile_name: value("compaction_profile"),
+    reasoning_effort: value("compaction_reasoning_effort") || null,
+    timeout_seconds: Number(value("compaction_timeout") || 60),
+  };
+  patch.permissions = {
+    ai_approval: {
+      profile_name: value("ai_approval_profile"),
+      timeout_seconds: Number(value("ai_approval_timeout") || 12),
+    },
+  };
   return patch;
 }
-
 export function _resetSettingsForTest() {
   state = { dialog: null, content: null, error: null, save: null, close: null, tabs: null, activeTab: "model", snapshot: {}, onSave: null };
 }
@@ -246,15 +263,28 @@ function renderModelTab(snapshot: SettingsSnapshot = {}): DocumentFragment {
   const model = snapshot.model || {};
   const profiles = snapshot.profiles || [];
   const paths = snapshot.paths || {};
+  const compaction = (snapshot.compaction || {}) as Record<string, unknown>;
+  const permissions = snapshot.permissions || {};
+  const aiApproval = (permissions.ai_approval || {}) as Record<string, unknown>;
+  const profileChoices = profileOptions(snapshot);
   const frag = document.createDocumentFragment();
   frag.append(
-    section("当前模型", [
+    section("主对话", [
       readonlyRow("Provider", String(model.provider || "")),
       readonlyRow("Model", String(model.model || "")),
       readonlyRow("Base URL", String(model.base_url || "—")),
       readonlyRow("Protocol", String(model.protocol || "auto")),
-      readonlyRow("Reasoning", String(model.reasoning_effort || "xhigh")),
+      selectRow("Reasoning", "model_reasoning_effort", String(model.reasoning_effort || "xhigh"), [...REASONING_EFFORTS]),
       readonlyRow("Context window", model.context_window ? `${Number(model.context_window).toLocaleString()} tokens` : "Auto"),
+    ]),
+    section("上下文压缩", [
+      selectRow("Profile", "compaction_profile", String(compaction.profile_name || ""), profileChoices),
+      selectRow("Reasoning", "compaction_reasoning_effort", String(compaction.reasoning_effort || ""), [...REASONING_EFFORTS]),
+      numberRow("Timeout（秒）", "compaction_timeout", Number(compaction.timeout_seconds || 60), 1, 300),
+    ]),
+    section("AI 审批模型", [
+      selectRow("Profile", "ai_approval_profile", String(aiApproval.profile_name || ""), profileChoices),
+      numberRow("Timeout（秒）", "ai_approval_timeout", Number(aiApproval.timeout_seconds || 12), 1, 60),
     ]),
     section("已配置 Profiles", [
       ...(profiles.length
@@ -286,7 +316,6 @@ function renderModelTab(snapshot: SettingsSnapshot = {}): DocumentFragment {
   );
   return frag;
 }
-
 function renderPermissionsTab(snapshot: SettingsSnapshot = {}): DocumentFragment {
   const permissions = snapshot.permissions || {};
   const preset = inferPermissionMode(permissions);
@@ -302,15 +331,6 @@ function renderPermissionsTab(snapshot: SettingsSnapshot = {}): DocumentFragment
         (key) => PERMISSION_MODES[key as PermissionMode].label,
       ),
       readonlyRow("说明", presetConfig.description),
-      ...(preset === "ai_approval" ? [
-        selectRow(
-          "AI 审批 profile",
-          "ai_approval_profile",
-          String((permissions.ai_approval as Record<string, unknown> | undefined)?.profile_name || ""),
-          ["", ...(snapshot.profiles || []).filter((profile) => profile.configured).map((profile) => profile.name)],
-        ),
-        numberRow("审批超时（秒）", "ai_approval_timeout", Number((permissions.ai_approval as Record<string, unknown> | undefined)?.timeout_seconds || 12), 1, 60),
-      ] : []),
     ]),
     section("沙箱路径", [
       readonlyRow("Readable paths", [permissions.sandbox_readable_files, permissions.sandbox_readable_dirs].flat().join(", ") || "—"),

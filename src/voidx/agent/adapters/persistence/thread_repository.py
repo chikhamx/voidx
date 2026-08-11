@@ -76,6 +76,7 @@ class ThreadStore:
         *,
         profile: str = "coding",
         title: str = "Loop session",
+        root_session_id: str | None = None,
     ) -> None:
         from voidx.agent.adapters.persistence.session_repository import ensure_session
 
@@ -84,6 +85,7 @@ class ThreadStore:
             workspace,
             profile=profile,
             title=title,
+            root_session_id=root_session_id,
         )
     async def create_thread(
         self,

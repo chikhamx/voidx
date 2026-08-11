@@ -274,19 +274,34 @@
 }
 
 .request-tool-detail {
+  --request-risk-accent: var(--vx-border-strong);
   background: var(--vx-bg-subtle);
   border: 1px solid var(--vx-border);
+  border-left: 3px solid var(--request-risk-accent);
   border-radius: var(--vx-radius-md);
   display: grid;
   gap: 6px;
   padding: var(--vx-space-3);
 }
 
+.request-tool-risk-low { --request-risk-accent: var(--vx-success); }
+.request-tool-risk-medium { --request-risk-accent: var(--vx-warning); }
+.request-tool-risk-high,
+.request-tool-risk-blocked { --request-risk-accent: var(--vx-error); }
+
+.request-tool-heading { display: grid; gap: 2px; }
+
 .request-tool-title {
   color: var(--vx-text-primary);
+  font-size: var(--vx-text-md);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.request-tool-pattern {
+  color: var(--vx-text-muted);
   font-family: var(--vx-font-mono);
   font-size: var(--vx-text-sm);
-  font-weight: 600;
   overflow-wrap: anywhere;
 }
 
@@ -326,7 +341,8 @@
   white-space: pre-wrap;
 }
 
-.request-details textarea {
+.request-details textarea,
+.request-controls input[type="password"] {
   background: var(--vx-bg-surface);
   border: 1px solid var(--vx-border-strong);
   border-radius: var(--vx-radius-sm);
@@ -479,7 +495,7 @@
 
 /* === 终端 === */
 .vx-terminal {
-  background: var(--vx-bg-base);
+  background: var(--vx-bg-canvas);
   border: 1px solid var(--vx-border);
   border-radius: var(--vx-radius-md);
   font-family: var(--vx-font-mono);
@@ -506,7 +522,7 @@
 .vx-terminal-start:hover { background: var(--vx-btn-primary-hover); }
 
 .vx-terminal-output {
-  background: var(--vx-bg-base);
+  background: var(--vx-bg-canvas);
   border: 1px solid var(--vx-border);
   border-radius: var(--vx-radius-md);
   font-family: var(--vx-font-mono);

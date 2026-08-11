@@ -191,11 +191,64 @@ body.is-desktop.is-mac .vx-sidebar {
 
 .vx-sidebar-section {
   display: grid;
-  flex: 1;
   gap: var(--vx-space-1);
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
 }
+
+#temporary-session-section {
+  flex: 0 0 auto;
+  grid-template-rows: auto auto;
+}
+
+.vx-project-session-section { flex: 1; }
+
+.vx-sidebar-mode-switcher {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 1px;
+}
+
+.vx-sidebar-mode-entry {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--vx-radius-sm);
+  color: var(--vx-text-secondary);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-size: var(--vx-text-sm);
+  gap: var(--vx-space-2);
+  min-height: 32px;
+  padding: 0 var(--vx-space-2);
+  text-align: left;
+  transition: background var(--vx-transition-fast), color var(--vx-transition-fast);
+  width: 100%;
+}
+
+.vx-sidebar-mode-entry:hover {
+  background: var(--vx-bg-hover);
+  color: var(--vx-text-primary);
+}
+
+.vx-sidebar-mode-entry.active {
+  background: var(--vx-bg-active);
+  color: var(--vx-text-primary);
+  font-weight: 550;
+}
+
+.vx-mode-dot {
+  background: var(--vx-mode-coding);
+  border-radius: 50%;
+  flex: 0 0 auto;
+  height: 7px;
+  width: 7px;
+}
+
+.vx-sidebar-mode-entry[data-profile="chat"] .vx-mode-dot { background: var(--vx-mode-chat); }
+.vx-sidebar-mode-entry[data-profile="goal"] .vx-mode-dot { background: var(--vx-mode-goal); }
+.vx-sidebar-mode-entry[data-profile="loop"] .vx-mode-dot { background: var(--vx-mode-loop); }
 
 /* 侧栏行（导航 / 会话 / 目录） */
 .vx-nav-item,
@@ -756,3 +809,34 @@ body.is-desktop.is-mac .vx-sidebar {
 
 /* 空状态与输入区间的留白 */
 .vx-main-canvas.empty .vx-empty-state { margin-bottom: var(--vx-space-8); }
+
+.vx-chat-header-mode {
+  background: color-mix(in srgb, var(--vx-mode-coding) 12%, transparent);
+  border-radius: var(--vx-radius-full);
+  color: var(--vx-mode-coding);
+  flex-shrink: 0;
+  font-size: var(--vx-text-xs);
+  font-weight: 600;
+  padding: 2px var(--vx-space-2);
+}
+
+.vx-chat-header-mode[data-profile="chat"] { color: var(--vx-mode-chat); }
+.vx-chat-header-mode[data-profile="goal"] { color: var(--vx-mode-goal); }
+.vx-chat-header-mode[data-profile="loop"] { color: var(--vx-mode-loop); }
+
+.vx-sidebar-row-icon { position: relative; }
+
+.vx-session-profile-dot {
+  background: var(--vx-mode-coding);
+  border: 1px solid var(--vx-bg-app);
+  border-radius: 50%;
+  bottom: -1px;
+  height: 6px;
+  position: absolute;
+  right: -1px;
+  width: 6px;
+}
+
+.vx-session-profile-dot[data-profile="chat"] { background: var(--vx-mode-chat); }
+.vx-session-profile-dot[data-profile="goal"] { background: var(--vx-mode-goal); }
+.vx-session-profile-dot[data-profile="loop"] { background: var(--vx-mode-loop); }

@@ -195,6 +195,9 @@ async def test_commands_list_returns_desktop_catalog_metadata():
     assert model_new["uiTarget"] == "settings:model"
     assert model_new["requiresArgs"] is False
     assert model_new["dangerous"] is False
+    for mode in ("/chat", "/coding", "/goal", "/loop"):
+        item = next(command for command in commands if command["command"] == mode)
+        assert item["requiresArgs"] is False
     rollback = next(item for item in commands if item["command"] == "/rollback")
     assert rollback["category"] == "maintenance"
     assert rollback["dangerous"] is True
@@ -237,6 +240,35 @@ async def test_settings_get_returns_desktop_settings_snapshot(tmp_path, monkeypa
     assert settings["code_ide"]
     assert settings["update_check"]["enabled"] is True
     assert settings["paths"]["workspace_settings"].endswith(".voidx/settings.json")
+
+
+
+@pytest.mark.asyncio
+async def test_settings_get_and_update_compaction_config(tmp_path):
+    dock = BottomInputDock()
+    session = GatewaySession(lambda: dock.tree, thread_id="t1", workspace=str(tmp_path))
+
+    initial = await session.dispatch_request(JsonRpcRequest(id=151, method="settings.get", params={}))
+    assert isinstance(initial, JsonRpcResult)
+    assert initial.result["compaction"]["profile_name"] == ""
+    assert initial.result["compaction"]["timeout_seconds"] == 60.0
+
+    result = await session.dispatch_request(JsonRpcRequest(id=152, method="settings.update", params={
+        "patch": {
+            "compaction": {
+                "profile_name": "",
+                "reasoning_effort": "low",
+                "timeout_seconds": 75,
+            }
+        }
+    }))
+
+    assert isinstance(result, JsonRpcResult)
+    assert result.result["settings"]["compaction"] == {
+        "profile_name": "",
+        "reasoning_effort": "low",
+        "timeout_seconds": 75.0,
+    }
 
 
 @pytest.mark.asyncio

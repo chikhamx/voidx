@@ -228,6 +228,7 @@ async def run_subagent(
         resolve_protocol(model_cfg),
         model_cfg.context_window,
     )
+    run_usage_stats = UsageStats(context_limit=context_limit)
     convergence_state = BudgetConvergenceState()
     started_at = time.monotonic()
     guard_state = RuntimeGuardState(
@@ -240,6 +241,44 @@ async def run_subagent(
     pending_guard_guidance: list[str] = []
     contract_retry_count = 0
     has_successful_tool_work = False
+
+    run_call_count = 0
+
+    async def stream_child_llm(bound_model: object, llm_messages: list, renderer: object):
+        nonlocal run_call_count
+        run_call_count += 1
+        return await stream_llm(
+            bound_model,
+            llm_messages,
+            renderer,
+            resolve_protocol(model_cfg),
+            ui_port=ui_port,
+        )
+
+    def update_usage_context(tokens: int) -> None:
+        run_usage_stats.update_context(tokens)
+        if usage_stats is not None:
+            usage_stats.update_context(tokens)
+
+    def record_usage_call(
+        message: object,
+        *,
+        fallback_input_tokens: int,
+        fallback_output_tokens: int,
+        messages: list,
+    ) -> None:
+        usage = extract_token_usage(message)
+        for stats in (run_usage_stats, usage_stats):
+            if stats is None:
+                continue
+            stats.record_call(
+                usage,
+                fallback_input_tokens=fallback_input_tokens,
+                fallback_output_tokens=fallback_output_tokens,
+                messages=messages,
+                model=model_cfg.model,
+                cache_key=f"{model_cfg.provider}/{model_cfg.model}",
+            )
 
 
     def compile_context(source_messages: list) -> list:
@@ -448,6 +487,8 @@ async def run_subagent(
         if run_metadata is not None:
             run_metadata.update({
                 "finish_reason": reason,
+                "calls": run_call_count,
+                "tokens": run_usage_stats.total_tokens,
             })
 
 
@@ -520,28 +561,19 @@ async def run_subagent(
             headless=True,
         )
         try:
-            assistant_msg = await stream_llm(
-                model,
-                final_messages,
-                renderer,
-                resolve_protocol(model_cfg),
-                ui_port=ui_port,
-            )
+            assistant_msg = await stream_child_llm(model, final_messages, renderer)
             text = extract_text(assistant_msg).strip()
-            if usage_stats is not None:
-                final_context_tokens = estimate_context_tokens_with_tools(
-                    final_messages,
-                    [],
-                    model_cfg.model,
-                )
-                usage_stats.record_call(
-                    extract_token_usage(assistant_msg),
-                    fallback_input_tokens=final_context_tokens,
-                    fallback_output_tokens=estimate_message_tokens(assistant_msg, model_cfg.model),
-                    messages=final_messages,
-                    model=model_cfg.model,
-                    cache_key=f"{model_cfg.provider}/{model_cfg.model}",
-                )
+            final_context_tokens = estimate_context_tokens_with_tools(
+                final_messages,
+                [],
+                model_cfg.model,
+            )
+            record_usage_call(
+                assistant_msg,
+                fallback_input_tokens=final_context_tokens,
+                fallback_output_tokens=estimate_message_tokens(assistant_msg, model_cfg.model),
+                messages=final_messages,
+            )
             if text:
                 messages.append(assistant_msg)
                 sub_messages.append(assistant_msg)
@@ -649,8 +681,7 @@ async def run_subagent(
                         tool_defs,
                         model_cfg.model,
                     )
-                    if usage_stats is not None:
-                        usage_stats.update_context(context_tokens)
+                    update_usage_context(context_tokens)
                     if session_id:
                         await save_context_frame_from_messages(
                             session_id=session_id,
@@ -666,13 +697,7 @@ async def run_subagent(
                                 "agent_id": agent_id,
                             },
                         )
-                    assistant_msg = await stream_llm(
-                        model_with_tools,
-                        llm_messages,
-                        renderer,
-                        resolve_protocol(model_cfg),
-                        ui_port=ui_port,
-                    )
+                    assistant_msg = await stream_child_llm(model_with_tools, llm_messages, renderer)
                     if retry_status_active and ui_port.via_events():
                         await ui_port.events.emit(StatusFinished(status_id="llm:retry"))
                     break
@@ -733,15 +758,12 @@ async def run_subagent(
                 and record_convergence(post_llm_decision) == "finalize"
             ):
                 return await finalize("time_limit")
-            if usage_stats is not None:
-                usage_stats.record_call(
-                    extract_token_usage(assistant_msg),
-                    fallback_input_tokens=context_tokens,
-                    fallback_output_tokens=estimate_message_tokens(assistant_msg, model_cfg.model),
-                    messages=llm_messages,
-                    model=model_cfg.model,
-                    cache_key=f"{model_cfg.provider}/{model_cfg.model}",
-                )
+            record_usage_call(
+                assistant_msg,
+                fallback_input_tokens=context_tokens,
+                fallback_output_tokens=estimate_message_tokens(assistant_msg, model_cfg.model),
+                messages=llm_messages,
+            )
             messages.append(assistant_msg)
             sub_messages.append(assistant_msg)
             if session_id:

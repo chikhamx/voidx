@@ -17,7 +17,8 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import { handleNotification, initModelControls, resolveWsUrl, _resetWorkbenchForTest } from "../../src/main";
-import { initPermissionControls, populatePermissionDropdown } from "../../src/ui/model";
+import { initPermissionControls, populateCustomModelDropdown, populatePermissionDropdown } from "../../src/ui/model";
+import { uiState } from "../../src/services/state";
 import { _resetForTest as resetDock, initDock, switchTab, toggleDock, getActiveTab } from "../../src/ui/dock";
 import { _setSocket, _resetForTest as resetRpc } from "../../src/rpc";
 
@@ -73,6 +74,26 @@ beforeEach(() => {
   initPermissionControls();
 });
 
+
+describe("model dropdown safety", () => {
+  it("renders configured provider and model names as text", () => {
+    uiState.configuredProfiles = [{
+      name: "unsafe",
+      provider: "<svg data-provider-xss></svg>",
+      model: "<img data-model-xss>",
+      configured: true,
+    }];
+
+    populateCustomModelDropdown();
+
+    const item = document.querySelector(".vx-model-dropdown-item");
+    expect(item.querySelector("[data-provider-xss]")).toBeNull();
+    expect(item.querySelector("[data-model-xss]")).toBeNull();
+    expect(item.querySelector(".vx-model-item-title").textContent).toBe("<img data-model-xss>");
+    expect(item.querySelector(".vx-model-item-subtitle").textContent).toBe("<svg data-provider-xss></svg>");
+  });
+});
+
 describe("workbench shell", () => {
   it("renders the fixed sidebar navigation and project sections", () => {
     const sidebar = document.querySelector("#sidebar");
@@ -85,6 +106,16 @@ describe("workbench shell", () => {
     expect(document.querySelector(".vx-project-heading-label").textContent).toBe("项目");
     expect(document.querySelector("#project-list")).toBeNull();
     expect(document.querySelector("#btn-integrations").hidden).toBe(true);
+  });
+
+  it("renders four peer mode entries in the sidebar and none in the composer", () => {
+    const sidebarSwitcher = document.querySelector("#sidebar #runtime-profile-switcher");
+    expect(sidebarSwitcher).not.toBeNull();
+    expect(
+      [...sidebarSwitcher.querySelectorAll("[data-profile]")].map((button) => button.textContent.trim()),
+    ).toEqual(["聊天", "编码", "目标", "循环"]);
+    expect(document.querySelector("#composer #runtime-profile-switcher")).toBeNull();
+    expect(sidebarSwitcher.nextElementSibling?.id).toBe("project-session-section");
   });
 
 
@@ -215,7 +246,8 @@ describe("workbench shell", () => {
     expect(styles).toContain(".vx-sidebar-nav,\n.vx-sidebar-footer");
     expect(styles).toContain(".vx-session-children {\n  display: grid;");
     expect(styles).toContain("padding-left: var(--vx-space-4);");
-    expect(styles).toMatch(/\.vx-sidebar-section \{[^}]*flex: 1;[^}]*min-height: 0;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-sidebar-section \{[^}]*min-height: 0;[^}]*\}/);
+    expect(styles).toContain(".vx-project-session-section { flex: 1; }");
     expect(styles).toMatch(/\.vx-session-item \{[^}]*grid-template-columns: 16px minmax\(0, 1fr\) max-content;[^}]*\}/);
     expect(styles).toMatch(/\.vx-session-time \{[^}]*justify-self: end;[^}]*\}/);
     expect(styles).toMatch(/\.vx-nav-item,[\s\S]*\.vx-directory-row,[\s\S]*\.vx-session-item \{[^}]*padding: 0 var\(--vx-space-2\);[^}]*\}/);
@@ -248,6 +280,8 @@ describe("workbench shell", () => {
           title: "New session",
           status: "idle",
           workspace: "/Users/chikham/workspace/voidx",
+          runtime_profile: "coding",
+          temporary: true,
         },
         {
           thread_id: "filled",
@@ -890,6 +924,17 @@ describe("provider and model controls", () => {
     expect(document.querySelector("#status-permission")).toBeNull();
   });
 
+
+
+  it("refreshes settings when profile_configured changes", () => {
+    const sentMessages = setupOpenSocket();
+    handleNotification("startup.shown", { profile_configured: false });
+    sentMessages.length = 0;
+
+    handleNotification("startup.shown", { profile_configured: true });
+
+    expect(sentPayloads(sentMessages).some((payload) => payload.method === "settings.get")).toBe(true);
+  });
   it("workspace.snapshot fetches settings when startup model is missing", async () => {
     const { sentMessages, socket } = setupOpenSocketWithHandle();
 

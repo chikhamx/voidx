@@ -9,12 +9,12 @@ import type {
 } from './render-types';
 import { handleToolItem } from './render-tool-items';
 import { appendThoughtItem } from './render-thought-items';
-import { appendNoticeItem, appendDiffItem, handleStatusItem } from './render-notice-status';
+import { appendNoticeItem, appendDiffItem, appendCompactionDivider, handleStatusItem } from './render-notice-status';
 
 export type { TranscriptSnapshot } from './render-types';
 export { handleToolItem } from './render-tool-items';
 export { appendThoughtItem } from './render-thought-items';
-export { appendNoticeItem, appendDiffItem, handleStatusItem } from './render-notice-status';
+export { appendNoticeItem, appendDiffItem, appendCompactionDivider, handleStatusItem } from './render-notice-status';
 
 const RICH_TAG = /\[(\/)?(?:bold|dim|italic|underline|strike|red|green|yellow|blue|magenta|cyan|white|black|#[0-9A-Fa-f]{6})\]/g;
 
@@ -450,7 +450,29 @@ export function renderTranscript(root: HTMLElement, snapshot: TranscriptSnapshot
           title: node.header ?? "",
         });
         break;
-      // root / turn / startup / todo / status / permission / checkpoint / subagent → skip
+      case "status":
+        if (payload?.outcome === "compacted") {
+          appendCompactionDivider(node.id, {
+            outcome: "compacted",
+            detail: String(payload.detail || ""),
+            ok: node.status !== "error",
+          });
+        }
+        break;
+      case "checkpoint": {
+        const row = document.createElement("details");
+        row.className = "checkpoint-row";
+        const summary = document.createElement("summary");
+        summary.textContent = stripRichMarkup(node.header || "voidx plan");
+        row.append(summary);
+        const body = document.createElement("div");
+        body.className = "checkpoint-row-body";
+        body.textContent = (node.body_lines ?? []).map(stripRichMarkup).join("\n");
+        row.append(body);
+        root.append(row);
+        break;
+      }
+      // root / turn / startup / todo / permission / subagent → skip
     }
   }
 

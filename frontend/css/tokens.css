@@ -113,8 +113,11 @@
   --vx-shadow-lg: 0 4px 12px rgb(28 28 26 / 0.06), 0 16px 48px rgb(28 28 26 / 0.1);
   --vx-shadow-composer: 0 1px 2px rgb(28 28 26 / 0.04), 0 4px 16px rgb(28 28 26 / 0.06), 0 12px 40px rgb(28 28 26 / 0.05);
 
-  /* 旧 token 别名（兼容期内映射，逐步收敛） */
-  --vx-bg-base: var(--vx-bg-canvas);
+  /* 运行模式仅作为轻量标识色，避免干扰主强调色。 */
+  --vx-mode-chat:    #7b7b74;
+  --vx-mode-coding:  #2e6bff;
+  --vx-mode-goal:    #1f9d55;
+  --vx-mode-loop:    #c77700;
 }
 
 /* ──────────────────────────────────────────────
@@ -171,7 +174,10 @@
   --vx-shadow-lg: 0 4px 12px rgb(0 0 0 / 0.4), 0 16px 48px rgb(0 0 0 / 0.4);
   --vx-shadow-composer: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 32px rgb(0 0 0 / 0.35);
 
-  --vx-bg-base: var(--vx-bg-canvas);
+  --vx-mode-chat:    #a0a099;
+  --vx-mode-coding:  #5c8dff;
+  --vx-mode-goal:    #4cc38a;
+  --vx-mode-loop:    #e5a13d;
 }
 
 /* 未显式设置 data-theme 时跟随系统（JS 启动后会立即写入 data-theme） */
@@ -217,6 +223,9 @@
     --vx-shadow-md: 0 2px 6px rgb(0 0 0 / 0.35), 0 8px 24px rgb(0 0 0 / 0.3);
     --vx-shadow-lg: 0 4px 12px rgb(0 0 0 / 0.4), 0 16px 48px rgb(0 0 0 / 0.4);
     --vx-shadow-composer: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 32px rgb(0 0 0 / 0.35);
-    --vx-bg-base: var(--vx-bg-canvas);
+    --vx-mode-chat: #a0a099;
+    --vx-mode-coding: #5c8dff;
+    --vx-mode-goal: #4cc38a;
+    --vx-mode-loop: #e5a13d;
   }
 }

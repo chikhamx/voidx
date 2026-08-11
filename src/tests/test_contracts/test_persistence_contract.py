@@ -37,7 +37,7 @@ def schema_manifest(connection: sqlite3.Connection) -> dict[str, object]:
 
 
 def expected_manifest() -> dict[str, object]:
-    return json.loads((FIXTURES / "schema_v3.json").read_text(encoding="utf-8"))
+    return json.loads((FIXTURES / "schema_v4.json").read_text(encoding="utf-8"))
 
 
 def test_fresh_and_repeated_initialization_match_schema_manifest(tmp_path: Path) -> None:

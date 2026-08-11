@@ -84,7 +84,7 @@ def _run_with_locked_retry(operation: Callable[[], T]) -> T:
     raise RuntimeError("unreachable sqlite retry state")
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
@@ -209,6 +209,28 @@ def _migrate_to_v3(conn: sqlite3.Connection) -> None:
     _create_agent_thread_tables(conn)
 
 
+def _create_provisional_session_table(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS provisional_sessions (
+            session_id TEXT PRIMARY KEY,
+            root_session_id TEXT NOT NULL,
+            owner_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_provisional_sessions_root
+            ON provisional_sessions(root_session_id);
+        CREATE INDEX IF NOT EXISTS idx_provisional_sessions_owner_created
+            ON provisional_sessions(owner_id, created_at);
+    """)
+
+
+def _migrate_to_v4(conn: sqlite3.Connection) -> None:
+    """v3 → v4: add provisional session lifecycle markers."""
+    _create_provisional_session_table(conn)
+
+
 from voidx.persistence.migrations import MigrationPlan, MigrationRunner, MigrationStep
 
 
@@ -216,6 +238,7 @@ MIGRATIONS = (
     MigrationStep(1, "sessions-runtime-columns", _migrate_to_v1),
     MigrationStep(2, "runtime-profile", _migrate_to_v2),
     MigrationStep(3, "agent-thread-tables", _migrate_to_v3),
+    MigrationStep(4, "provisional-sessions", _migrate_to_v4),
 )
 
 
@@ -289,6 +312,7 @@ def bootstrap_schema(conn: sqlite3.Connection) -> None:
             ON model_profiles(provider);
     """)
     _create_agent_thread_tables(conn)
+    _create_provisional_session_table(conn)
 
 
 def _init_schema(conn: sqlite3.Connection) -> None:

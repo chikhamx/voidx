@@ -195,6 +195,42 @@ def test_transparent_subagent_spaces_ai_message_after_tools():
     assert search_index == message_index + 1
 
 
+def test_todo_nodes_stay_internal():
+    tree = OutputTree()
+    tree.new_node(
+        tree.root,
+        node_type="todo",
+        header="[bold #A3BE8C]Todo[/]: [#8F9BA8]4/6 done · 1 active · 1 pending[/]",
+    )
+    tree.new_node(tree.root, node_type="turn", header="visible turn")
+    hidden_assistant = tree.new_node(tree.root, node_type="assistant", header="")
+    tree.new_node(
+        hidden_assistant,
+        node_type="todo",
+        header="[bold #A3BE8C]Todo[/]: [#8F9BA8]1/1 done · 0 active · 0 pending[/]",
+    )
+    assistant = tree.new_node(tree.root, node_type="assistant", header="")
+    subagent = tree.new_node(
+        assistant,
+        node_type="subagent",
+        header="[#B48EAD]●[/#B48EAD] [bold]Mira[/bold](按设计)",
+        agent_name="Mira",
+    )
+    tree.new_node(subagent, node_type="tool_call", header="[#EBCB8B]●[/#EBCB8B] Reading")
+    tree.new_node(
+        subagent,
+        node_type="todo",
+        header="[bold #A3BE8C]Todo[/]: [#8F9BA8]0/5 done · 1 active · 4 pending[/]",
+    )
+
+    lines = [_plain(line) for line in tree.render(120)]
+
+    assert _plain(lines[0]).startswith("visible turn")
+    assert lines[1] == ""
+    assert any("Reading" in line for line in lines)
+    assert not any("Todo:" in line for line in lines)
+
+
 def test_regular_subagent_spaces_following_assistant_message():
     tree = OutputTree()
     assistant = tree.new_node(tree.root, node_type="assistant", header="")

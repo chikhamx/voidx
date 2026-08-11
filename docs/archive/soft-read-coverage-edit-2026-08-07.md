@@ -1,5 +1,7 @@
 # Soft-Limit Read Coverage for File Edits
 
+> **Status: Done** — Archived on 2026-08-10.
+
 Date: 2026-08-07
 Last revised: 2026-08-10
 

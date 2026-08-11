@@ -50,3 +50,33 @@ describe("status item elapsed time", () => {
     expect(detail.textContent).toBe("done");
   });
 });
+
+  it("renders a quiet compaction divider when context pressure finishes compacted", () => {
+    handleStatusItem("item.started", "compact-1", {
+      status_id: "pressure-1",
+      label: "Compacting context",
+    });
+
+    handleStatusItem("item.completed", "compact-1", {
+      status_id: "pressure-1",
+      outcome: "compacted",
+      detail: "Summary retained",
+      ok: true,
+    });
+
+    const divider = document.querySelector(".compaction-divider");
+    expect(divider).not.toBeNull();
+    expect(divider.textContent).toContain("上下文已压缩");
+    expect(divider.textContent).toContain("Summary retained");
+    expect(document.querySelector("[data-status-item-id='compact-1']")).toBeNull();
+  });
+
+  it("renders a compaction divider even when only completion arrives", () => {
+    handleStatusItem("item.completed", "compact-2", {
+      status_id: "pressure-2",
+      outcome: "compacted",
+      ok: true,
+    });
+
+    expect(document.querySelector(".compaction-divider")?.textContent).toContain("上下文已压缩");
+  });

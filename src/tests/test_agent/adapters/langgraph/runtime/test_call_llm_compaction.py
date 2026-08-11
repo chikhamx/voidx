@@ -6,6 +6,7 @@ import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, RemoveMessage, SystemMessage, ToolMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
@@ -922,6 +923,65 @@ async def test_call_llm_returns_explicit_error_after_malformed_compaction_retry_
         "<tool_call>" in str(getattr(message, "content", ""))
         for message in result["messages"]
     )
+
+
+def test_classify_llm_remote_protocol_error_as_network():
+    from voidx.agent.adapters.langgraph.runtime.core.helpers import LLMErrorKind, _classify_llm_error
+
+    error = httpx.RemoteProtocolError(
+        "peer closed connection without sending complete message body (incomplete chunked read)"
+    )
+
+    assert _classify_llm_error(error) == LLMErrorKind.NETWORK
+
+
+@pytest.mark.asyncio
+async def test_call_llm_retries_incomplete_chunked_read(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
+
+    class FailsOnceRemoteProtocolStreamingModel(FakeStreamingModel):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
+
+        async def astream(self, messages):
+            self.calls += 1
+            if self.calls == 1:
+                raise httpx.RemoteProtocolError(
+                    "peer closed connection without sending complete message body "
+                    "(incomplete chunked read)"
+                )
+            self.messages = messages
+            yield AIMessageChunk(content="answer")
+            yield AIMessageChunk(
+                content="",
+                tool_calls=[{
+                    "name": "turn",
+                    "args": {"operation": "stop", "params": None},
+                    "id": "turn-1",
+                    "type": "tool_call",
+                }],
+            )
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+    graph = make_langgraph_execution(
+        Config(
+            model=ModelConfig(provider="openai", model="gpt-4o"),
+            workspace=str(tmp_path),
+        ),
+        api_key="",
+    )
+    graph.model = FailsOnceRemoteProtocolStreamingModel()
+
+    result = await graph._call_llm({
+        "messages": [HumanMessage(content="hi")],
+        "step_count": 0,
+        "persona": "voidx",
+    })
+
+    assert graph.model.calls == 2
+    assert result["messages"][0].content == "answer"
+
 
 @pytest.mark.asyncio
 async def test_classify_llm_error_404_fail_fast(tmp_path, monkeypatch):

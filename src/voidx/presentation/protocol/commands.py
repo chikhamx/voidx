@@ -13,12 +13,16 @@ class UiSubmitCommand(BaseModel):
     kind: Literal["submit"] = "submit"
     text: str
     thread_id: str = ""
+    session_id: str = ""
+    runtime_profile: str = ""
+    workspace: str = ""
 
     @model_serializer(mode="wrap")
     def _serialize(self, handler):
         data = handler(self)
-        if not self.thread_id:
-            data.pop("thread_id", None)
+        for field in ("thread_id", "session_id", "runtime_profile", "workspace"):
+            if not data[field]:
+                data.pop(field, None)
         return data
 
 

@@ -90,7 +90,6 @@ DANGEROUS_COMMANDS = {
 REQUIRES_ARGS = {
     "/allow",
     "/deny",
-    "/goal",
     "/guide",
     "/lang",
     "/model switch",

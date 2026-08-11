@@ -72,7 +72,12 @@ class GoalService(AutonomousServiceBase[GoalSpec, GoalScheduler]):
         await self._deactivate_current(parent, summary="Goal superseded by a new /goal start.")
         await self._store.discard_pending_outbox_prefix(f"goal:{parent}:")
         session_id = spec.goal_session_id(parent)
-        await self._store.ensure_session(session_id, self._workspace, profile="goal")
+        await self._store.ensure_session(
+            session_id,
+            self._workspace,
+            profile="goal",
+            root_session_id=parent,
+        )
         goal_state = GoalState.from_spec(spec, run_id=spec.generation)
         await self._store.create_thread(
             AgentThread(

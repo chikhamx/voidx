@@ -270,6 +270,8 @@ class SubagentFinished(UiEventBase):
     finish_reason: str = ""
     summary: str = ""
     error: str = ""
+    calls: int | None = None
+    tokens: int | None = None
 
 
 class PermissionToolDetail(BaseModel):

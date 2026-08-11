@@ -2,6 +2,7 @@ import type { ProfileSummary, SlashCommand } from "../utils/types";
 import type { RefCandidate, RefToken } from "../ui/reference";
 import type { SettingsSnapshot } from "../ui/settings";
 import { iconSvg } from "../utils/icons";
+import { renderRuntimeProfile } from "../ui/mode";
 
 /** 发送按钮图标：待机=向上箭头，运行=停止方块 */
 export const sendArrowIcon = iconSvg("arrow-up", 18, 2);
@@ -27,6 +28,7 @@ export interface UiState {
   aiApprovalCount: number;
   reasoningEffort: string;
   usage: UsageSnapshot | null;
+  isWaitingForWriteLock: boolean;
 }
 
 export interface UsageSnapshot {
@@ -78,6 +80,7 @@ export const uiState: UiState = {
   aiApprovalCount: 0,
   reasoningEffort: "xhigh",
   usage: null,
+  isWaitingForWriteLock: false,
 };
 
 export const DEFAULT_WORKSPACE = "voidx";
@@ -183,8 +186,7 @@ export function updateStatusBar(): void {
     statusWorkspaceDetailEl.textContent = workspaceName;
   }
   if (uiState.sessionId) {
-    const modeEl = document.querySelector<HTMLElement>("#chat-header-mode");
-    if (modeEl) modeEl.textContent = profileLabel;
+    renderRuntimeProfile(uiState.runtimeProfile);
     for (const id of ["mode-status", "mode-stop"]) {
       const button = document.querySelector<HTMLElement>(`#${id}`);
       if (button) button.hidden = !["loop", "goal"].includes(uiState.runtimeProfile);
@@ -206,6 +208,25 @@ export function updateStatusBar(): void {
       ? "switching"
       : "idle";
   if (statusUsageEl) statusUsageEl.textContent = formatUsageLabel(uiState.usage);
+  const aiApprovalVisible = uiState.aiApprovalCount > 0;
+  const stripAiApprovalEl = document.querySelector<HTMLElement>("#strip-ai-approval");
+  if (stripAiApprovalEl) {
+    stripAiApprovalEl.hidden = !aiApprovalVisible;
+    stripAiApprovalEl.textContent = aiApprovalVisible ? `AI 审批 ${uiState.aiApprovalCount}` : "";
+  }
+  const statusAiApprovalRowEl = document.querySelector<HTMLElement>("#status-ai-approval-row");
+  const statusAiApprovalEl = document.querySelector<HTMLElement>("#status-ai-approval");
+  if (statusAiApprovalRowEl) statusAiApprovalRowEl.hidden = !aiApprovalVisible;
+  if (statusAiApprovalEl) statusAiApprovalEl.textContent = String(uiState.aiApprovalCount);
+
+  const runtimeStatusEl = document.querySelector<HTMLElement>("#runtime-status-line");
+  if (runtimeStatusEl) {
+    const message = uiState.isWaitingForWriteLock ? "等待另一个会话完成写入…" : "";
+    runtimeStatusEl.textContent = message;
+    runtimeStatusEl.hidden = message === "";
+  }
+  inputEl.disabled = uiState.isSwitchingModel || uiState.isWaitingForWriteLock;
+  btnSendEl.disabled = uiState.isSwitchingModel || (uiState.isWaitingForWriteLock && !uiState.isRunning);
 
   const modelPillTextEl = document.querySelector("#model-pill-text");
   if (modelPillTextEl) {
@@ -259,7 +280,8 @@ export function setRunning(running: boolean): void {
   btnSendEl.classList.toggle("running", running);
   btnSendEl.innerHTML = running ? sendStopIcon : sendArrowIcon;
   btnSendEl.setAttribute("aria-label", running ? "Cancel" : "Send");
-  inputEl.disabled = uiState.isSwitchingModel;
+  inputEl.disabled = uiState.isSwitchingModel || uiState.isWaitingForWriteLock;
+  btnSendEl.disabled = uiState.isSwitchingModel || (uiState.isWaitingForWriteLock && !running);
   updateStatusBar();
 }
 
@@ -279,6 +301,10 @@ export function _resetWorkbenchStateForTest(): void {
   uiState.isRunning = false;
   uiState.profileConfigured = null;
   uiState.runtimeProfile = "coding";
+  uiState.aiApprovalCount = 0;
+  uiState.reasoningEffort = "xhigh";
+  uiState.usage = null;
+  uiState.isWaitingForWriteLock = false;
   uiState.configuredProfiles = [];
   uiState.isSwitchingModel = false;
   uiState.slashCommands = [];

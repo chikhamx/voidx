@@ -114,10 +114,13 @@ export function populateCustomModelDropdown(): void {
       btn.classList.add("active");
     }
 
-    btn.innerHTML = `
-      <span class="vx-model-item-title">${profile.model}</span>
-      <span class="vx-model-item-subtitle">${profile.provider}</span>
-    `;
+    const title = document.createElement("span");
+    title.className = "vx-model-item-title";
+    title.textContent = profile.model;
+    const subtitle = document.createElement("span");
+    subtitle.className = "vx-model-item-subtitle";
+    subtitle.textContent = profile.provider;
+    btn.append(title, subtitle);
 
     btn.addEventListener("click", () => {
       if (providerSelectEl && modelSelectEl) {
@@ -264,7 +267,14 @@ export function applyRuntimeState(params: Record<string, unknown>): void {
     uiState.workspace = params.workspace;
   }
   if (typeof params.profile_configured === "boolean") {
+    const profileConfiguredChanged =
+      uiState.profileConfigured !== null && uiState.profileConfigured !== params.profile_configured;
     uiState.profileConfigured = params.profile_configured;
+    if (profileConfiguredChanged) {
+      rpcCall("settings.get", {})
+        .then((snapshot) => applySettingsRuntimeState(snapshot as SettingsSnapshot))
+        .catch(() => {});
+    }
   }
   if (typeof params.runtime_profile === "string" && ["coding", "chat", "loop", "goal"].includes(params.runtime_profile)) {
     uiState.runtimeProfile = params.runtime_profile as typeof uiState.runtimeProfile;
@@ -274,6 +284,15 @@ export function applyRuntimeState(params: Record<string, unknown>): void {
   }
   if (typeof params.ai_approval_count === "number") {
     uiState.aiApprovalCount = params.ai_approval_count;
+  }
+  if ("workspace_write_lock" in params) {
+    const writeLock = params.workspace_write_lock as Record<string, unknown> | null;
+    const waitingThreadIds = Array.isArray(writeLock?.waiting_thread_ids)
+      ? writeLock.waiting_thread_ids
+      : [];
+    uiState.isWaitingForWriteLock = Boolean(
+      uiState.sessionId && waitingThreadIds.includes(uiState.sessionId),
+    );
   }
   if (hasProviderModel) {
     populateModelControls();

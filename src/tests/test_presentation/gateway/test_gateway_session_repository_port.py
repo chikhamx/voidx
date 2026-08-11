@@ -56,6 +56,37 @@ class FakeSessionRepository:
         self.sessions[info.id] = info
         return info
 
+    async def stage_provisional_session(self, **kwargs) -> SessionInfo:
+        self.calls.append(("stage", kwargs))
+        info = SessionInfo(
+            id=kwargs["session_id"],
+            title=kwargs.get("title", "New session"),
+            workspace=kwargs.get("workspace", "."),
+            directory=kwargs.get("directory", ""),
+            model_provider=kwargs.get("provider", "anthropic"),
+            model_name=kwargs.get("model", ""),
+            runtime_profile=kwargs.get("profile", "coding"),
+        )
+        self.sessions[info.id] = info
+        return info
+
+    async def promote_provisional_session(self, session_id: str) -> int:
+        self.calls.append(("promote", session_id))
+        return 1
+
+    async def rollback_provisional_session(self, session_id: str) -> int:
+        self.calls.append(("rollback", session_id))
+        self.sessions.pop(session_id, None)
+        return 1
+
+    async def initialize_provisional_owner(self, owner_id: str) -> list[str]:
+        self.calls.append(("initialize_owner", owner_id))
+        return []
+
+    async def close_provisional_owner(self, owner_id: str) -> int:
+        self.calls.append(("close_owner", owner_id))
+        return 0
+
     async def list_sessions(self, *, limit: int = 50) -> list[SessionInfo]:
         self.calls.append(("list", limit))
         return list(self.sessions.values())[:limit]
@@ -92,7 +123,7 @@ async def dispatch(session: GatewaySession, request_id: int, method: str, params
 
 
 @pytest.mark.asyncio
-async def test_session_crud_uses_injected_repository_port() -> None:
+async def test_temporary_session_crud_stays_in_memory() -> None:
     repository = FakeSessionRepository()
     session = GatewaySession(
         lambda: BottomInputDock().tree,
@@ -115,36 +146,253 @@ async def test_session_crud_uses_injected_repository_port() -> None:
         "workspace": "project",
         "status": "idle",
         "runtime_profile": "goal",
+        "temporary": True,
     }
 
     listed = await dispatch(session, 2, "session.list", {})
-    assert [thread["thread_id"] for thread in listed["threads"]] == [session_id]
+    assert listed["threads"] == [
+        {
+            "thread_id": session_id,
+            "title": "Original",
+            "workspace": "project",
+            "directory": "project",
+            "model_provider": "",
+            "model_name": "",
+            "status": "idle",
+            "created_at": "",
+            "updated_at": "",
+            "message_count": 0,
+            "runtime_profile": "goal",
+            "temporary": True,
+        }
+    ]
 
-    forked = await dispatch(
+    assert await dispatch(
         session,
         3,
-        "session.fork",
-        {"thread_id": session_id, "title": "Forked"},
-    )
-    assert forked["title"] == "Forked"
+        "session.rename",
+        {"thread_id": session_id, "title": "Renamed"},
+    ) == {"ok": True}
+    assert session.list_threads()[0].title == "Renamed"
 
     assert await dispatch(
         session,
         4,
-        "session.rename",
-        {"thread_id": session_id, "title": "Renamed"},
-    ) == {"ok": True}
-    assert await dispatch(
-        session,
-        5,
         "session.delete",
         {"thread_id": session_id},
     ) == {"ok": True}
+    assert session.list_threads() == []
+    assert repository.calls == [("list", 200)]
+
+
+
+
+@pytest.mark.asyncio
+async def test_gateway_provisional_owner_lifecycle_uses_repository_port() -> None:
+    repository = FakeSessionRepository()
+    session = GatewaySession(
+        lambda: BottomInputDock().tree,
+        workspace="/workspace",
+        session_repository=repository,
+    )
+
+    await session.initialize_provisional_lifecycle()
+    await session.close_provisional_lifecycle()
 
     assert repository.calls == [
-        ("create", "project", "Original", "project", "anthropic", "", "goal"),
-        ("list", 200),
-        ("fork", session_id, "Forked"),
-        ("rename", session_id, "Renamed"),
-        ("delete", session_id),
+        ("initialize_owner", session.owner_id),
+        ("close_owner", session.owner_id),
     ]
+@pytest.mark.asyncio
+async def test_first_successful_turn_promotes_temporary_session() -> None:
+    from voidx.presentation.output.events.schema import TurnCompleted
+
+    repository = FakeSessionRepository()
+    received = []
+
+    async def handle(command) -> None:
+        received.append(command)
+
+    session = GatewaySession(
+        lambda: BottomInputDock().tree,
+        workspace="/workspace",
+        session_repository=repository,
+        command_handler=handle,
+    )
+    created = await dispatch(session, 10, "session.create", {"profile": "chat"})
+    thread_id = created["thread_id"]
+
+    assert await dispatch(
+        session, 11, "session.submit", {"thread_id": thread_id, "text": "hello"}
+    ) == {"ok": True}
+    assert repository.calls[0][0] == "stage"
+    assert repository.calls[0][1] == {
+        "owner_id": session.owner_id,
+        "session_id": thread_id,
+        "workspace": "/workspace",
+        "directory": "",
+        "title": "New session",
+        "profile": "chat",
+    }
+    assert session.list_threads()[0].temporary is True
+
+    await session.broadcast_event(TurnCompleted(), thread_id=thread_id)
+
+    assert repository.calls[-1] == ("promote", thread_id)
+    assert session.list_threads()[0].temporary is False
+    assert session.list_threads()[0].status == "idle"
+
+
+
+
+@pytest.mark.asyncio
+async def test_control_slash_does_not_stage_or_activate_temporary_session() -> None:
+    repository = FakeSessionRepository()
+    received = []
+    session = GatewaySession(
+        lambda: BottomInputDock().tree,
+        workspace="/workspace",
+        session_repository=repository,
+        command_handler=lambda command: received.append(command),
+    )
+    created = await dispatch(session, 12, "session.create", {"profile": "coding"})
+    thread_id = created["thread_id"]
+
+    assert await dispatch(
+        session, 13, "session.submit", {"thread_id": thread_id, "text": "/help"}
+    ) == {"ok": True}
+
+    assert repository.calls == []
+    assert len(received) == 1
+    assert received[0].text == "/help"
+    assert session.list_threads()[0].temporary is True
+    assert session.list_threads()[0].status == "idle"
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_kind", ["failed", "cancelled"])
+async def test_unsuccessful_first_turn_rolls_back_and_keeps_temporary_session(
+    terminal_kind: str,
+) -> None:
+    from voidx.presentation.output.events.schema import TurnCancelled, TurnFailed
+
+    repository = FakeSessionRepository()
+    session = GatewaySession(
+        lambda: BottomInputDock().tree,
+        workspace="/workspace",
+        session_repository=repository,
+        command_handler=lambda command: None,
+    )
+    created = await dispatch(session, 20, "session.create", {"profile": "goal"})
+    thread_id = created["thread_id"]
+    await dispatch(session, 21, "session.submit", {"thread_id": thread_id, "text": "try"})
+
+    event = TurnFailed(message="boom") if terminal_kind == "failed" else TurnCancelled()
+    await session.broadcast_event(event, thread_id=thread_id)
+
+    assert repository.calls[-1] == ("rollback", thread_id)
+    thread = session.list_threads()[0]
+    assert thread.thread_id == thread_id
+    assert thread.temporary is True
+    assert thread.status == "idle"
+
+    await dispatch(session, 22, "session.submit", {"thread_id": thread_id, "text": "retry"})
+    assert [call[0] for call in repository.calls].count("stage") == 2
+
+
+@pytest.mark.asyncio
+async def test_temporary_lifecycle_broadcasts_authoritative_snapshots() -> None:
+    import json
+
+    from tests.test_presentation.gateway.helpers import FakeClient
+    from voidx.presentation.output.events.schema import TurnCompleted, TurnFailed
+
+    repository = FakeSessionRepository()
+    session = GatewaySession(
+        lambda: BottomInputDock().tree,
+        workspace="/workspace",
+        session_repository=repository,
+        command_handler=lambda command: None,
+    )
+    client = FakeClient()
+    await session.connect(client)
+    created = await dispatch(session, 30, "session.create", {"profile": "coding"})
+    thread_id = created["thread_id"]
+    client.messages.clear()
+
+    await dispatch(session, 31, "session.submit", {"thread_id": thread_id, "text": "work"})
+    submit_snapshots = [
+        json.loads(message)["params"]
+        for message in client.messages
+        if json.loads(message).get("method") == "workspace.snapshot"
+    ]
+    assert any(
+        thread["thread_id"] == thread_id
+        and thread["temporary"] is True
+        and thread["status"] == "running"
+        for snapshot in submit_snapshots
+        for thread in snapshot["threads"]
+    )
+
+    client.messages.clear()
+    await session.broadcast_event(TurnCompleted(), thread_id=thread_id)
+    promoted = json.loads(client.messages[-1])
+    assert promoted["method"] == "workspace.snapshot"
+    promoted_thread = next(
+        thread for thread in promoted["params"]["threads"] if thread["thread_id"] == thread_id
+    )
+    assert promoted_thread["temporary"] is False
+    assert promoted_thread["status"] == "idle"
+
+    created = await dispatch(session, 32, "session.create", {"profile": "coding"})
+    failed_id = created["thread_id"]
+    await dispatch(session, 33, "session.submit", {"thread_id": failed_id, "text": "fail"})
+    client.messages.clear()
+    await session.broadcast_event(TurnFailed(message="boom"), thread_id=failed_id)
+    rolled_back = json.loads(client.messages[-1])
+    assert rolled_back["method"] == "workspace.snapshot"
+    failed_thread = next(
+        thread for thread in rolled_back["params"]["threads"] if thread["thread_id"] == failed_id
+    )
+    assert failed_thread["temporary"] is True
+    assert failed_thread["status"] == "idle"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_submit_stages_temporary_thread_once() -> None:
+    import asyncio
+
+    repository = FakeSessionRepository()
+    stage_started = asyncio.Event()
+    release_stage = asyncio.Event()
+    original_stage = repository.stage_provisional_session
+
+    async def slow_stage(**kwargs):
+        stage_started.set()
+        await release_stage.wait()
+        return await original_stage(**kwargs)
+
+    repository.stage_provisional_session = slow_stage
+    received = []
+    session = GatewaySession(
+        lambda: BottomInputDock().tree,
+        workspace="/workspace",
+        session_repository=repository,
+        command_handler=lambda command: received.append(command),
+    )
+    created = await dispatch(session, 40, "session.create", {"profile": "coding"})
+    thread_id = created["thread_id"]
+
+    first = asyncio.create_task(
+        dispatch(session, 41, "session.submit", {"thread_id": thread_id, "text": "first"})
+    )
+    await stage_started.wait()
+    second = asyncio.create_task(
+        dispatch(session, 42, "session.submit", {"thread_id": thread_id, "text": "second"})
+    )
+    release_stage.set()
+    assert await first == {"ok": True}
+    assert await second == {"ok": True}
+
+    assert [call[0] for call in repository.calls].count("stage") == 1
+    assert len(received) == 2
+    assert received[0].text == "first"
+    assert received[1]["kind"] == "guide"

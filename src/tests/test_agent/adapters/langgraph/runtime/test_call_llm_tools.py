@@ -19,8 +19,9 @@ from voidx.tooling.adapters.mcp import McpGatewayTool
 from voidx.agent.adapters.langgraph.runtime.convergence import is_step_hint_message
 from voidx.agent.adapters.langgraph.runtime.topology import latest_user_text
 from voidx.agent.application.runtime_context import RuntimeContextBuilder
-from voidx.agent.domain.task.state import TaskState
+from voidx.agent.domain.task.state import GoalSpec, TaskState
 from voidx.agent.domain.task.todo import TodoRunState
+from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.config import Config
 from voidx.llm.domain.model import ModelConfig
 from voidx.llm.compaction import CompactionSelection
@@ -622,6 +623,168 @@ async def test_call_llm_keeps_bound_tools_fixed_across_active_workflow_node(tmp_
     assert "line" not in tool_names
     assert "insert" not in tool_names
     assert "edit" not in tool_names
+
+
+
+
+@pytest.mark.asyncio
+async def test_call_llm_refreshes_current_task_state_from_latest_state(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+
+    async def no_save_context_frame(**_kwargs):
+        return None
+
+    monkeypatch.setattr(graph_module, "save_main_context_frame", no_save_context_frame)
+    graph = make_langgraph_execution(
+        Config(
+            model=ModelConfig(provider="openai", model="gpt-4o"),
+            workspace=str(tmp_path),
+        ),
+        api_key="test-key",
+    )
+    graph._session = SimpleNamespace(id="session-current-task-state-refresh")
+    graph.model = TrackingStreamingModel()
+    graph._last_context_builder = RuntimeContextBuilder(
+        config=graph.config,
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="coordinate",
+        interaction_mode="auto",
+        task_state=TaskState(current_goal=GoalSpec(desc="old goal")),
+    )
+    todo_state = TodoRunState.model_validate({
+        "summary": "0/1 done · 1 active · 0 pending",
+        "total": 1,
+        "done": 0,
+        "active": 1,
+        "pending": 0,
+        "active_items": [
+            {"id": "sync", "content": "refresh current task state", "status": "active"},
+        ],
+        "items": [
+            {"id": "sync", "content": "refresh current task state", "status": "active"},
+        ],
+    })
+    latest_task_state = TaskState(
+        current_goal=GoalSpec(desc="new goal"),
+        workflow_route=WorkflowRoute(join="tdd", leave="verify"),
+        workflow_runs={
+            "tdd": WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE),
+        },
+        todo_state=todo_state,
+    )
+
+    await graph._call_llm({
+        "messages": [HumanMessage(content="continue")],
+        "step_count": 1,
+        "persona": "implement",
+        "turn_state": "running",
+        "task_state": latest_task_state.model_dump(mode="json"),
+        "todo_state": todo_state.model_dump(mode="json"),
+    })
+
+    prompt = "\n".join(str(message.content) for message in graph.model.messages)
+    assert "Current persona: implement" in prompt
+    assert "Goal: new goal" in prompt
+    assert "Workflow route: tdd -> verify" in prompt
+    assert "Active workflows: tdd" in prompt
+    assert "Todo: 0/1 done · 1 active · 0 pending" in prompt
+    assert "active sync: refresh current task state" in prompt
+    assert "old goal" not in prompt
+
+
+
+
+@pytest.mark.asyncio
+async def test_call_llm_refreshes_current_task_state_after_pressure_rebuild(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
+    from voidx.agent.adapters.langgraph.runtime.context_pressure import ContextPressureDecision
+    from voidx.agent.domain.task.intent import TaskIntent
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+    monkeypatch.setattr(
+        graph_module,
+        "evaluate_context_pressure",
+        lambda *_args, **_kwargs: ContextPressureDecision(
+            over_soft=True,
+            over_hard=True,
+            can_compact=False,
+            pressure_level="hard",
+            should_inject=True,
+            turn_id="turn-pressure",
+            turn_count=1,
+            pre_tokens=90_000,
+            soft_threshold=75_000,
+            hard_threshold=90_000,
+            reason="hard_threshold",
+        ),
+    )
+    graph = make_langgraph_execution(
+        Config(
+            model=ModelConfig(provider="openai", model="gpt-4o"),
+            workspace=str(tmp_path),
+        ),
+        api_key="test-key",
+    )
+    graph.model = TrackingStreamingModel()
+    graph._last_context_builder = RuntimeContextBuilder(
+        config=graph.config,
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="coordinate",
+        interaction_mode="auto",
+        workflow_runs=[
+            WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE),
+        ],
+        active_workflow_summaries=["brainstorm (old trigger)"],
+        task_state=TaskState(current_goal=GoalSpec(desc="old goal")),
+    )
+    todo_state = TodoRunState.model_validate({
+        "summary": "0/1 done · 1 active · 0 pending",
+        "total": 1,
+        "done": 0,
+        "active": 1,
+        "pending": 0,
+        "active_items": [
+            {"id": "sync", "content": "refresh after pressure", "status": "active"},
+        ],
+        "items": [
+            {"id": "sync", "content": "refresh after pressure", "status": "active"},
+        ],
+    })
+    latest_task_state = TaskState(
+        current_intent=TaskIntent.GENERAL,
+        current_goal=GoalSpec(desc="new pressure goal"),
+        workflow_route=WorkflowRoute(join="tdd", leave="verify"),
+        workflow_runs={
+            "tdd": WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE),
+        },
+        todo_state=todo_state,
+    )
+
+    await graph._call_llm({
+        "messages": [HumanMessage(id="turn-pressure", content="continue")],
+        "step_count": 1,
+        "persona": "implement",
+        "turn_state": "running",
+        "task_state": latest_task_state.model_dump(mode="json"),
+        "todo_state": todo_state.model_dump(mode="json"),
+    })
+
+    prompt = "\n".join(str(message.content) for message in graph.model.messages)
+    assert prompt.count("## Current Task State") == 1
+    assert "Current persona: implement" in prompt
+    assert "Intent: general" in prompt
+    assert "Turn state: running" in prompt
+    assert "Goal: new pressure goal" in prompt
+    assert "Workflow route: tdd -> verify" in prompt
+    assert "Active workflows: tdd" in prompt
+    assert "Todo: 0/1 done · 1 active · 0 pending" in prompt
+    assert "active sync: refresh after pressure" in prompt
+    assert "old goal" not in prompt
+    assert "brainstorm (old trigger)" not in prompt
 
 
 

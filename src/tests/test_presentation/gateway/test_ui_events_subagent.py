@@ -407,7 +407,7 @@ async def test_child_agent_stream_updates_status_without_rendering_text(isolated
         rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(100))
         expected = _expected_subagent_title("agent_0", "inspect auth.py")
         assert "explore agent completed (2.5s)" not in rendered
-        assert f"{expected} completed (final answer, 2.5s)" in rendered
+        assert f"{expected} completed (2.5s)" in rendered
         assert "voidx(" not in rendered
         assert 'Agent("explore")' not in rendered
         assert "subagent completed" not in rendered
@@ -423,7 +423,7 @@ async def test_child_agent_stream_updates_status_without_rendering_text(isolated
 
 
 @pytest.mark.asyncio
-async def test_subagent_finish_failure_keeps_reason_status_without_summary(isolated_dock):
+async def test_subagent_finish_shows_stats_in_header_and_error_in_status(isolated_dock):
     bus = UiEventBus()
     bus.start(DockEventConsumer(isolated_dock))
     try:
@@ -453,8 +453,10 @@ async def test_subagent_finish_failure_keeps_reason_status_without_summary(isola
             subagent_id="agent_0",
             ok=False,
             elapsed=1.2,
-            finish_reason="permission_denied",
+            finish_reason="error",
             error="provider schema rejected tool definitions",
+            calls=3,
+            tokens=1545,
         ))
         await bus.drain()
 
@@ -462,10 +464,12 @@ async def test_subagent_finish_failure_keeps_reason_status_without_summary(isola
         agent_node = next(node for node in assistant.children if node.node_type == "subagent")
         status_node = next(node for node in agent_node.children if node.node_type == "status")
 
-        assert _rich_plain(status_node.header) == "✗ Failed: permission denied"
+        assert _rich_plain(status_node.header) == "✗ provider schema rejected tool definitions"
         expected = _expected_subagent_title("agent_0", "Task: review permission flow")
         rendered_agent = _rich_plain(agent_node.header)
-        assert f"{expected} failed (permission denied, provider schema rejected tool definitions, 1.2s)" in rendered_agent
+        assert f"{expected} failed (3 calls, 1.5k tokens, 1.2s)" in rendered_agent
+        assert "failed (error," not in rendered_agent
+        assert "provider schema rejected tool definitions" not in rendered_agent
     finally:
         await bus.stop()
 

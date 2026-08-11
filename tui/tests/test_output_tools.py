@@ -244,7 +244,7 @@ def test_file_change_add_remove_background_extends_to_render_width():
         test_dock.reset()
 
 
-def test_committed_todo_state_omits_progress_bar():
+def test_committed_todo_state_stays_internal_and_omits_progress_bar():
     test_dock = dock
     test_dock.begin_capture()
     try:
@@ -255,13 +255,21 @@ def test_committed_todo_state_omits_progress_bar():
                 {"content": "next task", "status": "pending"},
             ],
         )
-        test_dock.commit_todo_state()
+        node = test_dock.commit_todo_state()
 
         rendered = "\n".join(_rich_plain(line) for line in test_dock.tree.render(100))
 
-        assert "Todo: 1/2 done" in rendered
-        assert "finished task" in rendered
-        assert "next task" in rendered
+        assert test_dock.todo_state() is None
+        assert node is not None
+        assert node.node_type == "todo"
+        assert node.payload["summary"] == "1/2 done · 0 active · 1 pending"
+        assert [item["content"] for item in node.payload["items"]] == [
+            "finished task",
+            "next task",
+        ]
+        assert "Todo:" not in rendered
+        assert "finished task" not in rendered
+        assert "next task" not in rendered
         assert "█" not in rendered
         assert "░" not in rendered
     finally:

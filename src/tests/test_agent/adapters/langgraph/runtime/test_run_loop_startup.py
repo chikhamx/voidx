@@ -470,6 +470,33 @@ async def test_web_submit_context_defaults_to_coding_identity(tmp_path):
     assert context.session_id == ""
     assert context.workspace == workspace
 
+
+
+@pytest.mark.asyncio
+async def test_web_submit_context_uses_target_thread_metadata(tmp_path):
+    graph = _graph(workspace=str(tmp_path / "host"))
+    queued_inputs: list[tuple[str, TurnExecutionContext]] = []
+    app = SimpleNamespace(
+        submit_external_input=lambda text, *, context: queued_inputs.append((text, context)),
+        cancel_external_input=lambda **_: None,
+    )
+
+    await graph._handle_web_command(
+        app,
+        UiSubmitCommand(
+            text="hello from temporary chat",
+            thread_id="temporary-chat",
+            session_id="temporary-chat",
+            runtime_profile="chat",
+            workspace=str(tmp_path / "target"),
+        ),
+    )
+
+    _, context = queued_inputs[0]
+    assert context.thread_id == "temporary-chat"
+    assert context.session_id == "temporary-chat"
+    assert context.runtime_profile.profile_id == "chat"
+    assert context.workspace == str(tmp_path / "target")
 @pytest.mark.asyncio
 async def test_web_guide_submit_records_guidance_without_starting_turn():
     graph = _graph()

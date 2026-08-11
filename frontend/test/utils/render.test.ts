@@ -264,6 +264,51 @@ describe("renderTranscript", () => {
     expect(thinking.textContent).not.toContain("checking context");
     expect(root.querySelector(".markdown-body").textContent).toContain("final answer");
   });
+
+
+  it("restores a completed compaction divider from a status snapshot", () => {
+    resetStreams();
+    const root = document.createElement("div");
+    setTranscriptElement(root);
+
+    renderTranscript(root, {
+      nodes: [
+        {
+          node_type: "status",
+          id: "compact-status",
+          payload: { outcome: "compacted", detail: "Kept the latest work" },
+          status: "done",
+        },
+      ],
+    });
+
+    expect(root.querySelector(".compaction-divider")?.textContent).toContain("上下文已压缩");
+    expect(root.querySelector(".compaction-divider")?.textContent).toContain("Kept the latest work");
+  });
+
+
+  it("restores checkpoint nodes as collapsible system rows", () => {
+    resetStreams();
+    const root = document.createElement("div");
+    setTranscriptElement(root);
+
+    renderTranscript(root, {
+      nodes: [
+        {
+          node_type: "checkpoint",
+          id: "checkpoint-1",
+          header: "voidx plan",
+          body_lines: ["Plan: Ship it", "1. Run tests"],
+          payload: { checkpoint_id: "cp-1" },
+        },
+      ],
+    });
+
+    const row = root.querySelector("details.checkpoint-row");
+    expect(row).not.toBeNull();
+    expect(row.querySelector("summary").textContent).toContain("voidx plan");
+    expect(row.textContent).toContain("Run tests");
+  });
 });
 
 describe("appendNoticeItem", () => {

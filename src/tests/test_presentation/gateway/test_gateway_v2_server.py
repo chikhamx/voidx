@@ -521,3 +521,94 @@ async def test_websocket_client_priority_send_falls_back_to_head_when_no_droppab
         assert json.loads(queued[1])["id"] == 3
     finally:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_gateway_server_start_failure_closes_provisional_lifecycle(monkeypatch):
+    from voidx.presentation.gateway import server as server_module
+
+    class SessionStub:
+        def __init__(self):
+            self.calls = []
+
+        async def initialize_provisional_lifecycle(self):
+            self.calls.append("initialize")
+
+        async def close_provisional_lifecycle(self):
+            self.calls.append("close")
+
+    async def failing_serve(*args, **kwargs):
+        raise OSError("bind failed")
+
+    session = SessionStub()
+    server = server_module.GatewayServer(session)
+    monkeypatch.setattr(server_module, "serve", failing_serve)
+
+    with pytest.raises(OSError, match="bind failed"):
+        await server.start()
+
+    assert session.calls == ["initialize", "close"]
+    assert server._server is None
+    assert server._bound_port is None
+
+
+
+
+@pytest.mark.asyncio
+async def test_gateway_server_initialize_failure_still_closes_lifecycle():
+    from voidx.presentation.gateway.server import GatewayServer
+
+    class SessionStub:
+        def __init__(self):
+            self.calls = []
+
+        async def initialize_provisional_lifecycle(self):
+            self.calls.append("initialize")
+            raise RuntimeError("cleanup failed")
+
+        async def close_provisional_lifecycle(self):
+            self.calls.append("close")
+
+    session = SessionStub()
+    server = GatewayServer(session)
+
+    with pytest.raises(RuntimeError, match="cleanup failed"):
+        await server.start()
+
+    assert session.calls == ["initialize", "close"]
+    assert server._server is None
+    assert server._bound_port is None
+@pytest.mark.asyncio
+async def test_gateway_server_stop_wait_closed_failure_still_closes_lifecycle():
+    from voidx.presentation.gateway.server import GatewayServer
+
+    class SessionStub:
+        def __init__(self):
+            self.calls = []
+
+        async def close_provisional_lifecycle(self):
+            self.calls.append("close")
+
+    class ServerStub:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+        async def wait_closed(self):
+            raise RuntimeError("wait failed")
+
+    session = SessionStub()
+    gateway = GatewayServer(session)
+    bound = ServerStub()
+    gateway._server = bound
+    gateway._bound_port = 1234
+
+    with pytest.raises(RuntimeError, match="wait failed"):
+        await gateway.stop()
+
+    assert bound.closed is True
+    assert session.calls == ["close"]
+    assert gateway._server is None
+    assert gateway._bound_port is None

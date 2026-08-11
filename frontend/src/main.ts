@@ -1,4 +1,10 @@
 /// <reference types="vite/client" />
+import "../css/tokens.css";
+import "../css/base.css";
+import "../css/layout.css";
+import "../css/chat.css";
+import "../css/composer.css";
+import "../css/components.css";
 import {
   renderTranscript,
   appendMessageItem,
@@ -74,6 +80,8 @@ import {
   applySettingsRuntimeState,
   applyRuntimeState,
   initTheme,
+  initModeControls,
+  renderRuntimeProfile,
 } from "./ui";
 import {
   pushHistory,
@@ -82,7 +90,7 @@ import {
   resetHistoryNavigation,
   isHistoryBrowsing,
 } from "./ui/history";
-import type { ThreadInfo, SettingsSnapshot, IntegrationsSnapshot, RefCandidate, FileCandidate, SkillCandidate, McpCandidate } from "./ui";
+import type { ThreadInfo, SettingsSnapshot, IntegrationsSnapshot, RefCandidate, FileCandidate, SkillCandidate, McpCandidate, RuntimeProfile } from "./ui";
 import {
   showSlashMenu, hideSlashMenu, updateSlashMenu, runSlashCommand,
   refMenuVisible, showRefMenu, hideRefMenu, updateRefMenu,
@@ -148,6 +156,12 @@ function submitModeCommand(command: string): void {
       scrollToBottom();
     });
 }
+
+initModeControls((profile) => {
+  if (uiState.sessionId && uiState.runtimeProfile === profile) return;
+  void openThreadForProfile(profile);
+});
+renderRuntimeProfile(uiState.runtimeProfile);
 
 for (const [id, command] of [["mode-status", "status"], ["mode-stop", "stop"]] as const) {
   document.querySelector<HTMLElement>(`#${id}`)?.addEventListener("click", () => {
@@ -285,16 +299,12 @@ export function switchThread(threadId: string): Promise<void> {
     });
 }
 
-onThreadSelect((threadId: string) => {
-  switchThread(threadId).catch((err: Error) => {
-    showSessionError("会话切换", err);
-  });
-});
+function openThread(directory: string, profile?: string): Promise<void> {
+  if (!isRpcConnected()) return Promise.resolve();
 
-onNewThread((directory: string, profile?: string) => {
   const existing = findReusableEmptyThread(directory || uiState.workspace, profile);
   if (existing) {
-    rpcCall("session.switch", { thread_id: existing.thread_id })
+    return rpcCall("session.switch", { thread_id: existing.thread_id })
       .then((result: unknown) => {
         const selected = result as Record<string, unknown>;
         uiState.sessionId =
@@ -305,19 +315,25 @@ onNewThread((directory: string, profile?: string) => {
         }
         addThread(existing, uiState.sessionId);
         updateStatusBar();
-      })
-      .catch((err: Error) => {
-        showSessionError("会话切换", err);
       });
-    return;
   }
 
-  rpcCall("session.create", { directory })
+  const params: { directory: string; profile?: string } = { directory };
+  if (profile) params.profile = profile;
+  return rpcCall("session.create", params)
     .then((result: unknown) => {
-      const r = result as Record<string, string>;
+      const r = result as {
+        thread_id: string;
+        title?: string;
+        status?: string;
+        workspace?: string;
+        directory?: string;
+        runtime_profile?: string;
+        temporary?: boolean;
+      };
       uiState.sessionId = r.thread_id;
       const runtimeProfile =
-        typeof r.runtime_profile === "string" ? r.runtime_profile : undefined;
+        typeof r.runtime_profile === "string" ? r.runtime_profile : profile;
       if (runtimeProfile) {
         applyRuntimeState({ runtime_profile: runtimeProfile });
       }
@@ -328,14 +344,30 @@ onNewThread((directory: string, profile?: string) => {
           status: r.status,
           workspace: r.workspace || r.directory || directory || uiState.workspace,
           runtime_profile: runtimeProfile,
+          temporary: r.temporary === true,
         },
         uiState.sessionId,
       );
       updateStatusBar();
-    })
-    .catch((err: Error) => {
-      showSessionError("会话创建", err);
     });
+}
+
+export function openThreadForProfile(profile: RuntimeProfile): Promise<void> {
+  return openThread("", profile).catch((error: unknown) => {
+    showSessionError("模式切换", error);
+  });
+}
+
+onThreadSelect((threadId: string) => {
+  switchThread(threadId).catch((err: Error) => {
+    showSessionError("会话切换", err);
+  });
+});
+
+onNewThread((directory: string, profile?: string) => {
+  void openThread(directory, profile || uiState.runtimeProfile).catch((err: Error) => {
+    showSessionError("会话创建", err);
+  });
 });
 
 onThreadDelete((threadId: string) => {

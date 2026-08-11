@@ -82,6 +82,154 @@ class TestWindowBounds:
                 assert ids <= tool_ids, f"AIMessage tool_calls {ids} missing ToolMessage"
 
 
+class TestTokenRewriteBudget:
+    def test_default_token_budget_keeps_read_outside_rewrite_span(self):
+        oversized_line = " token" * 5000
+        msgs = [
+            _read_ai("old", "f.py", "x"),
+            _read_tool("old", f"1\told{oversized_line}"),
+            _read_ai("new", "f.py", "x"),
+            _read_tool("new", f"1\tnew{oversized_line}"),
+        ]
+
+        result = trim_superseded_file_tools(msgs)
+
+        assert "old" in _tool_message_ids(result)
+        assert "new" in _tool_message_ids(result)
+
+    def test_default_token_budget_still_trims_reads_inside_rewrite_span(self):
+        msgs = [
+            _read_ai("old", "f.py", "x"),
+            _read_tool("old", _numbered_lines(1, 10)),
+            _read_ai("new", "f.py", "x"),
+            _read_tool("new", _numbered_lines(1, 10)),
+        ]
+
+        result = trim_superseded_file_tools(msgs)
+
+        assert "old" not in _tool_message_ids(result)
+        assert "new" in _tool_message_ids(result)
+
+
+    def test_trimmed_read_does_not_reappear_after_history_grows(self):
+        reads = [
+            _read_ai("old", "f.py", "x"),
+            _read_tool("old", _numbered_lines(1, 10)),
+            _read_ai("new", "f.py", "x"),
+            _read_tool("new", _numbered_lines(1, 10)),
+        ]
+        initial = trim_superseded_file_tools(reads)
+
+        later = trim_superseded_file_tools([
+            *reads,
+            HumanMessage(content=" tail" * 5000),
+        ])
+
+        assert "old" not in _tool_message_ids(initial)
+        assert "old" not in _tool_message_ids(later)
+
+
+    def test_production_estimator_blocks_oversized_raw_edit_rewrite(self):
+        from voidx.llm.usage import estimate_message_tokens
+
+        edit = AIMessage(
+            content="",
+            tool_calls=[],
+            additional_kwargs={
+                "tool_calls": [{
+                    "id": "edit",
+                    "name": "replace",
+                    "args": {
+                        "file_path": "f.py",
+                        "new_string": " token" * 5000,
+                    },
+                }],
+            },
+        )
+        read = AIMessage(
+            content="",
+            tool_calls=[],
+            additional_kwargs={
+                "tool_calls": [{
+                    "id": "read",
+                    "name": "read",
+                    "args": {"file_path": "f.py"},
+                }],
+            },
+        )
+        messages = [
+            edit,
+            _edit_tool("edit", "File edited: f.py\n@@ -1 +1 @@\n-old\n+new"),
+            read,
+            _read_tool("read", "1\tnew"),
+        ]
+
+        result = trim_superseded_file_tools(
+            messages,
+            token_estimator=lambda message: estimate_message_tokens(
+                message,
+                "test-model",
+            ),
+        )
+
+        edit_result = next(
+            message.content
+            for message in result
+            if isinstance(message, ToolMessage) and message.tool_call_id == "edit"
+        )
+        assert "@@ -1 +1 @@" in edit_result
+
+
+    def test_production_estimator_blocks_raw_args_hidden_by_canonical_call(self):
+        import json
+
+        from voidx.llm.usage import estimate_message_tokens
+
+        edit = AIMessage(
+            content="",
+            tool_calls=[{
+                "id": "edit",
+                "name": "replace",
+                "args": {"file_path": "f.py"},
+                "type": "tool_call",
+            }],
+            additional_kwargs={
+                "tool_calls": [{
+                    "id": "edit",
+                    "type": "function",
+                    "function": {
+                        "name": "replace",
+                        "arguments": json.dumps({
+                            "file_path": "f.py",
+                            "new_string": " token" * 5000,
+                        }),
+                    },
+                }],
+            },
+        )
+        messages = [
+            edit,
+            _edit_tool("edit", "File edited: f.py\n@@ -1 +1 @@\n-old\n+new"),
+            _read_ai("read", "f.py", "x"),
+            _read_tool("read", "1\tnew"),
+        ]
+
+        result = trim_superseded_file_tools(
+            messages,
+            token_estimator=lambda message: estimate_message_tokens(
+                message,
+                "test-model",
+            ),
+        )
+
+        edit_result = next(
+            message.content
+            for message in result
+            if isinstance(message, ToolMessage) and message.tool_call_id == "edit"
+        )
+        assert "@@ -1 +1 @@" in edit_result
+
+
 class TestPairingIndex:
     def test_unpaired_tool_message_kept(self):
         # ToolMessage without matching AIMessage tool_call → kept as-is.

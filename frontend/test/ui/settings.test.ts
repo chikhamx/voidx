@@ -46,6 +46,34 @@ describe("renderSettingsModal", () => {
     expect(document.querySelector('[name="new_api_key"]')).not.toBeNull();
   });
 
+
+  it("renders the model configuration center for chat, compaction, and AI approval", () => {
+    initSettingsModal();
+    renderSettingsModal({
+      model: { provider: "openai", model: "gpt-5.5", reasoning_effort: "high" },
+      profiles: [
+        { name: "openai/gpt-5.5", provider: "openai", model: "gpt-5.5", base_url: null, protocol: "openai", configured: true },
+        { name: "anthropic/claude", provider: "anthropic", model: "claude", base_url: null, protocol: "anthropic", configured: false },
+      ],
+      compaction: { profile_name: "openai/gpt-5.5", reasoning_effort: "low", timeout_seconds: 45 },
+      permissions: {
+        permission_mode: "ai_approval",
+        ai_approval: { profile_name: "openai/gpt-5.5", timeout_seconds: 9 },
+      },
+    });
+
+    const content = document.querySelector("#settings-content");
+    expect(content.textContent).toContain("主对话");
+    expect(content.textContent).toContain("上下文压缩");
+    expect(content.textContent).toContain("AI 审批模型");
+    expect(document.querySelector('[name="model_reasoning_effort"]').value).toBe("high");
+    expect(document.querySelector('[name="compaction_profile"]').value).toBe("openai/gpt-5.5");
+    expect(document.querySelector('[name="compaction_reasoning_effort"]').value).toBe("low");
+    expect(document.querySelector('[name="compaction_timeout"]').value).toBe("45");
+    expect(document.querySelector('[name="ai_approval_profile"]').value).toBe("openai/gpt-5.5");
+    expect(document.querySelector('[name="ai_approval_timeout"]').value).toBe("9");
+  });
+
   it("renders ask-first permission presets instead of low-level controls", () => {
     initSettingsModal();
     renderSettingsModal({ permissions: { permission_mode: "project_trusted" } });
@@ -114,6 +142,23 @@ describe("collectSettingsPatch", () => {
     });
   });
 
+  it("does not overwrite AI approval configuration when saving permission preset", () => {
+    initSettingsModal();
+    renderSettingsModal({
+      permissions: {
+        permission_mode: "ai_approval",
+        ai_approval: { profile_name: "openai/gpt-5.5", timeout_seconds: 9 },
+      },
+    });
+    document.querySelector(".settings-tab[data-tab='permissions']").click();
+    document.querySelector('[name="permission_mode"]').value = "safe";
+
+    expect(collectSettingsPatch()).toEqual({
+      permissions: { permission_mode: "safe" },
+    });
+  });
+
+
 
   it("collects code_ide from active tab", () => {
     initSettingsModal();
@@ -137,7 +182,7 @@ describe("collectSettingsPatch", () => {
 
     const patch = collectSettingsPatch();
 
-    expect(patch).toEqual({
+    expect(patch).toMatchObject({
       model: {
         provider: "xunfei-coding-plan",
         model: "astron-code-latest",
@@ -153,6 +198,31 @@ describe("collectSettingsPatch", () => {
     });
   });
 });
+
+
+  it("collects model-purpose reasoning, compaction, and AI approval settings", () => {
+    initSettingsModal();
+    renderSettingsModal({
+      model: { provider: "openai", model: "gpt-5.5", reasoning_effort: "medium" },
+      profiles: [{ name: "openai/gpt-5.5", provider: "openai", model: "gpt-5.5", base_url: null, protocol: "openai", configured: true }],
+      compaction: { profile_name: "", reasoning_effort: null, timeout_seconds: 60 },
+      permissions: { permission_mode: "safe", ai_approval: { profile_name: "", timeout_seconds: 12 } },
+    });
+    document.querySelector('[name="model_reasoning_effort"]').value = "max";
+    document.querySelector('[name="compaction_profile"]').value = "openai/gpt-5.5";
+    document.querySelector('[name="compaction_reasoning_effort"]').value = "low";
+    document.querySelector('[name="compaction_timeout"]').value = "75";
+    document.querySelector('[name="ai_approval_profile"]').value = "openai/gpt-5.5";
+    document.querySelector('[name="ai_approval_timeout"]').value = "8";
+
+    const patch = collectSettingsPatch();
+
+    expect(patch).toMatchObject({
+      model: { reasoning_effort: "max" },
+      compaction: { profile_name: "openai/gpt-5.5", reasoning_effort: "low", timeout_seconds: 75 },
+      permissions: { ai_approval: { profile_name: "openai/gpt-5.5", timeout_seconds: 8 } },
+    });
+  });
 
 describe("closeSettingsModal", () => {
   it("removes open attribute from dialog", () => {

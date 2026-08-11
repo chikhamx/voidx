@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 
 import pytest
+
+from voidx.agent.domain.ui_events import ContextPressureFinished, ContextPressureUpdated
 from rich.console import Console
 from rich.text import Text
 
@@ -459,3 +461,42 @@ async def test_status_finished_for_existing_record_only_status_no_orphan(isolate
 
     orphan_logs = [c for c in orphan_calls if c["event"] == "ui_status_orphan"]
     assert not orphan_logs, f"Expected no orphan log, got: {orphan_logs}"
+
+
+@pytest.mark.asyncio
+async def test_context_pressure_events_stay_internal(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(ContextPressureUpdated(
+            pressure_id="context-pressure:turn-1",
+            level="soft",
+            outcome="hint_injected",
+            reason="soft_threshold",
+            turn_count=1,
+            pre_tokens=80_000,
+            soft_threshold=75_000,
+            hard_threshold=90_000,
+        ))
+        await bus.drain()
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert "Context pressure" not in rendered
+        assert "soft_threshold" not in rendered
+        record = isolated_dock.status_record("context-pressure:turn-1")
+        assert record is not None
+        assert record.detail == "soft_threshold"
+
+        await bus.emit(ContextPressureFinished(
+            pressure_id="context-pressure:turn-1",
+            level="soft",
+            outcome="turn_converged",
+        ))
+        await bus.drain()
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert "Context pressure" not in rendered
+        assert isolated_dock.status_record("context-pressure:turn-1") is None
+    finally:
+        await bus.stop()

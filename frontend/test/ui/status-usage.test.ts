@@ -15,6 +15,7 @@ function sentMethods(socket) {
 beforeEach(() => {
   _resetRpcForTest();
   uiState.usage = null;
+  uiState.aiApprovalCount = 0;
 });
 
 describe("formatUsageLabel", () => {
@@ -99,4 +100,74 @@ describe("status bar usage", () => {
     await vi.waitFor(() => expect(uiState.usage?.context_tokens).toBe(10));
   });
 
+
+
+  it("shows AI approval count only when it is positive", () => {
+    uiState.aiApprovalCount = 3;
+    updateStatusBar();
+
+    const stripCount = document.querySelector("#strip-ai-approval");
+    const panelRow = document.querySelector("#status-ai-approval-row");
+    expect(stripCount.hidden).toBe(false);
+    expect(stripCount.textContent).toBe("AI 审批 3");
+    expect(panelRow.hidden).toBe(false);
+    expect(document.querySelector("#status-ai-approval").textContent).toBe("3");
+
+    uiState.aiApprovalCount = 0;
+    updateStatusBar();
+    expect(stripCount.hidden).toBe(true);
+    expect(panelRow.hidden).toBe(true);
+  });
+
+  it("applies AI approval count from runtime snapshots", () => {
+    handleNotification("startup.shown", { ai_approval_count: 4 });
+
+    expect(uiState.aiApprovalCount).toBe(4);
+    expect(document.querySelector("#strip-ai-approval").textContent).toBe("AI 审批 4");
+  });
+
+
+  it("keeps the runtime status line hidden when no transient status is needed", () => {
+    uiState.runtimeProfile = "goal";
+    uiState.provider = "openai";
+    uiState.model = "gpt-5.5";
+    uiState.reasoningEffort = "high";
+    uiState.permissionMode = "project_trusted";
+    uiState.aiApprovalCount = 2;
+    updateStatusBar();
+
+    const runtimeStatus = document.querySelector("#runtime-status-line");
+    expect(runtimeStatus.hidden).toBe(true);
+    expect(runtimeStatus.textContent).toBe("");
+  });
+
+  it("disables sending while waiting for the write lock but keeps running cancellation available", () => {
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "thread-waiting",
+      active_snapshot: { thread_id: "thread-waiting", nodes: [] },
+      threads: [],
+      workspace_write_lock: {
+        holder_thread_id: "thread-running",
+        waiting_thread_ids: ["thread-waiting"],
+      },
+    });
+    handleNotification("turn.started", {});
+
+    expect(document.querySelector("#input").disabled).toBe(true);
+    expect(document.querySelector("#btn-send").disabled).toBe(false);
+    expect(document.querySelector("#runtime-status-line").textContent).toContain("等待另一个会话完成写入…");
+
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "thread-waiting",
+      active_snapshot: { thread_id: "thread-waiting", nodes: [] },
+      threads: [],
+      workspace_write_lock: {
+        holder_thread_id: "",
+        waiting_thread_ids: [],
+      },
+    });
+
+    expect(document.querySelector("#input").disabled).toBe(false);
+    expect(document.querySelector("#btn-send").disabled).toBe(false);
+  });
 });

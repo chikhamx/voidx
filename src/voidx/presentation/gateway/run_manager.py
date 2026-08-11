@@ -48,12 +48,12 @@ class ThreadActor:
         self.mailbox: asyncio.Queue[UiCommand] = asyncio.Queue(maxsize=2)
         self.state = ThreadRunState(thread_id=thread_id, session_id=thread_id)
 
-    async def submit(self, text: str) -> None:
+    async def submit(self, command: UiSubmitCommand) -> None:
         if self.is_active:
             raise MethodParamsError("turn already in progress", code=ERR_TURN_IN_PROGRESS)
         self.state.status = "running"
         self.state.started_at = time.time()
-        await self._enqueue(UiSubmitCommand(text=text, thread_id=self.thread_id))
+        await self._enqueue(command.model_copy(update={"thread_id": self.thread_id}))
 
     async def cancel(self) -> None:
         if not self.is_active:
@@ -130,6 +130,16 @@ class ThreadRunManager:
         self._actors: dict[str, ThreadActor] = {}
         self._workspace_write_lock_holder = ""
         self._workspace_write_lock_waiters: list[tuple[str, asyncio.Future[bool]]] = []
+        self._submission_locks: dict[str, asyncio.Lock] = {}
+
+    def submission_lock(self, thread_id: str) -> asyncio.Lock:
+        if not thread_id:
+            raise MethodParamsError("thread_id is required")
+        lock = self._submission_locks.get(thread_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._submission_locks[thread_id] = lock
+        return lock
 
     def actor(self, thread_id: str) -> ThreadActor:
         if not thread_id:
@@ -140,14 +150,21 @@ class ThreadRunManager:
             self._actors[thread_id] = actor
         return actor
 
-    async def submit(self, thread_id: str, text: str) -> None:
+    async def submit(
+        self,
+        command: UiSubmitCommand | str,
+        text: str | None = None,
+    ) -> None:
+        if isinstance(command, str):
+            command = UiSubmitCommand(text=text or "", thread_id=command)
+        thread_id = command.thread_id
         actor = self.actor(thread_id)
         if actor.is_active:
             raise MethodParamsError("turn already in progress", code=ERR_TURN_IN_PROGRESS)
         active = self.active_thread_ids()
         if thread_id not in active and len(active) >= self._max_concurrent_sessions:
             raise MethodParamsError("concurrency limit reached", code=ERR_CONCURRENCY_LIMIT)
-        await actor.submit(text)
+        await actor.submit(command)
 
     async def cancel(self, thread_id: str) -> None:
         self._cancel_workspace_write_lock_waiter(thread_id)

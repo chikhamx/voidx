@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from voidx.agent.domain.profile import CODING_PROFILE
+from voidx.agent.domain.automation.goal import GOAL_PROFILE
+from voidx.agent.domain.automation.loop import LOOP_PROFILE
+from voidx.agent.domain.profile import CODING_PROFILE, RuntimeProfile
+from voidx.agent.domain.prompt_policy import ChatPromptPolicy
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.ports.presentation import GatewayThreadRegistry, GuidancePort, RuntimeStatusReader
 from voidx.presentation.protocol import UiCancelCommand, UiSubmitCommand, parse_ui_command
@@ -58,7 +61,15 @@ class GatewayCommandHandler:
                 )
                 return
             self._thread_registry.ensure_thread(status.session)
-            context = _turn_context(parsed.thread_id, status.session.session_id, status.workspace)
+            session_id = parsed.session_id or (
+                parsed.thread_id if parsed.thread_id else status.session.session_id
+            )
+            context = _turn_context(
+                parsed.thread_id,
+                session_id,
+                parsed.workspace or status.workspace,
+                parsed.runtime_profile,
+            )
             app.submit_external_input(text, context=context)
         elif isinstance(parsed, UiCancelCommand):
             context = _turn_context(parsed.thread_id, status.session.session_id, status.workspace)
@@ -77,11 +88,30 @@ def _guidance_context(
     return _turn_context("", active_session_id, workspace)
 
 
-def _turn_context(thread_id: str, active_session_id: str, workspace: str) -> TurnExecutionContext:
-    session_id = active_session_id or thread_id
+def _runtime_profile(profile_id: str) -> RuntimeProfile:
+    profiles = {
+        "chat": RuntimeProfile(
+            profile_id="chat",
+            revision=1,
+            name="Chat",
+            prompt_policy=ChatPromptPolicy(),
+        ),
+        "coding": CODING_PROFILE,
+        "goal": GOAL_PROFILE,
+        "loop": LOOP_PROFILE,
+    }
+    return profiles.get(profile_id, CODING_PROFILE)
+
+
+def _turn_context(
+    thread_id: str,
+    session_id: str,
+    workspace: str,
+    runtime_profile: str = "coding",
+) -> TurnExecutionContext:
     return TurnExecutionContext(
         thread_id=thread_id or session_id or "coding",
         session_id=session_id,
-        runtime_profile=CODING_PROFILE,
+        runtime_profile=_runtime_profile(runtime_profile),
         workspace=workspace,
     )

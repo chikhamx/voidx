@@ -9,39 +9,39 @@ class SessionMethods:
     """Session/command-related JSON-RPC handlers, mixed into GatewaySession."""
 
     async def _method_session_create(self, params: dict) -> dict:
-        repository = self._session_repository
-        if repository is None:
-            raise RuntimeError("session_repository is required")
+        from voidx.presentation.gateway.session.temporary import (
+            new_temporary_thread_id,
+            validate_temporary_profile,
+        )
+
         title = params.get("title", "New session")
         directory = str(params.get("directory", "") or "")
         workspace = directory or self._workspace or "."
         profile = str(params.get("profile", "") or "coding")
         try:
-            info = await repository.create_session(
-                workspace=workspace,
-                title=title,
-                directory=directory,
-                profile=profile,
-            )
+            profile = validate_temporary_profile(profile)
         except ValueError as exc:
             raise MethodParamsError(f"unknown profile: {profile}") from exc
+        thread_id = new_temporary_thread_id()
         await self.register_thread(
-            info.id,
-            title=info.title,
-            directory=info.directory,
-            workspace=info.workspace,
-            runtime_profile=info.runtime_profile,
+            thread_id,
+            title=title,
+            directory=directory,
+            workspace=workspace,
+            runtime_profile=profile,
+            temporary=True,
         )
-        self._active_thread_id = info.id
+        self._active_thread_id = thread_id
         await self.broadcast_snapshot()
         return {
-            "thread_id": info.id,
-            "active_thread_id": info.id,
-            "title": info.title,
-            "directory": info.directory,
-            "workspace": info.workspace,
+            "thread_id": thread_id,
+            "active_thread_id": thread_id,
+            "title": title,
+            "directory": directory,
+            "workspace": workspace,
             "status": "idle",
-            "runtime_profile": info.runtime_profile,
+            "runtime_profile": profile,
+            "temporary": True,
         }
 
     async def _method_session_fork(self, params: dict) -> dict:
@@ -70,22 +70,25 @@ class SessionMethods:
         }
 
     async def _method_session_delete(self, params: dict) -> dict:
-        repository = self._session_repository
-        if repository is None:
-            raise RuntimeError("session_repository is required")
         thread_id = params.get("thread_id", "")
-        await repository.delete_session(thread_id)
+        info = self._threads.get(thread_id)
+        if info is None or not info.temporary:
+            repository = self._session_repository
+            if repository is None:
+                raise RuntimeError("session_repository is required")
+            await repository.delete_session(thread_id)
         await self.unregister_thread(thread_id)
         return {"ok": True}
 
     async def _method_session_rename(self, params: dict) -> dict:
-        repository = self._session_repository
-        if repository is None:
-            raise RuntimeError("session_repository is required")
         thread_id = params.get("thread_id", "")
         title = params.get("title", "")
-        await repository.update_title(thread_id, title)
         info = self._threads.get(thread_id)
+        if info is None or not info.temporary:
+            repository = self._session_repository
+            if repository is None:
+                raise RuntimeError("session_repository is required")
+            await repository.update_title(thread_id, title)
         if info is not None:
             self._threads[thread_id] = info.model_copy(update={"title": title})
         return {"ok": True}

@@ -26,6 +26,7 @@ class ThreadInfo(BaseModel):
     updated_at: str = ""
     message_count: int = 0
     runtime_profile: str = "coding"
+    temporary: bool = False
 
 
 class TurnInfo(BaseModel):

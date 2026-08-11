@@ -35,7 +35,7 @@ from voidx.agent.application.prompts import (
     build_base_system,
     persona_prompt,
 )
-from voidx.agent.application.runtime_context import ContextCompiler, InteractionMode, RuntimeContextBuilder
+from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.agent.adapters.langgraph.state import AgentState
 from voidx.agent.domain.task.state import TaskState, goal_label, goal_type_from_join
 from voidx.agent.domain.task.todo import TodoRunState
@@ -133,6 +133,7 @@ class LlmTurn:
             state.get("task_state"),
             getattr(host, "_task_state", None),
         )
+        persona = state.get("persona", "coordinate")
 
         guidance_pairs = host._drain_pending_guidance()
         guidance_messages = [msg for msg, _, _ in guidance_pairs]
@@ -195,6 +196,10 @@ class LlmTurn:
                 allow_inline_compaction=allow_inline_compaction,
                 compaction_happened=compaction_happened,
                 inline_compaction_guide_for=host._inline_compaction_guide_for,
+                message_token_estimator=lambda message: estimate_message_tokens(
+                    message,
+                    host.config.model.model,
+                ),
             )
 
         async def save_context_frame(
@@ -231,18 +236,18 @@ class LlmTurn:
                 messages,
                 new_turn_state,
                 task_state,
+                persona=persona,
             )
 
-        def refresh_child_run_context(messages: list[BaseMessage]) -> list[BaseMessage]:
+        def refresh_child_runs() -> None:
             builder = getattr(host, "_last_context_builder", None)
             session = getattr(host, "_session", None)
             agent_gateway = getattr(host, "agent_gateway", None)
             if builder is None or session is None or agent_gateway is None:
-                return messages
+                return
             root_run_id = agent_gateway.ensure_root(session.id)
             builder.child_runs = agent_gateway.list_child_runs(root_run_id)
             builder.child_runs_sampled_at = time.time()
-            return ContextCompiler(builder.build()).compile_messages(messages)
 
         def estimate_llm_context_tokens(messages: list[BaseMessage]) -> int:
             return estimate_context_tokens_with_tools(
@@ -252,7 +257,7 @@ class LlmTurn:
             )
 
         async def apply_compaction_result(result: CompactionResult) -> tuple[list[BaseMessage], list[HumanMessage], bool, int]:
-            nonlocal compaction_happened, state_messages, runtime_task_state
+            nonlocal compaction_happened, state_messages, runtime_task_state, persona
             compaction_happened = True
             state_messages = list(result.live_messages)
             if result.summary:
@@ -266,6 +271,7 @@ class LlmTurn:
                     prepared.get("task_state"),
                     runtime_task_state,
                 )
+                persona = prepared.get("persona", persona)
             rebuilt, conv_messages, conv_forced = rebuild_llm_messages(
                 state_messages,
                 allow_inline_compaction=False,
@@ -278,8 +284,12 @@ class LlmTurn:
             state_messages,
             allow_inline_compaction=getattr(host.config, "inline_compaction_enabled", False),
         )
+        llm_messages = _rerender_task_context(
+            llm_messages,
+            turn_state,
+            runtime_task_state,
+        )
 
-        persona = state.get("persona", "coordinate")
         if host._debug:
             host._ui.ui.print()
 
@@ -375,7 +385,12 @@ class LlmTurn:
         max_retries = _LLM_MAX_RETRIES
         while True:
             try:
-                llm_messages = refresh_child_run_context(llm_messages)
+                refresh_child_runs()
+                llm_messages = _rerender_task_context(
+                    llm_messages,
+                    turn_state,
+                    runtime_task_state,
+                )
                 loop.context_tokens = estimate_llm_context_tokens(llm_messages)
                 await save_context_frame(
                     llm_messages,
