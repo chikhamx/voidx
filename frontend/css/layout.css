@@ -203,13 +203,55 @@ body.is-desktop.is-mac .vx-sidebar {
 
 .vx-project-session-section { flex: 1; }
 
-.vx-sidebar-mode-switcher {
-  display: grid;
+.vx-mode-picker {
   flex: 0 0 auto;
-  gap: 1px;
+  position: relative;
 }
 
-.vx-sidebar-mode-entry {
+.vx-mode-trigger {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--vx-radius-sm);
+  color: var(--vx-text-primary);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-size: var(--vx-text-sm);
+  font-weight: 550;
+  gap: var(--vx-space-2);
+  justify-content: space-between;
+  min-height: 32px;
+  padding: 0 var(--vx-space-2);
+  text-align: left;
+  transition: background var(--vx-transition-fast), color var(--vx-transition-fast);
+  width: 100%;
+}
+
+.vx-mode-trigger:hover {
+  background: var(--vx-bg-hover);
+}
+
+.vx-mode-trigger .vx-sidebar-row-icon {
+  color: var(--vx-text-dim);
+}
+
+.vx-mode-menu {
+  background: var(--vx-bg-elevated);
+  border: 1px solid var(--vx-border-subtle);
+  border-radius: var(--vx-radius-md);
+  box-shadow: var(--vx-shadow-menu, 0 8px 24px rgb(0 0 0 / 0.28));
+  display: grid;
+  gap: 2px;
+  left: 0;
+  padding: 4px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: var(--vx-z-menu, 200);
+}
+
+.vx-mode-option {
   align-items: center;
   background: transparent;
   border: 0;
@@ -218,37 +260,45 @@ body.is-desktop.is-mac .vx-sidebar {
   cursor: pointer;
   display: flex;
   font: inherit;
-  font-size: var(--vx-text-sm);
   gap: var(--vx-space-2);
-  min-height: 32px;
-  padding: 0 var(--vx-space-2);
+  justify-content: space-between;
+  padding: var(--vx-space-2);
   text-align: left;
   transition: background var(--vx-transition-fast), color var(--vx-transition-fast);
   width: 100%;
 }
 
-.vx-sidebar-mode-entry:hover {
+.vx-mode-option:hover {
   background: var(--vx-bg-hover);
   color: var(--vx-text-primary);
 }
 
-.vx-sidebar-mode-entry.active {
-  background: var(--vx-bg-active);
+.vx-mode-option-text {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.vx-mode-option-name {
   color: var(--vx-text-primary);
-  font-weight: 550;
+  font-size: var(--vx-text-sm);
+  font-weight: 500;
 }
 
-.vx-mode-dot {
-  background: var(--vx-mode-coding);
-  border-radius: 50%;
+.vx-mode-option-desc {
+  color: var(--vx-text-dim);
+  font-size: var(--vx-text-xs);
+}
+
+.vx-mode-option-check {
+  color: var(--vx-text-primary);
   flex: 0 0 auto;
-  height: 7px;
-  width: 7px;
+  visibility: hidden;
 }
 
-.vx-sidebar-mode-entry[data-profile="chat"] .vx-mode-dot { background: var(--vx-mode-chat); }
-.vx-sidebar-mode-entry[data-profile="goal"] .vx-mode-dot { background: var(--vx-mode-goal); }
-.vx-sidebar-mode-entry[data-profile="loop"] .vx-mode-dot { background: var(--vx-mode-loop); }
+.vx-mode-option[aria-selected="true"] .vx-mode-option-check {
+  visibility: visible;
+}
 
 /* 侧栏行（导航 / 会话 / 目录） */
 .vx-nav-item,

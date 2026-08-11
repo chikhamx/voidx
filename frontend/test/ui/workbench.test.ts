@@ -108,11 +108,12 @@ describe("workbench shell", () => {
     expect(document.querySelector("#btn-integrations").hidden).toBe(true);
   });
 
-  it("renders four peer mode entries in the sidebar and none in the composer", () => {
+  it("renders a mode picker in the sidebar and none in the composer", () => {
     const sidebarSwitcher = document.querySelector("#sidebar #runtime-profile-switcher");
     expect(sidebarSwitcher).not.toBeNull();
+    expect(sidebarSwitcher.querySelector("#mode-trigger")).not.toBeNull();
     expect(
-      [...sidebarSwitcher.querySelectorAll("[data-profile]")].map((button) => button.textContent.trim()),
+      [...sidebarSwitcher.querySelectorAll("[data-profile] .vx-mode-option-name")].map((el) => el.textContent.trim()),
     ).toEqual(["聊天", "编码", "目标", "循环"]);
     expect(document.querySelector("#composer #runtime-profile-switcher")).toBeNull();
     expect(sidebarSwitcher.nextElementSibling?.id).toBe("project-session-section");

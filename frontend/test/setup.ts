@@ -58,12 +58,15 @@ document.body.innerHTML = `
           <div class="vx-sidebar-heading"><span>临时会话</span></div>
           <div class="vx-session-list" id="temporary-session-list"></div>
         </div>
-        <nav class="vx-sidebar-mode-switcher" id="runtime-profile-switcher" aria-label="运行模式">
-          <button type="button" class="vx-sidebar-mode-entry" data-profile="chat" aria-pressed="false"><span class="vx-mode-dot"></span><span>聊天</span></button>
-          <button type="button" class="vx-sidebar-mode-entry" data-profile="coding" aria-pressed="true"><span class="vx-mode-dot"></span><span>编码</span></button>
-          <button type="button" class="vx-sidebar-mode-entry" data-profile="goal" aria-pressed="false"><span class="vx-mode-dot"></span><span>目标</span></button>
-          <button type="button" class="vx-sidebar-mode-entry" data-profile="loop" aria-pressed="false"><span class="vx-mode-dot"></span><span>循环</span></button>
-        </nav>
+        <div class="vx-mode-picker" id="runtime-profile-switcher">
+          <button type="button" class="vx-mode-trigger" id="mode-trigger" aria-haspopup="listbox" aria-expanded="false"><span class="vx-mode-trigger-label" id="mode-trigger-label">编码</span></button>
+          <div class="vx-mode-menu" id="mode-menu" role="listbox" hidden>
+            <button type="button" class="vx-mode-option" data-profile="chat" role="option" aria-selected="false"><span class="vx-mode-option-text"><span class="vx-mode-option-name">聊天</span><span class="vx-mode-option-desc">自由对话与问答</span></span><span class="vx-mode-option-check"></span></button>
+            <button type="button" class="vx-mode-option" data-profile="coding" role="option" aria-selected="true"><span class="vx-mode-option-text"><span class="vx-mode-option-name">编码</span><span class="vx-mode-option-desc">构建、调试与发布</span></span><span class="vx-mode-option-check"></span></button>
+            <button type="button" class="vx-mode-option" data-profile="goal" role="option" aria-selected="false"><span class="vx-mode-option-text"><span class="vx-mode-option-name">目标</span><span class="vx-mode-option-desc">按目标持续推进</span></span><span class="vx-mode-option-check"></span></button>
+            <button type="button" class="vx-mode-option" data-profile="loop" role="option" aria-selected="false"><span class="vx-mode-option-text"><span class="vx-mode-option-name">循环</span><span class="vx-mode-option-desc">周期性自动执行</span></span><span class="vx-mode-option-check"></span></button>
+          </div>
+        </div>
         <div class="vx-sidebar-section vx-project-session-section" id="project-session-section">
           <div class="vx-sidebar-heading vx-project-heading">
             <span class="vx-sidebar-row-icon"><svg viewBox="0 0 20 20" aria-hidden="true"></svg></span><span class="vx-project-heading-label">项目</span>
