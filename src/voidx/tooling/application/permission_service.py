@@ -32,6 +32,7 @@ from voidx.tooling.domain.grants import (
     ApprovalPrecondition,
     GrantDelta,
     GrantUpdateResult,
+    ObjectType,
 )
 from voidx.tooling.ports.authorization import ExecutionLease
 from voidx.tooling.ports.permission_state import PermissionState
@@ -207,6 +208,7 @@ class PermissionService:
             raise PermissionError(f"Invalid permission mode: {preset}") from exc
         if self.permission_mode != parsed.value:
             self.permission_mode = parsed.value
+            self._state.clear_created_path_grants()
             self._state.advance_state(revoke=True)
 
     @property
@@ -242,6 +244,32 @@ class PermissionService:
     def grant_snapshot(self) -> tuple[AccessGrant, ...]:
         return self._state.grants_snapshot()
 
+    def created_path_grant_snapshot(self) -> tuple[AccessGrant, ...]:
+        return self._state.created_path_grants_snapshot()
+
+    async def record_created_path(self, path: object, *, object_type: ObjectType) -> bool:
+        async with self._state.commit_guard():
+            return self._state.record_created_path(path, object_type=object_type)
+
+    async def forget_created_path(self, path: object, *, object_type: ObjectType) -> bool:
+        async with self._state.commit_guard():
+            return self._state.forget_created_path(path, object_type=object_type)
+
+    async def move_created_path(
+        self,
+        source: object,
+        dest: object,
+        *,
+        object_type: ObjectType,
+        destination_created: bool,
+    ) -> bool:
+        async with self._state.commit_guard():
+            return self._state.move_created_path(
+                source,
+                dest,
+                object_type=object_type,
+                destination_created=destination_created,
+            )
 
     async def add_grant(
         self,

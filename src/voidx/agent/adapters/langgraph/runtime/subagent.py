@@ -255,6 +255,43 @@ async def run_subagent(
             ui_port=ui_port,
         )
 
+
+    async def stream_child_llm_with_retry(call):
+        failed_attempts = 0
+        retry_status_active = False
+        while True:
+            try:
+                assistant_msg = await call()
+            except Exception as exc:
+                kind = _classify_llm_error(exc)
+                retryable = kind not in {
+                    LLMErrorKind.UNKNOWN,
+                    LLMErrorKind.NON_RETRYABLE,
+                    LLMErrorKind.CONTEXT_OVERFLOW,
+                }
+                if not retryable or failed_attempts >= _LLM_MAX_RETRIES:
+                    if retry_status_active and ui_port.via_events():
+                        await ui_port.events.emit(StatusFinished(status_id="llm:retry"))
+                    raise
+                failed_attempts += 1
+                delay = _llm_retry_delay(failed_attempts)
+                delay_str = str(int(delay)) if delay == int(delay) else str(delay)
+                retry_detail = f"retrying in {delay_str}s: {_clean_error_message(exc)}"
+                if ui_port.via_events():
+                    retry_status_active = True
+                    await ui_port.events.emit(StatusUpdated(
+                        status_id="llm:retry",
+                        label="Retrying",
+                        detail=retry_detail,
+                    ))
+                else:
+                    ui_port.ui.print(f"[dim]Retrying ({retry_detail})[/dim]")
+                await asyncio.sleep(_llm_retry_sleep_delay(delay))
+                continue
+            if retry_status_active and ui_port.via_events():
+                await ui_port.events.emit(StatusFinished(status_id="llm:retry"))
+            return assistant_msg
+
     def update_usage_context(tokens: int) -> None:
         run_usage_stats.update_context(tokens)
         if usage_stats is not None:
@@ -553,15 +590,21 @@ async def run_subagent(
             ),
             additional_kwargs={GUIDANCE_MARKER: True},
         )
-        final_messages = compile_context([*messages, guidance])
+        final_messages: list = []
         renderer = ui_factories.streaming_renderer(
             ui_port.console,
             debug=debug,
             agent_id=agent_id,
             headless=True,
         )
+
+        async def stream_final_attempt():
+            nonlocal final_messages
+            final_messages = compile_context([*messages, guidance])
+            return await stream_child_llm(model, final_messages, renderer)
+
         try:
-            assistant_msg = await stream_child_llm(model, final_messages, renderer)
+            assistant_msg = await stream_child_llm_with_retry(stream_final_attempt)
             text = extract_text(assistant_msg).strip()
             final_context_tokens = estimate_context_tokens_with_tools(
                 final_messages,
@@ -671,87 +714,55 @@ async def run_subagent(
                         return await finalize("context_limit")
             step = next_step
             model_with_tools = model.bind_tools(tool_defs) if tool_defs else model
-            llm_failed_attempts = 0
-            retry_status_active = False
-            while True:
-                try:
-                    llm_messages = compile_context(llm_messages)
-                    context_tokens = estimate_context_tokens_with_tools(
-                        llm_messages,
-                        tool_defs,
-                        model_cfg.model,
+            async def stream_step_attempt():
+                nonlocal llm_messages, context_tokens
+                llm_messages = compile_context(llm_messages)
+                context_tokens = estimate_context_tokens_with_tools(
+                    llm_messages,
+                    tool_defs,
+                    model_cfg.model,
+                )
+                update_usage_context(context_tokens)
+                if session_id:
+                    await save_context_frame_from_messages(
+                        session_id=session_id,
+                        frame_kind="worker",
+                        agent_persona=persona,
+                        provider=model_cfg.provider,
+                        model=model_cfg.model,
+                        messages=llm_messages,
+                        token_estimate=context_tokens,
+                        metadata={
+                            "step": step,
+                            "tool_count": len(tool_defs),
+                            "agent_id": agent_id,
+                        },
                     )
-                    update_usage_context(context_tokens)
-                    if session_id:
-                        await save_context_frame_from_messages(
-                            session_id=session_id,
-                            frame_kind="worker",
-                            agent_persona=persona,
-                            provider=model_cfg.provider,
-                            model=model_cfg.model,
-                            messages=llm_messages,
-                            token_estimate=context_tokens,
-                            metadata={
-                                "step": step,
-                                "tool_count": len(tool_defs),
-                                "agent_id": agent_id,
-                            },
-                        )
-                    assistant_msg = await stream_child_llm(model_with_tools, llm_messages, renderer)
-                    if retry_status_active and ui_port.via_events():
-                        await ui_port.events.emit(StatusFinished(status_id="llm:retry"))
-                    break
-                except Exception as e:
-                    kind = _classify_llm_error(e)
-                    if kind == LLMErrorKind.UNKNOWN:
-                        raise
-                    if kind in {LLMErrorKind.NON_RETRYABLE, LLMErrorKind.CONTEXT_OVERFLOW}:
-                        if retry_status_active and ui_port.via_events():
-                            await ui_port.events.emit(StatusFinished(status_id="llm:retry"))
-                        partial = _partial_result_from_messages(messages, require_findings=True)
-                        if kind == LLMErrorKind.CONTEXT_OVERFLOW:
-                            text = partial or _partial_result_from_messages(messages)
-                            if tracker:
-                                tracker.update(task_id, last_output=text[:200])
-                                tracker.finish(task_id, "completed")
-                            await report_result(text, finish_reason="context_limit")
-                            mark_finished("context_limit")
-                            return text
-                        if partial:
-                            if tracker:
-                                tracker.update(task_id, last_output=partial[:200])
-                                tracker.finish(task_id, "completed")
-                            await report_result(partial, finish_reason="error_recovered")
-                            mark_finished("error_recovered")
-                            return partial
-                        raise
-                    if llm_failed_attempts < _LLM_MAX_RETRIES:
-                        llm_failed_attempts += 1
-                        delay = _llm_retry_delay(llm_failed_attempts)
-                        delay_str = str(int(delay)) if delay == int(delay) else str(delay)
-                        retry_detail = f"retrying in {delay_str}s: {_clean_error_message(e)}"
-                        if ui_port.via_events():
-                            retry_status_active = True
-                            await ui_port.events.emit(StatusUpdated(
-                                status_id="llm:retry",
-                                label="Retrying",
-                                detail=retry_detail,
-                            ))
-                        else:
-                            ui_port.ui.print(f"[dim]Retrying ({retry_detail})[/dim]")
-                        await asyncio.sleep(_llm_retry_sleep_delay(delay))
-                        continue
-                    if retry_status_active and ui_port.via_events():
-                        await ui_port.events.emit(StatusFinished(status_id="llm:retry"))
-                    partial = _partial_result_from_messages(messages, require_findings=True)
-                    if partial:
-                        if tracker:
-                            tracker.update(task_id, last_output=partial[:200])
-                            tracker.finish(task_id, "completed")
-                        await report_result(partial, finish_reason="error_recovered")
-                        mark_finished("error_recovered")
-                        return partial
+                return await stream_child_llm(model_with_tools, llm_messages, renderer)
+
+            try:
+                assistant_msg = await stream_child_llm_with_retry(stream_step_attempt)
+            except Exception as exc:
+                kind = _classify_llm_error(exc)
+                if kind == LLMErrorKind.UNKNOWN:
                     raise
+                partial = _partial_result_from_messages(messages, require_findings=True)
+                if kind == LLMErrorKind.CONTEXT_OVERFLOW:
+                    text = partial or _partial_result_from_messages(messages)
+                    if tracker:
+                        tracker.update(task_id, last_output=text[:200])
+                        tracker.finish(task_id, "completed")
+                    await report_result(text, finish_reason="context_limit")
+                    mark_finished("context_limit")
+                    return text
+                if partial:
+                    if tracker:
+                        tracker.update(task_id, last_output=partial[:200])
+                        tracker.finish(task_id, "completed")
+                    await report_result(partial, finish_reason="error_recovered")
+                    mark_finished("error_recovered")
+                    return partial
+                raise
             post_llm_decision = hard_wall_clock_decision()
             if (
                 post_llm_decision is not None

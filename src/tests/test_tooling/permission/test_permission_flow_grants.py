@@ -115,6 +115,34 @@ async def test_allow_once_choice_writes_runtime_grant(tmp_path):
     assert any(g.object_type == "file" and str(target) in g.path for g in grants)
 
 
+
+
+@pytest.mark.asyncio
+async def test_path_grant_choice_rejects_stale_permission_precondition(tmp_path):
+    workspace = tmp_path / "workspace"
+    external = tmp_path / "external"
+    workspace.mkdir()
+    external.mkdir()
+    target = external / "stale.txt"
+
+    graph = _graph(workspace)
+    graph._permission.permission_mode = "safe"
+
+    async def approve(_tool_calls):
+        graph._permission.set_permission_mode("project_trusted")
+        return "session_file"
+
+    graph._ask_tool_permission = approve
+
+    approved, denied = await graph._authorize_tool_calls(
+        [{"name": "write", "args": {"file_path": str(target), "op": "write", "new_string": "x"}, "id": "call_1"}],
+        plan_mode=False,
+        session_id="test",
+    )
+
+    assert approved == []
+    assert len(denied) == 1
+    assert graph._permission.grant_snapshot() == ()
 @pytest.mark.asyncio
 async def test_deny_choice_denies_tool(tmp_path):
     workspace = tmp_path / "workspace"

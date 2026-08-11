@@ -226,6 +226,12 @@ async def _execute_write_full(ctx: ToolContext, inp: WriteInput) -> ToolResult:
         )
     diff = make_file_diff(inp.file_path, original, final_text)
     file_diff = make_structured_diff(inp.file_path, original, final_text)
+    if created:
+        await ctx.authorization_service.record_created_path(
+            ctx.workspace,
+            path,
+            object_type="file",
+        )
     remap_read_coverage_from_file_diff(ctx, path, file_diff, old_ranges=old_ranges)
     numbered_diff = render_numbered_diff(file_diff)
     title = "File created" if created else "File overwritten"

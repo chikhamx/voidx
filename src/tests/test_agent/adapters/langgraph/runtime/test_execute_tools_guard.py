@@ -1533,6 +1533,64 @@ async def test_execute_approved_batch_cancels_pending_tasks_on_outer_cancellatio
 
 
 @pytest.mark.asyncio
+async def test_execute_approved_batch_keeps_runtime_grants_for_file_lock_waiters():
+    from voidx.agent.adapters.langgraph.runtime.tool_executor.helpers import _execute_approved_batch
+    from voidx.agent.adapters.langgraph.runtime.tool_executor.types import _ExecutedTool
+    from voidx.tooling.adapters.permission.in_memory_state import create_permission_service
+    from voidx.tooling.domain.grants import AccessGrant
+
+    service = create_permission_service()
+    grant = AccessGrant(
+        path="/external/same.txt",
+        access="write",
+        object_type="file",
+        persistence="runtime",
+    )
+    await service.add_grant(grant)
+    grant_seen: list[bool] = []
+
+    async def execute_one(tool_call: dict) -> _ExecutedTool:
+        async with service.execution_lease_for_tool("write"):
+            grant_seen.append(grant in service.grant_snapshot())
+            await asyncio.sleep(0)
+            return _ExecutedTool(
+                message=None,
+                result=ToolResult(output="ok"),
+                tool_call=tool_call,
+            )
+
+    approved = [
+        {
+            "name": "write",
+            "args": {"file_path": "/external/same.txt", "op": "write", "new_string": "a"},
+            "id": "call_a",
+            "type": "tool_call",
+        },
+        {
+            "name": "write",
+            "args": {"file_path": "/external/same.txt", "op": "write", "new_string": "b"},
+            "id": "call_b",
+            "type": "tool_call",
+        },
+    ]
+    host = SimpleNamespace(
+        config=Config(workspace="."),
+        _permission=service,
+        _ui=SimpleNamespace(via_events=lambda: False),
+    )
+
+    await _execute_approved_batch(
+        approved,
+        host=host,
+        guard_state=RuntimeGuardState(),
+        execute_one_fn=execute_one,
+    )
+
+    assert grant_seen == [True, True]
+    assert grant not in service.grant_snapshot()
+
+
+@pytest.mark.asyncio
 async def test_real_event_bus_stall_terminates_turn_without_drain(tmp_path, monkeypatch):
     """Regression: a real blocked UiEventBus consumer must cause a bounded turn
     termination that skips drain and leaves no pending task."""

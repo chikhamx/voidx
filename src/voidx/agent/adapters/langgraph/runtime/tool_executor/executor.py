@@ -236,6 +236,9 @@ class ToolExecutorAdapter:
             grant_writer=permission.add_grant,
             target_locker=permission.acquire_grant_targets,
             execution_lease_factory=permission.execution_lease_for_tool,
+            created_path_recorder=permission.record_created_path,
+            created_path_forgetter=permission.forget_created_path,
+            created_path_mover=permission.move_created_path,
             interaction=CallbackInteractionPort(
                 _make_interact_callback(host._ui, host._ui)
             ),

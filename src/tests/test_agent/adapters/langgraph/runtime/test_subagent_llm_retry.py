@@ -128,6 +128,44 @@ async def test_run_subagent_retries_transient_llm_errors_and_cleans_retry_status
 
 
 @pytest.mark.asyncio
+async def test_run_subagent_retries_interrupted_upstream_response_stream(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
+
+    attempts = 0
+    sleep_delays: list[float] = []
+
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ProviderError("Upstream response stream was interrupted")
+        return AIMessage(content="child answer")
+
+    async def fake_sleep(delay):
+        sleep_delays.append(delay)
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+    monkeypatch.setattr(subagent_module.asyncio, "sleep", fake_sleep)
+
+    output = await subagent_module.run_subagent(
+        _agent_def(),
+        "Inspect child path",
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        runtime_persona="explore",
+        goal_resolution=_goal_resolution(),
+        result_contract=_result_contract(),
+        debug=False,
+        ui_port=FakeUiPort(events=True),
+    )
+
+    assert output == "child answer"
+    assert attempts == 2
+    assert sleep_delays == [0.002]
+
+
+@pytest.mark.asyncio
 async def test_run_subagent_recovers_context_overflow_with_partial_result(tmp_path, monkeypatch):
     import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
 
@@ -336,6 +374,60 @@ async def test_run_subagent_retry_uses_text_fallback_without_events(tmp_path, mo
     assert sleep_delays == [0.002]
     assert ui_port.events.emitted == []
     assert any("Retrying" in line for line in ui_port.ui.lines)
+
+
+@pytest.mark.asyncio
+async def test_subagent_final_call_retries_interrupted_upstream_response_stream(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
+    from voidx.config import SubagentBudgetConfig
+
+    attempts = 0
+    sleep_delays: list[float] = []
+
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ProviderError("Upstream response stream was interrupted")
+        return AIMessage(content="status: complete\nfindings: final summary")
+
+    async def fake_sleep(delay):
+        sleep_delays.append(delay)
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+    monkeypatch.setattr(subagent_module, "estimate_context_tokens_with_tools", lambda *_args: 95)
+    monkeypatch.setattr(subagent_module.asyncio, "sleep", fake_sleep)
+
+    ui_port = FakeUiPort(events=True)
+    output = await subagent_module.run_subagent(
+        _agent_def(),
+        "Inspect child path",
+        "test-key",
+        Config(
+            workspace=str(tmp_path),
+            model={"context_window": 100},
+            subagent_budget=SubagentBudgetConfig(
+                context_soft_ratio=0.75,
+                context_hard_ratio=0.9,
+            ),
+        ),
+        runtime_persona="explore",
+        goal_resolution=_goal_resolution(),
+        result_contract=_result_contract(),
+        debug=False,
+        ui_port=ui_port,
+    )
+
+    retry_events = [event for event in ui_port.events.emitted if getattr(event, "status_id", None) == "llm:retry"]
+
+    assert output == "status: complete\nfindings: final summary"
+    assert attempts == 2
+    assert sleep_delays == [0.002]
+    assert [type(event).__name__ for event in retry_events] == [
+        "StatusUpdated",
+        "StatusFinished",
+    ]
 
 
 @pytest.mark.asyncio

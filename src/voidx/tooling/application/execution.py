@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from pydantic import ConfigDict, Field, SkipValidation
 
 from voidx.tooling.domain.context import ToolExecutionContext
 from voidx.tooling.domain.file_tracking import FileStateStore
-from voidx.tooling.domain.grants import AccessGrants
+from voidx.tooling.domain.grants import AccessGrants, ObjectType
 from voidx.tooling.ports.interaction import InteractionPort
 from voidx.tooling.ports.post_edit import PostEditFormatter
 from voidx.tooling.ports.invoker import ToolInvoker
@@ -19,6 +20,9 @@ from voidx.tooling.ports.process import ProcessSandbox
 GrantWriter = Callable[..., object | Awaitable[object]]
 GrantTargetLocker = Callable[..., object | Awaitable[object]]
 ExecutionLeaseFactory = Callable[[str], object]
+CreatedPathRecorder = Callable[..., object | Awaitable[object]]
+CreatedPathForgetter = Callable[..., object | Awaitable[object]]
+CreatedPathMover = Callable[..., object | Awaitable[object]]
 
 
 @dataclass
@@ -33,6 +37,9 @@ class AuthorizationRuntime:
     target_locker: GrantTargetLocker | None = None
     execution_lease_factory: ExecutionLeaseFactory | None = None
     interaction: InteractionPort | None = None
+    created_path_recorder: CreatedPathRecorder | None = None
+    created_path_forgetter: CreatedPathForgetter | None = None
+    created_path_mover: CreatedPathMover | None = None
 
     def access_grants(self) -> AccessGrants:
         if self.access_grants_reader is not None:
@@ -48,7 +55,74 @@ class AuthorizationRuntime:
         writable = [*self.write_files, *self.write_dirs]
         return writable if write else [*self.read_files, *self.read_dirs, *writable]
 
+    async def record_created_path(
+        self,
+        workspace: str,
+        path: str | Path,
+        *,
+        object_type: ObjectType,
+    ) -> None:
+        if self.created_path_recorder is None or _is_workspace_path(workspace, path):
+            return
+        await _maybe_await(self.created_path_recorder(path, object_type=object_type))
 
+    async def forget_created_path(
+        self,
+        workspace: str,
+        path: str | Path,
+        *,
+        object_type: ObjectType,
+    ) -> None:
+        if self.created_path_forgetter is None or _is_workspace_path(workspace, path):
+            return
+        await _maybe_await(self.created_path_forgetter(path, object_type=object_type))
+
+    async def move_created_path(
+        self,
+        workspace: str,
+        source: str | Path,
+        dest: str | Path,
+        *,
+        object_type: ObjectType,
+        destination_created: bool = False,
+    ) -> None:
+        source_external = not _is_workspace_path(workspace, source)
+        dest_external = not _is_workspace_path(workspace, dest)
+        if source_external and dest_external and self.created_path_mover is not None:
+            await _maybe_await(
+                self.created_path_mover(
+                    source,
+                    dest,
+                    object_type=object_type,
+                    destination_created=destination_created,
+                )
+            )
+        elif source_external and not dest_external and self.created_path_forgetter is not None:
+            await _maybe_await(
+                self.created_path_forgetter(source, object_type=object_type)
+            )
+        elif (
+            not source_external
+            and dest_external
+            and destination_created
+            and self.created_path_recorder is not None
+        ):
+            await _maybe_await(
+                self.created_path_recorder(dest, object_type=object_type)
+            )
+
+
+async def _maybe_await(value: object) -> object:
+    return await value if isinstance(value, Awaitable) else value
+
+
+def _is_workspace_path(workspace: str, path: str | Path) -> bool:
+    try:
+        workspace_path = Path(workspace).expanduser().resolve()
+        target = Path(path).expanduser().resolve(strict=False)
+        return target == workspace_path or target.is_relative_to(workspace_path)
+    except (OSError, RuntimeError, ValueError):
+        return False
 
 
 class CallbackInteractionPort:

@@ -28,6 +28,7 @@ def resolve_access(
     access_grants: AccessGrants | None = None,
     require_exists: bool = False,
     allow_missing_write_file: bool = False,
+    object_type: ObjectType | None = None,
 ) -> AccessResolution:
     """Resolve a tool path against workspace and grants without side effects."""
     normalized = _normalize_path(workspace, file_path)
@@ -36,12 +37,12 @@ def resolve_access(
 
     workspace_path = Path(workspace).expanduser().resolve()
     is_workspace_path = _contains(workspace_path, normalized)
-    object_type: ObjectType = "dir" if normalized.is_dir() else "file"
+    resolved_object_type: ObjectType = object_type or ("dir" if normalized.is_dir() else "file")
     intent = AccessIntent(
         requested_path=file_path,
         normalized_path=normalized,
         access=access,
-        object_type=object_type,
+        object_type=resolved_object_type,
         is_workspace_path=is_workspace_path,
         grant_matched=False,
     )
@@ -74,7 +75,7 @@ def resolve_access(
                 requested_path=file_path,
                 normalized_path=normalized,
                 access=access,
-                object_type=object_type,
+                object_type=resolved_object_type,
                 is_workspace_path=False,
                 grant_matched=True,
             ),
@@ -118,7 +119,9 @@ def delta_for_grant(grant: AccessGrant) -> GrantDelta:
 
 
 def _grant_dir_for_intent(intent: AccessIntent) -> Path:
-    return intent.normalized_path if intent.normalized_path.is_dir() else intent.normalized_path.parent
+    if intent.object_type == "dir":
+        return intent.normalized_path
+    return intent.normalized_path.parent
 
 
 def _normalize_path(workspace: str, file_path: str) -> Path | None:

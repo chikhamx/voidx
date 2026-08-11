@@ -114,6 +114,7 @@ class OutputTree:
     BOX_BRANCH = "[dim]├─[/dim] "
     BOX_LAST   = "[dim]└─[/dim] "
     BOX_VERT   = "   "
+    BOX_CONNECTED_VERT = "[dim]│[/dim]  "
     BOX_SPACE  = "   "
 
     def __init__(self):
@@ -553,9 +554,14 @@ class OutputTree:
             )
         )
         prefix = indent + connector
+        connected_subagent_child = (
+            node.parent is not None
+            and node.parent.node_type == "subagent"
+            and not suppress_connector
+        )
         aligned_prefix = (
             indent + self.BOX_SPACE if suppress_connector else (
-                prefix if is_first_sibling else indent + self.BOX_SPACE
+                prefix if is_first_sibling or connected_subagent_child else indent + self.BOX_SPACE
             )
         )
         inline_tool_result = (
@@ -615,7 +621,9 @@ class OutputTree:
                 click_map[len(lines) - 1] = node.id
 
         # Continuation for body lines and children
-        cont_suffix = self.BOX_SPACE if suppress_connector or effectively_last else self.BOX_VERT
+        cont_suffix = self.BOX_SPACE if suppress_connector or effectively_last else (
+            self.BOX_CONNECTED_VERT if connected_subagent_child else self.BOX_VERT
+        )
         cont = indent if inline_tool_result else (
             indent if transparent_assistant_child else indent + cont_suffix
         )

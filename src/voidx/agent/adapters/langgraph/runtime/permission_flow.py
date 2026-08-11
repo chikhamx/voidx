@@ -16,7 +16,7 @@ from voidx.tooling.application.permission_service import (
     classify_tool_call,
 )
 from voidx.tooling.domain.authorization import PermissionDecision
-from voidx.tooling.domain.grants import AccessIntent
+from voidx.tooling.domain.grants import AccessIntent, ApprovalPrecondition
 from voidx.tooling.policy.filesystem.grants import grant_for_intent
 from voidx.tooling.policy.permission.session_rules import scoped_session_rule_for_decision
 from voidx.tooling.domain.permission import Action
@@ -122,7 +122,13 @@ _GRANT_OBJECT_TYPE_MAP = {
 }
 
 
-async def _apply_path_grant_choice(host: Any, decisions: list[PermissionDecision], choice: str) -> None:
+async def _apply_path_grant_choice(
+    host: Any,
+    decisions: list[PermissionDecision],
+    choice: str,
+    *,
+    precondition: ApprovalPrecondition | None = None,
+) -> bool:
     persistence = _GRANT_PERSISTENCE_MAP.get(choice, "runtime")
     object_type = _GRANT_OBJECT_TYPE_MAP.get(choice, "file")
     for decision in decisions:
@@ -130,16 +136,32 @@ async def _apply_path_grant_choice(host: Any, decisions: list[PermissionDecision
             if intent.is_workspace_path or intent.grant_matched:
                 continue
             grant = grant_for_intent(intent, persistence, object_type=object_type)
-            await host._permission.add_grant(grant)
+            result = await host._permission.add_grant(grant, precondition=precondition)
+            if getattr(result, "ok", True) is False:
+                return False
+    return True
 
 
-async def _apply_runtime_grant(host: Any, decisions: list[PermissionDecision]) -> None:
+async def _apply_runtime_grant(
+    host: Any,
+    decisions: list[PermissionDecision],
+    *,
+    precondition: ApprovalPrecondition | None = None,
+) -> bool:
     for decision in decisions:
         for intent in decision.access_intents:
             if intent.is_workspace_path or intent.grant_matched:
                 continue
             choice = "runtime_dir" if intent.object_type == "dir" else "runtime_file"
-            await _apply_path_grant_choice(host, [decision], choice)
+            applied = await _apply_path_grant_choice(
+                host,
+                [decision],
+                choice,
+                precondition=precondition,
+            )
+            if not applied:
+                return False
+    return True
 
 
 def _ai_approval_failure_message(result: Any, call_id: str) -> str:
@@ -336,6 +358,10 @@ class PermissionFlow:
         if not approvable:
             return
 
+        precondition = ApprovalPrecondition(
+            permission_mode=host._permission.permission_mode,
+            revocation_epoch=host._permission.revocation_epoch,
+        )
         choice = await host._ask_tool_permission(approvable)
         if choice is None:
             choice = "n"
@@ -351,11 +377,24 @@ class PermissionFlow:
         elif choice == "y":
             approved.extend(tool_calls)
         elif choice in _PATH_GRANT_CHOICES:
-            await _apply_path_grant_choice(host, approvable, choice)
-            approved.extend(tool_calls)
+            applied = await _apply_path_grant_choice(
+                host,
+                approvable,
+                choice,
+                precondition=precondition,
+            )
+            if applied:
+                approved.extend(tool_calls)
+            else:
+                for tc in tool_calls:
+                    denied.append((tc, "Permission grant conflict"))
         elif choice == "allow":
-            await _apply_runtime_grant(host, approvable)
-            approved.extend(tool_calls)
+            applied = await _apply_runtime_grant(host, approvable, precondition=precondition)
+            if applied:
+                approved.extend(tool_calls)
+            else:
+                for tc in tool_calls:
+                    denied.append((tc, "Permission grant conflict"))
         else:
             host._notice_permission_result(f"{len(need_ask)} tools denied")
             for tc in tool_calls:

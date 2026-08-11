@@ -161,6 +161,11 @@ def _collect_external_access_intents(classified: ClassifiedToolCall, context: Pe
             access_grants=context.access_grants,
             require_exists=require_exists,
             allow_missing_write_file=allow_missing_write_file,
+            object_type=(
+                "dir"
+                if name == "manage" and classified.args.get("kind") == "dir"
+                else None
+            ),
         )
         if resolution.action == "deny":
             return None
@@ -335,6 +340,7 @@ async def authorized_path(
     write: bool,
     require_exists: bool = False,
     allow_missing_write_file: bool = False,
+    object_type: ObjectType | None = None,
     prompt_label: str | None = None,
     allow_description: str | None = None,
     deny_description: str | None = None,
@@ -350,6 +356,7 @@ async def authorized_path(
         access_grants=access_grants,
         require_exists=require_exists,
         allow_missing_write_file=allow_missing_write_file,
+        object_type=object_type,
     )
     if resolution.action == "allow" and resolution.intent is not None:
         return resolution.intent.normalized_path, None
@@ -374,6 +381,7 @@ async def authorized_path(
             access_grants=access_grants,
             require_exists=require_exists,
             allow_missing_write_file=allow_missing_write_file,
+            object_type=object_type,
         )
         if resolution.action == "allow" and resolution.intent is not None:
             await _release_lock(lock)

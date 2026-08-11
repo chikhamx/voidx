@@ -70,6 +70,8 @@ class AgentService:
         user_input = user_input.strip()
         if not user_input:
             return True, None
+        if not thread_id and context is not None:
+            thread_id = context.thread_id
 
         if user_input.startswith("/"):
             if user_input in ("/exit", "/quit"):
@@ -88,7 +90,7 @@ class AgentService:
             return True, None
 
         try:
-            if await self._autonomous_router.route_chat_turn(user_input, thread_id=thread_id):
+            if await self._autonomous_router.route_chat_turn(user_input, thread_id=thread_id, context=context):
                 return True, None
             if await self._autonomous_router.route_first_message(user_input, thread_id=thread_id):
                 return True, None

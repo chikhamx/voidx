@@ -68,10 +68,12 @@ def _classify_llm_error(exc: Exception) -> LLMErrorKind:
     # 2. No status_code — check exception type
     if isinstance(exc, (asyncio.TimeoutError, httpx.TimeoutException)):
         return LLMErrorKind.TIMEOUT
+    error_message = str(exc).lower()
     if (
         isinstance(exc, (ConnectionError, httpx.TransportError))
         or "connection" in type(exc).__name__.lower()
-        or "upstream http/2 stream failed" in str(exc).lower()
+        or "upstream http/2 stream failed" in error_message
+        or "upstream response stream was interrupted" in error_message
     ):
         return LLMErrorKind.NETWORK
 

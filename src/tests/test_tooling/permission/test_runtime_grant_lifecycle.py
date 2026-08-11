@@ -59,3 +59,18 @@ async def test_session_grants_survive_execution_lease(tmp_path):
         pass
 
     assert len(tuple(g for g in service.grant_snapshot() if g.persistence == "session")) == 1
+
+
+@pytest.mark.asyncio
+async def test_runtime_grants_survive_until_last_execution_lease_releases():
+    service = PermissionService()
+    grant = AccessGrant(path="/external/file.txt", access="write", object_type="file", persistence="runtime")
+    await service.add_grant(grant)
+
+    async with service.execution_lease_for_tool("read"):
+        async with service.execution_lease_for_tool("write"):
+            pass
+
+        assert tuple(g for g in service.grant_snapshot() if g.persistence == "runtime") == (grant,)
+
+    assert tuple(g for g in service.grant_snapshot() if g.persistence == "runtime") == ()

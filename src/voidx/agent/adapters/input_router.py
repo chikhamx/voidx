@@ -62,14 +62,30 @@ class LangGraphAutonomousInputRouter:
             workspace=workspace,
         )
 
-    async def route_chat_turn(self, text: str, *, thread_id: str = "") -> bool:
+    async def route_chat_turn(self, text: str, *, thread_id: str = "", context: Any = None) -> bool:
         if self._chat_service is None:
             return False
+        from voidx.agent.domain.thread import AgentThread
+
+        if context is not None:
+            # Trust the caller-provided context: it already carries the resolved
+            # profile, session id and workspace, so no repository lookup is needed.
+            if getattr(getattr(context, "runtime_profile", None), "profile_id", "coding") != "chat":
+                return False
+            session_id = context.session_id or context.thread_id or thread_id
+            if not session_id:
+                return False
+            await self._chat_service.run_chat_turn(
+                user_text=text,
+                thread=AgentThread(thread_id=f"chat:{session_id}", session_id=session_id),
+                workspace=context.workspace or None,
+            )
+            return True
+
         target_id = thread_id or getattr(self._execution, "session_id", "") or ""
         if not target_id:
             return False
         from voidx.agent.adapters.persistence.session_repository import get_session
-        from voidx.agent.domain.thread import AgentThread
 
         target = await get_session(target_id)
         if target is None or target.runtime_profile != "chat":

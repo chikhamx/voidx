@@ -36,6 +36,23 @@ def test_manage_create_external_produces_write_intent(tmp_path):
     assert intents[0].is_workspace_path is False
 
 
+def test_manage_create_external_directory_produces_directory_intent(tmp_path):
+    workspace = tmp_path / "workspace"
+    external = tmp_path / "external"
+    workspace.mkdir()
+    external.mkdir()
+    target = external / "new-dir"
+
+    classified = classify_tool_call({"name": "manage", "args": {"op": "create", "kind": "dir", "paths": str(target)}})
+    action, reason, intents = sandbox_precheck_action(classified, _context(workspace))
+
+    assert action == "defer"
+    assert len(intents) == 1
+    assert intents[0].access == "write"
+    assert intents[0].object_type == "dir"
+    assert intents[0].normalized_path == target
+
+
 def test_manage_move_external_produces_two_write_intents(tmp_path):
     workspace = tmp_path / "workspace"
     external = tmp_path / "external"

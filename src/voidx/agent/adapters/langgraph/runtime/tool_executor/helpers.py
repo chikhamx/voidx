@@ -681,28 +681,37 @@ async def _execute_approved_batch(
     """Execute a batch of approved tool calls with dedup and guard restoration."""
     if not approved:
         return []
-    runnable, blocked = _split_runtime_guard_blocked_calls(approved, guard_state)
-    unique_calls, duplicate_sources = _dedupe_repeated_read_calls(runnable)
-    if serial:
-        executed: list[_ExecutedTool] = []
-        terminal_seen = False
-        for tc in unique_calls:
-            if terminal_seen:
-                executed.append(_infrastructure_skipped_tool(tc, reason="was skipped"))
-                continue
-            item = await execute_one_fn(tc)
-            executed.append(item)
-            terminal_seen = item.terminal_reason is not None
+
+    async def execute_batch() -> list[_ExecutedTool]:
+        runnable, blocked = _split_runtime_guard_blocked_calls(approved, guard_state)
+        unique_calls, duplicate_sources = _dedupe_repeated_read_calls(runnable)
+        if serial:
+            executed: list[_ExecutedTool] = []
+            terminal_seen = False
+            for tc in unique_calls:
+                if terminal_seen:
+                    executed.append(_infrastructure_skipped_tool(tc, reason="was skipped"))
+                    continue
+                item = await execute_one_fn(tc)
+                executed.append(item)
+                terminal_seen = item.terminal_reason is not None
+            restored = _restore_deduped_read_results(runnable, executed, duplicate_sources)
+            return _restore_runtime_guard_blocked_results(approved, restored, blocked)
+
+        executed = await _execute_file_isolated_batch(
+            unique_calls,
+            execute_one_fn,
+            skipped_result_factory=lambda tc, reason: _infrastructure_skipped_tool(
+                tc,
+                reason=reason,
+            ),
+        )
         restored = _restore_deduped_read_results(runnable, executed, duplicate_sources)
         return _restore_runtime_guard_blocked_results(approved, restored, blocked)
 
-    executed = await _execute_file_isolated_batch(
-        unique_calls,
-        execute_one_fn,
-        skipped_result_factory=lambda tc, reason: _infrastructure_skipped_tool(
-            tc,
-            reason=reason,
-        ),
-    )
-    restored = _restore_deduped_read_results(runnable, executed, duplicate_sources)
-    return _restore_runtime_guard_blocked_results(approved, restored, blocked)
+    permission = getattr(host, "_permission", None)
+    lease_factory = getattr(permission, "execution_lease_for_tool", None)
+    if lease_factory is None:
+        return await execute_batch()
+    async with lease_factory("approved_batch"):
+        return await execute_batch()

@@ -334,3 +334,52 @@ async def test_agent_service_fallback_runner_preserves_explicit_context_identity
 
     with pytest.raises(RuntimeError, match="coding service is not configured"):
         await service.run_coding_turn("continue target", context=context)
+
+
+class RecordingRouter:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def start_turn(self, text: str) -> None:
+        pass
+
+    def publish_message(self, message: str) -> None:
+        pass
+
+    async def route_chat_turn(self, text: str, *, thread_id: str = "", context=None) -> bool:
+        self.calls.append(("route_chat_turn:context", context))
+        self.calls.append(("route_chat_turn", thread_id))
+        return False
+
+    async def route_first_message(self, text: str, *, thread_id: str = "") -> bool:
+        self.calls.append(("route_first_message", thread_id))
+        return False
+
+    async def route_followup(self, text: str, *, thread_id: str = "") -> bool:
+        self.calls.append(("route_followup", thread_id))
+        return False
+
+    async def run_coding_turn(
+        self,
+        text: str,
+        *,
+        thread_id: str = "",
+        context=None,
+        display_text: str | None = None,
+    ) -> None:
+        self.calls.append(("run_coding_turn", thread_id))
+
+
+@pytest.mark.asyncio
+async def test_dispatch_input_falls_back_to_context_thread_id_for_routing():
+    from voidx.agent.application.agent_service import AgentService
+    from tests.test_application.input_ports import FakeInputPorts
+
+    ports = FakeInputPorts()
+    router = RecordingRouter()
+    service = AgentService(ports, ports, router, ports)
+    context = TurnExecutionContext(thread_id="chat-thread-1", session_id="chat-thread-1")
+
+    await service.dispatch_input("你好，介绍一下你自己", context=context, thread_id="")
+
+    assert ("route_chat_turn", "chat-thread-1") in router.calls

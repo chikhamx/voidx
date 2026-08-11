@@ -221,6 +221,7 @@ async def _resolve_manage_path(
     *,
     require_exists: bool,
     allow_missing_write_file: bool = False,
+    object_type: Literal["file", "dir"] = "file",
 ) -> tuple[Path | None, str | None]:
     if ctx.authorization_service.access_grants is not None:
         resolution = resolve_access(
@@ -230,6 +231,7 @@ async def _resolve_manage_path(
             access_grants=ctx.authorization_service.access_grants(),
             require_exists=require_exists,
             allow_missing_write_file=allow_missing_write_file,
+            object_type=object_type,
         )
         if resolution.action == "allow" and resolution.intent is not None:
             return resolution.intent.normalized_path, None
@@ -241,6 +243,7 @@ async def _resolve_manage_path(
         write=True,
         require_exists=require_exists,
         allow_missing_write_file=allow_missing_write_file,
+        object_type=object_type,
         prompt_label="Write",
         allow_description="Allow this write once",
         deny_description="Do not write this file",
@@ -256,7 +259,13 @@ async def _resolve_directory_path(ctx: ToolContext, file_path: str, *, require_e
     normalized = Path(os.path.normpath(str(lexical)))
     if _has_symlink_component(lexical) or _has_symlink_component(normalized):
         return None, f"Directory path contains a symbolic link: {file_path}"
-    return await _resolve_manage_path(ctx, file_path, require_exists=require_exists, allow_missing_write_file=True)
+    return await _resolve_manage_path(
+        ctx,
+        file_path,
+        require_exists=require_exists,
+        allow_missing_write_file=True,
+        object_type="dir",
+    )
 
 
 def _protected_roots(ctx: ToolContext) -> set[Path]:
@@ -288,6 +297,7 @@ async def _create_one(
     if error:
         return {"file": file_path, "status": "error", "reason": error}
     assert path is not None
+    created = not path.exists()
     if path.exists() and path.is_dir():
         return {"file": file_path, "status": "error", "reason": f"Path is a directory: {file_path}"}
     if path.exists() and not overwrite:
@@ -306,6 +316,12 @@ async def _create_one(
         return {"file": file_path, "status": "error", "reason": write_result.error}
     record_mtime(ctx, path)
     clear_read_coverage(ctx, path)
+    if created:
+        await ctx.authorization_service.record_created_path(
+            ctx.workspace,
+            path,
+            object_type="file",
+        )
     return {"file": file_path, "status": "created"}
 
 
@@ -323,6 +339,11 @@ async def _create_directory(ctx: ToolContext, file_path: str) -> dict:
     create_result = executor.create_dir(authorized)
     if not create_result.ok:
         return {"file": file_path, "status": "error", "reason": create_result.error}
+    await ctx.authorization_service.record_created_path(
+        ctx.workspace,
+        path,
+        object_type="dir",
+    )
     return {"file": file_path, "status": "created"}
 
 
@@ -354,6 +375,11 @@ async def _delete_one(
     if not delete_result.ok:
         return {"file": file_path, "status": "error", "reason": delete_result.error}
     clear_file_tracking(ctx, path)
+    await ctx.authorization_service.forget_created_path(
+        ctx.workspace,
+        path,
+        object_type="file",
+    )
     return {"file": file_path, "status": "deleted"}
 
 
@@ -375,6 +401,11 @@ async def _delete_directory(ctx: ToolContext, file_path: str) -> dict:
         clear_tree_tracking(ctx, path)
         return {"file": file_path, "status": "error", "reason": delete_result.error}
     clear_tree_tracking(ctx, path)
+    await ctx.authorization_service.forget_created_path(
+        ctx.workspace,
+        path,
+        object_type="dir",
+    )
     return {"file": file_path, "status": "deleted"}
 
 
@@ -403,6 +434,7 @@ async def _move_one(
         return {"file": src, "dest": dest_path, "status": "skipped", "reason": "source file does not exist"}
     if source.is_dir():
         return {"file": src, "dest": dest_path, "status": "error", "reason": f"Path is a directory: {src}"}
+    destination_created = not dest.exists()
     if dest.exists() and dest.is_dir():
         return {"file": src, "dest": dest_path, "status": "error", "reason": f"Destination is a directory: {dest_path}"}
     source_stale = check_staleness(ctx, source)
@@ -426,6 +458,13 @@ async def _move_one(
     if not move_result.ok:
         return {"file": src, "dest": dest_path, "status": "error", "reason": move_result.error}
     move_file_tracking(ctx, source, dest)
+    await ctx.authorization_service.move_created_path(
+        ctx.workspace,
+        source,
+        dest,
+        object_type="file",
+        destination_created=destination_created,
+    )
     return {"file": src, "dest": dest_path, "status": "moved"}
 
 
@@ -449,6 +488,7 @@ async def _move_directory(ctx: ToolContext, src: str, dest_path: str, overwrite:
         return {"file": src, "dest": dest_path, "status": "error", "reason": "Destination is inside the source directory"}
     if source.is_relative_to(dest):
         return {"file": src, "dest": dest_path, "status": "error", "reason": "Source and destination directory trees overlap"}
+    destination_created = not dest.exists()
     if dest.exists() and not dest.is_dir():
         return {"file": src, "dest": dest_path, "status": "error", "reason": "Destination is a file, not a directory"}
     if dest.exists() and not overwrite:
@@ -480,4 +520,11 @@ async def _move_directory(ctx: ToolContext, src: str, dest_path: str, overwrite:
 
     clear_tree_tracking(ctx, source_root)
     clear_tree_tracking(ctx, dest)
+    await ctx.authorization_service.move_created_path(
+        ctx.workspace,
+        source_root,
+        dest,
+        object_type="dir",
+        destination_created=destination_created,
+    )
     return {"file": src, "dest": dest_path, "status": "moved"}

@@ -234,6 +234,31 @@ def test_only_subagent_todo_nodes_render():
     assert not any("Todo: 1/1 done" in line for line in lines)
 
 
+def test_subagent_todo_keeps_connector_to_following_output():
+    tree = OutputTree()
+    assistant = tree.new_node(tree.root, node_type="assistant", header="")
+    subagent = tree.new_node(
+        assistant,
+        node_type="subagent",
+        header="● voidx",
+        agent_name="voidx",
+    )
+    tree.new_node(subagent, node_type="status", header="Read schema")
+    tree.new_node(
+        subagent,
+        node_type="todo",
+        header="Todo: 2/5 done · 1 active · 2 pending",
+        body_lines=["◐ implement schema"],
+    )
+    tree.new_node(subagent, node_type="assistant", header="Final report")
+
+    lines = [_plain(line) for line in tree.render(120)]
+
+    assert any("├─ Todo: 2/5 done · 1 active · 2 pending" in line for line in lines)
+    assert any("│  ◐ implement schema" in line for line in lines)
+    assert any("└─ Final report" in line for line in lines)
+
+
 def test_regular_subagent_spaces_following_assistant_message():
     tree = OutputTree()
     assistant = tree.new_node(tree.root, node_type="assistant", header="")

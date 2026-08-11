@@ -6,7 +6,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from voidx.tooling.domain.grants import AccessGrant
+from voidx.tooling.domain.grants import AccessGrant, ObjectType
 
 
 
@@ -92,6 +92,7 @@ class InMemoryPermissionState:
     def __init__(self, persistent_grants: list[AccessGrant] | None = None) -> None:
         self.runtime_grants: list[AccessGrant] = []
         self.session_grants: list[AccessGrant] = []
+        self.created_path_grants: list[AccessGrant] = []
         self.persistent_grants: list[AccessGrant] = list(persistent_grants or [])
         self.grant_lock_manager = PathGrantLockManager()
         self.commit_lock = asyncio.Lock()
@@ -158,7 +159,21 @@ class InMemoryPermissionState:
             self.revocation_epoch += 1
 
     def grants_snapshot(self) -> tuple[AccessGrant, ...]:
-        return tuple((*self.runtime_grants, *self.session_grants, *self.persistent_grants))
+        return tuple((
+            *self.runtime_grants,
+            *self.session_grants,
+            *self.created_path_grants,
+            *self.persistent_grants,
+        ))
+
+    def created_path_grants_snapshot(self) -> tuple[AccessGrant, ...]:
+        return tuple(self.created_path_grants)
+
+    def clear_created_path_grants(self) -> bool:
+        if not self.created_path_grants:
+            return False
+        self.created_path_grants.clear()
+        return True
 
     def add_grant(self, grant: AccessGrant) -> bool:
         target = self.grants_for(grant.persistence)
@@ -168,7 +183,69 @@ class InMemoryPermissionState:
         self.advance_state(permissions=grant.persistence == "persistent")
         return True
 
+    def record_created_path(self, path: object, *, object_type: ObjectType) -> bool:
+        grant = _created_path_grant(path, object_type=object_type)
+        if grant in self.created_path_grants:
+            return False
+        self.created_path_grants.append(grant)
+        self.advance_state()
+        return True
+
+    def forget_created_path(self, path: object, *, object_type: ObjectType) -> bool:
+        target = _normalize_lock_path(path)
+        retained = [
+            grant
+            for grant in self.created_path_grants
+            if not _created_grant_is_within(grant, target, object_type=object_type)
+        ]
+        if len(retained) == len(self.created_path_grants):
+            return False
+        self.created_path_grants[:] = retained
+        self.advance_state()
+        return True
+
+    def move_created_path(
+        self,
+        source: object,
+        dest: object,
+        *,
+        object_type: ObjectType,
+        destination_created: bool,
+    ) -> bool:
+        source_path = _normalize_lock_path(source)
+        dest_path = _normalize_lock_path(dest)
+        source_owned = any(
+            _created_grant_covers(grant, source_path)
+            for grant in self.created_path_grants
+        )
+        moved: list[AccessGrant] = []
+        retained: list[AccessGrant] = []
+        for grant in self.created_path_grants:
+            grant_path = _normalize_lock_path(grant.path)
+            if _created_grant_is_within(grant, dest_path, object_type=object_type):
+                continue
+            if _contains(source_path, grant_path):
+                if destination_created:
+                    moved.append(
+                        _created_path_grant(
+                            dest_path / grant_path.relative_to(source_path),
+                            object_type=grant.object_type,
+                        )
+                    )
+                continue
+            retained.append(grant)
+        if destination_created and source_owned and not moved:
+            moved.append(_created_path_grant(dest_path, object_type=object_type))
+        updated = list(dict.fromkeys((*retained, *moved)))
+        if updated == self.created_path_grants:
+            return False
+        self.created_path_grants[:] = updated
+        self.advance_state()
+        return True
+
     def clear_runtime_grants_and_advance(self) -> None:
+        if self.has_active_leases():
+            return
         if self.clear_runtime_grants():
             self.advance_state()
 
@@ -177,11 +254,13 @@ class InMemoryPermissionState:
             self._session_allow
             or self._session_deny
             or self.session_grants
+            or self.created_path_grants
             or self.ai_approval_count > 0
         )
         self._session_allow.clear()
         self._session_deny.clear()
         self.session_grants.clear()
+        self.created_path_grants.clear()
         self.ai_approval_count = 0
         if had_permissions:
             self.advance_state(revoke=True)
@@ -194,7 +273,31 @@ class InMemoryPermissionState:
         self.ai_approval_count = value
 
 
-def _normalize_lock_path(path: str | Path) -> Path:
+def _created_path_grant(path: object, *, object_type: ObjectType) -> AccessGrant:
+    return AccessGrant(
+        path=str(_normalize_lock_path(path)),
+        access="write",
+        object_type=object_type,
+        persistence="session",
+    )
+
+
+def _created_grant_covers(grant: AccessGrant, path: Path) -> bool:
+    grant_path = _normalize_lock_path(grant.path)
+    return path == grant_path or (grant.object_type == "dir" and _contains(grant_path, path))
+
+
+def _created_grant_is_within(
+    grant: AccessGrant,
+    root: Path,
+    *,
+    object_type: ObjectType,
+) -> bool:
+    grant_path = _normalize_lock_path(grant.path)
+    return grant_path == root or (object_type == "dir" and _contains(root, grant_path))
+
+
+def _normalize_lock_path(path: object) -> Path:
     return Path(path).expanduser().resolve(strict=False)
 
 

@@ -122,3 +122,72 @@ async def test_route_chat_turn_does_not_route_coding_session(monkeypatch):
     routed = await router.route_chat_turn("hello", thread_id="")
 
     assert routed is False
+
+
+@pytest.mark.asyncio
+async def test_route_chat_turn_trusts_context_profile_without_db(monkeypatch):
+    """Gateway turns carry a full TurnExecutionContext; routing must trust its
+    profile instead of re-querying the session repository."""
+    from types import SimpleNamespace
+
+    from voidx.agent.application.chat_service import CHAT_PROFILE
+    from voidx.agent.domain.turn_context import TurnExecutionContext
+
+    class FakeChatService:
+        def __init__(self):
+            self.calls = []
+
+        async def run_chat_turn(self, **kwargs):
+            self.calls.append(kwargs)
+
+    chat = FakeChatService()
+    router = LangGraphAutonomousInputRouter(SimpleNamespace(session_id="host-session"), None, NullAgentEventPublisher(), SimpleNamespace(), chat_service=chat, coding_service=None, loop_service=None, goal_service=None)
+
+    async def fail_get_session(session_id):
+        raise AssertionError("routing must not query the repository when context is provided")
+
+    monkeypatch.setattr("voidx.agent.adapters.persistence.session_repository.get_session", fail_get_session)
+
+    context = TurnExecutionContext(
+        thread_id="chat-thread",
+        session_id="chat-thread",
+        runtime_profile=CHAT_PROFILE,
+        workspace="/tmp/ws",
+    )
+
+    routed = await router.route_chat_turn("hello", thread_id="", context=context)
+
+    assert routed is True
+    assert len(chat.calls) == 1
+    assert chat.calls[0]["thread"].thread_id == "chat:chat-thread"
+    assert chat.calls[0]["thread"].session_id == "chat-thread"
+    assert chat.calls[0]["workspace"] == "/tmp/ws"
+
+
+@pytest.mark.asyncio
+async def test_route_chat_turn_context_coding_returns_false_without_db(monkeypatch):
+    from types import SimpleNamespace
+
+    from voidx.agent.domain.profile import CODING_PROFILE
+    from voidx.agent.domain.turn_context import TurnExecutionContext
+
+    class FakeChatService:
+        async def run_chat_turn(self, **kwargs):
+            raise AssertionError("coding context must not route to chat")
+
+    router = LangGraphAutonomousInputRouter(SimpleNamespace(session_id="host-session"), None, NullAgentEventPublisher(), SimpleNamespace(), chat_service=FakeChatService(), coding_service=None, loop_service=None, goal_service=None)
+
+    async def fail_get_session(session_id):
+        raise AssertionError("routing must not query the repository when context is provided")
+
+    monkeypatch.setattr("voidx.agent.adapters.persistence.session_repository.get_session", fail_get_session)
+
+    context = TurnExecutionContext(
+        thread_id="coding-thread",
+        session_id="coding-thread",
+        runtime_profile=CODING_PROFILE,
+    )
+
+    routed = await router.route_chat_turn("hello", thread_id="", context=context)
+
+    assert routed is False

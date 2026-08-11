@@ -41,7 +41,7 @@ class FakeInputPorts:
     def publish_message(self, message: str) -> None:
         return None
 
-    async def route_chat_turn(self, text: str, *, thread_id: str = "") -> bool:
+    async def route_chat_turn(self, text: str, *, thread_id: str = "", context=None) -> bool:
         return False
 
     async def run_coding_turn(
