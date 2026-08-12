@@ -17,13 +17,11 @@ class AiApprovalConfig(BaseModel):
     timeout_seconds: float = Field(default=12.0, ge=1.0, le=60.0, allow_inf_nan=False)
 
 
-
-
 class CompactionConfig(BaseModel):
     profile_name: str = ""
     reasoning_effort: ReasoningEffort | None = None
     timeout_seconds: float = Field(
-        default=60.0,
+        default=256.0,
         ge=1.0,
         le=300.0,
         allow_inf_nan=False,

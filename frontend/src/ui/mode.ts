@@ -35,18 +35,40 @@ function menuElements() {
   return { switcher, trigger, menu };
 }
 
+function menuOptions(menu: HTMLElement): HTMLButtonElement[] {
+  return [...menu.querySelectorAll<HTMLButtonElement>("[data-profile]")];
+}
+
+function focusSelectedOption(menu: HTMLElement): void {
+  const options = menuOptions(menu);
+  const selected = options.find((option) => option.getAttribute("aria-selected") === "true");
+  (selected ?? options[0])?.focus();
+}
+
+function focusAdjacentOption(menu: HTMLElement, direction: 1 | -1): void {
+  const options = menuOptions(menu);
+  if (options.length === 0) return;
+  const currentIndex = options.indexOf(document.activeElement as HTMLButtonElement);
+  const nextIndex = currentIndex === -1
+    ? direction === 1 ? 0 : options.length - 1
+    : (currentIndex + direction + options.length) % options.length;
+  options[nextIndex]?.focus();
+}
+
 function openMenu(): void {
   const { trigger, menu } = menuElements();
   if (!trigger || !menu) return;
   menu.hidden = false;
   trigger.setAttribute("aria-expanded", "true");
+  focusSelectedOption(menu);
 }
 
-function closeMenu(): void {
+function closeMenu({ restoreFocus = true }: { restoreFocus?: boolean } = {}): void {
   const { trigger, menu } = menuElements();
   if (!trigger || !menu) return;
   menu.hidden = true;
   trigger.setAttribute("aria-expanded", "false");
+  if (restoreFocus) trigger.focus();
 }
 
 function toggleMenu(): void {
@@ -97,10 +119,25 @@ export function initModeControls(onSwitch: (profile: RuntimeProfile) => void): v
   menuController = new AbortController();
   const { signal } = menuController;
   document.addEventListener("click", (event) => {
-    if (!switcher.contains(event.target as Node)) closeMenu();
+    if (!menu.hidden && !switcher.contains(event.target as Node)) {
+      closeMenu({ restoreFocus: false });
+    }
   }, { signal });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") closeMenu();
+    const { menu } = menuElements();
+    if (!menu) return;
+    if (event.key === "Escape") {
+      if (!menu.hidden) {
+        event.preventDefault();
+        closeMenu();
+      }
+      return;
+    }
+    if (menu.hidden) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      focusAdjacentOption(menu, event.key === "ArrowDown" ? 1 : -1);
+    }
   }, { signal });
 }
 

@@ -327,7 +327,7 @@ describe("workbench shell", () => {
     });
   });
 
-  it("shows cancel state immediately after submitting a message and sends cancel", async () => {
+  it("shows a disabled running state immediately after submitting a message", async () => {
     const sentMessages = setupOpenSocket();
     const input = document.querySelector("#input");
     const send = document.querySelector("#btn-send");
@@ -335,8 +335,8 @@ describe("workbench shell", () => {
     handleNotification("workspace.snapshot", {
       active_thread_id: "t1",
       active_snapshot: { thread_id: "t1", nodes: [] },
-      threads: [{ thread_id: "t1", title: "Default", workspace: "/Users/chikham/workspace/voidx" }],
-      workspace: "/Users/chikham/workspace/voidx",
+      threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
+      workspace: "<workspace>",
       provider: "deepseek",
       model: "deepseek-chat",
       profile_configured: true,
@@ -347,6 +347,7 @@ describe("workbench shell", () => {
     document.querySelector("#composer").dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
 
     expect(send.classList.contains("running")).toBe(true);
+    expect(send.disabled).toBe(true);
     expect(send.querySelector("svg.vx-icon")).not.toBeNull();
     expect(input.disabled).toBe(false);
     expect(sentPayloads(sentMessages).find((payload) => payload.method === "session.submit")).toMatchObject({
@@ -356,7 +357,7 @@ describe("workbench shell", () => {
 
     send.click();
 
-    expect(sentPayloads(sentMessages).some((payload) => payload.method === "session.cancel")).toBe(true);
+    expect(sentPayloads(sentMessages).some((payload) => payload.method === "session.cancel")).toBe(false);
   });
 
   it("keeps input enabled while a turn is running", () => {

@@ -7,15 +7,11 @@ from typing import Protocol
 
 from voidx.agent.application.runtime.contracts import TurnRequest, TurnResult
 from voidx.agent.domain.chat_policy import ChatResourceScope, ChatToolView
-from voidx.agent.domain.prompt_policy import ChatPromptPolicy
-from voidx.agent.domain.profile import RuntimeProfile
+from voidx.agent.domain.profile import CHAT_PROFILE
 from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.domain.thread import AgentThread
 
-CHAT_PROFILE = RuntimeProfile(
-    profile_id="chat", revision=1, name="Chat", prompt_policy=ChatPromptPolicy()
-)
 
 
 class CreatedSession(Protocol):

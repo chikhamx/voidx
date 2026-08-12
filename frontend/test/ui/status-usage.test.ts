@@ -141,7 +141,7 @@ describe("status bar usage", () => {
     expect(runtimeStatus.textContent).toBe("");
   });
 
-  it("disables sending while waiting for the write lock but keeps running cancellation available", () => {
+  it("disables the send button while running and restores it after completion", () => {
     handleNotification("workspace.snapshot", {
       active_thread_id: "thread-waiting",
       active_snapshot: { thread_id: "thread-waiting", nodes: [] },
@@ -154,7 +154,7 @@ describe("status bar usage", () => {
     handleNotification("turn.started", {});
 
     expect(document.querySelector("#input").disabled).toBe(true);
-    expect(document.querySelector("#btn-send").disabled).toBe(false);
+    expect(document.querySelector("#btn-send").disabled).toBe(true);
     expect(document.querySelector("#runtime-status-line").textContent).toContain("等待另一个会话完成写入…");
 
     handleNotification("workspace.snapshot", {
@@ -168,6 +168,9 @@ describe("status bar usage", () => {
     });
 
     expect(document.querySelector("#input").disabled).toBe(false);
+    expect(document.querySelector("#btn-send").disabled).toBe(true);
+
+    handleNotification("turn.completed", {});
     expect(document.querySelector("#btn-send").disabled).toBe(false);
   });
 });

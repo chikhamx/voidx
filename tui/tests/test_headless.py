@@ -104,6 +104,33 @@ async def test_submit_external_input_fills_coding_turn_context_before_queue(tmp_
     assert context.runtime_profile == CODING_PROFILE
 
 
+
+
+@pytest.mark.asyncio
+async def test_submit_external_input_uses_current_chat_session_profile(tmp_path):
+    from voidx.agent.domain.prompt_policy import ChatPromptPolicy
+
+    tui = _tui(tmp_path)
+    tui.status.session_id = lambda: "chat-session"
+    tui.status.runtime_profile = lambda: "chat"
+    received: list[ThreadExecutionContext] = []
+
+    async def on_submit(text: str, *, context: ThreadExecutionContext) -> bool:
+        received.append(context)
+        return True
+
+    headless_task = asyncio.create_task(tui.run_headless(on_submit))
+    tui.submit_external_input("你好")
+    await asyncio.wait_for(asyncio.sleep(0.1), timeout=1)
+    tui._queue.put_nowait(None)
+    await asyncio.wait_for(headless_task, timeout=1)
+
+    assert len(received) == 1
+    context = received[0]
+    assert context.thread_id == "chat-session"
+    assert context.session_id == "chat-session"
+    assert context.runtime_profile.profile_id == "chat"
+    assert isinstance(context.runtime_profile.prompt_policy, ChatPromptPolicy)
 @pytest.mark.asyncio
 async def test_submit_external_input_defaults_to_coding_thread_before_session_exists(tmp_path):
     tui = _tui(tmp_path)

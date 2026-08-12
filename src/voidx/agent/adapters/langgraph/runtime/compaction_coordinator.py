@@ -58,7 +58,7 @@ class ResolvedCompactionModel:
 class _DefaultCompactionConfig:
     profile_name: str = ""
     reasoning_effort: ReasoningEffort | None = None
-    timeout_seconds: float = 60.0
+    timeout_seconds: float = 256.0
 
 
 class CompactionCoordinator:

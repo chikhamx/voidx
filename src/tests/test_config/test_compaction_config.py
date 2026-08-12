@@ -15,7 +15,7 @@ def test_compaction_config_defaults_preserve_inherit() -> None:
 
     assert config.profile_name == ""
     assert config.reasoning_effort is None
-    assert config.timeout_seconds == 60.0
+    assert config.timeout_seconds == 256.0
     assert config.model_dump(mode="json")["reasoning_effort"] is None
 
 

@@ -198,6 +198,9 @@ function inferPermissionMode(permissions: Record<string, unknown> = {}): Permiss
 }
 
 
+const DEFAULT_COMPACTION_TIMEOUT_SECONDS = 256;
+
+
 function collectModelPatch(value: (name: string) => string): Record<string, unknown> {
   const provider = value("new_provider").trim();
   const model = value("new_model").trim();
@@ -230,7 +233,7 @@ function collectModelPatch(value: (name: string) => string): Record<string, unkn
   patch.compaction = {
     profile_name: value("compaction_profile"),
     reasoning_effort: value("compaction_reasoning_effort") || null,
-    timeout_seconds: Number(value("compaction_timeout") || 60),
+    timeout_seconds: Number(value("compaction_timeout") || DEFAULT_COMPACTION_TIMEOUT_SECONDS),
   };
   patch.permissions = {
     ai_approval: {
@@ -280,7 +283,7 @@ function renderModelTab(snapshot: SettingsSnapshot = {}): DocumentFragment {
     section("上下文压缩", [
       selectRow("Profile", "compaction_profile", String(compaction.profile_name || ""), profileChoices),
       selectRow("Reasoning", "compaction_reasoning_effort", String(compaction.reasoning_effort || ""), [...REASONING_EFFORTS]),
-      numberRow("Timeout（秒）", "compaction_timeout", Number(compaction.timeout_seconds || 60), 1, 300),
+      numberRow("Timeout（秒）", "compaction_timeout", Number(compaction.timeout_seconds || DEFAULT_COMPACTION_TIMEOUT_SECONDS), 1, 300),
     ]),
     section("AI 审批模型", [
       selectRow("Profile", "ai_approval_profile", String(aiApproval.profile_name || ""), profileChoices),

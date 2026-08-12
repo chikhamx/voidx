@@ -232,6 +232,7 @@ class PureTui(
         )
         base_context = coding_turn_context_for_queue(self.status)
         self._locked_submit_context = base_context.model_copy(update={"runtime_profile": profile})
+        self._locked_submit_context_explicit = True
 
     def _submit_context(
         self,
@@ -244,6 +245,13 @@ class PureTui(
             if lock_from_runtime_state:
                 self._lock_submit_context_from_runtime_state()
             context = self._locked_submit_context
+            if context is not None and not self._locked_submit_context_explicit:
+                current = coding_turn_context_for_queue(self.status, thread_id=thread_id)
+                current_profile = current.runtime_profile.profile_id
+                locked_profile = context.runtime_profile.profile_id
+                if current.session_id != context.session_id or current_profile != locked_profile:
+                    context = current
+                    self._locked_submit_context = current
         return coding_turn_context_for_queue(self.status, thread_id=thread_id, context=context)
 
     def submit_external_input(
@@ -260,8 +268,12 @@ class PureTui(
             context=context,
             lock_from_runtime_state=explicit_context or not text.strip().startswith("/"),
         )
-        if self._locked_submit_context is None and (explicit_context or not text.strip().startswith("/")):
+        if explicit_context:
             self._locked_submit_context = context
+            self._locked_submit_context_explicit = True
+        elif self._locked_submit_context is None and not text.strip().startswith("/"):
+            self._locked_submit_context = context
+            self._locked_submit_context_explicit = False
         self._queue.put_nowait(_SubmitQueueItem(
             text,
             restore_text=text,

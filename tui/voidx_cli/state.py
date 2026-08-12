@@ -34,6 +34,7 @@ class SubmitState:
     ctrl_c_deadline: float = 0.0
     quiet_commands: list[str] = field(default_factory=list)
     locked_context: Any | None = None
+    locked_context_explicit: bool = False
 
 
 @dataclass
@@ -188,6 +189,7 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_ctrl_c_deadline": ("_submit_state", "ctrl_c_deadline"),
     "_quiet_commands": ("_submit_state", "quiet_commands"),
     "_locked_submit_context": ("_submit_state", "locked_context"),
+    "_locked_submit_context_explicit": ("_submit_state", "locked_context_explicit"),
     "_choice_queue": ("_choice_state", "queue"),
     "_active_choice": ("_choice_state", "active"),
     "_choice_prompt": ("_choice_state", "prompt"),

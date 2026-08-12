@@ -97,6 +97,71 @@ describe("runtime profile controls", () => {
     expect(menu.hidden).toBe(true);
   });
 
+
+
+  it("keeps focus on an outside input when the menu is already closed", () => {
+    initModeControls(vi.fn());
+
+    const input = document.querySelector<HTMLTextAreaElement>("#input")!;
+    input.focus();
+    input.click();
+
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("closes on outside input click without stealing its focus", () => {
+    initModeControls(vi.fn());
+
+    const trigger = document.querySelector<HTMLButtonElement>("#mode-trigger")!;
+    const menu = document.querySelector<HTMLElement>("#mode-menu")!;
+    const input = document.querySelector<HTMLTextAreaElement>("#input")!;
+
+    trigger.click();
+    expect(menu.hidden).toBe(false);
+
+    input.focus();
+    input.click();
+
+    expect(menu.hidden).toBe(true);
+    expect(document.activeElement).toBe(input);
+  });
+  it("focuses the selected option on open and returns focus to the trigger on Escape", () => {
+    initModeControls(vi.fn());
+    renderRuntimeProfile("goal");
+
+    const trigger = document.querySelector<HTMLButtonElement>("#mode-trigger")!;
+    const menu = document.querySelector<HTMLElement>("#mode-menu")!;
+    const selected = document.querySelector<HTMLButtonElement>('[data-profile="goal"]')!;
+
+    trigger.focus();
+    trigger.click();
+    expect(menu.hidden).toBe(false);
+    expect(document.activeElement).toBe(selected);
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(menu.hidden).toBe(true);
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("cycles focus through options with arrow keys while the menu is open", () => {
+    initModeControls(vi.fn());
+    renderRuntimeProfile("coding");
+
+    const trigger = document.querySelector<HTMLButtonElement>("#mode-trigger")!;
+    const options = [...document.querySelectorAll<HTMLButtonElement>("#mode-menu [data-profile]")];
+
+    trigger.click();
+    expect(document.activeElement).toBe(options[1]);
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+    expect(document.activeElement).toBe(options[2]);
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }));
+    expect(document.activeElement).toBe(options[1]);
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }));
+    expect(document.activeElement).toBe(options[0]);
+  });
   it("renders one selected option, a trigger label, and a profile badge", () => {
     renderRuntimeProfile("loop");
 

@@ -46,6 +46,16 @@ describe("renderSettingsModal", () => {
     expect(document.querySelector('[name="new_api_key"]')).not.toBeNull();
   });
 
+  it("uses a 256 second compaction timeout when settings omit it", () => {
+    initSettingsModal();
+    renderSettingsModal({ model: { provider: "openai", model: "gpt-5.5" } });
+
+    expect(document.querySelector('[name="compaction_timeout"]').value).toBe("256");
+    expect(collectSettingsPatch()).toMatchObject({
+      compaction: { timeout_seconds: 256 },
+    });
+  });
+
 
   it("renders the model configuration center for chat, compaction, and AI approval", () => {
     initSettingsModal();

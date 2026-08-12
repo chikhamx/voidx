@@ -6,8 +6,7 @@ from typing import Protocol
 
 from voidx.agent.domain.automation.goal import GOAL_PROFILE
 from voidx.agent.domain.automation.loop import LOOP_PROFILE
-from voidx.agent.domain.profile import CODING_PROFILE, RuntimeProfile
-from voidx.agent.domain.prompt_policy import ChatPromptPolicy
+from voidx.agent.domain.profile import CHAT_PROFILE, CODING_PROFILE, RuntimeProfile
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.ports.presentation import GatewayThreadRegistry, GuidancePort, RuntimeStatusReader
 from voidx.presentation.protocol import UiCancelCommand, UiSubmitCommand, parse_ui_command
@@ -90,12 +89,7 @@ def _guidance_context(
 
 def _runtime_profile(profile_id: str) -> RuntimeProfile:
     profiles = {
-        "chat": RuntimeProfile(
-            profile_id="chat",
-            revision=1,
-            name="Chat",
-            prompt_policy=ChatPromptPolicy(),
-        ),
+        "chat": CHAT_PROFILE,
         "coding": CODING_PROFILE,
         "goal": GOAL_PROFILE,
         "loop": LOOP_PROFILE,

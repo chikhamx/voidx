@@ -1451,6 +1451,67 @@ def test_first_explicit_profile_context_locks_future_messages(tmp_path):
     assert second.context.runtime_profile.protocol == "chat"
 
 
+
+
+def test_session_profile_switch_refreshes_locked_submit_context(tmp_path):
+    from voidx.agent.domain.prompt_policy import ChatPromptPolicy
+
+    tui = _tui(tmp_path)
+    current = {"session_id": "coding-session", "profile": "coding"}
+    tui.status.session_id = lambda: current["session_id"]
+    tui.status.runtime_profile = lambda: current["profile"]
+
+    tui._input_lines = ["first coding message"]
+    tui._cursor_col = len("first coding message")
+    assert tui._do_submit() is True
+    first = tui._queue.get_nowait()
+    assert first.context.session_id == "coding-session"
+    assert first.context.runtime_profile.profile_id == "coding"
+
+    current.update(session_id="chat-session", profile="chat")
+    tui._input_lines = ["你好"]
+    tui._cursor_col = len("你好")
+    assert tui._do_submit() is True
+    second = tui._queue.get_nowait()
+
+    assert second.context.thread_id == "chat-session"
+    assert second.context.session_id == "chat-session"
+    assert second.context.runtime_profile.profile_id == "chat"
+    assert isinstance(second.context.runtime_profile.prompt_policy, ChatPromptPolicy)
+
+
+def test_explicit_gateway_context_replaces_existing_implicit_lock(tmp_path):
+    from voidx.agent.domain.profile import CHAT_PROFILE
+    from voidx.agent.domain.turn_context import TurnExecutionContext
+
+    tui = _tui(tmp_path)
+    tui.status.session_id = lambda: "coding-session"
+    tui.status.runtime_profile = lambda: "coding"
+
+    tui._input_lines = ["first coding message"]
+    tui._cursor_col = len("first coding message")
+    assert tui._do_submit() is True
+    first = tui._queue.get_nowait()
+    assert first.context.runtime_profile.profile_id == "coding"
+
+    gateway_context = TurnExecutionContext(
+        thread_id="gateway-chat-thread",
+        session_id="gateway-chat-session",
+        runtime_profile=CHAT_PROFILE,
+        workspace=str(tmp_path),
+    )
+    tui.submit_external_input("gateway chat", context=gateway_context)
+    explicit = tui._queue.get_nowait()
+    assert explicit.context == gateway_context
+
+    tui._input_lines = ["继续聊天"]
+    tui._cursor_col = len("继续聊天")
+    assert tui._do_submit() is True
+    followup = tui._queue.get_nowait()
+
+    assert followup.context.thread_id == "gateway-chat-thread"
+    assert followup.context.session_id == "gateway-chat-session"
+    assert followup.context.runtime_profile == CHAT_PROFILE
 def test_message_after_loop_waiting_keeps_loop_context(tmp_path):
     from voidx.presentation.output.dock import dock
 

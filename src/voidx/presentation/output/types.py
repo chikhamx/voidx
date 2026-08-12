@@ -48,6 +48,23 @@ def _status_value(status: Any, name: str) -> str:
     return str(value or "")
 
 
+def _runtime_profile_for_status(status: Any):
+    from voidx.agent.domain.profile import CHAT_PROFILE, CODING_PROFILE
+
+    profile_id = _status_value(status, "runtime_profile") or "coding"
+    if profile_id == "chat":
+        return CHAT_PROFILE
+    if profile_id == "goal":
+        from voidx.agent.domain.automation.goal import GOAL_PROFILE
+
+        return GOAL_PROFILE
+    if profile_id == "loop":
+        from voidx.agent.domain.automation.loop import LOOP_PROFILE
+
+        return LOOP_PROFILE
+    return CODING_PROFILE
+
+
 def coding_turn_context_for_queue(
     status: Any,
     *,
@@ -60,11 +77,12 @@ def coding_turn_context_for_queue(
         resolved_session_id = context.session_id
         resolved_thread_id = str(thread_id or context.thread_id or resolved_session_id or "coding")
         resolved_workspace = context.workspace
+        profile = getattr(context, "runtime_profile", CODING_PROFILE)
     else:
         resolved_session_id = _status_value(status, "session_id")
         resolved_thread_id = str(thread_id or resolved_session_id or "coding")
         resolved_workspace = _status_value(status, "workspace")
-    profile = getattr(context, "runtime_profile", CODING_PROFILE)
+        profile = _runtime_profile_for_status(status)
     if getattr(profile, "profile_id", "coding") == "coding":
         profile = CODING_PROFILE
     return TurnExecutionContext(

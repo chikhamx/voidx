@@ -18,6 +18,7 @@ export interface UiState {
   profileConfigured: boolean | null;
   configuredProfiles: ProfileSummary[];
   isSwitchingModel: boolean;
+  isSwitchingProfile: boolean;
   slashCommands: SlashCommand[];
   slashSelectedIndex: number;
   refCandidates: RefCandidate[];
@@ -70,6 +71,7 @@ export const uiState: UiState = {
   profileConfigured: null,
   configuredProfiles: [],
   isSwitchingModel: false,
+  isSwitchingProfile: false,
   slashCommands: [],
   slashSelectedIndex: 0,
   refCandidates: [],
@@ -225,8 +227,8 @@ export function updateStatusBar(): void {
     runtimeStatusEl.textContent = message;
     runtimeStatusEl.hidden = message === "";
   }
-  inputEl.disabled = uiState.isSwitchingModel || uiState.isWaitingForWriteLock;
-  btnSendEl.disabled = uiState.isSwitchingModel || (uiState.isWaitingForWriteLock && !uiState.isRunning);
+  inputEl.disabled = uiState.isSwitchingModel || uiState.isSwitchingProfile || uiState.isWaitingForWriteLock;
+  btnSendEl.disabled = uiState.isSwitchingModel || uiState.isSwitchingProfile || uiState.isRunning || uiState.isWaitingForWriteLock;
 
   const modelPillTextEl = document.querySelector("#model-pill-text");
   if (modelPillTextEl) {
@@ -280,8 +282,8 @@ export function setRunning(running: boolean): void {
   btnSendEl.classList.toggle("running", running);
   btnSendEl.innerHTML = running ? sendStopIcon : sendArrowIcon;
   btnSendEl.setAttribute("aria-label", running ? "Cancel" : "Send");
-  inputEl.disabled = uiState.isSwitchingModel || uiState.isWaitingForWriteLock;
-  btnSendEl.disabled = uiState.isSwitchingModel || (uiState.isWaitingForWriteLock && !running);
+  inputEl.disabled = uiState.isSwitchingModel || uiState.isSwitchingProfile || uiState.isWaitingForWriteLock;
+  btnSendEl.disabled = uiState.isSwitchingModel || uiState.isSwitchingProfile || running || uiState.isWaitingForWriteLock;
   updateStatusBar();
 }
 
@@ -307,6 +309,7 @@ export function _resetWorkbenchStateForTest(): void {
   uiState.isWaitingForWriteLock = false;
   uiState.configuredProfiles = [];
   uiState.isSwitchingModel = false;
+  uiState.isSwitchingProfile = false;
   uiState.slashCommands = [];
   uiState.slashSelectedIndex = 0;
 }

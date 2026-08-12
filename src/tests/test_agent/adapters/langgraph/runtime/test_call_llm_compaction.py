@@ -138,6 +138,74 @@ async def test_main_agent_hard_context_pressure_keeps_tools_and_does_not_force_f
 
 
 @pytest.mark.asyncio
+async def test_main_hard_compaction_success_does_not_inject_pressure_hint(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
+    from voidx.agent.adapters.langgraph.runtime.context_pressure import ContextPressureDecision
+    from voidx.llm.message_markers import is_context_pressure_message
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+    monkeypatch.setattr(
+        graph_module,
+        "evaluate_context_pressure",
+        lambda *_args, **_kwargs: ContextPressureDecision(
+            over_soft=True,
+            over_hard=True,
+            can_compact=True,
+            pressure_level="hard",
+            should_inject=False,
+            turn_id="turn-current",
+            turn_count=2,
+            pre_tokens=90_000,
+            soft_threshold=75_000,
+            hard_threshold=90_000,
+            reason="hard_threshold",
+        ),
+    )
+    graph = make_langgraph_execution(
+        Config(
+            model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+            workspace=str(tmp_path),
+        ),
+        api_key=str(),
+    )
+    graph.model = FakeStreamingModel()
+    graph._compaction.is_overflow = lambda _tokens: True
+    compaction_reasons: list[str] = []
+
+    async def successful_preflight(messages, _session_msgs=None, *, force=False, reason="threshold", ask=False):
+        compaction_reasons.append(reason)
+        result = CompactionResult(
+            summary="",
+            removed_messages=list(messages[:2]),
+            live_messages=list(messages[2:]),
+            tail_id=getattr(messages[2], "id", None),
+            metadata={"compaction_reason": reason},
+        )
+        return result, PreflightCompactionResult.from_compaction_result(result)
+
+    graph._preflight_compact_if_needed = successful_preflight
+
+    result = await graph._call_llm({
+        "messages": [
+            HumanMessage(id="turn-old", content="old request"),
+            AIMessage(content="old answer"),
+            HumanMessage(id="turn-current", content="finish the task"),
+        ],
+        "step_count": 10,
+        "persona": "coordinate",
+    })
+
+    assert compaction_reasons == ["hard_threshold"]
+    assert not any(
+        is_context_pressure_message(message)
+        for message in graph.model.messages
+    )
+    assert result["convergence_forced"] is False
+
+
+
+
+@pytest.mark.asyncio
 async def test_main_hard_compaction_failure_injects_hint_and_keeps_tools(tmp_path, monkeypatch):
     import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
     from voidx.agent.adapters.langgraph.runtime.context_pressure import ContextPressureDecision

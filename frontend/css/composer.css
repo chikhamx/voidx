@@ -141,6 +141,12 @@
 .btn-send:active { transform: scale(0.94); }
 .btn-send:disabled { cursor: not-allowed; opacity: 0.4; }
 
+.btn-send.running:disabled {
+  background: var(--vx-bg-active);
+  color: var(--vx-text-muted);
+  opacity: 1;
+}
+
 .btn-send.running {
   background: var(--vx-error);
   color: #fff;

@@ -67,6 +67,19 @@ describe("composer history navigation", () => {
     expect(inputEl.value).toBe("ship it");
   });
 
+
+  it("does not submit while an IME composition is being confirmed", () => {
+    const socket = fakeOpenSocket();
+    _setSocket(socket);
+    inputEl.value = "你好";
+
+    keydown("Enter", { isComposing: true });
+
+    const methods = socket.send.mock.calls.map(([data]) => JSON.parse(data).method);
+    expect(methods).not.toContain("session.submit");
+    expect(document.querySelectorAll("#transcript .message-item")).toHaveLength(0);
+    expect(inputEl.value).toBe("你好");
+  });
   it("typing resets browsing so next ArrowUp starts from newest", () => {
     pushHistory("older");
     pushHistory("latest");

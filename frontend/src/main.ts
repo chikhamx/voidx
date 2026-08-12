@@ -158,6 +158,7 @@ function submitModeCommand(command: string): void {
 }
 
 initModeControls((profile) => {
+  if (uiState.isSwitchingProfile) return;
   if (uiState.sessionId && uiState.runtimeProfile === profile) return;
   void openThreadForProfile(profile);
 });
@@ -353,9 +354,17 @@ function openThread(directory: string, profile?: string): Promise<void> {
 }
 
 export function openThreadForProfile(profile: RuntimeProfile): Promise<void> {
-  return openThread("", profile).catch((error: unknown) => {
-    showSessionError("模式切换", error);
-  });
+  if (uiState.isSwitchingProfile) return Promise.resolve();
+  uiState.isSwitchingProfile = true;
+  updateStatusBar();
+  return openThread("", profile)
+    .catch((error: unknown) => {
+      showSessionError("模式切换", error);
+    })
+    .finally(() => {
+      uiState.isSwitchingProfile = false;
+      updateStatusBar();
+    });
 }
 
 onThreadSelect((threadId: string) => {
@@ -723,6 +732,7 @@ composerEl.addEventListener("submit", (event: SubmitEvent) => {
   if (
     !text ||
     uiState.isSwitchingModel ||
+    uiState.isSwitchingProfile ||
     !isRpcConnected()
   ) {
     return;
@@ -864,6 +874,7 @@ function handleCtrlCInterrupt(event: KeyboardEvent): boolean {
 }
 
 inputEl.addEventListener("keydown", (event: KeyboardEvent) => {
+  if (event.isComposing || event.keyCode === 229) return;
   if (refMenuVisible() && uiState.refCandidates.length > 0) {
     const count = uiState.refCandidates.length;
     if (event.key === "ArrowDown") {

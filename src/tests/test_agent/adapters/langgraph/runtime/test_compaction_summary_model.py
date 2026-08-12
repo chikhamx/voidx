@@ -47,13 +47,22 @@ def _host(config: CompactionConfig, *, profile: Profile | None = None, main_mode
 async def test_zero_config_reuses_exact_main_model() -> None:
     host, created = _host(CompactionConfig())
 
-    stages = await CompactionCoordinator(host).resolve_compaction_models()
+    coordinator = CompactionCoordinator(host)
+    stages = await coordinator.resolve_compaction_models()
 
     assert len(stages) == 1
     assert stages[0].model is host.model
     assert stages[0].model_source == "main"
     assert stages[0].reasoning_source == "main"
+    assert coordinator._compaction_config().timeout_seconds == 256.0
     assert created == []
+
+
+def test_missing_compaction_settings_use_256_second_timeout() -> None:
+    host, _ = _host(CompactionConfig())
+    host._settings = SimpleNamespace()
+
+    assert CompactionCoordinator(host)._compaction_config().timeout_seconds == 256.0
 
 
 @pytest.mark.asyncio

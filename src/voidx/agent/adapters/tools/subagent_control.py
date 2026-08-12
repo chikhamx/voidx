@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from typing import Literal
 
@@ -250,7 +251,7 @@ def _result_output(result: dict | None) -> str:
     for key in ("result", "output", "content", "text"):
         if key in result:
             return str(result.get(key) or "")
-    return ""
+    return json.dumps(result, ensure_ascii=False, default=str)
 
 
 __all__ = ["AgentControlInput", "AgentControlTool", "_WAIT_TIMEOUT"]

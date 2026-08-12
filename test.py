@@ -26,6 +26,8 @@ _VENV_PY = Path(_VOIDX_HOME) / "venv" / "bin" / "python"
 if _VENV_PY.is_file() and str(_VENV_PY) != sys.executable:
     os.execv(str(_VENV_PY), [str(_VENV_PY), str(Path(__file__).resolve()), *sys.argv[1:]])
 
+
+
 SUITES = ("backend", "frontend", "desktop")
 _ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 

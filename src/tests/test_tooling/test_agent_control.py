@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 
 import pytest
@@ -124,6 +125,56 @@ async def test_wait_single_completed_uses_compact_output_and_compatible_metadata
         "run", "status", "wait_outcome", "terminal", "result_quality", "finish_reason"
     }
 
+
+@pytest.mark.asyncio
+async def test_wait_single_completed_renders_top_level_structured_result():
+    payload = {
+        "schema_name": "review_result",
+        "verdict": "PASS",
+        "findings": [],
+        "risks": ["无"],
+        "next_actions": [],
+    }
+    run = _run(
+        "run_structured",
+        status="completed",
+        result=payload,
+        wait_outcome="already_terminal",
+    )
+
+    result = await AgentControlTool().execute(
+        {"action": "wait", "run_id": run.run_id},
+        _ctx(FakeTransport({run.run_id: run})),
+    )
+
+    assert result.output == (
+        f"{subagent_display_name(run.run_id)} [completed]\nResult:\n"
+        f"{json.dumps(payload, ensure_ascii=False)}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_batch_wait_renders_top_level_structured_results():
+    first_payload = {
+        "schema_name": "review_result",
+        "verdict": "PASS",
+        "findings": [],
+    }
+    second_payload = {
+        "schema_name": "review_result",
+        "verdict": "NEEDS_CHANGE",
+        "findings": [{"id": "finding-1"}],
+    }
+    first = _run("run_structured_first", status="completed", result=first_payload)
+    second = _run("run_structured_second", status="completed", result=second_payload)
+
+    result = await AgentControlTool().execute(
+        {"action": "wait", "run_id": [first.run_id, second.run_id]},
+        _ctx(FakeTransport({first.run_id: first, second.run_id: second})),
+    )
+
+    assert f"Result:\n{json.dumps(first_payload, ensure_ascii=False)}" in result.output
+    assert f"Result:\n{json.dumps(second_payload, ensure_ascii=False)}" in result.output
 
 @pytest.mark.asyncio
 async def test_wait_timeout_uses_fixed_256s_and_short_hint(monkeypatch):
