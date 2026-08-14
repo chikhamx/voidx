@@ -158,9 +158,9 @@ async def test_compact_model_interactive_selects_configured_profile(tmp_path, mo
     assert configured.profile_name == "openai/gpt-5"
     assert configured.timeout_seconds == 7
     prompt, choices = prompt_ui.calls[0]
-    assert prompt == "Compaction model profile"
+    assert prompt.startswith("Compaction model profile")
     labels = [choice[0] for choice in choices]
-    assert "Current main profile (default)" in labels
+    assert "Current main profile (default) [active]" in labels
     assert "openai/gpt-5" in labels
     assert "anthropic/sonnet" not in labels
 

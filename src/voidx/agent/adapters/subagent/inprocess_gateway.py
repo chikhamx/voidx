@@ -5,7 +5,8 @@ import json
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 _CANCEL_ACK_TIMEOUT = 5.0
@@ -14,8 +15,11 @@ _CANCEL_ACK_TIMEOUT = 5.0
 from voidx.agent.domain.subagent import (
     USER_MESSAGE_TYPES,
     TERMINAL_STATUSES,
+    AgentActivity,
+    AgentActivityCategory,
     AgentGatewayError,
     AgentMessage,
+    AgentProgress,
     UserMessageType,
     AgentRun,
     AgentRunStatus,
@@ -29,6 +33,12 @@ from voidx.agent.domain.subagent import (
 
 
 
+@dataclass(frozen=True)
+class _FileImpact:
+    read_paths: frozenset[str] = frozenset()
+    edited_paths: frozenset[str] = frozenset()
+
+
 @dataclass
 class _RunRecord:
     run: AgentRun
@@ -36,6 +46,12 @@ class _RunRecord:
     done: asyncio.Event
     task: asyncio.Task[None] | None = None
     terminal_sent: bool = False
+    seen_activity_ids: set[str] = field(default_factory=set)
+    finished_activity_ids: set[str] = field(default_factory=set)
+    active_activities: dict[str, AgentActivity] = field(default_factory=dict)
+    pending_file_impacts: dict[str, _FileImpact] = field(default_factory=dict)
+    read_paths: set[str] = field(default_factory=set)
+    edited_paths: set[str] = field(default_factory=set)
 
 
 class InProcessSubagentGateway:
@@ -62,6 +78,8 @@ class InProcessSubagentGateway:
             status="running",
             created_at=now,
             updated_at=now,
+            current_activity=_idle_activity(now),
+            last_activity_at=now,
         )
         self._runs[run_id] = _RunRecord(
             run=run,
@@ -95,6 +113,8 @@ class InProcessSubagentGateway:
             status="running",
             created_at=now,
             updated_at=now,
+            current_activity=_idle_activity(now),
+            last_activity_at=now,
         )
         record = _RunRecord(
             run=run,
@@ -147,13 +167,12 @@ class InProcessSubagentGateway:
                 created_at=time.time(),
             )
             if message_type == "result":
-                source.run = finish_run(
-                    source.run,
+                await self._finish(
+                    sender_run_id,
                     status="completed",
                     result=payload,
-                    now=time.time(),
+                    send_lifecycle=False,
                 )
-                source.done.set()
                 await self._put_message(target, message, lifecycle=True)
                 await self._send_lifecycle(source)
             else:
@@ -192,7 +211,7 @@ class InProcessSubagentGateway:
         except TimeoutError:
             if target.run.status in TERMINAL_STATUSES:
                 return self._copy_run(target.run, wait_outcome="terminal_reached_during_wait")
-            return self._copy_run(target.run, wait_outcome="timed_out_still_running")
+            return self._copy_run(target.run, wait_outcome="timed_out")
         return self._copy_run(target.run, wait_outcome="terminal_reached_during_wait")
 
     def get_run(self, *, requester_run_id: str, target_run_id: str) -> AgentRun:
@@ -241,11 +260,60 @@ class InProcessSubagentGateway:
             if record.run.parent_run_id == parent_run_id
         ]
 
-    def start_tool_activity(self, run_id: str, *, tool_name: str, tool_call_id: str) -> None:
+    def start_model_activity(self, run_id: str, *, activity_id: str) -> None:
+        self._start_activity(run_id, activity_id=activity_id, category="thinking")
+
+    def touch_model_activity(self, run_id: str, *, activity_id: str) -> None:
+        record = self._require_run(run_id)
+        activity = record.active_activities.get(activity_id)
+        if activity is None or record.run.status in TERMINAL_STATUSES:
+            return
+        now = time.time()
+        record.active_activities[activity_id] = activity.model_copy(
+            update={"last_observed_at": now}
+        )
+        self._update_activity_snapshot(record, now=now)
+
+    def finish_model_activity(
+        self,
+        run_id: str,
+        *,
+        activity_id: str,
+        succeeded: bool,
+    ) -> None:
+        self._finish_activity(run_id, activity_id=activity_id, succeeded=succeeded)
+
+    def start_tool_activity(
+        self,
+        run_id: str,
+        *,
+        tool_name: str,
+        tool_call_id: str,
+        args: dict | None = None,
+        workspace: str = "",
+    ) -> None:
         record = self._require_run(run_id)
         if record.run.status in TERMINAL_STATUSES:
             return
         now = time.time()
+        is_new = tool_call_id not in record.seen_activity_ids
+        if is_new:
+            self._start_activity(
+                run_id,
+                activity_id=tool_call_id,
+                category=_tool_activity_category(tool_name),
+                now=now,
+            )
+            record.pending_file_impacts[tool_call_id] = _file_impact(
+                tool_name,
+                args or {},
+                workspace=workspace,
+            )
+            record.run = record.run.model_copy(
+                update={"progress": _progress_after_tool_start(record.run.progress, tool_name)}
+            )
+        else:
+            return
         activity = AgentToolActivity(
             tool_name=tool_name,
             tool_call_id=tool_call_id,
@@ -264,25 +332,113 @@ class InProcessSubagentGateway:
 
     def finish_tool_activity(self, run_id: str, *, tool_call_id: str, succeeded: bool) -> None:
         record = self._require_run(run_id)
+        if tool_call_id in record.finished_activity_ids:
+            return
         active_tools = list(record.run.active_tools)
-        activity = next(
+        tool_activity = next(
             (item for item in active_tools if item.tool_call_id == tool_call_id),
             None,
         )
-        if activity is None:
+        abstract_activity = record.active_activities.get(tool_call_id)
+        if tool_activity is None and abstract_activity is None:
             return
         now = time.time()
         active_tools = [
             item for item in active_tools
             if item.tool_call_id != tool_call_id
         ]
-        last_tool = activity.model_copy(update={
-            "status": "succeeded" if succeeded else "failed",
-            "finished_at": now,
-        })
+        last_tool = (
+            tool_activity.model_copy(update={
+                "status": "succeeded" if succeeded else "failed",
+                "finished_at": now,
+            })
+            if tool_activity is not None
+            else record.run.last_tool
+        )
+        if succeeded:
+            impact = record.pending_file_impacts.get(tool_call_id, _FileImpact())
+            record.read_paths.update(impact.read_paths)
+            record.edited_paths.update(impact.edited_paths)
+        record.pending_file_impacts.pop(tool_call_id, None)
+        self._finish_activity(
+            run_id,
+            activity_id=tool_call_id,
+            succeeded=succeeded,
+            now=now,
+        )
         record.run = record.run.model_copy(update={
             "active_tools": active_tools,
             "last_tool": last_tool,
+            "progress": record.run.progress.model_copy(update={
+                "files_read": len(record.read_paths),
+                "files_edited": len(record.edited_paths),
+            }),
+            "updated_at": now,
+        })
+
+    def _start_activity(
+        self,
+        run_id: str,
+        *,
+        activity_id: str,
+        category: AgentActivityCategory,
+        now: float | None = None,
+    ) -> None:
+        record = self._require_run(run_id)
+        if (
+            not activity_id
+            or record.run.status in TERMINAL_STATUSES
+            or activity_id in record.seen_activity_ids
+        ):
+            return
+        observed_at = time.time() if now is None else now
+        record.seen_activity_ids.add(activity_id)
+        record.active_activities[activity_id] = AgentActivity(
+            category=category,
+            status="running",
+            started_at=observed_at,
+            last_observed_at=observed_at,
+        )
+        self._update_activity_snapshot(record, now=observed_at)
+
+    def _finish_activity(
+        self,
+        run_id: str,
+        *,
+        activity_id: str,
+        succeeded: bool,
+        now: float | None = None,
+    ) -> None:
+        record = self._require_run(run_id)
+        if activity_id in record.finished_activity_ids:
+            return
+        activity = record.active_activities.pop(activity_id, None)
+        if activity is None:
+            return
+        observed_at = time.time() if now is None else now
+        record.finished_activity_ids.add(activity_id)
+        record.run = record.run.model_copy(update={
+            "recent_activity": activity.model_copy(update={
+                "status": "succeeded" if succeeded else "failed",
+                "last_observed_at": observed_at,
+                "finished_at": observed_at,
+            })
+        })
+        self._update_activity_snapshot(record, now=observed_at)
+
+    @staticmethod
+    def _update_activity_snapshot(record: _RunRecord, *, now: float) -> None:
+        current = (
+            max(
+                record.active_activities.values(),
+                key=lambda activity: (activity.last_observed_at, activity.started_at),
+            )
+            if record.active_activities
+            else _idle_activity(now)
+        )
+        record.run = record.run.model_copy(update={
+            "current_activity": current,
+            "last_activity_at": now,
             "updated_at": now,
         })
 
@@ -328,13 +484,20 @@ class InProcessSubagentGateway:
         record = self._runs.get(run_id)
         if record is None or record.run.status in TERMINAL_STATUSES:
             return
+        now = time.time()
+        record.active_activities.clear()
+        record.pending_file_impacts.clear()
         record.run = finish_run(
             record.run,
             status=status,
             result=result,
             error=error,
-            now=time.time(),
-        )
+            now=now,
+        ).model_copy(update={
+            "active_tools": [],
+            "current_activity": None,
+            "last_activity_at": now,
+        })
         record.done.set()
         if send_lifecycle:
             await self._send_lifecycle(record)
@@ -409,3 +572,69 @@ class InProcessSubagentGateway:
     @staticmethod
     def _new_run_id() -> str:
         return f"run_{uuid.uuid4().hex}"
+
+
+def _idle_activity(observed_at: float) -> AgentActivity:
+    return AgentActivity(
+        category="other",
+        status="running",
+        started_at=observed_at,
+        last_observed_at=observed_at,
+    )
+
+
+def _tool_activity_category(tool_name: str) -> AgentActivityCategory:
+    if tool_name == "read":
+        return "reading"
+    if tool_name in {"write", "replace", "manage"}:
+        return "editing"
+    if tool_name == "bash":
+        return "running_command"
+    if tool_name in {"find", "search", "lsp", "websearch", "webfetch"}:
+        return "searching"
+    return "other"
+
+
+def _progress_after_tool_start(progress: AgentProgress, tool_name: str) -> AgentProgress:
+    if tool_name == "bash":
+        return progress.model_copy(update={"commands_run": progress.commands_run + 1})
+    if tool_name in {"find", "search", "lsp", "websearch", "webfetch"}:
+        return progress.model_copy(update={"searches": progress.searches + 1})
+    if tool_name not in {"read", "write", "replace", "manage"}:
+        return progress.model_copy(update={"other_actions": progress.other_actions + 1})
+    return progress
+
+
+def _file_impact(tool_name: str, args: dict, *, workspace: str) -> _FileImpact:
+    if tool_name == "read":
+        path = _normalized_path(args.get("file_path"), workspace=workspace)
+        return _FileImpact(read_paths=frozenset({path}) if path else frozenset())
+    if tool_name in {"write", "replace"}:
+        path = _normalized_path(args.get("file_path"), workspace=workspace)
+        return _FileImpact(edited_paths=frozenset({path}) if path else frozenset())
+    if tool_name != "manage" or args.get("kind", "file") != "file":
+        return _FileImpact()
+    op = str(args.get("op") or "")
+    if op in {"create", "delete"}:
+        values = args.get("paths")
+        paths = values if isinstance(values, list) else [values]
+    elif op == "move":
+        moves = args.get("moves") or []
+        paths = [move.get("dest") for move in moves if isinstance(move, dict)]
+    else:
+        paths = []
+    normalized = {
+        path
+        for value in paths
+        if (path := _normalized_path(value, workspace=workspace))
+    }
+    return _FileImpact(edited_paths=frozenset(normalized))
+
+
+def _normalized_path(value: object, *, workspace: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = Path(workspace or ".") / path
+    return str(path.resolve(strict=False))

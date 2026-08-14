@@ -30,15 +30,27 @@ def test_normalize_agent_input_uses_goal_and_mode_route():
     assert normalized.goal_resolution.goal.desc == "精简 agent 工具"
     assert normalized.goal_resolution.plan.join == "tdd"
     assert normalized.goal_resolution.plan.leave == "verify"
-    assert normalized.result_contract.schema_name == "implementation_result"
+    assert normalized.result_contract.model_dump() == {
+        "format": "status, files_changed, tests_run, risks, followups",
+    }
     assert "Scope: src/voidx/tools/agent.py" in normalized.description
     assert "更新实现和测试。" in normalized.description
 
 
 def test_normalize_agent_input_maps_review_and_debug_routes():
-    for mode, join, leave, schema_name in (
-        ("review", "review", "review", "review_result"),
-        ("debug", "debug", "debug", "debug_result"),
+    for mode, join, leave, result_format in (
+        (
+            "review",
+            "review",
+            "review",
+            "verdict=PASS|FAIL|NEEDS_CHANGE, findings, risks, next_actions",
+        ),
+        (
+            "debug",
+            "debug",
+            "debug",
+            "root_cause, evidence, reproduction, fix_direction, open_questions",
+        ),
     ):
         normalized = normalize_agent_input(
             AgentInput(
@@ -50,7 +62,7 @@ def test_normalize_agent_input_maps_review_and_debug_routes():
         )
         assert normalized.goal_resolution.plan.join == join
         assert normalized.goal_resolution.plan.leave == leave
-        assert normalized.result_contract.schema_name == schema_name
+        assert normalized.result_contract.model_dump() == {"format": result_format}
 
 
 def test_agent_schema_rejects_invalid_mode():

@@ -11,7 +11,7 @@ AgentRunStatus = Literal["pending", "running", "completed", "failed", "cancelled
 AgentWaitOutcome = Literal[
     "already_terminal",
     "terminal_reached_during_wait",
-    "timed_out_still_running",
+    "timed_out",
 ]
 UserMessageType = Literal["message", "question", "answer", "result"]
 LifecycleMessageType = Literal["completed", "failed", "cancelled"]
@@ -46,6 +46,31 @@ class AgentMessage(BaseModel):
 
 
 ToolActivityStatus = Literal["running", "succeeded", "failed"]
+AgentActivityCategory = Literal[
+    "thinking",
+    "reading",
+    "editing",
+    "running_command",
+    "searching",
+    "other",
+]
+AgentActivityStatus = Literal["running", "succeeded", "failed"]
+
+
+class AgentProgress(BaseModel):
+    files_read: int = 0
+    files_edited: int = 0
+    commands_run: int = 0
+    searches: int = 0
+    other_actions: int = 0
+
+
+class AgentActivity(BaseModel):
+    category: AgentActivityCategory
+    status: AgentActivityStatus
+    started_at: float
+    last_observed_at: float
+    finished_at: float | None = None
 
 
 class AgentToolActivity(BaseModel):
@@ -68,6 +93,10 @@ class AgentRun(BaseModel):
     error: str | None = None
     created_at: float
     updated_at: float
+    progress: AgentProgress = Field(default_factory=AgentProgress)
+    current_activity: AgentActivity | None = None
+    recent_activity: AgentActivity | None = None
+    last_activity_at: float | None = None
     active_tools: list[AgentToolActivity] = Field(default_factory=list)
     last_tool: AgentToolActivity | None = None
     wait_outcome: AgentWaitOutcome | None = None

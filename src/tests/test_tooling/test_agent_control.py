@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 
 import pytest
 from pydantic import ValidationError
@@ -12,7 +11,13 @@ from pydantic import ValidationError
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext, AgentToolRuntime
 import voidx.agent.adapters.tools.subagent_control as control_module
 from voidx.agent.adapters.tools.subagent_control import AgentControlInput, AgentControlTool, _WAIT_TIMEOUT
-from voidx.agent.domain.subagent import AgentGatewayError, AgentRun, AgentToolActivity
+from voidx.agent.domain.subagent import (
+    AgentActivity,
+    AgentGatewayError,
+    AgentProgress,
+    AgentRun,
+    AgentToolActivity,
+)
 from voidx.agent.domain.subagent_display import subagent_display_name
 from voidx.tooling.domain.schema import model_to_json_schema
 
@@ -24,6 +29,10 @@ def _run(
     result: dict | None = None,
     error: str | None = None,
     wait_outcome: str | None = None,
+    progress: AgentProgress | None = None,
+    current_activity: AgentActivity | None = None,
+    recent_activity: AgentActivity | None = None,
+    last_activity_at: float | None = None,
     active_tools: list[AgentToolActivity] | None = None,
     last_tool: AgentToolActivity | None = None,
 ) -> AgentRun:
@@ -39,6 +48,10 @@ def _run(
         error=error,
         created_at=1.0,
         updated_at=2.0,
+        progress=progress or AgentProgress(),
+        current_activity=current_activity,
+        recent_activity=recent_activity,
+        last_activity_at=last_activity_at,
         active_tools=active_tools or [],
         last_tool=last_tool,
         wait_outcome=wait_outcome,
@@ -122,14 +135,16 @@ async def test_wait_single_completed_uses_compact_output_and_compatible_metadata
     assert result.summary == f"{name} completed"
     assert result.next_step_hint == ""
     assert set(result.metadata) == {
-        "run", "status", "wait_outcome", "terminal", "result_quality", "finish_reason"
+        "run", "status", "wait_outcome", "result_quality", "finish_reason"
     }
+    assert "terminal" not in result.metadata
+    assert "active_tools" not in result.metadata["run"]
+    assert "last_tool" not in result.metadata["run"]
 
 
 @pytest.mark.asyncio
 async def test_wait_single_completed_renders_top_level_structured_result():
     payload = {
-        "schema_name": "review_result",
         "verdict": "PASS",
         "findings": [],
         "risks": ["无"],
@@ -156,12 +171,10 @@ async def test_wait_single_completed_renders_top_level_structured_result():
 @pytest.mark.asyncio
 async def test_batch_wait_renders_top_level_structured_results():
     first_payload = {
-        "schema_name": "review_result",
         "verdict": "PASS",
         "findings": [],
     }
     second_payload = {
-        "schema_name": "review_result",
         "verdict": "NEEDS_CHANGE",
         "findings": [{"id": "finding-1"}],
     }
@@ -177,10 +190,21 @@ async def test_batch_wait_renders_top_level_structured_results():
     assert f"Result:\n{json.dumps(second_payload, ensure_ascii=False)}" in result.output
 
 @pytest.mark.asyncio
-async def test_wait_timeout_uses_fixed_256s_and_short_hint(monkeypatch):
+async def test_wait_timeout_without_observed_activity_suggests_cancel(monkeypatch):
     monkeypatch.setattr(control_module, "_WAIT_TIMEOUT", 0.01)
-    monkeypatch.setattr(time, "time", lambda: 11.0)
-    run = _run("run_slow", wait_outcome="timed_out_still_running")
+    moments = iter([10.0, 10.01])
+    monkeypatch.setattr(control_module.time, "time", lambda: next(moments))
+    run = _run(
+        "run_slow",
+        wait_outcome="timed_out",
+        current_activity=AgentActivity(
+            category="thinking",
+            status="running",
+            started_at=8.0,
+            last_observed_at=9.0,
+        ),
+        last_activity_at=9.0,
+    )
     transport = FakeTransport({run.run_id: run})
 
     result = await AgentControlTool().execute(
@@ -189,26 +213,56 @@ async def test_wait_timeout_uses_fixed_256s_and_short_hint(monkeypatch):
     )
 
     assert result.output == (
-        f"{subagent_display_name(run.run_id)} [running]\nStatus: elapsed 10s"
+        f"{subagent_display_name(run.run_id)} [running]\n"
+        "Wait timed out after 0.01s.\n"
+        "Status: elapsed 9s\n"
+        "Current: thinking · activity 1s ago"
     )
+    assert result.metadata["wait_outcome"] == "timed_out"
+    assert "terminal" not in result.metadata
+    assert result.metadata["wait_timeout_seconds"] == 0.01
+    assert "active_tools" not in result.metadata["run"]
+    assert "last_tool" not in result.metadata["run"]
     assert transport.calls == [("wait", run.run_id, 0.01)]
     assert result.next_step_hint == (
-        "The child agent is still running and may need more time; wait again later if the result is still needed."
+        "No activity was observed during the 0.01s wait; current state is thinking "
+        "and its last activity was 1s ago. Cancel the child agent unless this duration is expected."
     )
 
 
 @pytest.mark.asyncio
-async def test_wait_timeout_reports_elapsed_and_active_tool(monkeypatch):
+async def test_wait_timeout_with_observed_activity_reports_abstract_progress(monkeypatch):
     monkeypatch.setattr(control_module, "_WAIT_TIMEOUT", 0.01)
-    monkeypatch.setattr(time, "time", lambda: 11.0)
+    moments = iter([10.0, 10.01])
+    monkeypatch.setattr(control_module.time, "time", lambda: next(moments))
     run = _run(
         "run_active",
-        wait_outcome="timed_out_still_running",
-        active_tools=[AgentToolActivity(
-            tool_name="search",
-            tool_call_id="call-search",
+        wait_outcome="timed_out",
+        progress=AgentProgress(
+            files_read=7,
+            files_edited=3,
+            commands_run=4,
+            searches=6,
+        ),
+        current_activity=AgentActivity(
+            category="searching",
             status="running",
-            started_at=8.0,
+            started_at=10.0,
+            last_observed_at=10.005,
+        ),
+        recent_activity=AgentActivity(
+            category="editing",
+            status="succeeded",
+            started_at=9.0,
+            last_observed_at=9.5,
+            finished_at=9.5,
+        ),
+        last_activity_at=10.005,
+        active_tools=[AgentToolActivity(
+            tool_name="secret_search_tool",
+            tool_call_id="call-secret",
+            status="running",
+            started_at=10.0,
         )],
     )
 
@@ -219,8 +273,19 @@ async def test_wait_timeout_reports_elapsed_and_active_tool(monkeypatch):
 
     assert result.output == (
         f"{subagent_display_name(run.run_id)} [running]\n"
-        "Status: elapsed 10s · active: search (3s)"
+        "Wait timed out after 0.01s.\n"
+        "Status: elapsed 9s\n"
+        "Progress: read 7 files · edited 3 files · ran 4 commands · searched 6 times\n"
+        "Current: searching · activity 0s ago\n"
+        "Recent: editing · succeeded 0s ago"
     )
+    assert result.next_step_hint == (
+        "Activity was observed 0s ago; current state is searching. "
+        "Wait again if the result is still needed."
+    )
+    assert "secret_search_tool" not in result.output
+    assert "secret_search_tool" not in str(result.metadata)
+    assert "call-secret" not in str(result.metadata)
 
 
 @pytest.mark.asyncio
@@ -253,9 +318,20 @@ async def test_wait_failed_and_incomplete_results_emit_recovery_hints():
 
 
 @pytest.mark.asyncio
-async def test_batch_wait_is_concurrent_ordered_and_reports_partial_error():
+async def test_batch_wait_is_concurrent_ordered_and_reports_partial_error(monkeypatch):
+    monkeypatch.setattr(control_module.time, "time", lambda: 10.0)
     first = _run("run_first", status="completed", result={"result": "one"}, wait_outcome="already_terminal")
-    third = _run("run_third", wait_outcome="timed_out_still_running")
+    third = _run(
+        "run_third",
+        wait_outcome="timed_out",
+        current_activity=AgentActivity(
+            category="thinking",
+            status="running",
+            started_at=8.0,
+            last_observed_at=9.0,
+        ),
+        last_activity_at=9.0,
+    )
     denied = AgentGatewayError("Route not allowed", reason="route_not_allowed")
     transport = FakeTransport({first.run_id: first, "run_denied": denied, third.run_id: third})
 
@@ -282,7 +358,9 @@ async def test_batch_wait_is_concurrent_ordered_and_reports_partial_error():
         first.run_id, "run_denied", third.run_id
     ]
     assert result.next_step_hint == "\n".join([
-        "The child agent is still running and may need more time; wait again later if the result is still needed.",
+        f"{subagent_display_name(third.run_id)}: no activity was observed during the 256s wait; "
+        "current state is thinking and its last activity was 1s ago. "
+        "Cancel the child agent unless this duration is expected.",
         "Verify the run IDs and parent-child control relationship before retrying.",
     ])
 

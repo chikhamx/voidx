@@ -53,8 +53,22 @@ async def main() -> int:
         await gateway.cancel(requester_run_id=root_id, target_run_id=spawned.run_id)
 
     elapsed = time.monotonic() - start
-    if result.metadata.get("wait_outcome") != "timed_out_still_running":
+    if result.metadata.get("wait_outcome") != "timed_out":
         print(f"[repro] FAIL: unexpected metadata {result.metadata!r}")
+        return 1
+    if result.metadata.get("status") != "running":
+        print(f"[repro] FAIL: expected running status, got {result.metadata!r}")
+        return 1
+    if "terminal" in result.metadata:
+        print(f"[repro] FAIL: redundant terminal metadata leaked {result.metadata!r}")
+        return 1
+    public_run = result.metadata.get("run") or {}
+    if "active_tools" in public_run or "last_tool" in public_run:
+        print(f"[repro] FAIL: concrete tool details leaked {public_run!r}")
+        return 1
+    expected_wait = f"No activity was observed during the {TEST_TIMEOUT_SECS:g}s wait"
+    if expected_wait not in result.next_step_hint or "Cancel the child agent" not in result.next_step_hint:
+        print(f"[repro] FAIL: unexpected next step hint {result.next_step_hint!r}")
         return 1
     print(f"[repro] PASS: default wait returned after {elapsed:.2f}s")
     return 0

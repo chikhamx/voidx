@@ -91,16 +91,13 @@ def _child_goal_resolution(
     )
 
 
-def _child_result_contract(schema_name: str = "implementation_result") -> AgentResultContract:
+def _child_result_contract(contract_type: str = "implementation_result") -> AgentResultContract:
     result_format = (
         "verdict=PASS|FAIL|NEEDS_CHANGE, findings, risks, verification_notes, next_actions"
-        if schema_name == "review_result"
+        if contract_type == "review_result"
         else "status, files_changed, tests_run, risks, followups"
     )
-    return AgentResultContract(
-        schema_name=schema_name,
-        format=result_format,
-    )
+    return AgentResultContract(format=result_format)
 
 
 def _subagent_contract_kwargs(
@@ -109,11 +106,11 @@ def _subagent_contract_kwargs(
     desc: str = "Inspect the workspace",
     join: str = "review",
     leave: str = "review",
-    schema_name: str = "inspection_result",
+    contract_type: str = "inspection_result",
 ) -> dict:
     return {
         "goal_resolution": _child_goal_resolution(goal_type, desc=desc, join=join, leave=leave),
-        "result_contract": _child_result_contract(schema_name),
+        "result_contract": _child_result_contract(contract_type),
     }
 
 
@@ -230,7 +227,7 @@ async def test_subagent_injects_result_contract_into_task_payload(tmp_path, monk
             desc="Inspect the workspace",
             join="review",
             leave="review",
-            schema_name="review_result",
+            contract_type="review_result",
             
         ),
         debug=False,
@@ -243,7 +240,7 @@ async def test_subagent_injects_result_contract_into_task_payload(tmp_path, monk
         if isinstance(message, HumanMessage) and "Result contract" in str(message.content)
     )
     assert "Result contract" in task_payload
-    assert "review_result" in task_payload
+    assert "schema_name" not in task_payload
     assert "verdict=PASS|FAIL|NEEDS_CHANGE" in task_payload
 
 
@@ -424,7 +421,7 @@ async def test_subagent_requires_structured_contract_after_tool_work(tmp_path, m
             desc="Review subagent behavior",
             join="review",
             leave="review",
-            schema_name="inspection_result",
+            contract_type="inspection_result",
         ),
         debug=False,
     )
@@ -433,7 +430,8 @@ async def test_subagent_requires_structured_contract_after_tool_work(tmp_path, m
     contract_retry = captured_calls[2][-1]
     assert isinstance(contract_retry, HumanMessage)
     assert "Your previous response did not satisfy the child-agent result contract" in contract_retry.content
-    assert "schema_name: inspection_result" in contract_retry.content
+    assert "schema_name" not in contract_retry.content
+    assert "format: status, files_changed, tests_run, risks, followups" in contract_retry.content
 
 
 @pytest.mark.asyncio
@@ -505,7 +503,7 @@ async def test_subagent_contract_retry_exhausted_returns_contract_unsatisfied(tm
             desc="Review subagent behavior",
             join="review",
             leave="review",
-            schema_name="inspection_result",
+            contract_type="inspection_result",
         ),
         debug=False,
     )

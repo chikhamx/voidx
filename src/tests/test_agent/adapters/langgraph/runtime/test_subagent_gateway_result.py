@@ -53,7 +53,6 @@ def _goal_resolution() -> GoalResolution:
 
 def _result_contract() -> AgentResultContract:
     return AgentResultContract(
-        schema_name="review_result",
         format="verdict=PASS|FAIL|NEEDS_CHANGE, findings, risks, next_actions",
     )
 
@@ -121,6 +120,9 @@ async def test_run_subagent_explicit_result_message_completes_gateway_run(tmp_pa
 
     assert run.status == "completed"
     assert run.result == {"result": "explicit result", "verdict": "PASS"}
+    assert run.current_activity is None
+    assert run.active_tools == []
+    assert run.last_activity_at == run.updated_at
     assert [(message.type, message.payload) for message in messages] == [
         ("result", {"result": "explicit result", "verdict": "PASS"}),
         ("completed", {"run_id": run.run_id}),
@@ -436,6 +438,33 @@ async def test_run_subagent_reports_tool_activity_and_refreshes_child_context_ea
     release_tool = asyncio.Event()
     child_created = asyncio.Event()
     captured_prompts: list[str] = []
+    model_activity_events: list[tuple] = []
+    tool_start_events: list[tuple] = []
+    original_start_model = gateway.start_model_activity
+    original_touch_model = gateway.touch_model_activity
+    original_finish_model = gateway.finish_model_activity
+    original_start_tool = gateway.start_tool_activity
+
+    def start_model(run_id: str, *, activity_id: str) -> None:
+        model_activity_events.append(("start", run_id, activity_id))
+        original_start_model(run_id, activity_id=activity_id)
+
+    def touch_model(run_id: str, *, activity_id: str) -> None:
+        model_activity_events.append(("touch", run_id, activity_id))
+        original_touch_model(run_id, activity_id=activity_id)
+
+    def finish_model(run_id: str, *, activity_id: str, succeeded: bool) -> None:
+        model_activity_events.append(("finish", run_id, activity_id, succeeded))
+        original_finish_model(run_id, activity_id=activity_id, succeeded=succeeded)
+
+    def start_tool(run_id: str, **kwargs) -> None:
+        tool_start_events.append((run_id, kwargs))
+        original_start_tool(run_id, **kwargs)
+
+    monkeypatch.setattr(gateway, "start_model_activity", start_model)
+    monkeypatch.setattr(gateway, "touch_model_activity", touch_model)
+    monkeypatch.setattr(gateway, "finish_model_activity", finish_model)
+    monkeypatch.setattr(gateway, "start_tool_activity", start_tool)
 
     class BlockingTool:
         id = "blocking"
@@ -457,6 +486,9 @@ async def test_run_subagent_reports_tool_activity_and_refreshes_child_context_ea
         nonlocal calls
         calls += 1
         captured_prompts.append("\n".join(str(message.content) for message in messages))
+        on_activity = kwargs.get("on_activity")
+        assert callable(on_activity)
+        on_activity()
         if calls == 1:
             return AIMessage(
                 content="",
@@ -491,7 +523,7 @@ async def test_run_subagent_reports_tool_activity_and_refreshes_child_context_ea
         description="Goal: review activity",
         runner=runner,
     )
-    await tool_started.wait()
+    await asyncio.wait_for(tool_started.wait(), timeout=1)
     running = gateway.lookup_run(parent.run_id)
     assert running is not None
     assert [(item.tool_name, item.status) for item in running.active_tools] == [
@@ -522,6 +554,28 @@ async def test_run_subagent_reports_tool_activity_and_refreshes_child_context_ea
     assert parent.last_tool.status == "succeeded"
     assert "Child agents: 1 running · 0 recent terminal" in captured_prompts[1]
     assert f"{nested.run_id} [running] Goal: nested review" in captured_prompts[1]
+    starts = [event for event in model_activity_events if event[0] == "start"]
+    touches = [event for event in model_activity_events if event[0] == "touch"]
+    finishes = [event for event in model_activity_events if event[0] == "finish"]
+    assert len(starts) == len(touches) == len(finishes)
+    assert len(starts) >= 2
+    activity_ids = [event[2] for event in starts]
+    assert len(set(activity_ids)) == len(activity_ids)
+    assert [event[2] for event in touches] == activity_ids
+    assert [(event[2], event[3]) for event in finishes] == [
+        (activity_id, True) for activity_id in activity_ids
+    ]
+    assert tool_start_events == [
+        (
+            parent.run_id,
+            {
+                "tool_name": "blocking",
+                "tool_call_id": "call-blocking",
+                "args": {},
+                "workspace": str(tmp_path),
+            },
+        )
+    ]
 
     nested_release.set()
     nested_task = gateway._runs[nested.run_id].task

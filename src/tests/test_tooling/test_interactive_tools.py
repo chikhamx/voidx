@@ -220,7 +220,9 @@ class TestInteractiveTools:
         assert "Scope: src/voidx/tools/agent.py" in captured["description"]
         assert "Result contract:" not in captured["description"]
         assert captured["goal_resolution"].goal.desc == "审查 agent 工具"
-        assert captured["result"].schema_name == "review_result"
+        assert captured["result"].model_dump() == {
+            "format": "verdict=PASS|FAIL|NEEDS_CHANGE, findings, risks, next_actions",
+        }
         assert "PASS|FAIL|NEEDS_CHANGE" in captured["result"].format
     @pytest.mark.asyncio
     async def test_agent_tool_does_not_expose_model_param(self, tmp_path):
@@ -277,7 +279,9 @@ class TestInteractiveTools:
         assert goal_resolution.goal.desc == "审查 agent 工具"
         assert goal_resolution.plan.join == "tdd"
         assert goal_resolution.plan.leave == "verify"
-        assert captured["result"].schema_name == "implementation_result"
+        assert captured["result"].model_dump() == {
+            "format": "status, files_changed, tests_run, risks, followups",
+        }
 
 
 
@@ -477,7 +481,7 @@ async def test_agent_tool_default_wait_is_finite(tmp_path, monkeypatch):
         ctx,
     )
 
-    assert wait_result.metadata["wait_outcome"] == "timed_out_still_running"
+    assert wait_result.metadata["wait_outcome"] == "timed_out"
     assert wait_result.metadata["status"] == "running"
     release.set()
     await gateway.wait(

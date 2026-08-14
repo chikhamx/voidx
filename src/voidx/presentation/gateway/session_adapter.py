@@ -37,6 +37,7 @@ def build_gateway_session(
     return GatewaySession(
         lambda: active_dock.tree,
         thread_id=session_id,
+        runtime_profile=status.session.runtime_profile,
         session_id=session_id,
         workspace=status.workspace,
         settings_factory=settings_factory,
@@ -56,6 +57,7 @@ def _runtime_state(status: RuntimePresentationStatus) -> dict[str, object]:
         "model": status.model,
         "workspace": status.workspace,
         "profile_configured": status.profile_configured,
+        "runtime_profile": status.session.runtime_profile,
         "permission_mode": status.permission_mode,
         "ai_approval_count": status.ai_approval_count,
     }

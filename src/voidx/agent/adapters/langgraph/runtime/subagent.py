@@ -8,6 +8,7 @@ import asyncio
 import json
 import re
 import time
+import uuid
 from typing import Any, Protocol
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -247,13 +248,36 @@ async def run_subagent(
     async def stream_child_llm(bound_model: object, llm_messages: list, renderer: object):
         nonlocal run_call_count
         run_call_count += 1
-        return await stream_llm(
-            bound_model,
-            llm_messages,
-            renderer,
-            resolve_protocol(model_cfg),
-            ui_port=ui_port,
-        )
+        activity_id = f"llm_{uuid.uuid4().hex}"
+        tracks_activity = agent_gateway is not None and bool(run_identity)
+        if tracks_activity:
+            agent_gateway.start_model_activity(run_identity, activity_id=activity_id)
+        succeeded = False
+        try:
+            result = await stream_llm(
+                bound_model,
+                llm_messages,
+                renderer,
+                resolve_protocol(model_cfg),
+                ui_port=ui_port,
+                on_activity=(
+                    lambda: agent_gateway.touch_model_activity(
+                        run_identity,
+                        activity_id=activity_id,
+                    )
+                    if tracks_activity
+                    else None
+                ),
+            )
+            succeeded = True
+            return result
+        finally:
+            if tracks_activity:
+                agent_gateway.finish_model_activity(
+                    run_identity,
+                    activity_id=activity_id,
+                    succeeded=succeeded,
+                )
 
 
     async def stream_child_llm_with_retry(call):
@@ -860,13 +884,16 @@ async def run_subagent(
                 tid = tc.get("name", "")
                 targs = tc.get("args", {})
                 cid = tc.get("id", "")
+                activity_cid = cid or f"tool_{uuid.uuid4().hex}"
                 if capture_tree and parent_node is not None:
                     capture.tool_call(tid, targs, tool_call_id=cid)
                 if agent_gateway is not None and run_identity:
                     agent_gateway.start_tool_activity(
                         run_identity,
                         tool_name=tid,
-                        tool_call_id=cid,
+                        tool_call_id=activity_cid,
+                        args=targs,
+                        workspace=ctx.workspace,
                     )
                 result = None
                 try:
@@ -884,7 +911,7 @@ async def run_subagent(
                     if agent_gateway is not None and run_identity:
                         agent_gateway.finish_tool_activity(
                             run_identity,
-                            tool_call_id=cid,
+                            tool_call_id=activity_cid,
                             succeeded=result is not None and result_ok(result),
                         )
                 todo_state = todo_run_state_from_result(result) if tid == "todo" else None
@@ -1043,13 +1070,11 @@ async def run_subagent(
 
 
 def _task_payload(task_description: str, result_contract) -> str:
-    schema_name = str(getattr(result_contract, "schema_name", "") or "agent_result")
     result_format = str(getattr(result_contract, "format", "") or "").strip()
     parts = [task_description]
     if result_format:
         parts.append(
             "Result contract:\n"
-            f"- schema_name: {schema_name}\n"
             f"- format: {result_format}\n"
             "Return the final answer using this contract."
         )
@@ -1132,12 +1157,10 @@ def _satisfies_result_contract(text: str, result_contract) -> bool:
 
 
 def _result_contract_retry_message(result_contract) -> str:
-    schema_name = str(getattr(result_contract, "schema_name", "") or "agent_result")
     result_format = str(getattr(result_contract, "format", "") or "").strip()
     return (
         "Your previous response did not satisfy the child-agent result contract. "
         "Do not return raw tool output or code snippets as the final answer.\n"
         "Summarize the completed delegated task using the required contract:\n"
-        f"- schema_name: {schema_name}\n"
         f"- format: {result_format}"
     )

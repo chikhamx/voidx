@@ -11,7 +11,14 @@ from voidx.agent.ports.presentation import SessionPresentationStatus
 
 class GatewayThreadSession(Protocol):
     def has_thread(self, thread_id: str) -> bool: ...
-    async def register_thread(self, thread_id: str, *, title: str = "", directory: str = "") -> None: ...
+    async def register_thread(
+        self,
+        thread_id: str,
+        *,
+        title: str = "",
+        directory: str = "",
+        runtime_profile: str = "coding",
+    ) -> None: ...
 
 
 class GatewayThreadRegistryAdapter:
@@ -28,5 +35,6 @@ class GatewayThreadRegistryAdapter:
                     session.session_id,
                     title=session.title,
                     directory=session.directory,
+                    runtime_profile=session.runtime_profile,
                 )
             )

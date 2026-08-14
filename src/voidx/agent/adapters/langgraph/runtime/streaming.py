@@ -6,7 +6,7 @@ import html
 import json
 import re
 import uuid
-from typing import Any
+from typing import Any, Callable
 
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
@@ -59,6 +59,7 @@ async def stream_llm(
     protocol: str = "",
     *,
     ui_port: AgentUiPort | None = None,
+    on_activity: Callable[[], None] | None = None,
 ) -> AIMessage:
     """Stream LLM response, render live, return merged AIMessage."""
     from voidx.llm.thinking import extract_thinking
@@ -66,9 +67,13 @@ async def stream_llm(
     ui_port = ui_port or NullAgentUiPort()
     chunks: list[AIMessageChunk] = []
     renderer.start()
+    if on_activity is not None:
+        on_activity()
 
     try:
         async for raw_chunk in model.astream(_sanitize_messages_for_replay(messages, protocol=protocol)):
+            if on_activity is not None:
+                on_activity()
             thinking = extract_thinking(raw_chunk, protocol)
             content = _stream_visible_content(raw_chunk.content, thinking)
             chunk = (

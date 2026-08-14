@@ -12,17 +12,21 @@ from pydantic import BaseModel, ValidationError, field_validator
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext
 from voidx.agent.domain.subagent import AgentGatewayError, AgentRun
 from voidx.agent.domain.subagent_display import subagent_display_name
-from voidx.agent.application.subagent_status import render_child_run_metrics
+from voidx.agent.application.subagent_status import (
+    activity_label,
+    activity_recommendation,
+    format_duration,
+    public_child_run_snapshot,
+    render_child_activity,
+    render_child_elapsed,
+    render_child_progress,
+)
 from voidx.tooling.domain.result import ToolResult
 from voidx.tooling.domain.schema import model_to_json_schema
 
 
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 _WAIT_TIMEOUT = 256.0
-_TIMEOUT_HINT = (
-    "The child agent is still running and may need more time; "
-    "wait again later if the result is still needed."
-)
 _CONTROL_ERROR_HINTS = {
     "unknown_run": "Verify the run IDs and parent-child control relationship before retrying.",
     "route_not_allowed": "Verify the run IDs and parent-child control relationship before retrying.",
@@ -95,6 +99,7 @@ class AgentControlTool:
         run_id: str,
         ctx: ToolContext,
     ) -> dict:
+        wait_started_at = time.time() if action == "wait" else None
         try:
             if action == "wait":
                 run = await ctx.runtime.subagent_transport.wait(
@@ -117,25 +122,44 @@ class AgentControlTool:
                 "reason": reason,
                 "detail": detail[:200],
             }
-        return _success_item(action, run)
+        return _success_item(
+            action,
+            run,
+            wait_timeout_seconds=_WAIT_TIMEOUT if action == "wait" else None,
+            wait_started_at=wait_started_at,
+            sampled_at=time.time() if action == "wait" else None,
+        )
 
 
-def _success_item(action: str, run) -> dict:
+def _success_item(
+    action: str,
+    run,
+    *,
+    wait_timeout_seconds: float | None = None,
+    wait_started_at: float | None = None,
+    sampled_at: float | None = None,
+) -> dict:
     item = {
         "run_id": run.run_id,
-        "run": run.model_dump(mode="json"),
+        "run": public_child_run_snapshot(run),
         "status": run.status,
     }
     if action == "wait":
         terminal = run.status in _TERMINAL_STATUSES
+        wait_outcome = run.wait_outcome or (
+            "already_terminal" if terminal else "timed_out"
+        )
         item.update({
-            "wait_outcome": run.wait_outcome or (
-                "already_terminal" if terminal else "timed_out_still_running"
-            ),
-            "terminal": terminal,
+            "wait_outcome": wait_outcome,
             "result_quality": _result_quality(run),
             "finish_reason": _finish_reason(run),
         })
+        if wait_outcome == "timed_out":
+            item.update({
+                "wait_timeout_seconds": wait_timeout_seconds,
+                "_wait_started_at": wait_started_at,
+                "_sampled_at": sampled_at,
+            })
     return item
 
 
@@ -152,7 +176,10 @@ def _single_result(action: str, item: dict) -> ToolResult:
             metadata=metadata,
             next_step_hint=_hints(action, [item]),
         )
-    metadata = {key: value for key, value in item.items() if key != "run_id"}
+    metadata = {
+        key: value for key, value in item.items()
+        if key != "run_id" and not key.startswith("_")
+    }
     return ToolResult(
         output=output,
         display=f"{name} {item['status']}.",
@@ -168,7 +195,11 @@ def _batch_result(action: str, items: list[dict]) -> ToolResult:
         status = item["status"]
         counts[status] = counts.get(status, 0) + 1
     error_count = counts.get("error", 0)
-    metadata: dict = {"action": action, "items": items, "counts": counts}
+    public_items = [
+        {key: value for key, value in item.items() if not key.startswith("_")}
+        for item in items
+    ]
+    metadata: dict = {"action": action, "items": public_items, "counts": counts}
     if error_count == len(items):
         metadata["error"] = True
     elif error_count:
@@ -199,20 +230,23 @@ def _render_item(item: dict) -> str:
             lines.append(f"Error: {error}")
     elif result_text:
         lines.extend(["Result:", result_text])
-    if status == "running" and item.get("wait_outcome") == "timed_out_still_running":
+    if status == "running" and item.get("wait_outcome") == "timed_out":
+        timeout_seconds = float(item.get("wait_timeout_seconds") or _WAIT_TIMEOUT)
+        sampled_at = float(item.get("_sampled_at") or time.time())
         agent_run = AgentRun.model_validate(run)
-        lines.append(
-            f"Status: {render_child_run_metrics(agent_run, sampled_at=time.time())}"
-        )
+        lines.append(f"Wait timed out after {timeout_seconds:g}s.")
+        lines.append(f"Status: {render_child_elapsed(agent_run, sampled_at=sampled_at)}")
+        progress = render_child_progress(agent_run.progress)
+        if progress:
+            lines.append(f"Progress: {progress}")
+        lines.extend(render_child_activity(agent_run, sampled_at=sampled_at))
     return "\n".join(lines)
 
 
 def _hints(action: str, items: list[dict]) -> str:
     hints: list[str] = []
-    if action == "wait" and any(
-        item.get("wait_outcome") == "timed_out_still_running" for item in items
-    ):
-        hints.append(_TIMEOUT_HINT)
+    for item in (value for value in items if value.get("wait_outcome") == "timed_out"):
+        hints.append(_timeout_hint(item, include_name=len(items) > 1))
     for item in items:
         if item["status"] == "error":
             _append_unique(hints, _CONTROL_ERROR_HINTS.get(item.get("reason"), _CONTROL_ERROR_HINTS["gateway_error"]))
@@ -221,6 +255,25 @@ def _hints(action: str, items: list[dict]) -> str:
     if action == "wait" and any(item.get("finish_reason") for item in items):
         _append_unique(hints, _INCOMPLETE_HINT)
     return "\n".join(hints)
+
+
+def _timeout_hint(item: dict, *, include_name: bool) -> str:
+    run = AgentRun.model_validate(item["run"])
+    sampled_at = float(item.get("_sampled_at") or time.time())
+    wait_started_at = float(item.get("_wait_started_at") or sampled_at)
+    timeout_seconds = float(item.get("wait_timeout_seconds") or _WAIT_TIMEOUT)
+    current = activity_label(run.current_activity) if run.current_activity is not None else "other"
+    age = format_duration(max(0.0, sampled_at - (run.last_activity_at or sampled_at)))
+    if activity_recommendation(run, wait_started_at=wait_started_at) == "wait":
+        text = f"Activity was observed {age} ago; current state is {current}. Wait again if the result is still needed."
+    else:
+        text = (
+            f"No activity was observed during the {timeout_seconds:g}s wait; current state is {current} "
+            f"and its last activity was {age} ago. Cancel the child agent unless this duration is expected."
+        )
+    if not include_name:
+        return text
+    return f"{subagent_display_name(item['run_id'])}: {text[0].lower()}{text[1:]}"
 
 
 def _append_unique(values: list[str], value: str) -> None:

@@ -1017,7 +1017,6 @@ class LangGraphExecution:
                 "parent_agent_id": -1,
                 "parent_tool_call_id": parent_tool_call_id,
                 "goal_resolution": goal_resolution.model_dump(mode="json"),
-                "result_schema": result_contract.schema_name,
             })
 
         ok = False

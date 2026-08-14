@@ -219,7 +219,9 @@ class TestInteractiveTools:
         assert "Scope: src/voidx/tools/agent.py" in captured["description"]
         assert "Result contract:" not in captured["description"]
         assert captured["goal_resolution"].goal.desc == "Review one changed file"
-        assert captured["result"].schema_name == "review_result"
+        assert captured["result"].model_dump() == {
+            "format": "verdict=PASS|FAIL|NEEDS_CHANGE, findings, risks, next_actions",
+        }
         assert "PASS|FAIL|NEEDS_CHANGE" in captured["result"].format
     @pytest.mark.asyncio
     async def test_agent_tool_normalizes_implement_mode_to_tdd_verify_route(self, tmp_path):
@@ -255,4 +257,6 @@ class TestInteractiveTools:
         assert goal_resolution.goal.desc == "Review one changed file"
         assert goal_resolution.plan.join == "tdd"
         assert goal_resolution.plan.leave == "verify"
-        assert captured["result"].schema_name == "implementation_result"
+        assert captured["result"].model_dump() == {
+            "format": "status, files_changed, tests_run, risks, followups",
+        }

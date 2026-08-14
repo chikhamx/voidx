@@ -27,7 +27,7 @@ from voidx.skills.context import (
     SKILL_TOOL_CONTEXT_STRIPPED_MARKER,
 )
 from voidx.agent.application.automation.workflow.runtime import WorkflowActivationSource, WorkflowRunState, WorkflowRunStatus
-from voidx.agent.domain.subagent import AgentRun, AgentToolActivity
+from voidx.agent.domain.subagent import AgentActivity, AgentRun, AgentToolActivity
 
 def _runtime_state_human_messages(messages):
     return [
@@ -647,6 +647,9 @@ def _child_run(
     created_at: float,
     updated_at: float,
     description: str | None = None,
+    current_activity: AgentActivity | None = None,
+    recent_activity: AgentActivity | None = None,
+    last_activity_at: float | None = None,
     active_tools: list[AgentToolActivity] | None = None,
     last_tool: AgentToolActivity | None = None,
 ) -> AgentRun:
@@ -660,6 +663,9 @@ def _child_run(
         status=status,
         created_at=created_at,
         updated_at=updated_at,
+        current_activity=current_activity,
+        recent_activity=recent_activity,
+        last_activity_at=last_activity_at,
         active_tools=active_tools or [],
         last_tool=last_tool,
     )
@@ -686,6 +692,20 @@ def test_current_task_state_renders_running_and_three_recent_terminal_child_agen
             created_at=100.0,
             updated_at=190.0,
             description="Goal: inspect cache\n\nDetails:\nlong detail omitted",
+            current_activity=AgentActivity(
+                category="searching",
+                status="running",
+                started_at=190.0,
+                last_observed_at=190.0,
+            ),
+            recent_activity=AgentActivity(
+                category="reading",
+                status="succeeded",
+                started_at=170.0,
+                last_observed_at=180.0,
+                finished_at=180.0,
+            ),
+            last_activity_at=190.0,
             active_tools=[active_tool],
             last_tool=last_tool,
         ),
@@ -712,7 +732,8 @@ def test_current_task_state_renders_running_and_three_recent_terminal_child_agen
 
     rendered = context.render_task_context()
     assert "Child agents: 1 running · 3 recent terminal" in rendered
-    assert "run_active [running] Goal: inspect cache · elapsed 1m40s · active: search (10s)" in rendered
+    assert "run_active [running] Goal: inspect cache · elapsed 1m40s · current: searching · activity 10s ago" in rendered
+    assert "active: search" not in rendered
     assert "run_done_3 [completed] Goal: run_done_3 · elapsed 50s" in rendered
     assert "run_done_2 [completed]" in rendered
     assert "run_done_1 [completed]" in rendered
@@ -727,8 +748,16 @@ def test_current_task_state_renders_last_tool_when_no_tool_is_active(tmp_path):
         status="running",
         created_at=100.0,
         updated_at=180.0,
+        recent_activity=AgentActivity(
+            category="reading",
+            status="failed",
+            started_at=160.0,
+            last_observed_at=180.0,
+            finished_at=180.0,
+        ),
+        last_activity_at=180.0,
         last_tool=AgentToolActivity(
-            tool_name="read",
+            tool_name="secret_read_tool",
             tool_call_id="call-read",
             status="failed",
             started_at=160.0,
@@ -745,4 +774,6 @@ def test_current_task_state_renders_last_tool_when_no_tool_is_active(tmp_path):
         child_runs_sampled_at=200.0,
     ).build()
 
-    assert "last: read failed 20s ago" in context.render_task_context()
+    rendered = context.render_task_context()
+    assert "recent: reading failed · 20s ago" in rendered
+    assert "secret_read_tool" not in rendered

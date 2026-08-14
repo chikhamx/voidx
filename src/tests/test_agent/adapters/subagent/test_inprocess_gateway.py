@@ -180,11 +180,18 @@ async def test_wait_timeout_zero_waits_indefinitely_until_terminal():
 
 
 @pytest.mark.asyncio
-async def test_result_message_completes_run_and_blocks_later_messages():
+async def test_result_message_completes_run_and_blocks_later_messages(monkeypatch):
+    import voidx.agent.adapters.subagent.inprocess_gateway as gateway_module
+
+    now = [100.0]
+    monkeypatch.setattr(gateway_module.time, "time", lambda: now[0])
     gateway = InProcessSubagentGateway()
     root_id = gateway.ensure_root("session-1")
 
     async def runner(run_id: str) -> str:
+        now[0] = 110.0
+        gateway.start_model_activity(run_id, activity_id="llm-result")
+        now[0] = 120.0
         await gateway.send(
             sender_run_id=run_id,
             target_run_id=root_id,
@@ -219,6 +226,10 @@ async def test_result_message_completes_run_and_blocks_later_messages():
     waited = await gateway.wait(requester_run_id=root_id, target_run_id=run.run_id, timeout=0.1)
     assert waited.status == "completed"
     assert waited.result == {"result": "first"}
+    assert waited.current_activity is None
+    assert waited.last_activity_at == 120.0
+    assert waited.updated_at == 120.0
+    assert gateway._runs[run.run_id].active_activities == {}
     messages = await gateway.receive(run_id=root_id, limit=10, timeout=0)
     assert [(message.type, message.payload) for message in messages] == [
         ("result", {"result": "first"}),
@@ -316,6 +327,9 @@ async def test_wait_timeout_failure_cancellation_and_close_session_cleanup():
         target_run_id=pending_run.run_id,
     )
     assert cancelled.status == "cancelled"
+    assert cancelled.current_activity is None
+    assert cancelled.active_tools == []
+    assert cancelled.last_activity_at == cancelled.updated_at
     assert (await pending_task).status == "running"
     cancel_messages = await gateway.receive(run_id=root_id, limit=10, timeout=0)
     assert [(message.type, message.payload) for message in cancel_messages] == [
@@ -335,6 +349,9 @@ async def test_wait_timeout_failure_cancellation_and_close_session_cleanup():
     assert failed.status == "running"
     failed = await gateway.wait(requester_run_id=root_id, target_run_id=failed.run_id, timeout=0.1)
     assert failed.status == "failed"
+    assert failed.current_activity is None
+    assert failed.active_tools == []
+    assert failed.last_activity_at == failed.updated_at
     assert "boom" in (failed.error or "")
     failed_messages = await gateway.receive(run_id=root_id, limit=10, timeout=0)
     assert [(message.type, message.payload) for message in failed_messages] == [
@@ -822,7 +839,7 @@ async def test_wait_marks_timeout_while_run_is_still_active():
     )
 
     assert timed_out.status == "running"
-    assert timed_out.wait_outcome == "timed_out_still_running"
+    assert timed_out.wait_outcome == "timed_out"
     await gateway.cancel(requester_run_id=root_id, target_run_id=run.run_id)
 
 
@@ -1354,6 +1371,154 @@ async def test_tool_activity_tracks_parallel_calls_and_latest_completion(monkeyp
     assert completed.last_tool.tool_name == "read"
     assert completed.last_tool.status == "succeeded"
     assert completed.updated_at == 120.0
+
+    release.set()
+    await gateway.wait(requester_run_id=root_id, target_run_id=child.run_id, timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_activity_summary_tracks_abstract_progress_and_unique_files(monkeypatch):
+    import voidx.agent.adapters.subagent.inprocess_gateway as gateway_module
+
+    now = [100.0]
+    monkeypatch.setattr(gateway_module.time, "time", lambda: now[0])
+    gateway = InProcessSubagentGateway()
+    root_id = gateway.ensure_root("session-progress-summary")
+    release = asyncio.Event()
+
+    async def runner(_run_id: str) -> str:
+        await release.wait()
+        return "done"
+
+    child = await gateway.spawn(
+        session_id="session-progress-summary",
+        parent_run_id=root_id,
+        agent_name="child",
+        description="track abstract progress",
+        runner=runner,
+    )
+
+    calls = [
+        ("read", "read-1", {"file_path": "src/a.py"}, True),
+        ("read", "read-2", {"file_path": "./src/a.py"}, True),
+        ("write", "write-1", {"file_path": "src/a.py"}, True),
+        ("replace", "replace-1", {"file_path": "src/a.py"}, False),
+        ("manage", "manage-1", {"kind": "file", "op": "move", "moves": [{"src": "src/a.py", "dest": "src/b.py"}]}, True),
+        ("bash", "bash-1", {"command": "echo one && echo two"}, False),
+        ("search", "search-1", {"query": "needle"}, True),
+        ("mcp", "other-1", {"op": "call"}, True),
+    ]
+    for index, (tool_name, call_id, args, succeeded) in enumerate(calls, start=1):
+        now[0] = 100.0 + index
+        gateway.start_tool_activity(
+            child.run_id,
+            tool_name=tool_name,
+            tool_call_id=call_id,
+            args=args,
+            workspace="/workspace",
+        )
+        gateway.start_tool_activity(
+            child.run_id,
+            tool_name=tool_name,
+            tool_call_id=call_id,
+            args=args,
+            workspace="/workspace",
+        )
+        now[0] += 0.5
+        gateway.finish_tool_activity(child.run_id, tool_call_id=call_id, succeeded=succeeded)
+        gateway.finish_tool_activity(child.run_id, tool_call_id=call_id, succeeded=succeeded)
+
+    run = gateway.lookup_run(child.run_id)
+    assert run is not None
+    assert run.progress.model_dump() == {
+        "files_read": 1,
+        "files_edited": 2,
+        "commands_run": 1,
+        "searches": 1,
+        "other_actions": 1,
+    }
+    assert run.current_activity is not None
+    assert run.current_activity.category == "other"
+    assert run.recent_activity is not None
+    assert run.recent_activity.category == "other"
+    assert run.recent_activity.status == "succeeded"
+    assert run.last_activity_at == 108.5
+
+    release.set()
+    await gateway.wait(requester_run_id=root_id, target_run_id=child.run_id, timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_model_activity_touch_updates_current_and_yields_to_newer_tool(monkeypatch):
+    import voidx.agent.adapters.subagent.inprocess_gateway as gateway_module
+
+    now = [200.0]
+    monkeypatch.setattr(gateway_module.time, "time", lambda: now[0])
+    gateway = InProcessSubagentGateway()
+    root_id = gateway.ensure_root("session-model-activity")
+    release = asyncio.Event()
+
+    async def runner(_run_id: str) -> str:
+        await release.wait()
+        return "done"
+
+    child = await gateway.spawn(
+        session_id="session-model-activity",
+        parent_run_id=root_id,
+        agent_name="child",
+        description="track model activity",
+        runner=runner,
+    )
+
+    now[0] = 210.0
+    gateway.start_model_activity(child.run_id, activity_id="llm-1")
+    now[0] = 215.0
+    gateway.touch_model_activity(child.run_id, activity_id="llm-1")
+    thinking = gateway.lookup_run(child.run_id)
+    assert thinking is not None
+    assert thinking.current_activity is not None
+    assert thinking.current_activity.category == "thinking"
+    assert thinking.last_activity_at == 215.0
+
+    now[0] = 216.0
+    gateway.start_tool_activity(
+        child.run_id,
+        tool_name="search",
+        tool_call_id="search-1",
+        args={"query": "needle"},
+        workspace="/workspace",
+    )
+    searching = gateway.lookup_run(child.run_id)
+    assert searching is not None
+    assert searching.current_activity is not None
+    assert searching.current_activity.category == "searching"
+
+    now[0] = 217.0
+    gateway.touch_model_activity(child.run_id, activity_id="llm-1")
+    thinking_again = gateway.lookup_run(child.run_id)
+    assert thinking_again is not None
+    assert thinking_again.current_activity is not None
+    assert thinking_again.current_activity.category == "thinking"
+
+    now[0] = 218.0
+    gateway.finish_model_activity(child.run_id, activity_id="llm-1", succeeded=False)
+    after_model = gateway.lookup_run(child.run_id)
+    assert after_model is not None
+    assert after_model.current_activity is not None
+    assert after_model.current_activity.category == "searching"
+    assert after_model.recent_activity is not None
+    assert after_model.recent_activity.category == "thinking"
+    assert after_model.recent_activity.status == "failed"
+
+    now[0] = 219.0
+    gateway.finish_tool_activity(child.run_id, tool_call_id="search-1", succeeded=True)
+    after_tool = gateway.lookup_run(child.run_id)
+    assert after_tool is not None
+    assert after_tool.current_activity is not None
+    assert after_tool.current_activity.category == "other"
+    assert after_tool.recent_activity is not None
+    assert after_tool.recent_activity.category == "searching"
+    assert after_tool.last_activity_at == 219.0
 
     release.set()
     await gateway.wait(requester_run_id=root_id, target_run_id=child.run_id, timeout=1)

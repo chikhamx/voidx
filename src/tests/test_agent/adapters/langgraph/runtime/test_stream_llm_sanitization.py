@@ -530,3 +530,19 @@ async def test_stream_llm_preserves_usage_metadata():
         "output_tokens": 3,
         "total_tokens": 10,
     }
+
+
+@pytest.mark.asyncio
+async def test_stream_llm_reports_start_and_each_stream_chunk_activity():
+    renderer = FakeRenderer()
+    observed: list[str] = []
+
+    await _stream_llm(
+        FakeStreamingModel(),
+        [],
+        renderer,
+        "anthropic",
+        on_activity=lambda: observed.append("activity"),
+    )
+
+    assert observed == ["activity", "activity", "activity", "activity"]

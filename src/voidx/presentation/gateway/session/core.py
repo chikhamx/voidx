@@ -68,6 +68,7 @@ class GatewaySession(
         *,
         thread_id: str = "",
         session_id: str = "",
+        runtime_profile: str = "coding",
         command_handler: Callable[[UiCommand], Awaitable[None] | None] | None = None,
         workspace: str = "",
         runtime_state_provider: RuntimeStateProvider | None = None,
@@ -111,6 +112,7 @@ class GatewaySession(
             self._threads[thread_id] = ThreadInfo(
                 thread_id=thread_id,
                 workspace=workspace or ".",
+                runtime_profile=runtime_profile,
             )
             self._adapters[thread_id] = UiEventItemAdapter(
                 thread_id=thread_id, turn_id="",

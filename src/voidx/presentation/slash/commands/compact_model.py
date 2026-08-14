@@ -21,12 +21,30 @@ class CompactModelCommandsMixin:
             if app is None:
                 self._show_compact_model(config)
                 return
+            main = self.preferences_port.model_config
+            current_profile = config.profile_name or ""
             profiles = [profile for profile in await settings.list_profiles() if profile.api_key]
-            choices = [
-                ("Current main profile (default)", "", "Follow the active model profile."),
-                *((profile.name, profile.name, "") for profile in profiles),
-            ]
-            selected = await app.ask_choice("Compaction model profile", choices)
+
+            choices = []
+            selected_idx = 0
+
+            default_label = "Current main profile (default)"
+            if not current_profile:
+                default_label += " [active]"
+            choices.append((default_label, "", f"Follow the active main model ({main.provider}/{main.model})"))
+
+            for i, profile in enumerate(profiles, start=1):
+                label = profile.name
+                if profile.name == current_profile:
+                    label += " [active]"
+                    selected_idx = i
+                choices.append((label, profile.name, ""))
+
+            selected = await app.ask_choice(
+                f"Compaction model profile (current: {current_profile or 'default'})",
+                choices,
+                selected=selected_idx
+            )
             if selected is None:
                 self._show_compact_model(config)
                 return

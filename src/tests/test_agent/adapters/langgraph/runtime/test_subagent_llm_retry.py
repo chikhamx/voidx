@@ -58,7 +58,6 @@ def _goal_resolution() -> GoalResolution:
 
 def _result_contract() -> AgentResultContract:
     return AgentResultContract(
-        schema_name="implementation_result",
         format="status, files_changed, tests_run, risks, followups",
     )
 

@@ -251,7 +251,7 @@ async def test_settings_get_and_update_compaction_config(tmp_path):
     initial = await session.dispatch_request(JsonRpcRequest(id=151, method="settings.get", params={}))
     assert isinstance(initial, JsonRpcResult)
     assert initial.result["compaction"]["profile_name"] == ""
-    assert initial.result["compaction"]["timeout_seconds"] == 60.0
+    assert initial.result["compaction"]["timeout_seconds"] == 256.0
 
     result = await session.dispatch_request(JsonRpcRequest(id=152, method="settings.update", params={
         "patch": {

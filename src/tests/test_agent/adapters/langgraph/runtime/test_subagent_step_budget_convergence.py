@@ -92,16 +92,13 @@ def _child_goal_resolution(
     )
 
 
-def _child_result_contract(schema_name: str = "implementation_result") -> AgentResultContract:
+def _child_result_contract(contract_type: str = "implementation_result") -> AgentResultContract:
     result_format = (
         "verdict=PASS|FAIL|NEEDS_CHANGE, findings, risks, verification_notes, next_actions"
-        if schema_name == "review_result"
+        if contract_type == "review_result"
         else "status, files_changed, tests_run, risks, followups"
     )
-    return AgentResultContract(
-        schema_name=schema_name,
-        format=result_format,
-    )
+    return AgentResultContract(format=result_format)
 
 
 def _subagent_contract_kwargs(
@@ -110,11 +107,11 @@ def _subagent_contract_kwargs(
     desc: str = "Inspect the workspace",
     join: str = "review",
     leave: str = "review",
-    schema_name: str = "inspection_result",
+    contract_type: str = "inspection_result",
 ) -> dict:
     return {
         "goal_resolution": _child_goal_resolution(goal_type, desc=desc, join=join, leave=leave),
-        "result_contract": _child_result_contract(schema_name),
+        "result_contract": _child_result_contract(contract_type),
     }
 
 
@@ -171,7 +168,7 @@ async def test_subagent_skill_context_matches_orchestrator(tmp_path, monkeypatch
             desc="Implement the feature",
             join="tdd",
             leave="verify",
-            schema_name="implementation_result",
+            contract_type="implementation_result",
             
         ),
         workflow_runtime_context=workflow_context,

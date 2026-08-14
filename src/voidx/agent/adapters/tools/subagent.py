@@ -34,10 +34,6 @@ from voidx.agent.adapters.tools.subagent_control import AgentControlTool
 
 
 class AgentResultContract(BaseModel):
-    schema_name: str = Field(
-        default="agent_result",
-        description="Name of the structured result contract the child agent must return.",
-    )
     format: str = Field(description="Concrete structured result fields and allowed values.")
 
 
@@ -68,15 +64,12 @@ _MODE_ROUTES: dict[str, tuple[str, str, str]] = {
 
 _RESULT_PRESETS: dict[str, AgentResultContract] = {
     "review": AgentResultContract(
-        schema_name="review_result",
         format="verdict=PASS|FAIL|NEEDS_CHANGE, findings, risks, next_actions",
     ),
     "debug": AgentResultContract(
-        schema_name="debug_result",
         format="root_cause, evidence, reproduction, fix_direction, open_questions",
     ),
     "implement": AgentResultContract(
-        schema_name="implementation_result",
         format="status, files_changed, tests_run, risks, followups",
     ),
 }
