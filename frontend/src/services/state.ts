@@ -4,9 +4,8 @@ import type { SettingsSnapshot } from "../ui/settings";
 import { iconSvg } from "../utils/icons";
 import { renderRuntimeProfile } from "../ui/mode";
 
-/** 发送按钮图标：待机=向上箭头，运行=停止方块 */
+/** 发送按钮图标。 */
 export const sendArrowIcon = iconSvg("arrow-up", 18, 2);
-export const sendStopIcon = iconSvg("stop", 16, 1.6);
 
 export interface UiState {
   connection: string;
@@ -19,6 +18,7 @@ export interface UiState {
   configuredProfiles: ProfileSummary[];
   isSwitchingModel: boolean;
   isSwitchingProfile: boolean;
+  isSwitchingThread: boolean;
   slashCommands: SlashCommand[];
   slashSelectedIndex: number;
   refCandidates: RefCandidate[];
@@ -72,6 +72,7 @@ export const uiState: UiState = {
   configuredProfiles: [],
   isSwitchingModel: false,
   isSwitchingProfile: false,
+  isSwitchingThread: false,
   slashCommands: [],
   slashSelectedIndex: 0,
   refCandidates: [],
@@ -93,7 +94,7 @@ export const MAX_SIDEBAR_WIDTH = 420;
 
 // DOM Cache (populated by initStateDom on startup)
 // DOM Cache
-export let statusDotEl: HTMLElement;
+export let statusDotEl: HTMLElement | null;
 export let statusModelEl: HTMLElement | null;
 export let statusWorkspaceEl: HTMLElement | null;
 export let statusSessionEl: HTMLElement;
@@ -127,7 +128,7 @@ export let requestDetailsEl: HTMLElement;
 export let requestControlsEl: HTMLElement;
 
 export function initStateDom(): void {
-  statusDotEl = document.querySelector<HTMLElement>("#status-dot")!;
+  statusDotEl = document.querySelector<HTMLElement>("#status-dot");
   statusModelEl = document.querySelector<HTMLElement>("#status-model");
   statusWorkspaceEl = document.querySelector<HTMLElement>("#status-workspace");
   statusSessionEl = document.querySelector<HTMLElement>("#status-session")!;
@@ -227,8 +228,13 @@ export function updateStatusBar(): void {
     runtimeStatusEl.textContent = message;
     runtimeStatusEl.hidden = message === "";
   }
-  inputEl.disabled = uiState.isSwitchingModel || uiState.isSwitchingProfile || uiState.isWaitingForWriteLock;
-  btnSendEl.disabled = uiState.isSwitchingModel || uiState.isSwitchingProfile || uiState.isRunning || uiState.isWaitingForWriteLock;
+  const composerLocked =
+    uiState.isSwitchingModel ||
+    uiState.isSwitchingProfile ||
+    uiState.isSwitchingThread ||
+    uiState.isWaitingForWriteLock;
+  inputEl.disabled = composerLocked;
+  btnSendEl.disabled = composerLocked;
 
   const modelPillTextEl = document.querySelector("#model-pill-text");
   if (modelPillTextEl) {
@@ -268,7 +274,7 @@ export function updateStatusBar(): void {
 
 export function setConnectionStatus(status: string, message?: string): void {
   uiState.connection = status;
-  statusDotEl.className = `status-dot ${status}`;
+  if (statusDotEl) statusDotEl.className = `status-dot ${status}`;
   if (statusModelEl && message && status === "disconnected") {
     statusModelEl.textContent = message;
   } else if (statusModelEl && status === "connected") {
@@ -279,11 +285,9 @@ export function setConnectionStatus(status: string, message?: string): void {
 
 export function setRunning(running: boolean): void {
   uiState.isRunning = running;
-  btnSendEl.classList.toggle("running", running);
-  btnSendEl.innerHTML = running ? sendStopIcon : sendArrowIcon;
-  btnSendEl.setAttribute("aria-label", running ? "Cancel" : "Send");
-  inputEl.disabled = uiState.isSwitchingModel || uiState.isSwitchingProfile || uiState.isWaitingForWriteLock;
-  btnSendEl.disabled = uiState.isSwitchingModel || uiState.isSwitchingProfile || running || uiState.isWaitingForWriteLock;
+  btnSendEl.classList.remove("running");
+  btnSendEl.innerHTML = sendArrowIcon;
+  btnSendEl.setAttribute("aria-label", running ? "Send guidance" : "Send");
   updateStatusBar();
 }
 
@@ -310,6 +314,11 @@ export function _resetWorkbenchStateForTest(): void {
   uiState.configuredProfiles = [];
   uiState.isSwitchingModel = false;
   uiState.isSwitchingProfile = false;
+  uiState.isSwitchingThread = false;
   uiState.slashCommands = [];
   uiState.slashSelectedIndex = 0;
+  uiState.refCandidates = [];
+  uiState.refSelectedIndex = 0;
+  uiState.refToken = null;
+  uiState.permissionMode = "safe";
 }

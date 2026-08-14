@@ -75,7 +75,7 @@ describe("status bar usage", () => {
   it("requests usage.get on workspace.snapshot", () => {
     const socket = fakeSocket();
     _setSocket(socket);
-    handleNotification("workspace.snapshot", { threads: [], active_snapshot: { nodes: [] } });
+    handleNotification("workspace.snapshot", { threads: [], active_snapshot: null });
     expect(sentMethods(socket)).toContain("usage.get");
   });
 
@@ -141,17 +141,17 @@ describe("status bar usage", () => {
     expect(runtimeStatus.textContent).toBe("");
   });
 
-  it("disables the send button while running and restores it after completion", () => {
+  it("enables guidance submission after the workspace write lock is released", () => {
     handleNotification("workspace.snapshot", {
       active_thread_id: "thread-waiting",
-      active_snapshot: { thread_id: "thread-waiting", nodes: [] },
+      active_snapshot: { thread_id: "thread-waiting", revision: 0, nodes: [] },
       threads: [],
       workspace_write_lock: {
         holder_thread_id: "thread-running",
         waiting_thread_ids: ["thread-waiting"],
       },
     });
-    handleNotification("turn.started", {});
+    handleNotification("turn.started", { thread_id: "thread-waiting", turn_id: "usage-turn" });
 
     expect(document.querySelector("#input").disabled).toBe(true);
     expect(document.querySelector("#btn-send").disabled).toBe(true);
@@ -159,7 +159,7 @@ describe("status bar usage", () => {
 
     handleNotification("workspace.snapshot", {
       active_thread_id: "thread-waiting",
-      active_snapshot: { thread_id: "thread-waiting", nodes: [] },
+      active_snapshot: { thread_id: "thread-waiting", revision: 0, nodes: [] },
       threads: [],
       workspace_write_lock: {
         holder_thread_id: "",
@@ -168,9 +168,9 @@ describe("status bar usage", () => {
     });
 
     expect(document.querySelector("#input").disabled).toBe(false);
-    expect(document.querySelector("#btn-send").disabled).toBe(true);
+    expect(document.querySelector("#btn-send").disabled).toBe(false);
 
-    handleNotification("turn.completed", {});
+    handleNotification("turn.completed", { thread_id: "thread-waiting", turn_id: "usage-turn" });
     expect(document.querySelector("#btn-send").disabled).toBe(false);
   });
 });

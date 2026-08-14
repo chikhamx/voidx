@@ -42,6 +42,29 @@ function expandWorkspace(workspace = "") {
   document.querySelector(selector).click();
 }
 
+  it("does not render a workspace icon in the project heading", () => {
+    renderSidebar([], "", "voidx", "/tmp/voidx");
+
+    expect(document.querySelector(".vx-project-heading .vx-sidebar-row-icon")).toBeNull();
+    expect(document.querySelector("#btn-open-workspace")).not.toBeNull();
+  });
+
+  it("uses folder icons for collapsed and expanded workspace groups", () => {
+    renderSidebar([
+      { thread_id: "folder-thread", title: "Folder session", status: "idle", workspace: "/tmp/folder-workspace" },
+      { thread_id: "folder-thread-2", title: "Another session", status: "idle", workspace: "/tmp/folder-workspace" },
+    ], "folder-thread", "folder-workspace", "/tmp/folder-workspace");
+
+    const group = document.querySelector<HTMLElement>('.vx-workspace-session-group[data-workspace="/tmp/folder-workspace"]')!;
+    const icon = group.querySelector<HTMLElement>(".vx-workspace-session-row .vx-sidebar-row-icon svg")!;
+    expect(icon.innerHTML).toContain('M20 20a2 2 0 0 0 2-2V8');
+
+    group.querySelector<HTMLElement>(".vx-workspace-session-row")!.click();
+
+    const expandedIcon = group.querySelector<HTMLElement>(".vx-workspace-session-row .vx-sidebar-row-icon svg")!;
+    expect(expandedIcon.innerHTML).toContain('m6 14 1.45-2.7');
+  });
+
   it("uses one unified new-session entry", () => {
     expect(document.querySelectorAll("#btn-new-chat, #btn-new-chat-restricted, #btn-new-loop, #btn-new-goal")).toHaveLength(1);
     expect(document.querySelector("#btn-new-chat").textContent).toContain("新建会话");
@@ -430,8 +453,11 @@ describe("renderSidebar", () => {
 
     document.querySelector(".vx-workspace-collapse").click();
 
-    expect(document.querySelectorAll(".vx-session-item")).toHaveLength(5);
-    expect(document.querySelector(".vx-session-item[data-thread-id='t6']")).toBeNull();
+    const group = document.querySelector('.vx-workspace-session-group[data-workspace="/Users/me/workspace/voidx"]');
+    expect(group.classList.contains("collapsed")).toBe(true);
+    expect(group.querySelector(".vx-session-children").hidden).toBe(true);
+    expect(group.querySelectorAll(".vx-session-item")).toHaveLength(0);
+    expect(group.querySelector(".vx-workspace-expand-controls")).toBeNull();
   });
 
   it("renders expand and collapse controls as adjacent muted text without chevrons", () => {
@@ -599,10 +625,13 @@ describe("renderSidebar", () => {
     expect(group).not.toBeNull();
   });
 
-  it("sets project name in sidebar header", () => {
+  it("does not render a redundant project name header", () => {
     renderSidebar([{ thread_id: "t1", title: "A", status: "idle", workspace: "/tmp/myproject" }], "t1", "myproject");
-    const header = document.querySelector(".vx-project-name");
-    expect(header.textContent).toBe("myproject");
+
+    expect(document.querySelector(".vx-project-name")).toBeNull();
+    const sidebar = document.querySelector("#sidebar");
+    expect(sidebar?.firstElementChild?.id).toBe("runtime-profile-switcher");
+    expect(sidebar?.firstElementChild?.nextElementSibling?.classList.contains("vx-sidebar-nav")).toBe(true);
   });
 });
 

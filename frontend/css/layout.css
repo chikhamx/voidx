@@ -31,7 +31,7 @@
 
 .vx-titlebar-left {
   align-items: center;
-  background: transparent;
+  background: var(--vx-bg-app);
   box-sizing: border-box;
   display: flex;
   gap: var(--vx-space-1);
@@ -39,7 +39,7 @@
   padding-left: var(--vx-space-3);
   width: var(--vx-sidebar-width);
   flex-shrink: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 body.is-desktop .vx-titlebar-left {
@@ -163,7 +163,7 @@ body.is-desktop .vx-titlebar-left {
   flex-direction: column;
   flex: 0 0 var(--vx-sidebar-width);
   gap: var(--vx-space-2);
-  padding: calc(var(--vx-titlebar-height) + var(--vx-space-2)) var(--vx-space-2) var(--vx-space-2);
+  padding: var(--vx-titlebar-height) var(--vx-space-2) var(--vx-space-2);
   width: var(--vx-sidebar-width);
   min-height: 0;
 }
@@ -174,7 +174,11 @@ body.is-desktop.is-mac .vx-body {
   background: transparent;
 }
 
-/* 毛玻璃上叠半透明 tint，侧栏与主区拉开色差（titlebar 悬浮透明，只给侧栏叠色） */
+/* 标题栏覆盖在侧栏之上，保持透明以避免半透明 tint 叠色 */
+body.is-desktop.is-mac .vx-titlebar-left {
+  background: transparent;
+}
+
 body.is-desktop.is-mac .vx-sidebar {
   background: rgb(242 242 237 / 0.6);
 }
@@ -203,10 +207,25 @@ body.is-desktop.is-mac .vx-sidebar {
 
 .vx-project-session-section { flex: 1; }
 
+.vx-project-session-section > .vx-session-list {
+  padding-left: var(--vx-space-4);
+}
+
 .vx-mode-picker {
+  -webkit-app-region: no-drag;
   flex: 0 0 auto;
   position: relative;
 }
+
+.vx-sidebar > .vx-mode-picker {
+  align-items: center;
+  box-sizing: border-box;
+  display: flex;
+  min-height: 32px;
+  width: 100%;
+  z-index: 11;
+}
+
 
 .vx-mode-trigger {
   align-items: center;
@@ -840,7 +859,28 @@ body.is-desktop.is-mac .vx-sidebar {
 
 /* === 响应式 === */
 @media (max-width: 899px) {
-  .vx-sidebar,
+  .vx-sidebar {
+    display: flex;
+    height: var(--vx-titlebar-height);
+    left: 0;
+    padding: 0 var(--vx-space-2);
+    position: absolute;
+    top: 0;
+    z-index: 11;
+  }
+
+  .vx-sidebar > .vx-mode-picker {
+    min-height: var(--vx-titlebar-height);
+  }
+
+  body.is-desktop .vx-sidebar > .vx-mode-picker {
+    padding-left: calc(80px - var(--vx-space-2));
+  }
+
+  .vx-sidebar > :not(.vx-mode-picker) {
+    display: none;
+  }
+
   .vx-sidebar-resizer { display: none; }
 
   .vx-titlebar-left { width: auto; border-right: 0; }

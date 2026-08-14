@@ -175,20 +175,12 @@ function _updateDocTitle(activeTitle: string | null): void {
   document.title = "";
 }
 
-function _renderProjectHeadingIcon(): void {
-  const folderSpan = projectHeaderEl?.querySelector<HTMLElement>(".vx-sidebar-row-icon");
-  if (!folderSpan) return;
-  const newIcon = _svgIcon(projectExpanded ? "folder-open" : "folder");
-  newIcon.className = "vx-sidebar-row-icon";
-  folderSpan.replaceWith(newIcon);
-}
 
 function _handleProjectHeadingClick(event: MouseEvent): void {
   if ((event.target as HTMLElement).closest("#btn-open-workspace")) return;
   projectExpanded = !projectExpanded;
   const list = document.querySelector<HTMLElement>("#session-list");
   if (list) list.hidden = !projectExpanded || !projectSectionHasSessions;
-  _renderProjectHeadingIcon();
 }
 
 export function renderSidebar(
@@ -242,7 +234,7 @@ export function renderSidebar(
   const sidebarHeader = document.querySelector<HTMLElement>(".vx-project-heading");
   if (sidebarHeader) {
     projectHeaderEl = sidebarHeader;
-    _renderProjectHeadingIcon();
+    sidebarHeader.querySelector<HTMLElement>(".vx-sidebar-row-icon")?.remove();
     if (!projectHeaderBound) {
       sidebarHeader.style.cursor = "pointer";
       sidebarHeader.addEventListener("click", _handleProjectHeadingClick);
@@ -355,9 +347,7 @@ function _createWorkspaceGroup(group: WorkspaceGroup, activeThreadId: string | n
       collapse.className = "vx-workspace-expand vx-workspace-collapse";
       collapse.textContent = "折叠显示";
       collapse.addEventListener("click", () => {
-        workspaceVisibleCounts.set(group.workspace, SESSION_PREVIEW_LIMIT);
-        renderVisibleSessions();
-        renderExpandControls();
+        row.click();
       });
       controls.append(collapse);
     }
@@ -405,6 +395,9 @@ function _createWorkspaceGroup(group: WorkspaceGroup, activeThreadId: string | n
     folderIcon = newIcon;
 
     if (nextCollapsed) {
+      workspaceVisibleCounts.delete(group.workspace);
+      renderVisibleSessions();
+      renderExpandControls();
       return;
     }
     renderVisibleSessions();

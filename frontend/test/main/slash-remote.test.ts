@@ -30,7 +30,7 @@ describe("remote command catalog", () => {
   it("requests commands.list on workspace.snapshot", () => {
     const socket = fakeSocket();
     _setSocket(socket);
-    handleNotification("workspace.snapshot", { threads: [], active_snapshot: { nodes: [] } });
+    handleNotification("workspace.snapshot", { threads: [], active_snapshot: null });
     expect(sentMethods(socket)).toContain("commands.list");
   });
 });

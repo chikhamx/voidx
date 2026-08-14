@@ -16,6 +16,9 @@ import {
   setTranscriptElement,
   appendStreamText,
   commitStream,
+  clearCommittedStreams,
+  clearActiveStreams,
+  stripRichMarkup,
 } from "./utils";
 import type { TranscriptSnapshot, SlashCommand } from "./utils";
 
@@ -24,6 +27,7 @@ import {
   rpcRespond,
   onNotification,
   _setSocket,
+  _resetForTest as _resetRpcForTest,
   isRpcConnected,
 } from "./rpc";
 
@@ -100,6 +104,10 @@ import { _resetSettingsForTest } from "./ui/settings";
 import { _resetIntegrationsForTest } from "./ui/integrations";
 import { _resetContextMenuForTest } from "./ui/context-menu";
 import { _resetDialogForTest } from "./ui/dialog";
+import { _resetForTest as _resetSidebarForTest } from "./ui/sidebar";
+import { _resetModeControlsForTest } from "./ui/mode";
+import { _resetHistoryForTest } from "./ui/history";
+import { _resetCommandCatalogForTest } from "./ui/slash";
 
 import {
   type UsageSnapshot,
@@ -127,7 +135,6 @@ import {
   requestStartupSettingsIfNeeded,
   _resetConnectionForTest,
   incrementConnectionGeneration,
-  sendStopIcon,
 } from "./services";
 
 // Re-export functions required by test suites
@@ -144,10 +151,154 @@ setTranscriptElement(transcriptEl);
 initTheme();
 initDock();
 initTerminal();
+interface PendingLocalMessage {
+  threadId: string;
+  itemId: string;
+  text: string;
+  style: "text" | "guidance";
+}
+
+interface SnapshotUserEntry {
+  id: string;
+  text: string;
+  style: "user" | "guidance";
+  rendered: boolean;
+}
+
+let pendingLocalMessages: PendingLocalMessage[] = [];
+const knownSnapshotUserNodeIds = new Map<string, Set<string>>();
+let localItemSequence = 0;
+
+function snapshotUserEntries(snapshot: TranscriptSnapshot): SnapshotUserEntry[] {
+  const entries: SnapshotUserEntry[] = [];
+  for (const node of snapshot.nodes || []) {
+    const payload = node.payload as Record<string, unknown> | undefined;
+    if (node.node_type !== "message") continue;
+    const style = String(payload?.style || payload?.role || "").toLowerCase();
+    if (style !== "user" && style !== "guidance") continue;
+    const text = typeof payload?.raw_text === "string"
+      ? payload.raw_text
+      : stripRichMarkup([node.header || node.title || "", ...(node.body_lines || [])].join("\n"));
+    if (text.trim()) {
+      entries.push({
+        id: node.id,
+        text: text.trim(),
+        style: style as "user" | "guidance",
+        rendered: true,
+      });
+    }
+  }
+  return entries;
+}
+
+function rememberPendingLocalMessage(
+  threadId: string,
+  itemId: string,
+  text: string,
+  style: "text" | "guidance",
+): void {
+  pendingLocalMessages.push({
+    threadId,
+    itemId,
+    text,
+    style,
+  });
+}
+
+function appendPendingLocalMessage(pending: PendingLocalMessage): void {
+  appendMessageItem(pending.itemId, { style: pending.style, text: pending.text });
+}
+
+function restorePendingLocalMessages(
+  threadId: string,
+  snapshot: TranscriptSnapshot,
+): void {
+  const entries = snapshotUserEntries(snapshot);
+  const knownIds = knownSnapshotUserNodeIds.get(threadId) || new Set<string>();
+  const freshByText = new Map<string, SnapshotUserEntry[]>();
+  for (const entry of entries) {
+    if (!knownIds.has(entry.id)) {
+      const fresh = freshByText.get(entry.text) || [];
+      fresh.push(entry);
+      freshByText.set(entry.text, fresh);
+    }
+    knownIds.add(entry.id);
+  }
+  knownSnapshotUserNodeIds.set(threadId, knownIds);
+
+  const takeFreshEntry = (
+    text: string,
+    predicate: (entry: SnapshotUserEntry) => boolean,
+  ): SnapshotUserEntry | undefined => {
+    const fresh = freshByText.get(text) || [];
+    const index = fresh.findIndex(predicate);
+    if (index < 0) return undefined;
+    const [entry] = fresh.splice(index, 1);
+    if (fresh.length === 0) freshByText.delete(text);
+    return entry;
+  };
+
+  const retained: PendingLocalMessage[] = [];
+  for (const pending of pendingLocalMessages) {
+    if (pending.threadId !== threadId) {
+      retained.push(pending);
+      continue;
+    }
+    const expectedStyle = pending.style === "guidance" ? "guidance" : "user";
+    const renderedEntry = takeFreshEntry(
+      pending.text,
+      (entry) => entry.rendered && entry.style === expectedStyle,
+    );
+    if (renderedEntry) continue;
+    retained.push(pending);
+    appendPendingLocalMessage(pending);
+  }
+
+  pendingLocalMessages = retained;
+}
+
+function forgetPendingLocalMessage(itemId: string): void {
+  pendingLocalMessages = pendingLocalMessages.filter((pending) => pending.itemId !== itemId);
+}
+
+function removePendingLocalMessage(itemId: string): void {
+  forgetPendingLocalMessage(itemId);
+  transcriptEl.querySelector<HTMLElement>(`[data-item-id="${itemId}"]`)?.remove();
+}
+
+function forgetPendingLocalMessages(): void {
+  pendingLocalMessages = [];
+  knownSnapshotUserNodeIds.clear();
+}
+
+function createLocalItemId(prefix: string): string {
+  localItemSequence += 1;
+  return `${prefix}-${localItemSequence}`;
+}
+
+function replacePendingGuidanceWithServerItem(
+  threadId: string,
+  text: string,
+): void {
+  const pending = pendingLocalMessages.find(
+    (candidate) =>
+      candidate.threadId === threadId &&
+      candidate.style === "guidance" &&
+      candidate.text === text,
+  );
+  if (pending) {
+    removePendingLocalMessage(pending.itemId);
+  }
+}
+
 function submitModeCommand(command: string): void {
   if (!isRpcConnected() || !uiState.sessionId) return;
-  rpcCall("session.submit", { text: command, thread_id: uiState.sessionId })
+  const threadId = uiState.sessionId;
+  const contextGeneration = threadContextGeneration;
+  rpcCall("session.submit", { text: command, thread_id: threadId })
     .catch((error: Error) => {
+      if (!isCurrentSendContext(threadId, contextGeneration)) return;
+      if (!inputEl.value) inputEl.value = command;
       appendMessageItem(`mode-error-${Date.now()}`, {
         style: "error",
         text: error.message || `命令失败: ${command}`,
@@ -157,12 +308,18 @@ function submitModeCommand(command: string): void {
     });
 }
 
-initModeControls((profile) => {
+function handleRuntimeProfileSwitch(profile: RuntimeProfile): void {
   if (uiState.isSwitchingProfile) return;
   if (uiState.sessionId && uiState.runtimeProfile === profile) return;
   void openThreadForProfile(profile);
-});
-renderRuntimeProfile(uiState.runtimeProfile);
+}
+
+function initializeModeControls(): void {
+  initModeControls(handleRuntimeProfileSwitch);
+  renderRuntimeProfile(uiState.runtimeProfile);
+}
+
+initializeModeControls();
 
 for (const [id, command] of [["mode-status", "status"], ["mode-stop", "stop"]] as const) {
   document.querySelector<HTMLElement>(`#${id}`)?.addEventListener("click", () => {
@@ -173,16 +330,21 @@ initModelControls();
 initPermissionControls();
 initReasoningControls();
 initIntegrationsPanel();
-initSettingsModal({
-  onSave: async (patch: Record<string, unknown>) => {
-    const result = await rpcCall("settings.update", { patch });
-    const settings = (result as { settings?: SettingsSnapshot } | undefined)?.settings;
-    if (settings) {
-      applySettingsRuntimeState(settings);
-    }
-    return result;
-  },
-});
+
+async function saveSettings(patch: Record<string, unknown>): Promise<unknown> {
+  const result = await rpcCall("settings.update", { patch });
+  const settings = (result as { settings?: SettingsSnapshot } | undefined)?.settings;
+  if (settings) {
+    applySettingsRuntimeState(settings);
+  }
+  return result;
+}
+
+function initializeSettingsModal(): void {
+  initSettingsModal({ onSave: saveSettings });
+}
+
+initializeSettingsModal();
 initContextMenu();
 registerNotificationHandlers();
 syncEmptyState();
@@ -288,15 +450,244 @@ function openIntegrations(): void {
   );
 }
 
+let threadActivationGeneration = 0;
+let threadContextGeneration = 0;
+let pendingActivationTarget: string | null = null;
+let pendingActivationSnapshot: Record<string, unknown> | null = null;
+const staleSnapshotThreadIds = new Set<string>();
+const scopedThreadIds = new Set<string>();
+const lastSnapshotRevisionByThread = new Map<string, number>();
+const renderedItemIdsByThread = new Map<string, Set<string>>();
+interface ThreadTurnContext {
+  currentTurnId: string | null;
+  retiredTurnIds: Set<string>;
+}
+const threadTurnContexts = new Map<string, ThreadTurnContext>();
+
+function threadTurnContext(threadId: string): ThreadTurnContext {
+  let context = threadTurnContexts.get(threadId);
+  if (!context) {
+    context = { currentTurnId: null, retiredTurnIds: new Set<string>() };
+    threadTurnContexts.set(threadId, context);
+  }
+  return context;
+}
+
+function isCurrentThreadIdentity(params: Record<string, unknown>): boolean {
+  if (uiState.isSwitchingThread) return false;
+  const threadId = params.thread_id;
+  if (!uiState.sessionId) {
+    return typeof threadId !== "string" || !threadId;
+  }
+  return typeof threadId === "string" && threadId === uiState.sessionId;
+}
+
+function isCurrentUiRequest(params: Record<string, unknown>): boolean {
+  const threadId = params.thread_id;
+  const isUnscoped = threadId === undefined || threadId === null || threadId === "";
+  if (uiState.isSwitchingThread) return isUnscoped;
+  if (!uiState.sessionId) return isUnscoped;
+  return typeof threadId === "string" && threadId === uiState.sessionId;
+}
+
+function retireThreadTurn(threadId: string): void {
+  if (!threadId) return;
+  const context = threadTurnContext(threadId);
+  if (context.currentTurnId) {
+    context.retiredTurnIds.add(context.currentTurnId);
+    context.currentTurnId = null;
+  }
+}
+
+function isCurrentThreadEvent(params: Record<string, unknown>): boolean {
+  if (!isCurrentThreadIdentity(params)) return false;
+  if (!uiState.sessionId) return true;
+  const threadId = params.thread_id;
+  const turnId = params.turn_id;
+  if (typeof threadId !== "string" || !threadId || typeof turnId !== "string" || !turnId) {
+    return false;
+  }
+  const context = threadTurnContext(threadId);
+  if (context.retiredTurnIds.has(turnId)) return false;
+  return context.currentTurnId === null || context.currentTurnId === turnId;
+}
+
+function registerTurnStarted(params: Record<string, unknown>): boolean {
+  if (!isCurrentThreadIdentity(params)) return false;
+  if (!uiState.sessionId) return true;
+  const threadId = params.thread_id;
+  const turnId = params.turn_id;
+  if (typeof threadId !== "string" || !threadId || typeof turnId !== "string" || !turnId) {
+    return false;
+  }
+  const context = threadTurnContext(threadId);
+  if (context.retiredTurnIds.has(turnId)) return false;
+  if (context.currentTurnId && context.currentTurnId !== turnId) {
+    context.retiredTurnIds.add(context.currentTurnId);
+  }
+  context.currentTurnId = turnId;
+  return true;
+}
+
+function retireCompletedTurn(params: Record<string, unknown>): void {
+  const threadId = params.thread_id;
+  const turnId = params.turn_id;
+  if (typeof threadId !== "string" || !threadId || typeof turnId !== "string" || !turnId) return;
+  const context = threadTurnContext(threadId);
+  if (context.currentTurnId === turnId) {
+    context.retiredTurnIds.add(turnId);
+    context.currentTurnId = null;
+  }
+}
+
+function isCurrentSendContext(threadId: string, contextGeneration: number): boolean {
+  return !uiState.isSwitchingThread &&
+    uiState.sessionId === threadId &&
+    threadContextGeneration === contextGeneration;
+}
+
+function snapshotRevision(params: Record<string, unknown>): number | null {
+  const snapshot = params.active_snapshot;
+  if (!snapshot || typeof snapshot !== "object") return null;
+  const revision = (snapshot as Record<string, unknown>).revision;
+  return typeof revision === "number" && Number.isFinite(revision) ? revision : null;
+}
+
+function snapshotThreadMatchesActive(params: Record<string, unknown>, activeThreadId: string): boolean {
+  if (!activeThreadId) {
+    if (uiState.sessionId || pendingActivationTarget !== null) return false;
+    return params.active_snapshot === undefined || params.active_snapshot === null;
+  }
+  const snapshot = params.active_snapshot;
+  if (!snapshot || typeof snapshot !== "object") return false;
+  const snapshotRecord = snapshot as Record<string, unknown>;
+  return snapshotRecord.thread_id === activeThreadId &&
+    typeof snapshotRecord.revision === "number" &&
+    Number.isInteger(snapshotRecord.revision) &&
+    snapshotRecord.revision >= 0;
+}
+
+function isSnapshotRevisionFresh(threadId: string, params: Record<string, unknown>): boolean {
+  const revision = snapshotRevision(params);
+  if (revision === null) return true;
+  const lastRevision = lastSnapshotRevisionByThread.get(threadId);
+  return lastRevision === undefined || revision >= lastRevision;
+}
+
+function rememberSnapshotRevision(threadId: string, params: Record<string, unknown>): void {
+  const revision = snapshotRevision(params);
+  if (revision === null) return;
+  const lastRevision = lastSnapshotRevisionByThread.get(threadId);
+  if (lastRevision === undefined || revision > lastRevision) {
+    lastSnapshotRevisionByThread.set(threadId, revision);
+  }
+}
+
+function renderedItemIds(threadId: string): Set<string> {
+  let ids = renderedItemIdsByThread.get(threadId);
+  if (!ids) {
+    ids = new Set<string>();
+    renderedItemIdsByThread.set(threadId, ids);
+  }
+  return ids;
+}
+
+function isDuplicateItemStart(method: string, params: Record<string, unknown>): boolean {
+  if (method !== "item.started") return false;
+  const itemId = params.item_id;
+  if (typeof itemId !== "string" || !itemId) return false;
+  const threadId = typeof params.thread_id === "string" && params.thread_id
+    ? params.thread_id
+    : uiState.sessionId;
+  if (!threadId) return false;
+  const ids = renderedItemIds(threadId);
+  if (ids.has(itemId)) return true;
+  ids.add(itemId);
+  return false;
+}
+
+function applyThreadStatus(status: unknown): void {
+  if (typeof status === "string") {
+    setRunning(status === "running");
+  }
+}
+
+function beginThreadActivation(targetThreadId: string | null): number {
+  btnSendEl.classList.remove("guidance-pending");
+  if (uiState.sessionId && uiState.sessionId !== targetThreadId) {
+    staleSnapshotThreadIds.add(uiState.sessionId);
+  }
+  if (pendingActivationTarget && pendingActivationTarget !== targetThreadId) {
+    staleSnapshotThreadIds.add(pendingActivationTarget);
+  }
+  if (targetThreadId) staleSnapshotThreadIds.delete(targetThreadId);
+  const generation = ++threadActivationGeneration;
+  pendingActivationTarget = targetThreadId;
+  pendingActivationSnapshot = null;
+  uiState.isSwitchingThread = true;
+  updateStatusBar();
+  return generation;
+}
+
+function isCurrentThreadActivation(generation: number): boolean {
+  return generation === threadActivationGeneration;
+}
+
+function activateThread(threadId: string): void {
+  if (threadId !== uiState.sessionId) {
+    if (uiState.sessionId) retireThreadTurn(uiState.sessionId);
+    threadContextGeneration += 1;
+    clearCommittedStreams();
+    clearActiveStreams();
+    forgetPendingLocalMessages();
+    transcriptEl.replaceChildren();
+    btnSendEl.classList.remove("guidance-pending");
+    setRunning(false);
+    syncEmptyState();
+  }
+  uiState.sessionId = threadId;
+}
+
+function finishThreadActivation(generation: number, threadId: string): void {
+  if (!isCurrentThreadActivation(generation)) return;
+  const bufferedSnapshot = pendingActivationSnapshot;
+  pendingActivationTarget = null;
+  pendingActivationSnapshot = null;
+  activateThread(threadId);
+  uiState.isSwitchingThread = false;
+  updateStatusBar();
+  if (bufferedSnapshot?.active_thread_id === threadId) {
+    renderWorkspaceSnapshot(bufferedSnapshot);
+  }
+}
+
+function failThreadActivation(generation: number): void {
+  if (!isCurrentThreadActivation(generation)) return;
+  if (uiState.sessionId) staleSnapshotThreadIds.delete(uiState.sessionId);
+  pendingActivationTarget = null;
+  pendingActivationSnapshot = null;
+  uiState.isSwitchingThread = false;
+  updateStatusBar();
+}
+
 export function switchThread(threadId: string): Promise<void> {
+  const generation = beginThreadActivation(threadId);
   return rpcCall("session.switch", { thread_id: threadId })
     .then((result: unknown) => {
+      if (!isCurrentThreadActivation(generation)) return;
       const selected = result as Record<string, unknown>;
-      uiState.sessionId = (selected.active_thread_id as string) || threadId;
+      const activeThreadId = (selected.active_thread_id as string) || threadId;
+      finishThreadActivation(generation, activeThreadId);
       if (typeof selected.runtime_profile === "string") {
         applyRuntimeState({ runtime_profile: selected.runtime_profile });
       }
+      applyThreadStatus(selected.status);
       updateStatusBar();
+    })
+    .catch((error: unknown) => {
+      if (!isCurrentThreadActivation(generation)) return;
+      failThreadActivation(generation);
+      throw error;
     });
 }
 
@@ -304,18 +695,27 @@ function openThread(directory: string, profile?: string): Promise<void> {
   if (!isRpcConnected()) return Promise.resolve();
 
   const existing = findReusableEmptyThread(directory || uiState.workspace, profile);
+  const generation = beginThreadActivation(existing?.thread_id || null);
   if (existing) {
     return rpcCall("session.switch", { thread_id: existing.thread_id })
       .then((result: unknown) => {
+        if (!isCurrentThreadActivation(generation)) return;
         const selected = result as Record<string, unknown>;
-        uiState.sessionId =
+        const activeThreadId =
           (selected.active_thread_id as string) || existing.thread_id;
+        finishThreadActivation(generation, activeThreadId);
         if (typeof selected.runtime_profile === "string") {
           existing.runtime_profile = selected.runtime_profile;
           applyRuntimeState({ runtime_profile: selected.runtime_profile });
         }
+        applyThreadStatus(selected.status ?? existing.status);
         addThread(existing, uiState.sessionId);
         updateStatusBar();
+      })
+      .catch((error: unknown) => {
+        if (!isCurrentThreadActivation(generation)) return;
+        failThreadActivation(generation);
+        throw error;
       });
   }
 
@@ -323,6 +723,7 @@ function openThread(directory: string, profile?: string): Promise<void> {
   if (profile) params.profile = profile;
   return rpcCall("session.create", params)
     .then((result: unknown) => {
+      if (!isCurrentThreadActivation(generation)) return;
       const r = result as {
         thread_id: string;
         title?: string;
@@ -332,12 +733,13 @@ function openThread(directory: string, profile?: string): Promise<void> {
         runtime_profile?: string;
         temporary?: boolean;
       };
-      uiState.sessionId = r.thread_id;
+      finishThreadActivation(generation, r.thread_id);
       const runtimeProfile =
         typeof r.runtime_profile === "string" ? r.runtime_profile : profile;
       if (runtimeProfile) {
         applyRuntimeState({ runtime_profile: runtimeProfile });
       }
+      applyThreadStatus(r.status);
       addThread(
         {
           thread_id: r.thread_id,
@@ -350,6 +752,11 @@ function openThread(directory: string, profile?: string): Promise<void> {
         uiState.sessionId,
       );
       updateStatusBar();
+    })
+    .catch((error: unknown) => {
+      if (!isCurrentThreadActivation(generation)) return;
+      failThreadActivation(generation);
+      throw error;
     });
 }
 
@@ -367,44 +774,48 @@ export function openThreadForProfile(profile: RuntimeProfile): Promise<void> {
     });
 }
 
-onThreadSelect((threadId: string) => {
-  switchThread(threadId).catch((err: Error) => {
-    showSessionError("会话切换", err);
-  });
-});
-
-onNewThread((directory: string, profile?: string) => {
-  void openThread(directory, profile || uiState.runtimeProfile).catch((err: Error) => {
-    showSessionError("会话创建", err);
-  });
-});
-
-onThreadDelete((threadId: string) => {
-  rpcCall("session.delete", { thread_id: threadId })
-    .then(() => {
-      removeThread(threadId, uiState.sessionId);
-    })
-    .catch((err: Error) => {
-      console.warn("voidx: session delete failed", err.message);
+function initializeSidebarCallbacks(): void {
+  onThreadSelect((threadId: string) => {
+    switchThread(threadId).catch((err: Error) => {
+      showSessionError("会话切换", err);
     });
-});
+  });
 
-onThreadRename((threadId: string) => {
-  const item = document.querySelector(
-    `.vx-session-item[data-thread-id="${threadId}"]`,
-  );
-  const titleEl = item?.querySelector(".vx-session-title");
-  const oldTitle = titleEl?.textContent || "";
-  const newTitle = window.prompt("Rename session:", oldTitle);
-  if (!newTitle || newTitle === oldTitle) return;
-  rpcCall("session.rename", { thread_id: threadId, title: newTitle })
-    .then(() => {
-      if (titleEl) titleEl.textContent = newTitle;
-    })
-    .catch((err: Error) => {
-      console.warn("voidx: session rename failed", err.message);
+  onNewThread((directory: string, profile?: string) => {
+    void openThread(directory, profile || uiState.runtimeProfile).catch((err: Error) => {
+      showSessionError("会话创建", err);
     });
-});
+  });
+
+  onThreadDelete((threadId: string) => {
+    rpcCall("session.delete", { thread_id: threadId })
+      .then(() => {
+        removeThread(threadId, uiState.sessionId);
+      })
+      .catch((err: Error) => {
+        console.warn("voidx: session delete failed", err.message);
+      });
+  });
+
+  onThreadRename((threadId: string) => {
+    const item = document.querySelector(
+      `.vx-session-item[data-thread-id="${threadId}"]`,
+    );
+    const titleEl = item?.querySelector(".vx-session-title");
+    const oldTitle = titleEl?.textContent || "";
+    const newTitle = window.prompt("Rename session:", oldTitle);
+    if (!newTitle || newTitle === oldTitle) return;
+    rpcCall("session.rename", { thread_id: threadId, title: newTitle })
+      .then(() => {
+        if (titleEl) titleEl.textContent = newTitle;
+      })
+      .catch((err: Error) => {
+        console.warn("voidx: session rename failed", err.message);
+      });
+  });
+}
+
+initializeSidebarCallbacks();
 
 const searchEl = document.querySelector<HTMLInputElement>("#session-search");
 if (searchEl) {
@@ -478,36 +889,65 @@ function registerNotificationHandlers(): void {
   }
 }
 
+function renderWorkspaceSnapshot(params: Record<string, unknown>): void {
+  const activeThreadId = (params.active_thread_id as string) || "";
+  if (!snapshotThreadMatchesActive(params, activeThreadId)) return;
+  if (activeThreadId && !isSnapshotRevisionFresh(activeThreadId, params)) return;
+  if (uiState.isSwitchingThread) {
+    if (pendingActivationTarget !== null) {
+      if (activeThreadId !== pendingActivationTarget) return;
+      pendingActivationSnapshot = params;
+      return;
+    }
+    if (!activeThreadId || activeThreadId === uiState.sessionId) return;
+    pendingActivationSnapshot = params;
+    return;
+  }
+  if (activeThreadId && staleSnapshotThreadIds.has(activeThreadId)) return;
+
+  const snapshot = params.active_snapshot || { nodes: [] };
+  if (activeThreadId) rememberSnapshotRevision(activeThreadId, params);
+  requestCommandCatalogIfNeeded();
+  const activeThread = ((params.threads as Array<Record<string, unknown>> | undefined) || []).find(
+    (thread) => thread.thread_id === activeThreadId,
+  );
+  const threadChanged = uiState.sessionId !== activeThreadId;
+  if (threadChanged) {
+    if (uiState.sessionId) staleSnapshotThreadIds.add(uiState.sessionId);
+    activateThread(activeThreadId);
+  }
+  uiState.sessionId = activeThreadId;
+  applyRuntimeState(params);
+  if (typeof activeThread?.runtime_profile === "string") {
+    applyRuntimeState({ runtime_profile: activeThread.runtime_profile });
+  }
+  applyThreadStatus(activeThread?.status ?? params.status);
+  refreshUsageSnapshot();
+  requestStartupSettingsIfNeeded(applySettingsRuntimeState);
+  updateStatusBar();
+  renderSidebar(
+    (params.threads as unknown as ThreadInfo[]) || [],
+    activeThreadId,
+    workspaceBasename(uiState.workspace),
+    uiState.workspace,
+  );
+  const typedSnapshot = snapshot as TranscriptSnapshot;
+  renderTranscript(transcriptEl, typedSnapshot);
+  restorePendingLocalMessages(activeThreadId, typedSnapshot);
+  syncEmptyState();
+  scrollToBottom();
+}
+
 export function handleNotification(
   method: string,
   params: Record<string, unknown> = {},
 ): void {
   if (method === "workspace.snapshot") {
-    const snapshot = params.active_snapshot || { nodes: [] };
-    requestCommandCatalogIfNeeded();
-    const activeThread = ((params.threads as Array<Record<string, unknown>> | undefined) || []).find(
-      (thread) => thread.thread_id === params.active_thread_id,
-    );
-    uiState.sessionId = (params.active_thread_id as string) || "";
-    applyRuntimeState(params);
-    if (typeof activeThread?.runtime_profile === "string") {
-      applyRuntimeState({ runtime_profile: activeThread.runtime_profile });
-    }
-    refreshUsageSnapshot();
-    requestStartupSettingsIfNeeded(applySettingsRuntimeState);
-    updateStatusBar();
-    renderSidebar(
-      (params.threads as unknown as ThreadInfo[]) || [],
-      (params.active_thread_id as string) || "",
-      workspaceBasename(uiState.workspace),
-      uiState.workspace,
-    );
-    renderTranscript(transcriptEl, snapshot as TranscriptSnapshot);
-    syncEmptyState();
-    scrollToBottom();
+    renderWorkspaceSnapshot(params);
     return;
   }
   if (method === "ui.request") {
+    if (!isCurrentUiRequest(params)) return;
     showRequest(params);
     return;
   }
@@ -516,6 +956,7 @@ export function handleNotification(
     return;
   }
   if (method === "turn.started") {
+    if (!registerTurnStarted(params)) return;
     setRunning(true);
     return;
   }
@@ -524,6 +965,8 @@ export function handleNotification(
     method === "turn.failed" ||
     method === "turn.cancelled"
   ) {
+    if (!isCurrentThreadEvent(params)) return;
+    retireCompletedTurn(params);
     if (method === "turn.completed") {
       refreshUsageSnapshot();
     }
@@ -588,9 +1031,11 @@ export function handleItem(
   method: string,
   params: Record<string, unknown>,
 ): void {
+  if (!isCurrentThreadEvent(params)) return;
   const kind = params.kind as string;
   const itemId = params.item_id as string;
   const data = (params.data as Record<string, unknown>) || {};
+  if (isDuplicateItemStart(method, params)) return;
 
   if (kind === "assistant_stream") {
     if (method === "item.started") {
@@ -666,6 +1111,10 @@ export function handleItem(
     if (method === "item.started") {
       const text = (data.text as string) || "";
       if (text) {
+        replacePendingGuidanceWithServerItem(
+          (params.thread_id as string) || uiState.sessionId,
+          text,
+        );
         appendMessageItem(itemId, { style: "guidance", text });
       }
     }
@@ -727,54 +1176,121 @@ composerEl.addEventListener("submit", (event: SubmitEvent) => {
   const text = [expandPasteTokens(inputEl.value.trim()), tokens]
     .filter(Boolean)
     .join(" ");
-  clearPasteEntries();
-  clearImageAttachments();
   if (
     !text ||
     uiState.isSwitchingModel ||
     uiState.isSwitchingProfile ||
-    !isRpcConnected()
+    uiState.isSwitchingThread
   ) {
     return;
   }
+  if (!isRpcConnected()) {
+    showSessionError("发送", new Error("未连接到后端"));
+    return;
+  }
+  clearPasteEntries();
+  clearImageAttachments();
   if (text.startsWith("/") && !isKnownSlashCommand(text)) {
     inputEl.value = "";
     hideSlashMenu();
     hideRefMenu();
     return;
   }
+
+  const threadId = uiState.sessionId;
+  const sendContextGeneration = threadContextGeneration;
+  const isGuidance = uiState.isRunning;
+  const isChatGuidance = isGuidance && uiState.runtimeProfile === "chat";
+  const style = isGuidance ? "guidance" : "text";
+  const itemId = createLocalItemId(isGuidance ? "guidance" : "user");
+  if (!isGuidance || isChatGuidance) {
+    rememberPendingLocalMessage(threadId, itemId, text, style);
+    appendMessageItem(itemId, { style, text });
+    syncEmptyState();
+    inputEl.value = "";
+  }
+  hideSlashMenu();
+  hideRefMenu();
   pushHistory(text);
-  if (uiState.isRunning) {
+
+  if (isGuidance) {
     btnSendEl.classList.add("guidance-pending");
-    btnSendEl.innerHTML = sendStopIcon;
-    rpcCall("session.submit", { text, thread_id: uiState.sessionId })
-      .then(() => {
-        inputEl.value = "";
-        hideSlashMenu();
-        hideRefMenu();
+    rpcCall("session.submit", { text, thread_id: threadId })
+      .then((result: unknown) => {
+        if ((result as { ok?: boolean } | null)?.ok === false) {
+          throw new Error("后端未接受发送请求");
+        }
+        if (isCurrentSendContext(threadId, sendContextGeneration) && (!inputEl.value || inputEl.value === text)) inputEl.value = "";
       })
-      .catch(() => {})
+      .catch((error: Error) => {
+        if (!isCurrentSendContext(threadId, sendContextGeneration)) return;
+        removePendingLocalMessage(itemId);
+        if (!inputEl.value) inputEl.value = text;
+        showSessionError("发送", error);
+      })
       .finally(() => {
-        btnSendEl.classList.remove("guidance-pending");
-        btnSendEl.innerHTML = sendStopIcon;
+        if (isCurrentSendContext(threadId, sendContextGeneration)) {
+          btnSendEl.classList.remove("guidance-pending");
+        }
       });
     return;
   }
+
   setRunning(true);
-  rpcCall("session.submit", { text, thread_id: uiState.sessionId }).catch(() => setRunning(false));
-  appendMessageItem(`user-${Date.now()}`, { style: "text", text });
-  syncEmptyState();
-  inputEl.value = "";
-  hideSlashMenu();
-  hideRefMenu();
+  rpcCall("session.submit", { text, thread_id: threadId })
+    .then((result: unknown) => {
+      if ((result as { ok?: boolean } | null)?.ok === false) {
+        throw new Error("后端未接受发送请求");
+      }
+    })
+    .catch((error: Error) => {
+      if (!isCurrentSendContext(threadId, sendContextGeneration)) return;
+      setRunning(false);
+      removePendingLocalMessage(itemId);
+      if (!inputEl.value) inputEl.value = text;
+      showSessionError("发送", error);
+    });
 });
 
+
 export function _resetWorkbenchForTest(): void {
+  threadActivationGeneration += 1;
+  threadContextGeneration += 1;
+  pendingActivationTarget = null;
+  pendingActivationSnapshot = null;
+  staleSnapshotThreadIds.clear();
+  lastSnapshotRevisionByThread.clear();
+  renderedItemIdsByThread.clear();
+  threadTurnContexts.clear();
+  clearCommittedStreams();
+  clearActiveStreams();
+  localItemSequence = 0;
+  forgetPendingLocalMessages();
+  clearPasteEntries();
+  clearImageAttachments();
+  _resetHistoryForTest();
+  _resetCommandCatalogForTest();
+  _resetSettingsForTest();
+  _resetIntegrationsForTest();
+  _resetContextMenuForTest();
+  _resetDialogForTest();
+  _resetSidebarForTest();
+  _resetModeControlsForTest();
   _resetWorkbenchStateForTest();
   _resetConnectionForTest();
-  _resetDialogForTest();
+  _resetRpcForTest();
+  inputEl.value = "";
+  transcriptEl.replaceChildren();
+  btnSendEl.classList.remove("guidance-pending");
+  setRunning(false);
   hideRefMenu();
   hideSlashMenu();
+  registerNotificationHandlers();
+  initializeModeControls();
+  initializeSettingsModal();
+  initIntegrationsPanel();
+  initContextMenu();
+  initializeSidebarCallbacks();
 
   const shell = document.querySelector<HTMLElement>(".vx-workbench-shell");
   if (shell) {
@@ -790,21 +1306,9 @@ export function _resetWorkbenchForTest(): void {
   }
   initSidebarResizer();
   initModelControls();
-  updateStatusBar();
   syncEmptyState();
 }
 
-btnSendEl.addEventListener("click", (e: MouseEvent) => {
-  if (uiState.isRunning) {
-    e.preventDefault();
-    if (!isRpcConnected()) {
-      return;
-    }
-    rpcCall("session.cancel", { thread_id: uiState.sessionId })
-      .then(() => setRunning(false))
-      .catch(() => setRunning(false));
-  }
-});
 
 document
   .querySelector("#btn-integrations")

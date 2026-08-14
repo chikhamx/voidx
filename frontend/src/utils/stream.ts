@@ -112,6 +112,13 @@ export function takeCommittedStreams(): HTMLElement[] {
   return els;
 }
 
+export function clearCommittedStreams(): void {
+  for (const el of committedEls) {
+    el.remove();
+  }
+  committedEls.length = 0;
+}
+
 export function clearActiveStreams(): void {
   for (const [, stream] of streams) {
     if (stream.debounceTimer) {

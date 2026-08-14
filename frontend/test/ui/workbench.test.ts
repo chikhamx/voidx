@@ -18,7 +18,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import { handleNotification, initModelControls, resolveWsUrl, _resetWorkbenchForTest } from "../../src/main";
 import { initPermissionControls, populateCustomModelDropdown, populatePermissionDropdown } from "../../src/ui/model";
-import { uiState } from "../../src/services/state";
+import { initStateDom, setConnectionStatus, uiState } from "../../src/services/state";
 import { _resetForTest as resetDock, initDock, switchTab, toggleDock, getActiveTab } from "../../src/ui/dock";
 import { _setSocket, _resetForTest as resetRpc } from "../../src/rpc";
 
@@ -34,6 +34,10 @@ function readCombinedStyles(filePath: string): string {
 
 function readStylesCSS(): string {
   return readCombinedStyles(join(process.cwd(), "css/styles.css"));
+}
+
+function readIndexDOM(): Document {
+  return new DOMParser().parseFromString(readFileSync(join(process.cwd(), "index.html"), "utf8"), "text/html");
 }
 
 function sentPayloads(sentMessages) {
@@ -102,21 +106,51 @@ describe("workbench shell", () => {
     expect(sidebar.textContent).not.toContain("已安排");
     expect(sidebar.textContent).toContain("项目");
     expect(sidebar.textContent).not.toContain("历史会话");
-    expect(document.querySelector(".vx-project-heading .vx-sidebar-row-icon svg")).not.toBeNull();
+    expect(readIndexDOM().querySelector(".vx-project-heading .vx-sidebar-row-icon")).toBeNull();
     expect(document.querySelector(".vx-project-heading-label").textContent).toBe("项目");
     expect(document.querySelector("#project-list")).toBeNull();
     expect(document.querySelector("#btn-integrations").hidden).toBe(true);
   });
 
-  it("renders a mode picker in the sidebar and none in the composer", () => {
-    const sidebarSwitcher = document.querySelector("#sidebar #runtime-profile-switcher");
-    expect(sidebarSwitcher).not.toBeNull();
-    expect(sidebarSwitcher.querySelector("#mode-trigger")).not.toBeNull();
-    expect(
-      [...sidebarSwitcher.querySelectorAll("[data-profile] .vx-mode-option-name")].map((el) => el.textContent.trim()),
-    ).toEqual(["聊天", "编码", "目标", "循环"]);
-    expect(document.querySelector("#composer #runtime-profile-switcher")).toBeNull();
-    expect(sidebarSwitcher.nextElementSibling?.id).toBe("project-session-section");
+  it("places the mode picker first in the sidebar above new session", () => {
+    for (const root of [document, readIndexDOM()]) {
+      const titlebarLeft = root.querySelector(".vx-titlebar-left");
+      const sidebar = root.querySelector("#sidebar");
+      const switcher = root.querySelector("#runtime-profile-switcher");
+      const nav = root.querySelector(".vx-sidebar-nav");
+
+      expect(sidebar?.firstElementChild).toBe(switcher);
+      expect(switcher?.nextElementSibling).toBe(nav);
+      expect(nav?.firstElementChild?.id).toBe("btn-new-chat");
+      expect(switcher?.closest("#sidebar")).toBe(sidebar);
+      expect(titlebarLeft?.contains(switcher)).toBe(false);
+      expect(root.querySelector("#status-dot")).toBeNull();
+      expect(root.querySelector("#titlebar-sidebar-toggle")).toBeNull();
+      expect(titlebarLeft?.querySelector("button, input, select, textarea, a[href], [tabindex]")).toBeNull();
+      expect(switcher?.querySelector("#mode-trigger")).not.toBeNull();
+      expect(
+        [...switcher.querySelectorAll("[data-profile] .vx-mode-option-name")].map((el) => el.textContent.trim()),
+      ).toEqual(["聊天", "编码", "目标", "循环"]);
+      expect(root.querySelector("#composer #runtime-profile-switcher")).toBeNull();
+    }
+  });
+
+  it("updates the status panel when the titlebar connection dot is absent", () => {
+    const dot = document.querySelector("#status-dot");
+    const parent = dot?.parentNode;
+    const nextSibling = dot?.nextSibling;
+    dot?.remove();
+
+    try {
+      expect(() => {
+        initStateDom();
+        setConnectionStatus("connected");
+      }).not.toThrow();
+      expect(document.querySelector("#status-connection").textContent).toBe("connected");
+    } finally {
+      if (dot && parent) parent.insertBefore(dot, nextSibling ?? null);
+      initStateDom();
+    }
   });
 
 
@@ -179,7 +213,7 @@ describe("workbench shell", () => {
     });
     handleNotification("workspace.snapshot", {
       active_thread_id: "t1",
-      active_snapshot: { thread_id: "t1", nodes: [] },
+      active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
       threads: [{ thread_id: "t1", title: "Default", workspace: "/Users/chikham/workspace/voidx" }],
       workspace: "/Users/chikham/workspace/voidx",
       provider: "openai",
@@ -259,6 +293,23 @@ describe("workbench shell", () => {
     expect(styles).toContain(".vx-sidebar-row-icon");
   });
 
+  it("uses a continuous background across the titlebar left segment and sidebar", () => {
+    const styles = readStylesCSS();
+
+    expect(styles).toMatch(/\.vx-titlebar-left\s*\{[^}]*background:\s*var\(--vx-bg-app\);[^}]*\}/);
+    expect(styles).toMatch(/\.vx-titlebar-left\s*\{[^}]*overflow:\s*visible;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-project-session-section > \.vx-session-list\s*\{[^}]*padding-left:\s*var\(--vx-space-4\);[^}]*\}/);
+    expect(styles).toMatch(/\.vx-sidebar\s*\{[^}]*background:\s*var\(--vx-bg-app\);[^}]*padding:\s*var\(--vx-titlebar-height\) var\(--vx-space-2\) var\(--vx-space-2\);[^}]*\}/);
+    expect(styles).toMatch(/\.vx-sidebar > \.vx-mode-picker\s*\{[^}]*min-height:\s*32px;[^}]*\}/);
+    const responsiveStart = styles.indexOf("@media (max-width: 899px)");
+    expect(styles.slice(0, responsiveStart)).not.toMatch(/body\.is-desktop \.vx-sidebar > \.vx-mode-picker\s*\{[^}]*padding-left:/);
+    expect(styles).toMatch(/body\.is-desktop\.is-mac \.vx-titlebar-left\s*\{[^}]*background:\s*transparent;[^}]*\}/);
+    expect(styles).toMatch(/body\.is-desktop\.is-mac \.vx-sidebar\s*\{[^}]*background:\s*rgb\(242 242 237 \/ 0\.6\);[^}]*\}/);
+    expect(styles).toMatch(/:root\[data-theme=["']dark["']\] body\.is-desktop\.is-mac \.vx-sidebar\s*\{[^}]*background:\s*rgb\(20 20 18 \/ 0\.6\);[^}]*\}/);
+    expect(styles).toMatch(/body\.is-desktop \.vx-titlebar-left\s*\{[^}]*padding-left:\s*80px;[^}]*\}/);
+    expect(styles).toMatch(/@media \(max-width: 899px\) \{[\s\S]*?\.vx-sidebar\s*\{[^}]*display:\s*flex;[^}]*position:\s*absolute;[^}]*z-index:\s*11;[^}]*\}[\s\S]*?\.vx-sidebar > \.vx-mode-picker\s*\{[^}]*min-height:\s*var\(--vx-titlebar-height\);[^}]*\}[\s\S]*?body\.is-desktop \.vx-sidebar > \.vx-mode-picker\s*\{[^}]*padding-left:\s*calc\(80px - var\(--vx-space-2\)\);[^}]*\}[\s\S]*?\.vx-sidebar > :not\(\.vx-mode-picker\)\s*\{[^}]*display:\s*none;[^}]*\}/);
+  });
+
   it("resizes the sidebar from the draggable boundary", () => {
     const resizer = document.querySelector("#sidebar-resizer");
 
@@ -274,7 +325,7 @@ describe("workbench shell", () => {
 
     handleNotification("workspace.snapshot", {
       active_thread_id: "filled",
-      active_snapshot: { thread_id: "filled", nodes: [] },
+      active_snapshot: { thread_id: "filled", revision: 0, nodes: [] },
       threads: [
         {
           thread_id: "empty-1",
@@ -327,14 +378,27 @@ describe("workbench shell", () => {
     });
   });
 
-  it("shows a disabled running state immediately after submitting a message", async () => {
-    const sentMessages = setupOpenSocket();
+  it("keeps the draft and shows an error when send is clicked while disconnected", () => {
+    const input = document.querySelector("#input");
+    const send = document.querySelector("#btn-send");
+
+    input.value = "你好";
+    send.click();
+
+    expect(input.value).toBe("你好");
+    expect(uiState.isRunning).toBe(false);
+    expect(document.querySelector(".message-error")?.textContent).toContain("发送失败");
+    expect(document.querySelector(".message-error")?.textContent).toContain("未连接");
+  });
+
+  it("restores the draft and shows an error when idle submission fails", async () => {
+    const { sentMessages, socket } = setupOpenSocketWithHandle();
     const input = document.querySelector("#input");
     const send = document.querySelector("#btn-send");
 
     handleNotification("workspace.snapshot", {
       active_thread_id: "t1",
-      active_snapshot: { thread_id: "t1", nodes: [] },
+      active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
       threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
       workspace: "<workspace>",
       provider: "deepseek",
@@ -344,25 +408,91 @@ describe("workbench shell", () => {
     sentMessages.length = 0;
 
     input.value = "你好";
-    document.querySelector("#composer").dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
-
-    expect(send.classList.contains("running")).toBe(true);
-    expect(send.disabled).toBe(true);
-    expect(send.querySelector("svg.vx-icon")).not.toBeNull();
-    expect(input.disabled).toBe(false);
-    expect(sentPayloads(sentMessages).find((payload) => payload.method === "session.submit")).toMatchObject({
-      method: "session.submit",
-      params: { text: "你好", thread_id: "t1" },
-    });
-
     send.click();
 
+    const submitMsg = sentPayloads(sentMessages).find((payload) => payload.method === "session.submit");
+    expect(submitMsg).toBeDefined();
+    socket.onmessage({
+      data: JSON.stringify({
+        jsonrpc: "2.0",
+        id: submitMsg.id,
+        error: { code: -32603, message: "submit failed" },
+      }),
+    });
+
+    await vi.waitFor(() => {
+      expect(input.value).toBe("你好");
+    });
+    expect(uiState.isRunning).toBe(false);
+    expect(document.querySelector(".message-text")).toBeNull();
+    expect(document.querySelector(".message-error")?.textContent).toContain("submit failed");
+  });
+
+  it("restores the draft when the backend rejects an idle submission", async () => {
+    const { sentMessages, socket } = setupOpenSocketWithHandle();
+    const input = document.querySelector("#input");
+    const send = document.querySelector("#btn-send");
+
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "t1",
+      active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
+      threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
+      workspace: "<workspace>",
+      provider: "deepseek",
+      model: "deepseek-chat",
+      profile_configured: true,
+    });
+    sentMessages.length = 0;
+
+    input.value = "你好";
+    send.click();
+
+    const submitMsg = sentPayloads(sentMessages).find((payload) => payload.method === "session.submit");
+    socket.onmessage({
+      data: JSON.stringify({ jsonrpc: "2.0", id: submitMsg.id, result: { ok: false } }),
+    });
+
+    await vi.waitFor(() => {
+      expect(input.value).toBe("你好");
+    });
+    expect(uiState.isRunning).toBe(false);
+    expect(document.querySelector(".message-error")?.textContent).toContain("未接受");
+  });
+
+  it("submits guidance when clicking send during a running turn", async () => {
+    const sentMessages = setupOpenSocket();
+    const input = document.querySelector("#input");
+    const send = document.querySelector("#btn-send");
+
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "t1",
+      active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
+      threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
+      workspace: "<workspace>",
+      provider: "deepseek",
+      model: "deepseek-chat",
+      profile_configured: true,
+    });
+    handleNotification("turn.started", { thread_id: "t1", turn_id: "test-turn" });
+    sentMessages.length = 0;
+
+    input.value = "继续执行";
+    send.click();
+
+    expect(send.disabled).toBe(false);
+    expect(send.getAttribute("aria-label")).toBe("Send guidance");
+    expect(sentPayloads(sentMessages).filter((payload) => payload.method === "session.submit")).toEqual([
+      expect.objectContaining({
+        method: "session.submit",
+        params: { text: "继续执行", thread_id: "t1" },
+      }),
+    ]);
     expect(sentPayloads(sentMessages).some((payload) => payload.method === "session.cancel")).toBe(false);
   });
 
   it("keeps input enabled while a turn is running", () => {
     const input = document.querySelector("#input");
-    handleNotification("turn.started", {});
+    handleNotification("turn.started", { thread_id: "t1", turn_id: "test-turn" });
     expect(input.disabled).toBe(false);
   });
 
@@ -372,7 +502,7 @@ describe("workbench shell", () => {
 
     handleNotification("workspace.snapshot", {
       active_thread_id: "t1",
-      active_snapshot: { thread_id: "t1", nodes: [] },
+      active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
       threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
       workspace: "<workspace>",
       provider: "deepseek",
@@ -394,7 +524,7 @@ describe("workbench shell", () => {
 
     handleNotification("workspace.snapshot", {
       active_thread_id: "t1",
-      active_snapshot: { thread_id: "t1", nodes: [] },
+      active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
       threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
       workspace: "<workspace>",
       provider: "deepseek",
@@ -415,7 +545,7 @@ describe("workbench shell", () => {
 
     handleNotification("workspace.snapshot", {
       active_thread_id: "t1",
-      active_snapshot: { thread_id: "t1", nodes: [] },
+      active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
       threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
       workspace: "<workspace>",
       provider: "deepseek",
@@ -437,7 +567,7 @@ describe("workbench shell", () => {
 
     handleNotification("workspace.snapshot", {
       active_thread_id: "t1",
-      active_snapshot: { thread_id: "t1", nodes: [] },
+      active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
       threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
       workspace: "<workspace>",
       provider: "deepseek",
@@ -459,14 +589,14 @@ describe("workbench shell", () => {
 
     handleNotification("workspace.snapshot", {
       active_thread_id: "t1",
-      active_snapshot: { thread_id: "t1", nodes: [] },
+      active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
       threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
       workspace: "<workspace>",
       provider: "deepseek",
       model: "deepseek-chat",
       profile_configured: true,
     });
-    handleNotification("turn.started", {});
+    handleNotification("turn.started", { thread_id: "t1", turn_id: "test-turn" });
     sentMessages.length = 0;
 
     input.value = "keep going";
@@ -486,14 +616,14 @@ describe("workbench shell", () => {
 
     handleNotification("workspace.snapshot", {
       active_thread_id: "t1",
-      active_snapshot: { thread_id: "t1", nodes: [] },
+      active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
       threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
       workspace: "<workspace>",
       provider: "deepseek",
       model: "deepseek-chat",
       profile_configured: true,
     });
-    handleNotification("turn.started", {});
+    handleNotification("turn.started", { thread_id: "t1", turn_id: "test-turn" });
     sentMessages.length = 0;
 
     input.value = "keep going";
@@ -517,14 +647,14 @@ describe("workbench shell", () => {
 
     handleNotification("workspace.snapshot", {
       active_thread_id: "t1",
-      active_snapshot: { thread_id: "t1", nodes: [] },
+      active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
       threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
       workspace: "<workspace>",
       provider: "deepseek",
       model: "deepseek-chat",
       profile_configured: true,
     });
-    handleNotification("turn.started", {});
+    handleNotification("turn.started", { thread_id: "t1", turn_id: "test-turn" });
     sentMessages.length = 0;
 
     input.value = "keep going";
@@ -546,14 +676,14 @@ describe("workbench shell", () => {
 
     handleNotification("workspace.snapshot", {
       active_thread_id: "t1",
-      active_snapshot: { thread_id: "t1", nodes: [] },
+      active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
       threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
       workspace: "<workspace>",
       provider: "deepseek",
       model: "deepseek-chat",
       profile_configured: true,
     });
-    handleNotification("turn.started", {});
+    handleNotification("turn.started", { thread_id: "t1", turn_id: "test-turn" });
     sentMessages.length = 0;
 
     input.value = "keep going";
@@ -568,23 +698,29 @@ describe("workbench shell", () => {
     expect(send.classList.contains("guidance-pending")).toBe(false);
   });
 
-  it("clears running state when a turn end notification arrives", () => {
+  it("restores the regular send label when a turn ends", () => {
     const send = document.querySelector("#btn-send");
-    handleNotification("turn.started", {});
+    uiState.sessionId = "t1";
+    handleNotification("turn.started", { thread_id: "t1", turn_id: "test-turn" });
 
-    expect(send.classList.contains("running")).toBe(true);
+    expect(send.getAttribute("aria-label")).toBe("Send guidance");
 
-    handleNotification("turn.completed", {});
+    handleNotification("turn.completed", { thread_id: "t1", turn_id: "test-turn" });
 
-    expect(send.classList.contains("running")).toBe(false);
+    expect(send.getAttribute("aria-label")).toBe("Send");
     expect(send.querySelector("svg.vx-icon")).not.toBeNull();
   });
 
   it("renders a visible error when a turn fails", () => {
     const send = document.querySelector("#btn-send");
-    handleNotification("turn.started", {});
+    uiState.sessionId = "t1";
+    handleNotification("turn.started", { thread_id: "t1", turn_id: "test-turn" });
 
-    handleNotification("turn.failed", { message: "LLM call failed: invalid API key" });
+    handleNotification("turn.failed", {
+      thread_id: "t1",
+      turn_id: "test-turn",
+      message: "LLM call failed: invalid API key",
+    });
 
     expect(send.classList.contains("running")).toBe(false);
     expect(send.querySelector("svg.vx-icon")).not.toBeNull();
@@ -615,6 +751,7 @@ describe("workbench shell", () => {
   it("opens request dialog for real permission ui requests", () => {
     const dialog = document.querySelector("#request-dialog");
     const showModal = vi.spyOn(dialog, "showModal").mockImplementation(() => {});
+    uiState.sessionId = "t2";
 
     handleNotification("ui.request", {
       kind: "permission",
@@ -634,6 +771,7 @@ describe("workbench shell", () => {
   it("renders risk-aware permission request details", () => {
     const dialog = document.querySelector("#request-dialog");
     vi.spyOn(dialog, "showModal").mockImplementation(() => {});
+    uiState.sessionId = "t2";
 
     handleNotification("ui.request", {
       kind: "permission",
@@ -675,6 +813,7 @@ describe("workbench shell", () => {
   it("renders AI approval failure reason in permission details", () => {
     const dialog = document.querySelector("#request-dialog");
     vi.spyOn(dialog, "showModal").mockImplementation(() => {});
+    uiState.sessionId = "t2";
 
     handleNotification("ui.request", {
       kind: "permission",
@@ -697,6 +836,7 @@ describe("workbench shell", () => {
 
   it("queues overlapping ui requests instead of replacing the active dialog", () => {
     const sentMessages = setupOpenSocket();
+    uiState.sessionId = "t2";
     const dialog = document.querySelector("#request-dialog");
     vi.spyOn(dialog, "showModal").mockImplementation(() => {
       dialog.setAttribute("open", "");
@@ -783,7 +923,7 @@ describe("provider and model controls", () => {
 
     handleNotification("workspace.snapshot", {
       active_thread_id: "t1",
-      active_snapshot: { thread_id: "t1", nodes: [] },
+      active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
       threads: [{ thread_id: "t1", title: "Default" }],
       workspace: "/",
       provider: "",
@@ -819,7 +959,7 @@ describe("provider and model controls", () => {
 
     handleNotification("workspace.snapshot", {
       active_thread_id: "t1",
-      active_snapshot: { thread_id: "t1", nodes: [] },
+      active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
       threads: [{ thread_id: "t1", title: "Default" }],
       workspace: "/",
       provider: "",
@@ -857,7 +997,7 @@ describe("provider and model controls", () => {
 
     handleNotification("workspace.snapshot", {
       active_thread_id: "t1",
-      active_snapshot: { thread_id: "t1", nodes: [] },
+      active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
       threads: [{ thread_id: "t1", title: "Default" }],
       workspace: "/",
       provider: "",
@@ -912,7 +1052,7 @@ describe("provider and model controls", () => {
   it("workspace.snapshot syncs startup default model status", () => {
     handleNotification("workspace.snapshot", {
       active_thread_id: "t1",
-      active_snapshot: { thread_id: "t1", nodes: [] },
+      active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
       threads: [{ thread_id: "t1", title: "Default" }],
       workspace: "/Users/chikham/workspace/voidx",
       provider: "deepseek",
@@ -942,7 +1082,7 @@ describe("provider and model controls", () => {
 
     handleNotification("workspace.snapshot", {
       active_thread_id: "t1",
-      active_snapshot: { thread_id: "t1", nodes: [] },
+      active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
       threads: [{ thread_id: "t1", title: "Default" }],
       workspace: "/Users/chikham/workspace/voidx",
     });
@@ -986,7 +1126,7 @@ describe("provider and model controls", () => {
 
     handleNotification("workspace.snapshot", {
       active_thread_id: "t1",
-      active_snapshot: { thread_id: "t1", nodes: [] },
+      active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
       threads: [{ thread_id: "t1", title: "Default" }],
       workspace: "/",
       provider: "",
@@ -1033,7 +1173,7 @@ describe("provider and model controls", () => {
 
     handleNotification("workspace.snapshot", {
       active_thread_id: "t1",
-      active_snapshot: { thread_id: "t1", nodes: [] },
+      active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
       threads: [{ thread_id: "t1", title: "Default" }],
       workspace: "/",
       provider: "",
@@ -1099,7 +1239,7 @@ describe("provider and model controls", () => {
 
     handleNotification("workspace.snapshot", {
       active_thread_id: "t1",
-      active_snapshot: { thread_id: "t1", nodes: [] },
+      active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
       threads: [{ thread_id: "t1", title: "Default" }],
       workspace: "/",
       provider: "deepseek",
@@ -1194,14 +1334,14 @@ it("renders running-turn guidance exactly once from the backend message event", 
 
   handleNotification("workspace.snapshot", {
     active_thread_id: "t1",
-    active_snapshot: { thread_id: "t1", nodes: [] },
+    active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
     threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
     workspace: "<workspace>",
     provider: "deepseek",
     model: "deepseek-chat",
     profile_configured: true,
   });
-  handleNotification("turn.started", {});
+  handleNotification("turn.started", { thread_id: "t1", turn_id: "test-turn" });
   sentMessages.length = 0;
 
   input.value = "keep going";
@@ -1219,6 +1359,8 @@ it("renders running-turn guidance exactly once from the backend message event", 
   expect(document.querySelectorAll(".message-guidance")).toHaveLength(0);
 
   handleNotification("item.started", {
+    thread_id: "t1",
+    turn_id: "test-turn",
     kind: "message",
     item_id: "guidance-1",
     data: { style: "guidance", text: "keep going" },
