@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use voidx_desktop::{default_install_dir, resolve_python};
+use voidx_desktop::{bundled_backend_command_args, default_install_dir, resolve_python};
 
 /// Serialize tests that mutate process-global env vars. cargo test runs
 /// threads in parallel; `set_var` is not thread-safe.
@@ -158,4 +158,189 @@ fn default_install_dir_uses_local_appdata() {
         path,
         PathBuf::from("C:\\custom\\appdata\\voidx\\venv\\Scripts\\python.exe")
     );
+}
+
+
+#[test]
+fn runtime_paths_are_nested_under_voidx_data_root() {
+    let data_root = PathBuf::from("/tmp/voidx-data");
+    assert_eq!(
+        voidx_desktop::runtime_root(&data_root),
+        data_root.join("runtime")
+    );
+    assert_eq!(
+        voidx_desktop::runtime_current_manifest_path(&data_root),
+        data_root.join("runtime/current.json")
+    );
+    assert_eq!(
+        voidx_desktop::runtime_version_dir(&data_root, "sha256-test"),
+        data_root.join("runtime/versions/sha256-test")
+    );
+}
+
+#[test]
+fn backend_manifest_requires_version_api_target_and_fingerprint() {
+    let manifest = serde_json::json!({
+        "schema_version": 1,
+        "backend_version": "3.8.0",
+        "backend_api": "gateway-v2",
+        "target": "aarch64-apple-darwin",
+        "image_fingerprint": "a".repeat(64),
+        "python_relative": "python/bin/python",
+        "site_packages_relative": "site-packages"
+    });
+
+    assert!(voidx_desktop::backend_manifest_is_compatible(
+        &manifest,
+        "3.8.0",
+        "gateway-v2",
+        "aarch64-apple-darwin",
+    ));
+    assert!(!voidx_desktop::backend_manifest_is_compatible(
+        &manifest,
+        "3.8.1",
+        "gateway-v2",
+        "aarch64-apple-darwin",
+    ));
+    assert!(!voidx_desktop::backend_manifest_is_compatible(
+        &manifest,
+        "3.8.0",
+        "gateway-v1",
+        "aarch64-apple-darwin",
+    ));
+    assert!(!voidx_desktop::backend_manifest_is_compatible(
+        &manifest,
+        "3.8.0",
+        "x",
+        "x86_64-apple-darwin",
+    ));
+}
+
+
+#[test]
+fn runtime_target_and_relative_paths_are_strict() {
+    assert_eq!(
+        voidx_desktop::runtime_target_triple("macos", "aarch64"),
+        Some("aarch64-apple-darwin".to_string())
+    );
+    assert_eq!(
+        voidx_desktop::runtime_target_triple("windows", "x86_64"),
+        Some("x86_64-pc-windows-msvc".to_string())
+    );
+    assert_eq!(
+        voidx_desktop::runtime_target_triple("linux", "aarch64"),
+        Some("aarch64-unknown-linux-gnu".to_string())
+    );
+    assert_eq!(
+        voidx_desktop::runtime_python_path(
+            PathBuf::from("/tmp/voidx/runtime/versions/fingerprint").as_path(),
+            "python/bin/python",
+        ),
+        Some(PathBuf::from("/tmp/voidx/runtime/versions/fingerprint/python/bin/python"))
+    );
+    assert!(voidx_desktop::runtime_python_path(
+        PathBuf::from("/tmp/voidx/runtime/versions/fingerprint").as_path(),
+        "../python/bin/python",
+    )
+    .is_none());
+    assert!(voidx_desktop::runtime_python_path(
+        PathBuf::from("/tmp/voidx/runtime/versions/fingerprint").as_path(),
+        "/tmp/python",
+    )
+    .is_none());
+}
+
+
+#[test]
+fn bundled_backend_command_uses_isolated_python_and_runtime_site_packages() {
+    let args = bundled_backend_command_args(PathBuf::from("/tmp/runtime/site-packages").as_path());
+
+    assert_eq!(args.first().map(String::as_str), Some("-I"));
+    assert_eq!(args.get(1).map(String::as_str), Some("-c"));
+    assert!(args
+        .get(2)
+        .is_some_and(|code| code.contains("sys.path.insert(0, sys.argv.pop(1))")));
+    assert_eq!(args.get(3).map(String::as_str), Some("/tmp/runtime/site-packages"));
+}
+
+
+#[test]
+fn install_backend_image_uses_shared_data_root_and_preserves_user_data() {
+    let data_root = tempfile::tempdir().unwrap();
+    let image = tempfile::tempdir().unwrap();
+    let site_packages = image.path().join("site-packages");
+    std::fs::create_dir_all(site_packages.join("voidx/presentation/gateway/session/method"))
+        .unwrap();
+    std::fs::create_dir_all(image.path().join("python/bin")).unwrap();
+    std::fs::write(image.path().join("python/bin/python"), b"python").unwrap();
+    std::fs::write(
+        site_packages.join("voidx/presentation/gateway/session/method/sessions.py"),
+        b"new_temporary_thread_id runtime_profile=profile",
+    )
+    .unwrap();
+
+    let fingerprint = voidx_desktop::hash_image_tree(image.path()).unwrap();
+    let manifest = serde_json::json!({
+        "schema_version": 1,
+        "backend_version": "3.8.0",
+        "backend_api": "gateway-v2",
+        "target": voidx_desktop::current_runtime_target_triple(),
+        "image_fingerprint": fingerprint,
+        "python_relative": "python/bin/python",
+        "site_packages_relative": "site-packages",
+        "source_revision": "test-revision"
+    });
+    std::fs::write(
+        image.path().join("manifest.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let store = data_root.path().join("store");
+    std::fs::create_dir_all(&store).unwrap();
+    std::fs::write(store.join("voidx.db"), b"existing database").unwrap();
+
+    let installed = voidx_desktop::install_backend_image(
+        data_root.path(),
+        image.path(),
+        "3.8.0",
+        "gateway-v2",
+        voidx_desktop::current_runtime_target_triple(),
+    )
+    .unwrap();
+    voidx_desktop::activate_runtime(data_root.path(), &manifest).unwrap();
+
+    assert_eq!(
+        installed,
+        data_root.path().join("runtime/versions").join(fingerprint)
+    );
+    assert!(installed.join("python/bin/python").exists());
+    assert_eq!(
+        std::fs::read(store.join("voidx.db")).unwrap(),
+        b"existing database"
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(
+            &std::fs::read(data_root.path().join("runtime/current.json")).unwrap()
+        )
+        .unwrap(),
+        manifest
+    );
+}
+
+#[test]
+fn install_backend_image_does_not_activate_incomplete_source() {
+    let data_root = tempfile::tempdir().unwrap();
+    let image = tempfile::tempdir().unwrap();
+    std::fs::write(image.path().join("manifest.json"), b"{}").unwrap();
+
+    assert!(voidx_desktop::install_backend_image(
+        data_root.path(),
+        image.path(),
+        "3.8.0",
+        "gateway-v2",
+        voidx_desktop::current_runtime_target_triple(),
+    )
+    .is_err());
+    assert!(!data_root.path().join("runtime/current.json").exists());
 }

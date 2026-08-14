@@ -41,6 +41,8 @@ desktop/tauri/target/
 desktop/tauri/gen/
 # Cargo.lock 对二进制应用应入库
 !desktop/tauri/Cargo.lock
+desktop/tauri/resources/backend/*
+!desktop/tauri/resources/backend/.gitkeep
 
 # npm bundled wheel (build artifact, copied by release.py)
 npm/*.whl

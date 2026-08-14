@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import subprocess
 import sys
@@ -47,6 +48,47 @@ def test_voidx_script_prioritizes_workspace_source_over_installed_package(
     assert "loaded fake installed voidx" not in result.stdout
     assert result.stdout.startswith("voidx v")
 
+
+
+def test_voidx_script_uses_shared_runtime_when_voidx_home_is_data_root(
+    tmp_path: Path,
+) -> None:
+    data_root = tmp_path / ".voidx"
+    fingerprint = "a" * 64
+    runtime = data_root / "runtime" / "versions" / fingerprint
+    runtime.mkdir(parents=True)
+    python_path = runtime / ("python.exe" if os.name == "nt" else "python")
+    python_path.write_bytes(Path(sys.executable).read_bytes())
+    python_path.chmod(0o755)
+    (runtime / "site-packages").mkdir()
+    (data_root / "runtime" / "current.json").write_text(
+        json.dumps(
+            {
+                "image_fingerprint": fingerprint,
+                "python_relative": python_path.name,
+                "site_packages_relative": "site-packages",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = os.environ.copy()
+    env["VOIDX_HOME"] = str(data_root)
+    env["PYTHONPATH"] = os.pathsep.join(
+        entry for entry in sys.path if entry and Path(entry).is_dir()
+    )
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "voidx.py"), "--version"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("voidx v")
 
 def test_print_version_uses_void_console(monkeypatch) -> None:
     voidx_main = importlib.import_module("voidx.bootstrap.command_line")

@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
 # voidx desktop one-click build script.
-# Builds the frontend (../../frontend) then runs `tauri build` to produce
-# native desktop bundles (dmg/app on macOS, msi on Windows, deb/appimage on Linux).
+# Builds the backend image and frontend (../../frontend), then runs `tauri build`
+# to produce native desktop bundles (dmg/app on macOS, msi on Windows,
+# deb/appimage on Linux).
 #
 # Usage:
-#   ./build.sh            # build frontend + tauri bundle
+#   ./build.sh            # build backend image + frontend + tauri bundle
 #   ./build.sh --clean    # remove old build artifacts first
 #   ./build.sh --no-frontend  # skip frontend build (assume dist is fresh)
 #   ./build.sh --help     # show this help
 #
-# The Python backend is NOT bundled. At runtime the Tauri app resolves the
-# voidx Python interpreter via resolve_python() in tauri/src/main.rs
-# (.venv, ~/.local/share/voidx/venv, PATH, etc.). This script keeps that
-# contract: it only builds the native shell + frontend assets.
+# The backend image contains the platform Python runtime, dependencies, and
+# current voidx wheel. At runtime Tauri installs it into ~/.voidx/runtime.
 
 set -euo pipefail
 
@@ -23,6 +22,14 @@ ROOT_DIR="$(cd "$DESKTOP_DIR/.." && pwd)"
 FRONTEND_DIR="$ROOT_DIR/frontend"
 TAURI_DIR="$DESKTOP_DIR/tauri"
 BUNDLE_DIR="$TAURI_DIR/target/release/bundle"
+BACKEND_RESOURCE_DIR="$TAURI_DIR/resources/backend"
+BACKEND_WORK_DIR="$TAURI_DIR/target/desktop-backend-build"
+
+restore_backend_resource_placeholder() {
+  mkdir -p "$BACKEND_RESOURCE_DIR"
+  touch "$BACKEND_RESOURCE_DIR/.gitkeep"
+}
+trap restore_backend_resource_placeholder EXIT
 
 # --- Args ------------------------------------------------------------------
 CLEAN=0
@@ -38,7 +45,7 @@ for arg in "$@"; do
 done
 
 if [ "$SHOW_HELP" = "1" ]; then
-  sed -n '2,16p' "$0"
+  sed -n '2,15p' "$0"
   exit 0
 fi
 
@@ -54,11 +61,6 @@ warn() { echo "${YELLOW}!${RESET} $*" >&2; }
 die()  { echo "${RED}✗${RESET} $*" >&2; exit 1; }
 
 # --- Rust/Cargo PATH bootstrap ---------------------------------------------
-# rustup installs cargo as a proxy under ~/.cargo/bin, but that dir is only
-# added to PATH when ~/.cargo/env is sourced (typically via ~/.zshrc /
-# ~/.bash_profile). Non-interactive shells (CI, tool runners) don't load
-# those files, so cargo appears "missing" even though it's installed.
-# Source the env file if present so the dependency check below succeeds.
 if [ -z "${CARGO_HOME:-}" ]; then
   CARGO_HOME="$HOME/.cargo"
 fi
@@ -76,7 +78,6 @@ log "checking dependencies..."
 check_cmd node
 check_cmd npm
 check_cmd cargo
-# tauri-cli is invoked via npm script in desktop/, so just ensure npm deps resolve.
 ok "node $(node -v), npm $(npm -v), cargo $(cargo --version 2>&1 | awk '{print $1" "$2}')"
 
 # --- Clean -----------------------------------------------------------------
@@ -86,6 +87,43 @@ if [ "$CLEAN" = "1" ]; then
   rm -rf "$FRONTEND_DIR/dist"
   ok "cleaned"
 fi
+
+# --- Backend image build ---------------------------------------------------
+log "building bundled backend image..."
+[ -f "$ROOT_DIR/python.py" ] || die "python launcher not found at $ROOT_DIR/python.py"
+[ -f "$ROOT_DIR/scripts/package.py" ] || die "package builder not found at $ROOT_DIR/scripts/package.py"
+
+BACKEND_VERSION="$(cd "$ROOT_DIR" && "$ROOT_DIR/python.py" -c 'from scripts.desktop_backend_manifest import BACKEND_VERSION; print(BACKEND_VERSION)')"
+[ -n "$BACKEND_VERSION" ] || die "could not read backend version from src/voidx/platform/version.py"
+BACKEND_TARGET="$(cd "$ROOT_DIR" && "$ROOT_DIR/python.py" -c 'from scripts.desktop_backend_manifest import target_triple; print(target_triple())')"
+INSTALL_ROOT="${VOIDX_INSTALL_ROOT:-${VOIDX_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/voidx}}"
+WHEEL_DIR="$BACKEND_WORK_DIR/wheels"
+
+rm -rf "$BACKEND_WORK_DIR" "$BACKEND_RESOURCE_DIR"
+mkdir -p "$WHEEL_DIR" "$BACKEND_RESOURCE_DIR"
+(
+  cd "$ROOT_DIR"
+  "$ROOT_DIR/python.py" scripts/package.py \
+    --format wheel \
+    --out-dir "$WHEEL_DIR" \
+    --clean \
+    --skip-checks
+)
+WHEEL_PATH="$(find "$WHEEL_DIR" -maxdepth 1 -type f -name "voidx-${BACKEND_VERSION}-*.whl" ! -name 'voidx_cli-*' -print -quit)"
+[ -n "$WHEEL_PATH" ] || die "backend wheel for version $BACKEND_VERSION was not produced"
+(
+  cd "$ROOT_DIR"
+  "$ROOT_DIR/python.py" -m scripts.build_desktop_backend \
+    --output "$BACKEND_RESOURCE_DIR" \
+    --install-root "$INSTALL_ROOT" \
+    --wheel "$WHEEL_PATH" \
+    --version "$BACKEND_VERSION" \
+    --target "$BACKEND_TARGET"
+)
+[ -f "$BACKEND_RESOURCE_DIR/manifest.json" ] || die "backend image manifest was not produced"
+[ -d "$BACKEND_RESOURCE_DIR/python" ] || die "backend image Python runtime was not produced"
+[ -d "$BACKEND_RESOURCE_DIR/site-packages" ] || die "backend image site-packages was not produced"
+ok "backend image ready at $BACKEND_RESOURCE_DIR ($BACKEND_TARGET)"
 
 # --- Frontend build --------------------------------------------------------
 if [ "$NO_FRONTEND" = "0" ]; then

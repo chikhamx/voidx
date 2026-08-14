@@ -3,16 +3,22 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
-use serde_json::json;
+use serde_json::{json, Value};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
 #[cfg(not(windows))]
 use voidx_desktop::CommandExt;
-use tauri::{Emitter, State, WindowEvent};
+use tauri::{Emitter, Manager, State, WindowEvent};
 
-use voidx_desktop::{BackendStatus, resolve_python, resolve_workspace};
+use voidx_desktop::{
+    activate_runtime, acquire_runtime_install_lock, backend_manifest_is_compatible,
+    backend_manifests_match, current_runtime_target_triple, default_data_root,
+    bundled_backend_command_args, install_backend_image, probe_backend, resolve_python,
+    resolve_workspace,
+    validate_installed_runtime, BackendStatus, BACKEND_API, BACKEND_VERSION,
+};
 
 struct AppState {
     gateway_url: Arc<Mutex<Option<String>>>,
@@ -74,6 +80,94 @@ fn restart_backend(
     json!({"status": "restarting"})
 }
 
+struct PreparedBackend {
+    python: PathBuf,
+    site_packages: Option<PathBuf>,
+    data_root: PathBuf,
+}
+
+fn read_manifest(path: &std::path::Path) -> Result<Value, String> {
+    serde_json::from_slice(
+        &std::fs::read(path).map_err(|error| format!("read backend manifest {}: {error}", path.display()))?,
+    )
+    .map_err(|error| format!("parse backend manifest {}: {error}", path.display()))
+}
+
+fn prepare_backend(app: &tauri::AppHandle) -> Result<PreparedBackend, String> {
+    let data_root = default_data_root()
+        .ok_or_else(|| "cannot resolve the user home for ~/.voidx".to_string())?;
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|error| format!("resolve bundled backend resources: {error}"))?;
+    let image_dir = resource_dir.join("backend");
+    let bundled_manifest_path = image_dir.join("manifest.json");
+
+    if !bundled_manifest_path.is_file() {
+        if cfg!(debug_assertions) {
+            let python = resolve_python()
+                .ok_or_else(|| "failed to resolve development Python interpreter".to_string())?;
+            return Ok(PreparedBackend {
+                python,
+                site_packages: None,
+                data_root,
+            });
+        }
+        return Err(format!(
+            "bundled backend image is missing: {}",
+            bundled_manifest_path.display()
+        ));
+    }
+
+    let bundled_manifest = read_manifest(&bundled_manifest_path)?;
+    let target = current_runtime_target_triple();
+    if !backend_manifest_is_compatible(
+        &bundled_manifest,
+        BACKEND_VERSION,
+        BACKEND_API,
+        target,
+    ) {
+        return Err(format!(
+            "bundled backend manifest is incompatible with this desktop build (target {target})"
+        ));
+    }
+
+    let _install_lock = acquire_runtime_install_lock(&data_root)?;
+    let current_manifest_path = voidx_desktop::runtime_current_manifest_path(&data_root);
+    if let Ok(current_manifest) = read_manifest(&current_manifest_path) {
+        if backend_manifests_match(&current_manifest, &bundled_manifest) {
+            if let Ok((python, site_packages)) =
+                validate_installed_runtime(&data_root, &bundled_manifest)
+            {
+                if probe_backend(&python, &site_packages, BACKEND_VERSION).is_ok() {
+                    return Ok(PreparedBackend {
+                        python,
+                        site_packages: Some(site_packages),
+                        data_root,
+                    });
+                }
+            }
+        }
+    }
+
+    let runtime_dir = install_backend_image(
+        &data_root,
+        &image_dir,
+        BACKEND_VERSION,
+        BACKEND_API,
+        target,
+    )?;
+    activate_runtime(&data_root, &bundled_manifest)?;
+    let (python, site_packages) = validate_installed_runtime(&data_root, &bundled_manifest)?;
+    probe_backend(&python, &site_packages, BACKEND_VERSION)?;
+    eprintln!("voidx backend runtime installed at {}", runtime_dir.display());
+    Ok(PreparedBackend {
+        python,
+        site_packages: Some(site_packages),
+        data_root,
+    })
+}
+
 fn spawn_backend(
     app: tauri::AppHandle,
     gateway_url: Arc<Mutex<Option<String>>>,
@@ -82,27 +176,25 @@ fn spawn_backend(
     workspace: Arc<Mutex<PathBuf>>,
 ) {
     std::thread::spawn(move || {
-        let python = match resolve_python() {
-            Some(path) => path,
-            None => {
-                let error = "failed to resolve python interpreter".to_string();
+        let prepared = match prepare_backend(&app) {
+            Ok(prepared) => prepared,
+            Err(error) => {
                 eprintln!("{error}");
                 set_failed(&app, &backend_status, &gateway_url, error);
                 return;
             }
         };
+        let python = prepared.python;
 
-        // Diagnostic log: only when VOIDX_DEBUG is set. Helps debug backend
-        // spawn failures (e.g. msi install startup) without polluting prod.
         if std::env::var("VOIDX_DEBUG").is_ok() {
             let log_path = std::env::temp_dir().join("voidx_spawn_diag.log");
             if let Ok(mut f) = std::fs::File::create(&log_path) {
                 use std::io::Write;
                 let _ = writeln!(f, "exe: {:?}", std::env::current_exe());
                 let _ = writeln!(f, "cwd: {:?}", std::env::current_dir());
-                let _ = writeln!(f, "LOCALAPPDATA: {:?}", std::env::var("LOCALAPPDATA"));
-                let _ = writeln!(f, "VOIDX_PYTHON: {:?}", std::env::var("VOIDX_PYTHON"));
                 let _ = writeln!(f, "resolved python: {:?}", python);
+                let _ = writeln!(f, "bundled site-packages: {:?}", prepared.site_packages);
+                let _ = writeln!(f, "data root: {:?}", prepared.data_root);
                 let resolved_workspace = workspace
                     .lock()
                     .map(|slot| slot.clone())
@@ -116,26 +208,27 @@ fn spawn_backend(
             .map(|slot| slot.clone())
             .unwrap_or_else(|_| resolve_workspace());
         let mut command = Command::new(&python);
+        if let Some(site_packages) = &prepared.site_packages {
+            command.args(bundled_backend_command_args(site_packages));
+        } else {
+            command.args(["-m", "voidx.main"]);
+        }
         command
             .args([
-                "-m",
-                "voidx.main",
                 "--web",
                 "--web-headless",
                 "-w",
                 &workspace.to_string_lossy(),
             ])
+            .env("VOIDX_HOME", &prepared.data_root)
+            .env("PYTHONNOUSERSITE", "1")
             .stderr(Stdio::piped())
             .stdout(Stdio::null());
-        // Start the backend in its own process group so kill_backend can
-        // terminate the whole tree (Python + any MCP/LSP subprocesses).
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
         }
-        // Windows: suppress the console window that spawn() allocates for the
-        // child process, so only the Tauri window is visible to the user.
         #[cfg(windows)]
         {
             const CREATE_NO_WINDOW: u32 = 0x08000000;

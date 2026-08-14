@@ -45,7 +45,7 @@ fn desktop_frontend_runtime_profile_contract_is_embedded() {
     for profile in ["coding", "chat", "loop", "goal"] {
         assert!(sidebar.contains(&format!("\"{profile}\"")));
     }
-    assert!(main.contains("rpcCall(\"session.create\", { directory })"));
+    assert!(main.contains("rpcCall(\"session.create\", params)"));
     assert!(main.contains("rpcCall(\"session.switch\", { thread_id: threadId })"));
     assert!(main.contains("runtime_profile"));
 }

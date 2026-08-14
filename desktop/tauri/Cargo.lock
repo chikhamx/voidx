@@ -3737,10 +3737,11 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "voidx-desktop"
-version = "1.0.0"
+version = "3.8.0"
 dependencies = [
  "libc",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
