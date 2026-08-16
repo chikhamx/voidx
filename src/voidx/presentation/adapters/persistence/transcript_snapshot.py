@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 from collections import defaultdict
 import asyncio
@@ -12,7 +13,9 @@ from voidx.presentation.output.tree import OutputNode, OutputTree
 
 from voidx.persistence.jsonl import (
     append_session_records,
+    replace_session_records,
     read_session_records_from_offset,
+    read_session_records_between_offsets,
     session_dir,
     write_session_json,
 )
@@ -48,6 +51,18 @@ class TranscriptNodeRow(BaseModel):
     updated_at: str = Field(default_factory=now)
 
 
+
+
+
+@dataclass(frozen=True)
+class TranscriptPage:
+    rows: list[TranscriptNodeRow]
+    before_turn_id: int | None
+    after_turn_id: int | None
+    has_earlier: bool
+    has_later: bool
+
+
 async def replace_transcript(
     session_id: str,
     nodes: list[TranscriptNodeRow],
@@ -68,6 +83,33 @@ async def load_transcript(session_id: str) -> list[TranscriptNodeRow]:
     return await _load_transcript_jsonl(session_id) or []
 
 
+async def load_transcript_page(
+    session_id: str,
+    *,
+    before_turn_id: int | None = None,
+    turn_limit: int = 20,
+) -> TranscriptPage:
+    """Load a bounded turn window without scanning the full transcript when indexed."""
+    if turn_limit <= 0:
+        raise ValueError("turn_limit must be positive")
+
+    indexed_page = await _load_indexed_transcript_page(
+        session_id,
+        before_turn_id=before_turn_id,
+        turn_limit=turn_limit,
+    )
+    if indexed_page is not None:
+        return indexed_page
+
+    rows = await _load_transcript_jsonl(session_id) or []
+    return _page_from_rows(
+        rows,
+        sorted({row.turn_id for row in rows}),
+        before_turn_id=before_turn_id,
+        turn_limit=turn_limit,
+    )
+
+
 async def clear_transcript(session_id: str) -> None:
     await append_transcript_reset(session_id, reason="clear_transcript")
 
@@ -79,42 +121,11 @@ async def append_transcript_reset(session_id: str, *, reason: str) -> None:
         "created_at": now(),
     }
     offsets, transcript_size = await append_session_records(session_id, "transcript.jsonl", [record])
-    await write_session_json(session_id, "transcript.idx.json", {
-        "version": 1,
-        "transcript_size": transcript_size,
-        "last_reset_offset": offsets[0] if offsets else 0,
-        "turn_offsets": {},
-        "summary_offsets": {},
-        "last_checkpoint_offset": None,
-        "last_checkpoint_path": None,
-    })
-
-
-async def append_transcript_summary(session_id: str, *, turn_id: int, content: str) -> None:
-    record = {
-        "type": "summary",
-        "turn_id": turn_id,
-        "content": content,
-        "created_at": now(),
-    }
-    offsets, transcript_size = await append_session_records(session_id, "transcript.jsonl", [record])
-    index = _load_transcript_index(session_id) or {
-        "version": 1,
-        "last_reset_offset": 0,
-        "turn_offsets": {},
-        "summary_offsets": {},
-        "last_checkpoint_offset": None,
-        "last_checkpoint_path": None,
-    }
-    summary_offsets = index.get("summary_offsets")
-    if not isinstance(summary_offsets, dict):
-        summary_offsets = {}
-    summary_offsets[str(turn_id)] = offsets[0] if offsets else 0
-    index.update({
-        "version": 1,
-        "transcript_size": transcript_size,
-        "summary_offsets": summary_offsets,
-    })
+    index = _build_transcript_index(
+        [record],
+        offsets,
+        transcript_size,
+    )
     await write_session_json(session_id, "transcript.idx.json", index)
 
 
@@ -125,29 +136,15 @@ async def _write_transcript_jsonl_snapshot(
     timestamp: str,
 ) -> None:
     records = _transcript_snapshot_records(nodes, turn_ids, timestamp)
-    offsets, transcript_size = await append_session_records(session_id, "transcript.jsonl", records)
-    turn_offsets: dict[str, int] = {}
-    last_reset_offset = 0
-    summary_offsets: dict[str, int] = {}
-    for record, offset in zip(records, offsets, strict=False):
-        rtype = record.get("type")
-        if rtype == "transcript_reset":
-            last_reset_offset = offset
-        elif rtype == "turn_start":
-            turn_offsets[str(record["turn_id"])] = offset
-        elif rtype == "summary":
-            summary_offsets[str(record["turn_id"])] = offset
+    offsets, transcript_size = await replace_session_records(session_id, "transcript.jsonl", records)
     checkpoint_path = "transcript.checkpoint.json"
     await write_session_json(session_id, checkpoint_path, _checkpoint_payload(nodes, transcript_size))
-    await write_session_json(session_id, "transcript.idx.json", {
-        "version": 1,
-        "transcript_size": transcript_size,
-        "last_reset_offset": last_reset_offset,
-        "turn_offsets": turn_offsets,
-        "summary_offsets": summary_offsets,
+    index = _build_transcript_index(records, offsets, transcript_size)
+    index.update({
         "last_checkpoint_offset": transcript_size,
         "last_checkpoint_path": checkpoint_path,
     })
+    await write_session_json(session_id, "transcript.idx.json", index)
 
 
 def _transcript_snapshot_records(
@@ -207,13 +204,261 @@ def _node_record(node: TranscriptNodeRow) -> dict[str, Any]:
     return record
 
 
+class _TranscriptIndexBuilder:
+    def __init__(self) -> None:
+        self.last_reset_offset = 0
+        self.turn_offsets: dict[str, int] = {}
+        self.summary_offsets: dict[str, int] = {}
+        self.turn_ranges: dict[str, list[int]] = {}
+        self.range_readable = True
+        self._open_turn_id: int | None = None
+        self._open_turn_start: int | None = None
+
+    def add(self, record: dict[str, Any], offset: int, end_offset: int) -> None:
+        record_type = record.get("type")
+        if record_type == "transcript_reset":
+            self.last_reset_offset = offset
+            self.turn_offsets.clear()
+            self.summary_offsets.clear()
+            self.turn_ranges.clear()
+            self.range_readable = True
+            self._open_turn_id = None
+            self._open_turn_start = None
+            return
+        if record_type == "turn_start":
+            turn_id = record.get("turn_id")
+            key = str(turn_id) if isinstance(turn_id, int) else ""
+            if not key or self._open_turn_id is not None or key in self.turn_offsets:
+                self.range_readable = False
+                return
+            self.turn_offsets[key] = offset
+            self._open_turn_id = turn_id
+            self._open_turn_start = offset
+            return
+        if record_type == "node":
+            turn_id = record.get("turn_id")
+            if self._open_turn_id != turn_id or not isinstance(turn_id, int):
+                self.range_readable = False
+            if not isinstance(record.get("node_id"), int) or not isinstance(
+                record.get("sort_order"), int
+            ):
+                self.range_readable = False
+            return
+        if record_type == "turn_end":
+            turn_id = record.get("turn_id")
+            if (
+                self._open_turn_id != turn_id
+                or self._open_turn_start is None
+                or not isinstance(turn_id, int)
+            ):
+                self.range_readable = False
+                return
+            self.turn_ranges[str(turn_id)] = [self._open_turn_start, end_offset]
+            self._open_turn_id = None
+            self._open_turn_start = None
+            return
+        if record_type == "summary":
+            turn_id = record.get("turn_id")
+            if isinstance(turn_id, int):
+                self.summary_offsets[str(turn_id)] = offset
+            self.range_readable = False
+            return
+        self.range_readable = False
+
+    def mark_invalid(self) -> None:
+        self.range_readable = False
+
+    def build(self, transcript_size: int) -> dict[str, Any]:
+        if self._open_turn_id is not None:
+            self.range_readable = False
+        return {
+            "version": 2,
+            "transcript_size": transcript_size,
+            "last_reset_offset": self.last_reset_offset,
+            "turn_offsets": self.turn_offsets,
+            "turn_ranges": self.turn_ranges,
+            "summary_offsets": self.summary_offsets,
+            "range_readable": self.range_readable,
+            "indexed_end_offset": transcript_size,
+            "last_checkpoint_offset": None,
+            "last_checkpoint_path": None,
+        }
+
+
+def _build_transcript_index(
+    records: list[dict[str, Any]],
+    offsets: list[int],
+    transcript_size: int,
+) -> dict[str, Any]:
+    builder = _TranscriptIndexBuilder()
+    if len(records) != len(offsets):
+        builder.mark_invalid()
+    for index, (record, offset) in enumerate(zip(records, offsets, strict=False)):
+        end_offset = offsets[index + 1] if index + 1 < len(offsets) else transcript_size
+        builder.add(record, offset, end_offset)
+    return builder.build(transcript_size)
+
+
 async def _load_transcript_jsonl(session_id: str) -> list[TranscriptNodeRow] | None:
     if not (session_dir(session_id) / "transcript.jsonl").exists():
         return None
     base_rows, records = await _read_transcript_records(session_id)
     if records is None:
         return None
+    return _apply_transcript_records(session_id, base_rows, records)
 
+
+async def _load_indexed_transcript_page(
+    session_id: str,
+    *,
+    before_turn_id: int | None,
+    turn_limit: int,
+) -> TranscriptPage | None:
+    path = session_dir(session_id) / "transcript.jsonl"
+    if not path.exists():
+        return None
+    index = _load_transcript_index(session_id)
+    transcript_size = path.stat().st_size
+    if (
+        index is None
+        or index.get("version") not in (1, 2)
+        or index.get("transcript_size") != transcript_size
+        or not isinstance(index.get("last_reset_offset"), int)
+    ):
+        return None
+
+    raw_turn_offsets = index.get("turn_offsets")
+    if not isinstance(raw_turn_offsets, dict):
+        return None
+    turn_offsets = {
+        int(turn_id): offset
+        for turn_id, offset in raw_turn_offsets.items()
+        if isinstance(turn_id, str)
+        and turn_id.lstrip("-").isdigit()
+        and isinstance(offset, int)
+        and offset >= 0
+    }
+    turn_ids = sorted(turn_offsets)
+    if not turn_ids:
+        return None
+
+    end = len(turn_ids) if before_turn_id is None else _turn_page_end(turn_ids, before_turn_id)
+    first_index = max(0, end - turn_limit)
+    first_turn_id = turn_ids[first_index] if first_index < end else None
+    if first_turn_id is None:
+        return _page_from_rows([], turn_ids, before_turn_id=before_turn_id, turn_limit=turn_limit)
+
+    selected_turn_ids = turn_ids[first_index:end]
+    if (
+        index.get("version") == 2
+        and index.get("range_readable") is True
+        and index.get("indexed_end_offset") == transcript_size
+    ):
+        raw_turn_ranges = index.get("turn_ranges")
+        if isinstance(raw_turn_ranges, dict):
+            turn_ranges: dict[int, tuple[int, int]] = {}
+            ranges_valid = True
+            for turn_id in selected_turn_ids:
+                value = raw_turn_ranges.get(str(turn_id))
+                if (
+                    not isinstance(value, list)
+                    or len(value) != 2
+                    or not isinstance(value[0], int)
+                    or not isinstance(value[1], int)
+                    or value[0] != turn_offsets[turn_id]
+                    or value[0] < 0
+                    or value[0] >= value[1]
+                    or value[1] > transcript_size
+                ):
+                    ranges_valid = False
+                    break
+                turn_ranges[turn_id] = (value[0], value[1])
+            if ranges_valid:
+                records = await read_session_records_between_offsets(
+                    session_id,
+                    "transcript.jsonl",
+                    turn_ranges[selected_turn_ids[0]][0],
+                    turn_ranges[selected_turn_ids[-1]][1],
+                )
+                if records is None:
+                    return None
+                record_turn_ids = {
+                    record["turn_id"]
+                    for record in records
+                    if isinstance(record.get("turn_id"), int)
+                }
+                if record_turn_ids == set(selected_turn_ids):
+                    return _page_from_rows(
+                        _apply_transcript_records(session_id, [], records),
+                        turn_ids,
+                        before_turn_id=before_turn_id,
+                        turn_limit=turn_limit,
+                    )
+
+    records = await read_session_records_from_offset(
+        session_id,
+        "transcript.jsonl",
+        turn_offsets[first_turn_id],
+    )
+    if records is None:
+        return None
+
+    rows = _apply_transcript_records(session_id, [], records)
+    record_turn_ids = sorted({
+        record["turn_id"]
+        for record in records
+        if isinstance(record.get("turn_id"), int)
+    })
+    if any(record.get("type") == "transcript_reset" for record in records):
+        effective_turn_ids = record_turn_ids or turn_ids
+    elif record_turn_ids:
+        effective_turn_ids = sorted(set(turn_ids).union(record_turn_ids))
+    else:
+        effective_turn_ids = turn_ids
+    return _page_from_rows(
+        rows,
+        effective_turn_ids,
+        before_turn_id=before_turn_id,
+        turn_limit=turn_limit,
+    )
+
+
+def _turn_page_end(turn_ids: list[int], before_turn_id: int | None) -> int:
+    if before_turn_id is None:
+        return len(turn_ids)
+    for index, turn_id in enumerate(turn_ids):
+        if turn_id >= before_turn_id:
+            return index
+    return len(turn_ids)
+
+
+def _page_from_rows(
+    rows: list[TranscriptNodeRow],
+    turn_ids: list[int],
+    *,
+    before_turn_id: int | None,
+    turn_limit: int,
+) -> TranscriptPage:
+    end = _turn_page_end(turn_ids, before_turn_id)
+    start = max(0, end - turn_limit)
+    selected_turn_ids = set(turn_ids[start:end])
+    page_rows = [row for row in rows if row.turn_id in selected_turn_ids]
+    page_rows.sort(key=lambda row: (row.turn_id, row.sort_order, row.node_id))
+    selected = turn_ids[start:end]
+    return TranscriptPage(
+        rows=page_rows,
+        before_turn_id=selected[0] if selected else None,
+        after_turn_id=selected[-1] if selected else None,
+        has_earlier=start > 0,
+        has_later=end < len(turn_ids),
+    )
+
+
+def _apply_transcript_records(
+    session_id: str,
+    base_rows: list[TranscriptNodeRow],
+    records: list[dict[str, Any]],
+) -> list[TranscriptNodeRow]:
     rows: dict[tuple[int, int], TranscriptNodeRow] = {
         (row.turn_id, row.node_id): row for row in base_rows
     }
@@ -221,16 +466,13 @@ async def _load_transcript_jsonl(session_id: str) -> list[TranscriptNodeRow] | N
         rtype = record.get("type")
         if rtype == "transcript_reset":
             rows.clear()
-            continue
-        if rtype == "summary":
+        elif rtype == "summary":
             _apply_summary_record(session_id, rows, record)
-            continue
-        if rtype == "node":
+        elif rtype == "node":
             row = _node_row_from_record(session_id, record)
             if row is not None:
                 rows[(row.turn_id, row.node_id)] = row
-            continue
-        if rtype == "node_update":
+        elif rtype == "node_update":
             _apply_node_update(rows, record)
 
     return [
@@ -246,7 +488,7 @@ async def _read_transcript_records(
     index = _load_transcript_index(session_id)
     if (
         index
-        and index.get("version") == 1
+        and index.get("version") in (1, 2)
         and index.get("transcript_size") == path.stat().st_size
         and isinstance(index.get("last_reset_offset"), int)
     ):
@@ -344,43 +586,28 @@ async def _rebuild_transcript_index(session_id: str) -> None:
 
 
 def _scan_transcript_index(path) -> dict[str, Any]:
-    last_reset_offset = 0
-    turn_offsets: dict[str, int] = {}
-    summary_offsets: dict[str, int] = {}
+    builder = _TranscriptIndexBuilder()
     with path.open("rb") as f:
         while True:
             offset = f.tell()
             raw_line = f.readline()
             if not raw_line:
                 break
-            raw_line = raw_line.strip()
-            if not raw_line:
+            end_offset = f.tell()
+            if not raw_line.strip():
+                builder.mark_invalid()
                 continue
             try:
                 line = raw_line.decode("utf-8")
                 record = json.loads(line)
             except (UnicodeDecodeError, json.JSONDecodeError):
+                builder.mark_invalid()
                 continue
             if not isinstance(record, dict):
+                builder.mark_invalid()
                 continue
-            rtype = record.get("type")
-            if rtype == "transcript_reset":
-                last_reset_offset = offset
-                turn_offsets = {}
-                summary_offsets = {}
-            elif rtype == "turn_start" and isinstance(record.get("turn_id"), int):
-                turn_offsets[str(record["turn_id"])] = offset
-            elif rtype == "summary" and isinstance(record.get("turn_id"), int):
-                summary_offsets[str(record["turn_id"])] = offset
-    return {
-        "version": 1,
-        "transcript_size": path.stat().st_size,
-        "last_reset_offset": last_reset_offset,
-        "turn_offsets": turn_offsets,
-        "summary_offsets": summary_offsets,
-        "last_checkpoint_offset": None,
-        "last_checkpoint_path": None,
-    }
+            builder.add(record, offset, end_offset)
+    return builder.build(path.stat().st_size)
 
 
 def _apply_summary_record(

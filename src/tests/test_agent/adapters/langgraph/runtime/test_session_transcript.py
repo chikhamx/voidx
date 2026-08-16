@@ -22,11 +22,25 @@ from voidx.agent.adapters.persistence.session_repository import (
 )
 from voidx.presentation.adapters.persistence.transcript_snapshot import (
     TranscriptNodeRow,
-    append_transcript_summary,
     load_transcript,
+    load_transcript_page,
     replace_transcript,
 )
-from voidx.persistence.jsonl import append_session_record
+from voidx.persistence.jsonl import append_session_record, append_session_records
+
+
+async def _append_summary_record(session_id: str) -> None:
+    offset = await append_session_record(session_id, "transcript.jsonl", {
+        "type": "summary",
+        "turn_id": 0,
+        "content": "older context summary",
+        "created_at": "test",
+    })
+    index_path = _session_dir(session_id) / "transcript.idx.json"
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    index["transcript_size"] = (_session_dir(session_id) / "transcript.jsonl").stat().st_size
+    index["summary_offsets"] = {"0": offset}
+    index_path.write_text(json.dumps(index), encoding="utf-8")
 
 @pytest.mark.asyncio
 async def test_replace_and_load_transcript_nodes():
@@ -78,7 +92,7 @@ async def test_replace_and_load_transcript_nodes():
         assert transcript_records[3]["metadata"]["meta"] == "Thinking for 2s"
 
         index = json.loads((_session_dir(session.id) / "transcript.idx.json").read_text(encoding="utf-8"))
-        assert index["version"] == 1
+        assert index["version"] == 2
         assert index["transcript_size"] == (_session_dir(session.id) / "transcript.jsonl").stat().st_size
         assert index["last_reset_offset"] == 0
         assert "0" in index["turn_offsets"]
@@ -177,18 +191,38 @@ async def test_load_transcript_uses_index_seek_after_latest_reset():
             )],
             turn_count=1,
         )
-        await replace_transcript(
+        index_path = _session_dir(session.id) / "transcript.idx.json"
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+        offsets, transcript_size = await append_session_records(
             session.id,
-            [TranscriptNodeRow(
-                session_id=session.id,
-                turn_id=0,
-                node_id=0,
-                sort_order=0,
-                node_type="turn",
-                header="latest",
-            )],
-            turn_count=1,
+            "transcript.jsonl",
+            [
+                {"type": "transcript_reset", "reason": "legacy_replace", "created_at": "test"},
+                {"type": "turn_start", "turn_id": 0, "timestamp": "test"},
+                {
+                    "type": "node",
+                    "turn_id": 0,
+                    "node_id": 0,
+                    "parent_node_id": None,
+                    "sort_order": 0,
+                    "node_type": "turn",
+                    "header": "latest",
+                    "body_lines": [],
+                    "status": "running",
+                    "collapsed": False,
+                    "created_at": "test",
+                    "updated_at": "test",
+                    "metadata": {},
+                },
+                {"type": "turn_end", "turn_id": 0, "timestamp": "test"},
+            ],
         )
+        index.update(
+            transcript_size=transcript_size,
+            last_reset_offset=offsets[0],
+            turn_offsets={"0": offsets[1]},
+        )
+        index_path.write_text(json.dumps(index), encoding="utf-8")
 
         path = _session_dir(session.id) / "transcript.jsonl"
         data = path.read_bytes()
@@ -373,7 +407,7 @@ async def test_load_transcript_uses_summary_offset_and_skips_summarized_turns():
             ],
             turn_count=1,
         )
-        await append_transcript_summary(session.id, turn_id=0, content="older context summary")
+        await _append_summary_record(session.id)
         await append_session_record(session.id, "transcript.jsonl", {
             "type": "node",
             "turn_id": 1,
@@ -427,7 +461,7 @@ async def test_load_transcript_rebuilds_corrupt_index_after_fallback_scan():
             ],
             turn_count=1,
         )
-        await append_transcript_summary(session.id, turn_id=0, content="older context summary")
+        await _append_summary_record(session.id)
         index_path = _session_dir(session.id) / "transcript.idx.json"
         index_path.write_text("{not json", encoding="utf-8")
 
@@ -480,5 +514,463 @@ async def test_load_transcript_rebuilds_missing_index_after_fallback_scan():
         assert rebuilt["transcript_size"] == (_session_dir(session.id) / "transcript.jsonl").stat().st_size
         assert rebuilt["last_reset_offset"] == 0
         assert "0" in rebuilt["turn_offsets"]
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_replace_transcript_does_not_accumulate_previous_snapshot_records():
+    session = await create_session()
+    try:
+        await replace_transcript(
+            session.id,
+            [
+                TranscriptNodeRow(
+                    session_id=session.id,
+                    turn_id=0,
+                    node_id=0,
+                    sort_order=0,
+                    node_type="turn",
+                    header="old snapshot",
+                )
+            ],
+            turn_count=1,
+        )
+        await replace_transcript(
+            session.id,
+            [
+                TranscriptNodeRow(
+                    session_id=session.id,
+                    turn_id=0,
+                    node_id=0,
+                    sort_order=0,
+                    node_type="turn",
+                    header="new snapshot",
+                )
+            ],
+            turn_count=1,
+        )
+
+        records = _read_jsonl(_session_dir(session.id) / "transcript.jsonl")
+        assert [record["type"] for record in records] == [
+            "transcript_reset",
+            "turn_start",
+            "node",
+            "turn_end",
+        ]
+        assert records[2]["header"] == "new snapshot"
+        assert "old snapshot" not in (_session_dir(session.id) / "transcript.jsonl").read_text(
+            encoding="utf-8"
+        )
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_load_transcript_page_reads_latest_window_and_before_cursor():
+    session = await create_session()
+    try:
+        nodes = []
+        for turn_id in range(4):
+            nodes.extend([
+                TranscriptNodeRow(
+                    session_id=session.id,
+                    turn_id=turn_id,
+                    node_id=0,
+                    sort_order=0,
+                    node_type="turn",
+                    header=f"turn {turn_id}",
+                ),
+                TranscriptNodeRow(
+                    session_id=session.id,
+                    turn_id=turn_id,
+                    node_id=1,
+                    parent_node_id=0,
+                    sort_order=1,
+                    node_type="assistant",
+                    header=f"reply {turn_id}",
+                    body_lines=[f"body {turn_id}"],
+                    status="done",
+                ),
+            ])
+        await replace_transcript(session.id, nodes, turn_count=4)
+
+        latest = await load_transcript_page(session.id, turn_limit=2)
+
+        assert [row.turn_id for row in latest.rows] == [2, 2, 3, 3]
+        assert latest.before_turn_id == 2
+        assert latest.after_turn_id == 3
+        assert latest.has_earlier is True
+        assert latest.has_later is False
+
+        earlier = await load_transcript_page(
+            session.id,
+            before_turn_id=latest.before_turn_id,
+            turn_limit=2,
+        )
+
+        assert [row.turn_id for row in earlier.rows] == [0, 0, 1, 1]
+        assert earlier.before_turn_id == 0
+        assert earlier.after_turn_id == 1
+        assert earlier.has_earlier is False
+        assert earlier.has_later is True
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_load_transcript_page_falls_back_when_index_is_missing():
+    session = await create_session()
+    try:
+        await replace_transcript(
+            session.id,
+            [
+                TranscriptNodeRow(
+                    session_id=session.id,
+                    turn_id=turn_id,
+                    node_id=0,
+                    sort_order=0,
+                    node_type="turn",
+                    header=f"turn {turn_id}",
+                )
+                for turn_id in range(3)
+            ],
+            turn_count=3,
+        )
+        (_session_dir(session.id) / "transcript.idx.json").unlink()
+
+        page = await load_transcript_page(session.id, turn_limit=2)
+
+        assert [row.turn_id for row in page.rows] == [1, 2]
+        assert page.has_earlier is True
+        assert page.has_later is False
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_load_transcript_page_seeks_turn_offset_without_loading_checkpoint(monkeypatch):
+    session = await create_session()
+    try:
+        await replace_transcript(
+            session.id,
+            [
+                TranscriptNodeRow(
+                    session_id=session.id,
+                    turn_id=turn_id,
+                    node_id=0,
+                    sort_order=0,
+                    node_type="turn",
+                    header=f"turn {turn_id}",
+                )
+                for turn_id in range(3)
+            ],
+            turn_count=3,
+        )
+        from voidx.presentation.adapters.persistence import transcript_snapshot as module
+
+        monkeypatch.setattr(
+            module,
+            "_load_transcript_checkpoint",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("paged reads must seek turn offsets")
+            ),
+        )
+
+        page = await load_transcript_page(session.id, turn_limit=1)
+
+        assert [row.turn_id for row in page.rows] == [2]
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_load_transcript_page_falls_back_for_legacy_records_without_turn_offsets():
+    session = await create_session()
+    try:
+        await replace_transcript(
+            session.id,
+            [TranscriptNodeRow(
+                session_id=session.id,
+                turn_id=0,
+                node_id=0,
+                sort_order=0,
+                node_type="turn",
+                header="old",
+            )],
+            turn_count=1,
+        )
+        _, transcript_size = await append_session_records(
+            session.id,
+            "transcript.jsonl",
+            [
+                {"type": "transcript_reset", "reason": "legacy", "created_at": "test"},
+                {"type": "turn_start", "turn_id": 1, "timestamp": "test"},
+                {
+                    "type": "node",
+                    "turn_id": 1,
+                    "node_id": 0,
+                    "parent_node_id": None,
+                    "sort_order": 0,
+                    "node_type": "turn",
+                    "header": "legacy latest",
+                    "body_lines": [],
+                    "status": "done",
+                    "collapsed": False,
+                    "created_at": "test",
+                    "updated_at": "test",
+                    "metadata": {},
+                },
+                {"type": "turn_end", "turn_id": 1, "timestamp": "test"},
+            ],
+        )
+        index_path = _session_dir(session.id) / "transcript.idx.json"
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+        index["transcript_size"] = transcript_size
+        index_path.write_text(json.dumps(index), encoding="utf-8")
+
+        page = await load_transcript_page(session.id, turn_limit=1)
+
+        assert [row.header for row in page.rows] == ["legacy latest"]
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_load_transcript_page_includes_turn_appended_after_stale_index():
+    session = await create_session()
+    try:
+        await replace_transcript(
+            session.id,
+            [TranscriptNodeRow(
+                session_id=session.id,
+                turn_id=0,
+                node_id=0,
+                sort_order=0,
+                node_type="turn",
+                header="old turn",
+            )],
+            turn_count=1,
+        )
+        summary_offset = await append_session_record(session.id, "transcript.jsonl", {
+            "type": "summary",
+            "turn_id": 0,
+            "content": "summary",
+            "created_at": "test",
+        })
+        _, transcript_size = await append_session_records(
+            session.id,
+            "transcript.jsonl",
+            [{
+                "type": "node",
+                "turn_id": 1,
+                "node_id": 0,
+                "parent_node_id": None,
+                "sort_order": 0,
+                "node_type": "turn",
+                "header": "new turn",
+                "body_lines": [],
+                "status": "done",
+                "collapsed": False,
+                "created_at": "test",
+                "updated_at": "test",
+                "metadata": {},
+            }],
+        )
+        index_path = _session_dir(session.id) / "transcript.idx.json"
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+        index["transcript_size"] = transcript_size
+        index["summary_offsets"] = {"0": summary_offset}
+        index_path.write_text(json.dumps(index), encoding="utf-8")
+
+        page = await load_transcript_page(session.id, turn_limit=1)
+
+        assert [row.header for row in page.rows] == ["new turn"]
+        assert page.before_turn_id == 1
+        assert page.after_turn_id == 1
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_replace_transcript_writes_bounded_turn_ranges():
+    session = await create_session()
+    try:
+        await replace_transcript(
+            session.id,
+            [
+                TranscriptNodeRow(
+                    session_id=session.id,
+                    turn_id=turn_id,
+                    node_id=0,
+                    sort_order=0,
+                    node_type="turn",
+                    header=f"turn {turn_id}",
+                )
+                for turn_id in range(3)
+            ],
+            turn_count=3,
+        )
+
+        index = json.loads(
+            (_session_dir(session.id) / "transcript.idx.json").read_text(encoding="utf-8")
+        )
+
+        assert index["version"] == 2
+        assert index["range_readable"] is True
+        assert index["indexed_end_offset"] == index["transcript_size"]
+        assert set(index["turn_ranges"]) == {"0", "1", "2"}
+        assert all(
+            start < end
+            for start, end in index["turn_ranges"].values()
+        )
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_load_transcript_page_reads_only_selected_turn_range(monkeypatch):
+    session = await create_session()
+    try:
+        await replace_transcript(
+            session.id,
+            [
+                TranscriptNodeRow(
+                    session_id=session.id,
+                    turn_id=turn_id,
+                    node_id=0,
+                    sort_order=0,
+                    node_type="turn",
+                    header=f"turn {turn_id}",
+                )
+                for turn_id in range(5)
+            ],
+            turn_count=5,
+        )
+        from voidx.presentation.adapters.persistence import transcript_snapshot as module
+
+        calls: list[tuple[str, str, int, int]] = []
+
+        async def read_between(
+            session_id: str,
+            filename: str,
+            start: int,
+            end: int,
+        ) -> list[dict]:
+            calls.append((session_id, filename, start, end))
+            records: list[dict] = []
+            path = _session_dir(session_id) / filename
+            with path.open("rb") as stream:
+                stream.seek(start)
+                while stream.tell() < end:
+                    raw_line = stream.readline()
+                    if not raw_line:
+                        break
+                    raw_line = raw_line.strip()
+                    if not raw_line:
+                        continue
+                    record = json.loads(raw_line.decode("utf-8"))
+                    if isinstance(record, dict):
+                        records.append(record)
+            return records
+
+        monkeypatch.setattr(
+            module,
+            "read_session_records_between_offsets",
+            read_between,
+            raising=False,
+        )
+
+        page = await load_transcript_page(
+            session.id,
+            before_turn_id=4,
+            turn_limit=1,
+        )
+
+        assert [row.header for row in page.rows] == ["turn 3"]
+        assert len(calls) == 1
+        _, filename, start, end = calls[0]
+        assert filename == "transcript.jsonl"
+        assert start < end < (_session_dir(session.id) / filename).stat().st_size
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_noncanonical_append_disables_bounded_transcript_page(monkeypatch):
+    session = await create_session()
+    try:
+        await replace_transcript(
+            session.id,
+            [TranscriptNodeRow(
+                session_id=session.id,
+                turn_id=0,
+                node_id=0,
+                sort_order=0,
+                node_type="thought",
+                header="Thinking",
+                body_lines=["before"],
+                status="running",
+            )],
+            turn_count=1,
+        )
+        await append_session_record(session.id, "transcript.jsonl", {
+            "type": "node_update",
+            "turn_id": 0,
+            "node_id": 0,
+            "status": "done",
+            "body_append": ["after"],
+        })
+        from voidx.presentation.adapters.persistence import transcript_snapshot as module
+
+        async def unexpected_range_read(*_args, **_kwargs):
+            raise AssertionError("noncanonical transcript must use fallback reading")
+
+        monkeypatch.setattr(
+            module,
+            "read_session_records_between_offsets",
+            unexpected_range_read,
+            raising=False,
+        )
+
+        page = await load_transcript_page(session.id, turn_limit=1)
+        index = json.loads(
+            (_session_dir(session.id) / "transcript.idx.json").read_text(encoding="utf-8")
+        )
+
+        assert [row.body_lines for row in page.rows] == [["before", "after"]]
+        assert index["version"] == 2
+        assert index["range_readable"] is False
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_load_transcript_page_falls_back_when_range_contains_same_size_corruption():
+    session = await create_session()
+    try:
+        await replace_transcript(
+            session.id,
+            [
+                TranscriptNodeRow(
+                    session_id=session.id,
+                    turn_id=turn_id,
+                    node_id=0,
+                    sort_order=0,
+                    node_type="turn",
+                    header=f"turn {turn_id}",
+                )
+                for turn_id in range(2)
+            ],
+            turn_count=2,
+        )
+        path = _session_dir(session.id) / "transcript.jsonl"
+        data = path.read_bytes()
+        corrupt_at = data.index(b'"header":"turn 1"')
+        path.write_bytes(data[:corrupt_at] + b"\xff" + data[corrupt_at + 1:])
+
+        page = await load_transcript_page(session.id, turn_limit=1)
+
+        assert [row.header for row in page.rows] == ["turn 1"]
     finally:
         await delete_session(session.id)

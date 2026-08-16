@@ -124,6 +124,51 @@ def _read_jsonl_from_offset_sync(path: Path, offset: int) -> list[dict[str, Any]
     return records
 
 
+def _read_jsonl_between_offsets_sync(
+    path: Path,
+    start_offset: int,
+    end_offset: int,
+) -> list[dict[str, Any]] | None:
+    records: list[dict[str, Any]] = []
+    with path.open("rb") as f:
+        f.seek(max(start_offset, 0))
+        while f.tell() < end_offset:
+            raw_line = f.readline()
+            if not raw_line:
+                return None
+            raw_line = raw_line.strip()
+            if not raw_line:
+                return None
+            try:
+                line = raw_line.decode("utf-8")
+                record = json.loads(line)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                return None
+            if not isinstance(record, dict):
+                return None
+            records.append(record)
+    return records
+
+
+async def read_session_records_between_offsets(
+    session_id: str,
+    filename: str,
+    start_offset: int,
+    end_offset: int,
+) -> list[dict[str, Any]] | None:
+    path = session_dir(session_id) / filename
+    if not path.exists():
+        return None
+    lock = await _get_lock(session_id)
+    async with lock:
+        return await asyncio.to_thread(
+            _read_jsonl_between_offsets_sync,
+            path,
+            start_offset,
+            end_offset,
+        )
+
+
 async def append_session_record(
     session_id: str,
     filename: str,
@@ -147,6 +192,44 @@ async def append_session_records(
     path = session_dir(session_id) / filename
     async with lock:
         return await asyncio.to_thread(_append_jsonl_records_sync, path, records)
+
+
+def _replace_jsonl_records_sync(path: Path, records: list[dict[str, Any]]) -> tuple[list[int], int]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f".{path.name}.tmp")
+    offsets: list[int] = []
+    try:
+        with temp_path.open("w", encoding="utf-8") as f:
+            for record in records:
+                offsets.append(f.tell())
+                f.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")))
+                f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+            size = f.tell()
+        os.replace(temp_path, path)
+        if os.name != "nt":
+            dir_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        return offsets, size
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+
+
+async def replace_session_records(
+    session_id: str,
+    filename: str,
+    records: list[dict[str, Any]],
+) -> tuple[list[int], int]:
+    """Atomically replace one session JSONL file and return offsets and size."""
+    lock = await _get_lock(session_id)
+    path = session_dir(session_id) / filename
+    async with lock:
+        return await asyncio.to_thread(_replace_jsonl_records_sync, path, records)
 
 
 async def write_session_records(
