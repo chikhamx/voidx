@@ -2,7 +2,6 @@ from tui_helpers import *  # noqa: F403
 
 import os
 import re
-import shutil
 import sys
 from types import SimpleNamespace
 
@@ -186,22 +185,6 @@ def test_render_impl_clips_transcript_to_visible_tail(tmp_path):
     assert "line 19" in rendered
 
 
-def test_frame_top_positioning_uses_terminal_height_for_absolute_row(tmp_path, monkeypatch):
-    """Frame rendering calculates start_row from terminal height so
-    the frame always renders at the bottom without scrollback pollution."""
-    monkeypatch.setattr(
-        shutil, "get_terminal_size",
-        lambda fallback=None: os.terminal_size((80, 30)),
-    )
-    tui = _tui(tmp_path)
-    tui._tty = True
-    tui._has_rendered_frame = True
-
-    # _move_to_frame_top_sequence is no longer called in the render path;
-    # absolute positioning is computed directly from terminal height.
-    # The old method still exists but is dead code.
-    tui._last_frame_rows = 5
-    assert tui._move_to_frame_top_sequence() == "\x1b[5A"
 
 
 def test_frame_end_sequence_returns_from_input_cursor_to_frame_end(tmp_path):

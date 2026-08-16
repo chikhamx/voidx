@@ -1,7 +1,7 @@
 use std::fs;
 use std::sync::Mutex;
 
-use voidx_desktop::resolve_workspace;
+use voidx_desktop::{is_usable_workspace, resolve_workspace};
 
 /// Serialize tests that mutate process-global env vars (`HOME`,
 /// `VOIDX_WORKSPACE`); cargo test runs threads in parallel.
@@ -68,4 +68,15 @@ fn resolve_workspace_ignores_persisted_state_file() {
 
     // Workspace lives only in memory now; resolution must not consult the file.
     assert_ne!(resolve_workspace(), persisted.path());
+}
+
+#[test]
+fn app_bundle_directories_are_not_workspaces() {
+    let root = tempfile::tempdir().unwrap();
+    let app_dir = root.path().join("voidx.app");
+    let executable_dir = app_dir.join("Contents/MacOS");
+    fs::create_dir_all(&executable_dir).unwrap();
+
+    assert!(!is_usable_workspace(&app_dir));
+    assert!(!is_usable_workspace(&executable_dir));
 }

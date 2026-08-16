@@ -1,4 +1,4 @@
-import type { TranscriptNode, Payload } from '../rpc/protocol';
+import type { TranscriptNode } from '../rpc/protocol';
 
 
 /* ── Local type aliases ── */
@@ -8,7 +8,7 @@ export interface NodePayload {
   tool_name?: string;
   diff_text?: string;
   args?: string | Record<string, unknown>;
-  raw_args?: { command?: string };
+  raw_args?: Record<string, unknown>;
   name?: string;
   description?: string;
   style?: string;
@@ -27,7 +27,7 @@ export interface ToolItemData {
   tool_name?: string;
   label?: string;
   args?: string | Record<string, unknown>;
-  raw_args?: { command?: string };
+  raw_args?: Record<string, unknown>;
   diff_text?: string;
   detail?: string;
   ok?: boolean;
@@ -65,6 +65,13 @@ export interface TodoItem {
 
 export interface TranscriptSnapshot {
   nodes: TranscriptNode[];
+  thread_id?: string;
+  revision?: number;
+  windowed?: boolean;
+  before_turn_id?: number | null;
+  after_turn_id?: number | null;
+  has_earlier?: boolean;
+  has_later?: boolean;
 }
 
 export type ByIdMap = Map<string, TranscriptNode>;
@@ -72,6 +79,5 @@ export type ByIdMap = Map<string, TranscriptNode>;
 export const TOOL_GROUP_PREVIEW_LIMIT = 3;
 
 export interface ToolInfo {
-
   tool_name: string;
 }

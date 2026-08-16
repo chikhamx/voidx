@@ -633,7 +633,8 @@ class LlmTurn:
             InteractionMode.PLAN.value if state.get("plan_mode", False) else host._interaction_mode.value
         )
         current_user_text = latest_user_text(state.get("messages", []))
-        instructions = await host._instruction.system()
+        profile_id = getattr(active_profile, "profile_id", "coding")
+        instructions = await host._instruction.system(include_files=profile_id != "chat")
         task_state = _task_state_for_context(state.get("task_state"), getattr(host, "_task_state", None))
         current_goal = task_state.current_goal
         existing_workflow_runs = list((task_state.workflow_runs or {}).values())

@@ -1,8 +1,7 @@
 import { renderMarkdown } from './markdown';
 import { iconSvg } from './icons';
-import { takeCommittedStreams, getTranscriptElement } from './stream';
+import { getTranscriptElement } from './stream';
 import type { ThoughtItemData } from './render-types';
-import { formatElapsed } from './render';
 
 function formatThoughtMeta(meta: string | null | undefined, elapsed?: number | null): string {
   let seconds = elapsed;

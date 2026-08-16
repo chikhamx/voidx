@@ -43,10 +43,8 @@ type GenerateDiffCb = () => void;
 let hunkDecisionCb: HunkDecisionCb | null = null;
 let applyDiffCb: ApplyDiffCb | null = null;
 let generateDiffCb: GenerateDiffCb | null = null;
-let currentReviewId: string | null = null;
 
 export function renderDiffReview(reviewId: string, snapshot: DiffSnapshot): void {
-  currentReviewId = reviewId;
   const pane = document.querySelector<HTMLElement>("#diff-pane");
   if (!pane) return;
 
@@ -236,5 +234,4 @@ export function _resetForTest(): void {
   hunkDecisionCb = null;
   applyDiffCb = null;
   generateDiffCb = null;
-  currentReviewId = null;
 }

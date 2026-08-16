@@ -86,6 +86,8 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._width_provider: Callable[[], int] | None = None
         self._needs_clear_screen: bool = False
         self._needs_force_flush: bool = False
+        self._restored_root_child_start: int | None = None
+        self._restored_root_child_end: int | None = None
 
     @property
     def active(self) -> bool:
@@ -216,9 +218,12 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._hints = []
         self._needs_clear_screen = True
         self._needs_force_flush = True
+        self._restored_root_child_start = None
+        self._restored_root_child_end = None
         self.refresh()
 
     def restore_tree(self, tree: OutputTree, *, append: bool = False) -> None:
+        history_start = len(self._tree.root.children) if append else 0
         if append:
             self._tree.extend_from(tree)
         else:
@@ -227,7 +232,14 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._mark_tree_settled()
         self._reset_runtime_nodes()
         self._todo_state = None
+        self._restored_root_child_start = history_start
+        self._restored_root_child_end = len(self._tree.root.children)
         self.refresh()
+
+    def restored_root_child_range(self) -> tuple[int, int] | None:
+        if self._restored_root_child_start is None or self._restored_root_child_end is None:
+            return None
+        return self._restored_root_child_start, self._restored_root_child_end
 
     def _reset_runtime_nodes(self) -> None:
         self._current_turn = None
@@ -477,6 +489,24 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
 
     def safe_flush_line_count(self, width: int, committed: int) -> int:
         lines, line_map = self._tree.render_with_line_map(width)
+        return self._safe_flush_limit(lines, line_map, committed)
+
+    def safe_flush_root_slice_line_count(
+        self,
+        width: int,
+        start: int,
+        end: int,
+        committed: int,
+    ) -> int:
+        lines, line_map = self._tree.render_root_slice_with_line_map(width, start, end)
+        return self._safe_flush_limit(lines, line_map, committed)
+
+    def _safe_flush_limit(
+        self,
+        lines: list[str],
+        line_map: dict[int, str],
+        committed: int,
+    ) -> int:
         index = max(0, min(committed, len(lines)))
         while index < len(lines):
             node_id = line_map.get(index)
@@ -498,6 +528,12 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
             and node.payload.get("phase") == "thinking"
         )
 
+    def active_thinking_stream_node_id(self) -> str | None:
+        node = self._stream_node
+        if not self.has_active_thinking_stream() or node is None:
+            return None
+        return node.id
+
     def active_thinking_stream_line_ids(self, width: int) -> set[int]:
         node = self._stream_node
         if not self.has_active_thinking_stream() or node is None:
@@ -509,12 +545,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         node = self._stream_node
         if not self.has_active_thinking_stream() or node is None:
             return []
-        lines, line_map = self._tree.render_with_line_map(width)
-        return [
-            line
-            for index, line in enumerate(lines)
-            if line_map.get(index) == node.id
-        ]
+        return self._tree.render_node_lines(node.id, width)
 
     def mark_node_settled(self, node: OutputNode | None) -> None:
         self._mark_subtree_settled(node)

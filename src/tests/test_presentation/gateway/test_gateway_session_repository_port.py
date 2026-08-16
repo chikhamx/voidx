@@ -243,6 +243,36 @@ async def test_first_successful_turn_promotes_temporary_session() -> None:
     assert session.list_threads()[0].status == "idle"
 
 
+@pytest.mark.asyncio
+async def test_chat_runtime_events_stay_attached_to_the_session_thread() -> None:
+    from tests.test_presentation.gateway.helpers import FakeClient
+    from voidx.presentation.output.events.schema import TurnCompleted, TurnStarted
+
+    repository = FakeSessionRepository()
+    session = GatewaySession(
+        lambda: BottomInputDock().tree,
+        workspace="/workspace",
+        session_repository=repository,
+        command_handler=lambda command: None,
+    )
+    await session.connect(FakeClient())
+    created = await dispatch(session, 40, "session.create", {"profile": "chat"})
+    thread_id = created["thread_id"]
+
+    await dispatch(session, 41, "session.submit", {"thread_id": thread_id, "text": "hello"})
+    await session.broadcast_event(
+        TurnStarted(text="hello", thread_id=f"chat:{thread_id}"),
+    )
+    await session.broadcast_event(TurnCompleted(thread_id=f"chat:{thread_id}"))
+
+    assert session.active_thread_id == thread_id
+    assert [(thread.thread_id, thread.runtime_profile) for thread in session.list_threads()] == [
+        (thread_id, "chat"),
+    ]
+    assert session.list_threads()[0].temporary is False
+    assert repository.calls[-1] == ("promote", thread_id)
+
+
 
 
 @pytest.mark.asyncio

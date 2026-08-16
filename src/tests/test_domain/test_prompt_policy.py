@@ -56,11 +56,8 @@ class TestChatPromptPolicy:
     def test_base_system_spec_is_chat_spec(self):
         assert ChatPromptPolicy().base_system_spec() is CHAT_PROFILE_SPEC
 
-    def test_profile_sections_returns_directive(self):
-        sections = ChatPromptPolicy().profile_sections(None)
-        assert len(sections) == 1
-        assert sections[0].name == "Profile Directive"
-        assert "chat" in sections[0].content.lower()
+    def test_profile_sections_empty(self):
+        assert ChatPromptPolicy().profile_sections(None) == []
 
     def test_suppress_sections_covers_coding_only_sections(self):
         suppress = ChatPromptPolicy().suppress_sections()

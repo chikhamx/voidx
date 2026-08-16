@@ -3,13 +3,13 @@ import { takeCommittedStreams, clearActiveStreams, appendStreamText, commitStrea
 import type { TranscriptNode, Payload } from '../rpc/protocol';
 import { iconSvg } from './icons';
 import type {
-  NodePayload, MessageItemData, ToolItemData, ThoughtItemData,
-  NoticeItemData, DiffItemData, StatusItemData, TodoItem, ByIdMap,
+  MessageItemData, TodoItem, ByIdMap,
   TranscriptSnapshot,
 } from './render-types';
 import { handleToolItem } from './render-tool-items';
+import { resetFileChangeCards } from './render-file-changes';
 import { appendThoughtItem } from './render-thought-items';
-import { appendNoticeItem, appendDiffItem, appendCompactionDivider, handleStatusItem } from './render-notice-status';
+import { appendNoticeItem, appendDiffItem, appendCompactionDivider } from './render-notice-status';
 
 export type { TranscriptSnapshot } from './render-types';
 export { handleToolItem } from './render-tool-items';
@@ -339,6 +339,17 @@ export function appendMessageItem(itemId: string, data: MessageItemData): void {
   }
 }
 
+export function snapshotTurnText(node: TranscriptNode): string {
+  const payload = node.payload as Record<string, unknown> | undefined;
+  const rawText = String(payload?.raw_text
+    ?? [node.header || node.title || "", ...(node.body_lines ?? [])].join("\n"));
+  return rawText
+    .replace(/^\s*\[bold[^\]]*\]/, "")
+    .replace(/\[\/\]/g, "")
+    .replace(/^\s*(?:❯|>)\s*/, "")
+    .trim();
+}
+
 
 
 function depthFor(node: TranscriptNode, byId: ByIdMap): number {
@@ -351,10 +362,47 @@ function depthFor(node: TranscriptNode, byId: ByIdMap): number {
   return depth;
 }
 
+function assistantComparisonText(text: string): string {
+  const source = String(text || "").replace(/^\s*●\s+/, "");
+  return (renderMarkdown(source).textContent || "").trim();
+}
+
+function snapshotAssistantText(node: TranscriptNode): string {
+  const payload = node.payload as Record<string, unknown> | undefined;
+  return assistantComparisonText(
+    String(payload?.raw_text
+      ?? stripRichMarkup((node.body_lines ?? []).join("\n"))),
+  );
+}
+
+function committedStreamText(element: HTMLElement): string {
+  return (element.querySelector<HTMLElement>(".markdown-body")?.textContent || "").trim();
+}
+
+function takeCommittedStreamsForSnapshot(snapshot: TranscriptSnapshot): HTMLElement[] {
+  const coveredTexts = new Map<string, number>();
+  for (const node of snapshot.nodes) {
+    if (node.node_type !== "assistant") continue;
+    const text = snapshotAssistantText(node);
+    if (text) coveredTexts.set(text, (coveredTexts.get(text) || 0) + 1);
+  }
+
+  return takeCommittedStreams().filter((element) => {
+    const text = committedStreamText(element);
+    const count = coveredTexts.get(text) || 0;
+    if (count === 0) return true;
+    if (count === 1) coveredTexts.delete(text);
+    else coveredTexts.set(text, count - 1);
+    return false;
+  });
+}
+
 export function renderTranscript(root: HTMLElement, snapshot: TranscriptSnapshot): void {
+  resetFileChangeCards();
   root.replaceChildren();
-  const committed = takeCommittedStreams();
+  const committed = takeCommittedStreamsForSnapshot(snapshot);
   clearActiveStreams();
+  let currentTurnId = "";
 
   for (const node of snapshot.nodes) {
     const payload = node.payload as Record<string, unknown> | undefined;
@@ -390,7 +438,17 @@ export function renderTranscript(root: HTMLElement, snapshot: TranscriptSnapshot
           rawText,
           payload?.phase === "thinking" ? "thinking" : "text",
         );
-        commitStream(node.id);
+        const result = commitStream(node.id, false);
+        if (result?.thinking) {
+          appendThoughtItem(
+            `${node.id}-thought`,
+            {
+              text: result.thinking,
+              elapsed: node.elapsed ?? null,
+            },
+            result.el,
+          );
+        }
         break;
       }
       case "tool_call":
@@ -398,20 +456,20 @@ export function renderTranscript(root: HTMLElement, snapshot: TranscriptSnapshot
           tool_call_id: node.tool_call_id ?? null,
           tool_name: String(payload?.tool_name ?? ""),
           args: payload?.args as string | Record<string, unknown> | undefined,
-          raw_args: payload?.raw_args as { command?: string } | undefined,
-        });
+          raw_args: payload?.raw_args as Record<string, unknown> | undefined,
+        }, currentTurnId);
         if (payload?.diff_text) {
           handleToolItem("item.delta", node.id, {
             tool_call_id: node.tool_call_id ?? null,
             diff_text: String(payload.diff_text),
-          });
+          }, currentTurnId);
         }
         handleToolItem("item.completed", node.id, {
           tool_call_id: node.tool_call_id ?? null,
           ok: node.status !== "error",
           elapsed: node.elapsed ?? null,
           detail: String(payload?.summary ?? ""),
-        });
+        }, currentTurnId);
         break;
       case "tool_result": {
         const detailText = String(payload?.raw_text
@@ -459,6 +517,14 @@ export function renderTranscript(root: HTMLElement, snapshot: TranscriptSnapshot
           });
         }
         break;
+      case "turn": {
+        currentTurnId = node.id;
+        const text = snapshotTurnText(node);
+        if (text) {
+          appendMessageItem(node.id, { style: "user", text });
+        }
+        break;
+      }
       case "checkpoint": {
         const row = document.createElement("details");
         row.className = "checkpoint-row";
@@ -472,7 +538,7 @@ export function renderTranscript(root: HTMLElement, snapshot: TranscriptSnapshot
         root.append(row);
         break;
       }
-      // root / turn / startup / todo / permission / subagent → skip
+      // root / startup / todo / permission / subagent → skip
     }
   }
 

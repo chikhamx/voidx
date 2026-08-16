@@ -22,20 +22,19 @@ export function _resetConnectionForTest(): void {
   connectionGeneration = 0;
 }
 
-export function incrementConnectionGeneration(): void {
-  connectionGeneration += 1;
+
+interface DesktopRuntimeWindow {
+  __TAURI_INTERNALS__?: unknown;
+  __TAURI__?: unknown;
+  location?: { protocol?: string };
 }
 
-export function setSocket(s: typeof socket): void {
-  socket = s;
-}
-
-export function setReconnectAttempts(val: number): void {
-  reconnectAttempts = val;
-}
-
-export function setStartupSettingsRequested(val: boolean): void {
-  startupSettingsRequested = val;
+export function isDesktopRuntime(target: DesktopRuntimeWindow = window): boolean {
+  return Boolean(
+    target.__TAURI_INTERNALS__ ||
+    target.__TAURI__ ||
+    target.location?.protocol === "tauri:",
+  );
 }
 
 export async function bootstrap(): Promise<void> {
@@ -56,19 +55,64 @@ export async function resolveWsUrl(): Promise<string | null> {
   if (direct) {
     return direct;
   }
+  if (!import.meta.env.TEST && !isDesktopRuntime()) {
+    return null;
+  }
+
+  let finished = false;
+  let unlisten: (() => void) | null = null;
   try {
     const { invoke } = await import("@tauri-apps/api/core");
-    for (let attempt = 0; attempt < 60; attempt += 1) {
-      const url: unknown = await invoke("get_gateway_url");
+    const url = await invoke<unknown>("wait_gateway_url");
+    if (typeof url === "string" && url) return url;
+  } catch {
+    // Older desktop shells fall back to the event and polling paths below.
+  }
+  const readyEvent = import("@tauri-apps/api/event")
+    .then(({ listen }) => new Promise<string>(async (resolve) => {
+      unlisten = await listen<{ url?: unknown }>("backend_ready", (event) => {
+        const url = event.payload?.url;
+        if (typeof url === "string" && url) resolve(url);
+      });
+    }))
+    .catch(() => new Promise<string>(() => {}));
+
+  const polling = (async (): Promise<string | null> => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    while (!finished) {
+      let url: unknown = null;
+      try {
+        url = await invoke("get_gateway_url");
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        continue;
+      }
       if (typeof url === "string" && url) {
         return url;
       }
+      let status: unknown = null;
+      try {
+        status = await invoke("get_backend_status");
+      } catch {
+        // Older desktop shells may not expose status; URL polling remains authoritative.
+      }
+      if (
+        status &&
+        typeof status === "object" &&
+        (status as { status?: unknown }).status === "failed"
+      ) {
+        const error = (status as { error?: unknown }).error;
+        throw new Error(typeof error === "string" && error ? error : "Desktop backend failed to start");
+      }
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
-  } catch {
     return null;
-  }
-  return null;
+  })();
+
+  const url = await Promise.race([readyEvent, polling]);
+  finished = true;
+  unlisten?.();
+  return url;
 }
 
 export function connect(url: string): void {

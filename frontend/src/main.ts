@@ -19,12 +19,12 @@ import {
   clearCommittedStreams,
   clearActiveStreams,
   stripRichMarkup,
+  snapshotTurnText,
 } from "./utils";
 import type { TranscriptSnapshot, SlashCommand } from "./utils";
 
 import {
   rpcCall,
-  rpcRespond,
   onNotification,
   _setSocket,
   _resetForTest as _resetRpcForTest,
@@ -41,10 +41,6 @@ import {
   registerTextPaste,
   imageAttachmentTokens,
   clearImageAttachments,
-  renderSlashMenu,
-  findRefToken,
-  refInsertionText,
-  renderRefMenu,
   renderSidebar,
   addThread,
   removeThread,
@@ -75,7 +71,6 @@ import {
   initContextMenu,
   initWorkspaceControls,
   initSidebarResizer,
-  openWorkspacePicker,
   showRequest,
   showPromptItemRequest,
   initModelControls,
@@ -94,11 +89,11 @@ import {
   resetHistoryNavigation,
   isHistoryBrowsing,
 } from "./ui/history";
-import type { ThreadInfo, SettingsSnapshot, IntegrationsSnapshot, RefCandidate, FileCandidate, SkillCandidate, McpCandidate, RuntimeProfile } from "./ui";
+import type { ThreadInfo, SettingsSnapshot, IntegrationsSnapshot, RuntimeProfile } from "./ui";
 import {
   showSlashMenu, hideSlashMenu, updateSlashMenu, runSlashCommand,
-  refMenuVisible, showRefMenu, hideRefMenu, updateRefMenu,
-  scheduleRefUpdate, refreshRefCandidates, acceptRefCandidate,
+  refMenuVisible, hideRefMenu, updateRefMenu,
+  scheduleRefUpdate, acceptRefCandidate,
 } from "./ui/menus";
 import { _resetSettingsForTest } from "./ui/settings";
 import { _resetIntegrationsForTest } from "./ui/integrations";
@@ -116,12 +111,9 @@ import {
   composerEl,
   inputEl,
   btnSendEl,
-  slashMenuEl,
-  refMenuEl,
   requestDialogEl,
   transcriptEl,
   providerSelectEl,
-  modelSelectEl,
   setRunning,
   setConnectionStatus,
   syncEmptyState,
@@ -130,11 +122,9 @@ import {
   _resetWorkbenchStateForTest,
   DEFAULT_SIDEBAR_WIDTH,
   bootstrap,
-  connect,
   resolveWsUrl,
   requestStartupSettingsIfNeeded,
   _resetConnectionForTest,
-  incrementConnectionGeneration,
 } from "./services";
 
 // Re-export functions required by test suites
@@ -173,6 +163,18 @@ function snapshotUserEntries(snapshot: TranscriptSnapshot): SnapshotUserEntry[] 
   const entries: SnapshotUserEntry[] = [];
   for (const node of snapshot.nodes || []) {
     const payload = node.payload as Record<string, unknown> | undefined;
+    if (node.node_type === "turn") {
+      const text = snapshotTurnText(node);
+      if (text.trim()) {
+        entries.push({
+          id: node.id,
+          text: text.trim(),
+          style: "user",
+          rendered: true,
+        });
+      }
+      continue;
+    }
     if (node.node_type !== "message") continue;
     const style = String(payload?.style || payload?.role || "").toLowerCase();
     if (style !== "user" && style !== "guidance") continue;
@@ -455,7 +457,6 @@ let threadContextGeneration = 0;
 let pendingActivationTarget: string | null = null;
 let pendingActivationSnapshot: Record<string, unknown> | null = null;
 const staleSnapshotThreadIds = new Set<string>();
-const scopedThreadIds = new Set<string>();
 const lastSnapshotRevisionByThread = new Map<string, number>();
 const renderedItemIdsByThread = new Map<string, Set<string>>();
 interface ThreadTurnContext {
@@ -463,6 +464,84 @@ interface ThreadTurnContext {
   retiredTurnIds: Set<string>;
 }
 const threadTurnContexts = new Map<string, ThreadTurnContext>();
+
+const TRANSCRIPT_PAGE_SIZE = 20;
+interface TranscriptWindowState {
+  snapshot: TranscriptSnapshot;
+  loading: boolean;
+}
+const transcriptWindows = new Map<string, TranscriptWindowState>();
+
+function snapshotForRendering(threadId: string, snapshot: TranscriptSnapshot): TranscriptSnapshot {
+  if (!snapshot.windowed) {
+    transcriptWindows.delete(threadId);
+    return snapshot;
+  }
+  transcriptWindows.set(threadId, { snapshot, loading: false });
+  return snapshot;
+}
+
+function loadEarlierTranscriptPage(): void {
+  const threadId = uiState.sessionId;
+  if (!threadId || uiState.isSwitchingThread) return;
+  const state = transcriptWindows.get(threadId);
+  if (
+    !state ||
+    state.loading ||
+    !state.snapshot.has_earlier ||
+    typeof state.snapshot.before_turn_id !== "number"
+  ) return;
+
+  state.loading = true;
+  const contextGeneration = threadContextGeneration;
+  const previousHeight = transcriptEl.scrollHeight;
+  const previousTop = transcriptEl.scrollTop;
+  void rpcCall("transcript.page", {
+    thread_id: threadId,
+    before_turn_id: state.snapshot.before_turn_id,
+    turn_limit: TRANSCRIPT_PAGE_SIZE,
+  })
+    .then((result: unknown) => {
+      if (
+        uiState.sessionId !== threadId ||
+        uiState.isSwitchingThread ||
+        threadContextGeneration !== contextGeneration
+      ) return;
+      if (!result || typeof result !== "object") return;
+      const page = result as TranscriptSnapshot;
+      if (!Array.isArray(page.nodes) || (page.thread_id && page.thread_id !== threadId)) return;
+      const current = transcriptWindows.get(threadId);
+      if (!current || current !== state) return;
+      const existingIds = new Set(current.snapshot.nodes.map((node) => node.id));
+      const mergedSnapshot: TranscriptSnapshot = {
+        ...current.snapshot,
+        nodes: [
+          ...page.nodes.filter((node) => !existingIds.has(node.id)),
+          ...current.snapshot.nodes,
+        ],
+        revision: page.revision ?? current.snapshot.revision,
+        before_turn_id: page.before_turn_id ?? null,
+        has_earlier: Boolean(page.has_earlier),
+      };
+      current.snapshot = mergedSnapshot;
+      renderTranscript(transcriptEl, mergedSnapshot);
+      restorePendingLocalMessages(threadId, mergedSnapshot);
+      syncEmptyState();
+      transcriptEl.scrollTop = previousTop + (transcriptEl.scrollHeight - previousHeight);
+    })
+    .catch((error: unknown) => {
+      console.warn("voidx: transcript page failed", error);
+    })
+    .finally(() => {
+      state.loading = false;
+    });
+}
+
+function handleTranscriptScroll(): void {
+  if (transcriptEl.scrollTop <= 24) loadEarlierTranscriptPage();
+}
+
+transcriptEl.addEventListener("scroll", handleTranscriptScroll);
 
 function threadTurnContext(threadId: string): ThreadTurnContext {
   let context = threadTurnContexts.get(threadId);
@@ -556,7 +635,15 @@ function snapshotRevision(params: Record<string, unknown>): number | null {
 function snapshotThreadMatchesActive(params: Record<string, unknown>, activeThreadId: string): boolean {
   if (!activeThreadId) {
     if (uiState.sessionId || pendingActivationTarget !== null) return false;
-    return params.active_snapshot === undefined || params.active_snapshot === null;
+    const snapshot = params.active_snapshot;
+    if (snapshot === undefined || snapshot === null) return true;
+    if (typeof snapshot !== "object") return false;
+    const snapshotRecord = snapshot as Record<string, unknown>;
+    return snapshotRecord.thread_id === "" &&
+      typeof snapshotRecord.revision === "number" &&
+      Number.isInteger(snapshotRecord.revision) &&
+      snapshotRecord.revision >= 0 &&
+      Array.isArray(snapshotRecord.nodes);
   }
   const snapshot = params.active_snapshot;
   if (!snapshot || typeof snapshot !== "object") return false;
@@ -672,7 +759,10 @@ function failThreadActivation(generation: number): void {
 
 export function switchThread(threadId: string): Promise<void> {
   const generation = beginThreadActivation(threadId);
-  return rpcCall("session.switch", { thread_id: threadId })
+  return rpcCall("session.switch", {
+    thread_id: threadId,
+    turn_limit: TRANSCRIPT_PAGE_SIZE,
+  })
     .then((result: unknown) => {
       if (!isCurrentThreadActivation(generation)) return;
       const selected = result as Record<string, unknown>;
@@ -694,10 +784,14 @@ export function switchThread(threadId: string): Promise<void> {
 function openThread(directory: string, profile?: string): Promise<void> {
   if (!isRpcConnected()) return Promise.resolve();
 
-  const existing = findReusableEmptyThread(directory || uiState.workspace, profile);
+  const targetDirectory = directory || uiState.workspace;
+  const existing = findReusableEmptyThread(targetDirectory, profile);
   const generation = beginThreadActivation(existing?.thread_id || null);
   if (existing) {
-    return rpcCall("session.switch", { thread_id: existing.thread_id })
+    return rpcCall("session.switch", {
+      thread_id: existing.thread_id,
+      turn_limit: TRANSCRIPT_PAGE_SIZE,
+    })
       .then((result: unknown) => {
         if (!isCurrentThreadActivation(generation)) return;
         const selected = result as Record<string, unknown>;
@@ -719,7 +813,7 @@ function openThread(directory: string, profile?: string): Promise<void> {
       });
   }
 
-  const params: { directory: string; profile?: string } = { directory };
+  const params: { directory: string; profile?: string } = { directory: targetDirectory };
   if (profile) params.profile = profile;
   return rpcCall("session.create", params)
     .then((result: unknown) => {
@@ -931,7 +1025,7 @@ function renderWorkspaceSnapshot(params: Record<string, unknown>): void {
     workspaceBasename(uiState.workspace),
     uiState.workspace,
   );
-  const typedSnapshot = snapshot as TranscriptSnapshot;
+  const typedSnapshot = snapshotForRendering(activeThreadId, snapshot as TranscriptSnapshot);
   renderTranscript(transcriptEl, typedSnapshot);
   restorePendingLocalMessages(activeThreadId, typedSnapshot);
   syncEmptyState();
@@ -1067,7 +1161,7 @@ export function handleItem(
     if (method === "item.started") {
       setRunning(true);
     }
-    handleToolItem(method, itemId, data);
+    handleToolItem(method, itemId, data, (params.turn_id as string) || "");
     return;
   }
   if (kind === "todo") {
@@ -1262,6 +1356,7 @@ export function _resetWorkbenchForTest(): void {
   lastSnapshotRevisionByThread.clear();
   renderedItemIdsByThread.clear();
   threadTurnContexts.clear();
+  transcriptWindows.clear();
   clearCommittedStreams();
   clearActiveStreams();
   localItemSequence = 0;
@@ -1467,7 +1562,7 @@ inputEl.addEventListener("keydown", (event: KeyboardEvent) => {
       const recalled =
         event.key === "ArrowUp"
           ? historyPrev(inputEl.value)
-          : historyNext(inputEl.value);
+          : historyNext();
       if (recalled !== null) {
         event.preventDefault();
         inputEl.value = recalled;
@@ -1498,4 +1593,3 @@ inputEl.addEventListener("input", () => {
   hideSlashMenu();
   scheduleRefUpdate();
 });
-

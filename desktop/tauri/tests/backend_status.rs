@@ -39,13 +39,16 @@ fn desktop_supports_all_backend_runtime_profiles() {
 fn desktop_frontend_runtime_profile_contract_is_embedded() {
     let index = include_str!("../../../frontend/index.html");
     let main = include_str!("../../../frontend/src/main.ts");
-    let sidebar = include_str!("../../../frontend/src/ui/sidebar.ts");
+    let connection = include_str!("../../../frontend/src/services/connection.ts");
+    let mode = include_str!("../../../frontend/src/ui/mode.ts");
 
     assert!(index.contains("id=\"btn-new-chat\""));
     for profile in ["coding", "chat", "loop", "goal"] {
-        assert!(sidebar.contains(&format!("\"{profile}\"")));
+        assert!(mode.contains(&format!("\"{profile}\"")));
     }
     assert!(main.contains("rpcCall(\"session.create\", params)"));
-    assert!(main.contains("rpcCall(\"session.switch\", { thread_id: threadId })"));
+    assert!(main.contains("rpcCall(\"session.switch\", {"));
+    assert!(main.contains("turn_limit: TRANSCRIPT_PAGE_SIZE"));
     assert!(main.contains("runtime_profile"));
+    assert!(connection.contains("wait_gateway_url"));
 }

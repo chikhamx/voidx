@@ -3,7 +3,6 @@
 from voidx.mcp.context import (
     MCP_TOOL_CONTEXT_MARKER,
     MCP_TOOL_CONTEXT_STRIPPED_MARKER,
-    has_mcp_tool_context,
     render_mcp_tool_context,
     strip_mcp_tool_context,
 )
@@ -99,12 +98,6 @@ class TestRenderMcpToolContext:
 
 
 class TestStripMcpToolContext:
-    def test_has_marker_detection(self):
-        text = render_mcp_tool_context("tavily", "connected", [_tool("a")])
-        assert has_mcp_tool_context(text) is True
-        assert has_mcp_tool_context("plain text") is False
-        assert has_mcp_tool_context(None) is False
-
     def test_strip_replaces_with_summary(self):
         text = render_mcp_tool_context(
             "tavily", "connected", [_tool("tavily_search"), _tool("tavily_extract")],
@@ -115,7 +108,6 @@ class TestStripMcpToolContext:
         assert "tavily" in stripped
         assert "tavily_search" in stripped
         assert "Scope: current-turn" not in stripped
-        assert has_mcp_tool_context(stripped) is False
 
     def test_strip_preserves_prefix(self):
         text = "some output\n\n" + render_mcp_tool_context("tavily", "connected", [_tool("a")])
@@ -127,7 +119,6 @@ class TestStripMcpToolContext:
         content = [{"type": "text", "text": text}, {"type": "image", "data": "x"}]
         stripped = strip_mcp_tool_context(content)
 
-        assert has_mcp_tool_context(stripped) is False
         assert stripped[1] == {"type": "image", "data": "x"}
 
     def test_strip_noop_without_marker(self):

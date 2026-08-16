@@ -17,7 +17,6 @@ from voidx.agent.application.agents import (
     AgentDef,
     child_agent_descriptions_for_llm,
     get_agent,
-    get_visible_agents,
 )
 from voidx.agent.application.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
 from voidx.agent.adapters.langgraph.runtime.convergence import is_step_hint_message

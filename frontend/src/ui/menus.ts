@@ -9,9 +9,6 @@ import {
   type McpCandidate,
   findRefToken,
   refInsertionText,
-  fileInsertionText,
-  mcpInsertionText,
-  skillInsertionText,
   renderRefMenu,
 } from "./reference";
 

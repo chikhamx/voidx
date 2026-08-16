@@ -21,6 +21,11 @@ class ThreadSnapshot(BaseModel):
     thread_id: str
     revision: int = 0
     nodes: list[TranscriptNode] = Field(default_factory=list)
+    windowed: bool = False
+    before_turn_id: int | None = None
+    after_turn_id: int | None = None
+    has_earlier: bool = False
+    has_later: bool = False
 
 
 class WorkspaceSnapshot(BaseModel):

@@ -24,7 +24,6 @@ CHAT_PROFILE_SPEC = BaseSystemProfile(
         "language",
         "tone",
         "concise",
-        "internals_chat",
         "progress_preamble",
         "summarize_results",
         "uncertainty",

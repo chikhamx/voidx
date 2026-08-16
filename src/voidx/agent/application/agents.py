@@ -46,10 +46,6 @@ def get_agent(name: str) -> AgentDef | None:
     return BUILTIN_AGENTS.get(name)
 
 
-def get_visible_agents() -> list[AgentDef]:
-    return [a for a in BUILTIN_AGENTS.values() if not a.hidden]
-
-
 def get_subagents() -> list[AgentDef]:
     """Child-run identities voidx can delegate to."""
     agent = get_agent("voidx")

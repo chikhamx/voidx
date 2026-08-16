@@ -74,14 +74,3 @@ COMMANDS: list[tuple[str, str]] = sorted(
     [(spec.name, spec.desc) for spec in SLASH_COMMANDS] + _COMMAND_EXTRA,
     key=lambda pair: pair[0],
 )
-
-def filter_commands(prefix: str) -> list[tuple[str, str]]:
-    """Filter commands by prefix. Returns (name, description) pairs.
-
-    Matches both when the input *is* a prefix of a command (e.g. ``/res``
-    matches ``/resume``) and when the input *starts with* a command
-    (e.g. ``/resume abc123`` matches ``/resume``).
-    """
-    p = prefix.lower()
-    return [(n, d) for n, d in COMMANDS
-            if n.lower().startswith(p) or p.startswith(n.lower())]

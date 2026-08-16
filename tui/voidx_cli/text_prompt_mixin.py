@@ -6,14 +6,6 @@ import asyncio
 
 
 class _TextPromptMixin:
-    def _init_text_prompt_state(self) -> None:
-        self._text_queue: asyncio.Queue[str | None] = asyncio.Queue()
-        self._active_text_prompt: str | None = None
-        self._active_text_default: str = ""
-        self._active_text_secret: bool = False
-        self._saved_input_lines: list[str] = [""]
-        self._saved_cursor_row: int = 0
-        self._saved_cursor_col: int = 0
 
     async def ask_text(
         self, prompt: str, default: str = "", secret: bool = False, timeout: float | None = None

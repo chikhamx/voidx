@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import inspect
 import uuid
 from collections.abc import Awaitable, Callable
@@ -52,6 +53,12 @@ class ProtocolClient(Protocol):
         """Send an encoded protocol envelope to the connected client."""
 
 
+_request_client: contextvars.ContextVar[ProtocolClient | None] = contextvars.ContextVar(
+    "gateway_request_client",
+    default=None,
+)
+
+
 class GatewaySession(
     TerminalMethods,
     DiffMethods,
@@ -79,6 +86,7 @@ class GatewaySession(
         skills_api_factory: SkillsApiFactory | None = None,
         skills_api_provider: Callable[[str], object] | None = None,
         session_repository: SessionRepository | None = None,
+        dock: Any | None = None,
     ) -> None:
         self._tree_provider = tree_providers
         self._session_id = session_id or thread_id
@@ -94,14 +102,17 @@ class GatewaySession(
         self._mcp_catalog_provider = mcp_catalog_provider
         self._usage_stats_provider = usage_stats_provider
         self._clients: set[ProtocolClient] = set()
+        self._client_snapshot_turn_limits: dict[ProtocolClient, int] = {}
         self._settings_factory = settings_factory
         self._skills_api_factory = skills_api_factory
         self._skills_api_provider = skills_api_provider
         self._session_repository = session_repository
+        self._dock = dock
         self._owner_id = uuid.uuid4().hex
         self._seq = 0
         self._thread_id_provider: Callable[[], str] | None = None
         self._persisted_sync_task: asyncio.Task[None] | None = None
+        self._active_snapshot_cache: tuple[tuple[str, int, int], TranscriptSnapshot] | None = None
 
         # Multi-thread state
         self._threads: dict[str, ThreadInfo] = {}
@@ -165,6 +176,22 @@ class GatewaySession(
 
     def disconnect(self, client: ProtocolClient) -> None:
         self._clients.discard(client)
+        self._client_snapshot_turn_limits.pop(client, None)
+
+    def _remember_client_snapshot_limit(
+        self,
+        client: ProtocolClient | None,
+        turn_limit: int | None,
+    ) -> None:
+        if client is None:
+            return
+        if turn_limit is None:
+            self._client_snapshot_turn_limits.pop(client, None)
+        else:
+            self._client_snapshot_turn_limits[client] = turn_limit
+
+    def _remember_current_client_snapshot_limit(self, turn_limit: int | None) -> None:
+        self._remember_client_snapshot_limit(_request_client.get(), turn_limit)
 
     # ── v1 compatibility (for run_loop.py registration) ───────────────────
 
@@ -303,8 +330,19 @@ class GatewaySession(
         active = self._run_manager.active_thread_ids()
         return active[0] if len(active) == 1 else ""
 
+    def _session_thread_id_for_event(self, thread_id: str) -> str:
+        if not thread_id.startswith("chat:"):
+            return thread_id
+        session_id = thread_id.removeprefix("chat:")
+        info = self._threads.get(session_id)
+        if info is not None and info.runtime_profile == "chat":
+            return session_id
+        return thread_id
+
     async def broadcast_event(self, event: UiEvent, *, thread_id: str = "") -> None:
-        tid = thread_id or getattr(event, "thread_id", "")
+        tid = self._session_thread_id_for_event(
+            thread_id or getattr(event, "thread_id", "")
+        )
         active_run_thread_id = self._single_active_run_thread_id()
         if not tid:
             tid = active_run_thread_id
@@ -314,6 +352,8 @@ class GatewaySession(
             tid = self._thread_id_provider() or ""
         if not tid:
             return
+        if getattr(event, "thread_id", "") != tid:
+            event = event.model_copy(update={"thread_id": tid})
         await self._apply_turn_terminal_event(event, tid)
         if not self._clients:
             return
@@ -350,19 +390,63 @@ class GatewaySession(
                 self._run_manager.fail_turn(thread_id, getattr(event, "message", ""))
             self._sync_thread_status(thread_id)
 
-    async def broadcast_snapshot(self, *, sync_persisted: bool = True) -> None:
+    async def broadcast_snapshot(
+        self,
+        *,
+        sync_persisted: bool = True,
+        turn_limit: int | None = None,
+    ) -> None:
         if not self._clients:
             return
-        await self._broadcast(
-            await self._encode_snapshot(sync_persisted=sync_persisted)
+        clients = tuple(self._clients)
+        request_client = _request_client.get()
+        if turn_limit is not None and request_client is not None:
+            self._remember_client_snapshot_limit(request_client, turn_limit)
+        encoded: list[tuple[ProtocolClient, str]] = []
+        for client in clients:
+            if request_client is None:
+                effective_limit = (
+                    turn_limit
+                    if turn_limit is not None
+                    else self._client_snapshot_turn_limits.get(client)
+                )
+            else:
+                effective_limit = (
+                    turn_limit
+                    if client is request_client
+                    else self._client_snapshot_turn_limits.get(client)
+                )
+            encoded.append(
+                (
+                    client,
+                    await self._encode_snapshot(
+                        sync_persisted=sync_persisted,
+                        turn_limit=effective_limit,
+                    ),
+                )
+            )
+        results = await asyncio.gather(
+            *(client.send_text(text) for client, text in encoded),
+            return_exceptions=True,
         )
+        for (client, _), result in zip(encoded, results, strict=False):
+            if isinstance(result, Exception):
+                self._clients.discard(client)
+                self._client_snapshot_turn_limits.pop(client, None)
 
     # ── v2 JSON-RPC dispatch ──────────────────────────────────────────────
 
     async def dispatch_request(
-        self, request: JsonRpcRequest,
+        self,
+        request: JsonRpcRequest,
+        *,
+        client: ProtocolClient | None = None,
     ) -> JsonRpcResult | JsonRpcError:
-        return await self.methods.dispatch(request)
+        token = _request_client.set(client)
+        try:
+            return await self.methods.dispatch(request)
+        finally:
+            _request_client.reset(token)
 
     # ── multi-thread management ───────────────────────────────────────────
 
@@ -472,37 +556,90 @@ class GatewaySession(
     async def _sync_persisted_threads_and_broadcast(self) -> None:
         changed = await self.sync_persisted_threads()
         if changed and self._clients:
-            await self._broadcast(await self._encode_snapshot(sync_persisted=False))
+            await self.broadcast_snapshot(sync_persisted=False)
 
-    async def switch_thread(self, thread_id: str) -> None:
+    async def switch_thread(
+        self,
+        thread_id: str,
+        *,
+        turn_limit: int | None = None,
+    ) -> None:
         if thread_id not in self._threads:
             raise MethodParamsError(
                 f"thread not found: {thread_id}",
                 code=-32000,
             )
+        await self._activate_dock(thread_id)
         self._active_thread_id = thread_id
-        await self.broadcast_snapshot()
+        await self.broadcast_snapshot(turn_limit=turn_limit)
+
+    async def _activate_dock(self, thread_id: str) -> None:
+        """Keep the shared presentation tree aligned with the active thread."""
+        if self._dock is None or thread_id == self._active_thread_id:
+            return
+
+        from voidx.presentation.adapters.persistence.transcript_snapshot import (
+            load_transcript,
+            replace_transcript,
+            transcript_rows_to_tree,
+            tree_to_transcript_rows,
+        )
+
+        current_thread_id = self._active_thread_id
+        if current_thread_id:
+            rows, turn_count = tree_to_transcript_rows(
+                current_thread_id,
+                self._tree_provider(),
+            )
+            await replace_transcript(current_thread_id, rows, turn_count=turn_count)
+
+        rows = await load_transcript(thread_id)
+        if rows:
+            self._dock.restore_tree(transcript_rows_to_tree(rows), append=False)
+        else:
+            self._dock.reset()
 
     # ── snapshot encoding ─────────────────────────────────────────────────
 
-    async def _encode_snapshot(self, *, sync_persisted: bool = True) -> str:
+    async def _encode_snapshot(
+        self,
+        *,
+        sync_persisted: bool = True,
+        turn_limit: int | None = None,
+    ) -> str:
         self._next_seq()
-        snapshot = await self._build_workspace_snapshot(sync_persisted=sync_persisted)
+        snapshot = await self._build_workspace_snapshot(
+            sync_persisted=sync_persisted,
+            turn_limit=turn_limit,
+        )
         envelope = JsonRpcNotification(
             method="workspace.snapshot",
             params=snapshot.model_dump(),
         )
         return envelope.model_dump_json()
 
-    async def _build_workspace_snapshot(self, *, sync_persisted: bool = True) -> WorkspaceSnapshot:
+    async def _build_workspace_snapshot(
+        self,
+        *,
+        sync_persisted: bool = True,
+        turn_limit: int | None = None,
+    ) -> WorkspaceSnapshot:
         if sync_persisted:
             await self.sync_persisted_threads()
-        transcript = await self._active_thread_snapshot()
-        active_snapshot = ThreadSnapshot(
-            thread_id=self._active_thread_id,
-            revision=self._seq,
-            nodes=transcript.nodes,
-        )
+        if turn_limit is not None and self._active_thread_id:
+            active_snapshot = await self._windowed_thread_snapshot(
+                self._active_thread_id,
+                before_turn_id=None,
+                turn_limit=turn_limit,
+            )
+            active_snapshot = active_snapshot.model_copy(update={"revision": self._seq})
+        else:
+            transcript = await self._active_thread_snapshot()
+            active_snapshot = ThreadSnapshot(
+                thread_id=self._active_thread_id,
+                revision=self._seq,
+                nodes=transcript.nodes,
+            )
         runtime_state = self._runtime_state_provider() if self._runtime_state_provider else {}
         for thread_id in self._run_manager.active_thread_ids():
             if thread_id not in self._threads:
@@ -526,6 +663,38 @@ class GatewaySession(
             workspace_write_lock=self._run_manager.workspace_write_lock_snapshot(),
         )
 
+    async def _windowed_thread_snapshot(
+        self,
+        thread_id: str,
+        *,
+        before_turn_id: int | None,
+        turn_limit: int,
+    ) -> ThreadSnapshot:
+        from voidx.presentation.adapters.persistence.transcript_snapshot import (
+            load_transcript_page,
+            transcript_rows_to_tree,
+        )
+
+        page = await load_transcript_page(
+            thread_id,
+            before_turn_id=before_turn_id,
+            turn_limit=turn_limit,
+        )
+        transcript = tree_to_snapshot(
+            transcript_rows_to_tree(page.rows),
+            session_id=thread_id,
+        )
+        return ThreadSnapshot(
+            thread_id=thread_id,
+            revision=self._seq,
+            nodes=transcript.nodes,
+            windowed=True,
+            before_turn_id=page.before_turn_id,
+            after_turn_id=page.after_turn_id,
+            has_earlier=page.has_earlier,
+            has_later=page.has_later,
+        )
+
     async def _active_thread_snapshot(self) -> TranscriptSnapshot:
         if self._active_thread_id and self._active_thread_id != self._session_id:
             from voidx.presentation.adapters.persistence.transcript_snapshot import load_transcript
@@ -539,7 +708,18 @@ class GatewaySession(
                     session_id=self._active_thread_id,
                 )
             return TranscriptSnapshot(session_id=self._active_thread_id, nodes=[])
-        return tree_to_snapshot(self._tree_provider(), session_id=self._session_id)
+
+        tree = self._tree_provider()
+        cache_key = (
+            self._active_thread_id or self._session_id,
+            id(tree),
+            getattr(tree, "revision", 0),
+        )
+        if self._active_snapshot_cache is not None and self._active_snapshot_cache[0] == cache_key:
+            return self._active_snapshot_cache[1]
+        snapshot = tree_to_snapshot(tree, session_id=self._session_id)
+        self._active_snapshot_cache = (cache_key, snapshot)
+        return snapshot
 
     def _next_seq(self) -> int:
         self._seq += 1
@@ -577,6 +757,7 @@ class GatewaySession(
         m.register("session.delete", self._method_session_delete)
         m.register("session.rename", self._method_session_rename)
         m.register("session.switch", self._method_session_switch)
+        m.register("transcript.page", self._method_transcript_page)
         m.register("session.list", self._method_session_list)
 
         # Command forwarding (submit / cancel)

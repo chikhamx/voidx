@@ -11,6 +11,7 @@ def test_chat_without_workspace_binds_only_non_local_tools():
     assert view.allows("websearch")
     assert view.allows("webfetch")
     assert view.allows("mcp")
+    assert view.allows("skill")
     assert not view.allows("read")
     assert not view.allows("write")
     assert not view.allows("bash")
@@ -23,7 +24,7 @@ def test_chat_workspace_binds_read_only_tools_and_scope():
     assert view.allows("read", path=workspace / "README.md")
     assert view.allows("find", path=workspace / "src")
     assert view.allows("search", path=workspace / "src")
-    assert view.allows("lsp", path=workspace / "src")
+    assert not view.allows("lsp", path=workspace / "src")
     assert not view.allows("glob", path=workspace / "src")
     assert not view.allows("grep", path=workspace / "src")
     assert not view.allows("write", path=workspace / "README.md")
@@ -66,6 +67,15 @@ def test_chat_check_tool_call_denies_mcp_call_but_allows_discovery():
     )
     assert not decision.allowed
     assert decision.requests_approval is False
+
+
+def test_chat_check_tool_call_allows_skill_create():
+    view = ChatToolView.for_scope(ChatResourceScope())
+
+    decision = view.check_tool_call(
+        "skill", {"op": "create", "name": "docs", "description": "d", "body": "b"}
+    )
+    assert decision.allowed
 
 
 def test_chat_check_tool_call_extracts_nested_paths(tmp_path):

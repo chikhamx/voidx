@@ -130,6 +130,7 @@ class OutputTree:
         self._cached_lines: list[str] = []
         self._cached_width: int = 0
         self._render_width: int = 80
+        self._revision: int = 0
 
     def startup_line_count(self) -> int:
         """Return the number of rendered lines occupied by startup nodes."""
@@ -143,7 +144,16 @@ class OutputTree:
                     count += 1 + len(child.body_lines)
         return count
 
+    @property
+    def node_count(self) -> int:
+        return len(self._all)
+
+    @property
+    def revision(self) -> int:
+        return self._revision
+
     def mark_dirty(self, node_id: str | None = None) -> None:
+        self._revision += 1
         if node_id is None:
             self._dirty = True
             self._dirty_nodes.clear()
@@ -278,6 +288,187 @@ class OutputTree:
 
         # Incremental: only content changes on existing nodes
         return self._incremental_render(console_width)
+
+    def render_root_slice(
+        self,
+        console_width: int = 80,
+        start: int = 0,
+        end: int | None = None,
+    ) -> list[str]:
+        """Render only a contiguous range of root children."""
+        lines, _line_map = self._render_root_slice_with_line_map(
+            console_width,
+            start,
+            end,
+        )
+        return lines
+
+    def render_root_slice_with_line_map(
+        self,
+        console_width: int = 80,
+        start: int = 0,
+        end: int | None = None,
+    ) -> tuple[list[str], dict[int, str]]:
+        """Render a root-child range and return its local line ownership map."""
+        return self._render_root_slice_with_line_map(console_width, start, end)
+
+    def _render_root_slice_with_line_map(
+        self,
+        console_width: int,
+        start: int,
+        end: int | None,
+    ) -> tuple[list[str], dict[int, str]]:
+        start = max(0, start)
+        end = len(self.root.children) if end is None else min(end, len(self.root.children))
+        if start >= end:
+            return [], {}
+
+        renderer = OutputTree()
+        renderer.root = self.root
+        renderer._render_width = console_width
+        lines: list[str] = []
+        line_map: dict[int, str] = {}
+        previous: OutputNode | None = None
+        for child in reversed(self.root.children[:start]):
+            if _has_visible_output(child):
+                previous = child
+                break
+        for child in self.root.children[start:end]:
+            if not _has_visible_output(child):
+                continue
+            if _needs_gap_between_root_blocks(previous, child):
+                lines.append("")
+            renderer._walk_render(child, [], lines, line_map)
+            previous = child
+        return lines, line_map
+
+    def render_tail(self, console_width: int = 80, row_limit: int = 24) -> list[str]:
+        return self.render_root_tail(
+            console_width,
+            0,
+            len(self.root.children),
+            row_limit,
+        )
+
+    def render_root_tail(
+        self,
+        console_width: int = 80,
+        start: int = 0,
+        end: int | None = None,
+        row_limit: int = 24,
+    ) -> list[str]:
+        lines, _line_map = self.render_root_tail_with_line_map(
+            console_width,
+            start,
+            end,
+            row_limit,
+        )
+        return lines
+
+    def render_tail_with_line_map(
+        self,
+        console_width: int = 80,
+        row_limit: int = 24,
+    ) -> tuple[list[str], dict[int, str]]:
+        return self.render_root_tail_with_line_map(
+            console_width,
+            0,
+            len(self.root.children),
+            row_limit,
+        )
+
+    def render_root_tail_with_line_map(
+        self,
+        console_width: int = 80,
+        start: int = 0,
+        end: int | None = None,
+        row_limit: int = 24,
+    ) -> tuple[list[str], dict[int, str]]:
+        """Render the visible suffix of a root-child range."""
+        if row_limit <= 0:
+            return [], {}
+        start = max(0, start)
+        end = len(self.root.children) if end is None else min(end, len(self.root.children))
+        if start >= end:
+            return [], {}
+        if (
+            start == 0
+            and end == len(self.root.children)
+            and not self._dirty
+            and not self._dirty_nodes
+            and self._cached_width == console_width
+        ):
+            trim = max(0, len(self._cached_lines) - row_limit)
+            return (
+                self._cached_lines[trim:],
+                {
+                    index - trim: node_id
+                    for index, node_id in self._line_map.items()
+                    if index >= trim
+                },
+            )
+
+        renderer = OutputTree()
+        renderer.root = self.root
+        renderer._render_width = console_width
+        chunks: list[tuple[list[str], dict[int, str]]] = []
+        total_rows = 0
+        child_index = end - 1
+        while child_index >= start and total_rows < row_limit:
+            child = self.root.children[child_index]
+            if not _has_visible_output(child):
+                child_index -= 1
+                continue
+            child_lines: list[str] = []
+            child_line_map: dict[int, str] = {}
+            renderer._walk_render(child, [], child_lines, child_line_map)
+            if child_lines:
+                previous_index = child_index - 1
+                while previous_index >= 0 and not _has_visible_output(
+                    self.root.children[previous_index]
+                ):
+                    previous_index -= 1
+                if previous_index >= 0 and _needs_gap_between_root_blocks(
+                    self.root.children[previous_index], child
+                ):
+                    child_lines.insert(0, "")
+                    child_line_map = {
+                        index + 1: node_id
+                        for index, node_id in child_line_map.items()
+                    }
+                chunks.append((child_lines, child_line_map))
+                total_rows += len(child_lines)
+            child_index -= 1
+
+        lines: list[str] = []
+        line_map: dict[int, str] = {}
+        for chunk, chunk_map in reversed(chunks):
+            offset = len(lines)
+            lines.extend(chunk)
+            line_map.update({index + offset: node_id for index, node_id in chunk_map.items()})
+        if len(lines) <= row_limit:
+            return lines, line_map
+        trim = len(lines) - row_limit
+        return (
+            lines[trim:],
+            {index - trim: node_id for index, node_id in line_map.items() if index >= trim},
+        )
+
+    def render_node_lines(self, node_id: str, console_width: int = 80) -> list[str]:
+        """Render only the lines owned by one node in its root subtree."""
+        node = self._all.get(node_id)
+        if node is None or node is self.root:
+            return []
+        root_child = node
+        while root_child.parent is not None and root_child.parent is not self.root:
+            root_child = root_child.parent
+        renderer = OutputTree()
+        renderer.root = self.root
+        renderer._render_width = console_width
+        lines: list[str] = []
+        line_map: dict[int, str] = {}
+        renderer._walk_render(root_child, [], lines, line_map)
+        return [line for index, line in enumerate(lines) if line_map.get(index) == node_id]
 
     def _full_render(self, console_width: int) -> list[str]:
         self._render_width = console_width

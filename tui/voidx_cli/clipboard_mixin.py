@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 from voidx.presentation.tools.clipboard_image import (
@@ -48,21 +47,5 @@ class _ClipboardMixin:
         if image_result.status not in {"no_image", "unsupported"}:
             return
         self._paste_clipboard_text_quiet()
-
-    _CHANGE_COUNT_SCRIPT = (
-        'use framework "AppKit"\n'
-        "set pb to current application's NSPasteboard's generalPasteboard()\n"
-        "return (pb's changeCount) as text"
-    )
-
-    def _read_clipboard_change_count(self) -> int:
-        try:
-            result = subprocess.run(
-                ["osascript", "-e", self._CHANGE_COUNT_SCRIPT],
-                capture_output=True, text=True, timeout=2, check=False,
-            )
-            return int(result.stdout.strip()) if result.returncode == 0 else -1
-        except Exception:
-            return -1
 
 

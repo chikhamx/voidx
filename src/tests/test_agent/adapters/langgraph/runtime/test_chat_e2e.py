@@ -157,6 +157,7 @@ def _system_text(messages):
 
 @pytest.mark.asyncio
 async def test_chat_system_prompt_excludes_coding_persona_and_workflow(tmp_path):
+    (tmp_path / "AGENTS.md").write_text("# Project instructions\nsecret project rule", encoding="utf-8")
     coding = await create_session(workspace=str(tmp_path), profile="coding")
     try:
         execution = make_langgraph_execution(
@@ -187,7 +188,7 @@ async def test_chat_system_prompt_excludes_coding_persona_and_workflow(tmp_path)
 
         system = captured["system"]
         assert "## Base System\nYou are voidx, a conversational assistant." in system
-        assert "Profile Directive" in system
+        assert "Profile Directive" not in system
         assert "chat" in system.lower()
         assert "Persona Model" not in system
         assert "Workflow Runtime" not in system
@@ -200,9 +201,75 @@ async def test_chat_system_prompt_excludes_coding_persona_and_workflow(tmp_path)
         assert "### Collaboration Rules" in system
         assert "Summarize outcomes" in system
         assert "coding assistant" not in system
+        assert "Instructions from:" not in system
+        assert "secret project rule" not in system
     finally:
         await delete_session(coding.id)
 
+
+
+@pytest.mark.asyncio
+async def test_chat_system_prompt_keeps_skills_and_mcp_sections(tmp_path):
+    (tmp_path / "AGENTS.md").write_text("secret project rule", encoding="utf-8")
+    skill_dir = tmp_path / ".voidx" / "skills" / "test-skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: test-skill\ndescription: Test skill\nenabled: true\n---\nBody",
+        encoding="utf-8",
+    )
+
+    from voidx.config import McpServerConfig, Settings
+    from voidx.skills.application.api import SkillsApi
+    from voidx.skills.domain.selection import SkillSelectionConfig
+    from voidx.skills.registry import SkillRegistry
+    from voidx.skills.service import SkillService
+
+    selection = SkillSelectionConfig(enabled={"test-skill"}, auto={"test-skill"})
+    skills_api = SkillsApi(SkillService(SkillRegistry(str(tmp_path)), selection=selection))
+    settings = Settings(str(tmp_path))
+    settings.save_mcp_server(McpServerConfig(
+        name="demo-mcp", command="node", auto=True, description="Demo MCP server",
+    ))
+
+    coding = await create_session(workspace=str(tmp_path), profile="coding")
+    try:
+        execution = make_langgraph_execution(
+            Config(workspace=str(tmp_path)),
+            api_key=None,
+            session=coding,
+            settings=settings,
+            skills_api=skills_api,
+            skills_api_provider=lambda _ws: skills_api,
+        )
+
+        captured = {}
+
+        class FakeGraph:
+            async def astream(self, initial, _config, *, stream_mode="values"):
+                await execution._prepare_with_stream(initial)
+                captured["system"] = _system_text(initial["messages"])
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="ok")]}
+
+        execution.graph = FakeGraph()
+        service = ChatService(_runtime(execution), session_creator=create_session)
+        dock = BottomInputDock()
+        set_dock(dock)
+        dock.begin_capture()
+        try:
+            await service.run_turn(user_text="hello", workspace=tmp_path)
+        finally:
+            dock.deactivate()
+            dock.reset()
+            set_dock(None)
+
+        system = captured["system"]
+        assert "## Available Skills" in system
+        assert "test-skill" in system
+        assert "## Available MCP Servers" in system
+        assert "demo-mcp" in system
+        assert "secret project rule" not in system
+    finally:
+        await delete_session(coding.id)
 
 @pytest.mark.asyncio
 async def test_custom_profile_policy_selects_base_system_without_profile_branch(tmp_path):

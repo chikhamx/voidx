@@ -24,7 +24,6 @@ def test_coding_profile_spec_assembles_full_base_system_without_capability_filte
         "language",
         "tone",
         "concise",
-        "internals",
         "progress_preamble",
         "summarize_results",
         "uncertainty",
@@ -52,7 +51,7 @@ def test_chat_profile_spec_excludes_coding_only_rules():
     assert prompt.identity == "You are voidx, a conversational assistant."
     style_names = {rule.name for rule in prompt.communication_style}
     assert "todo_progress" not in style_names
-    assert "internals_chat" in style_names
+    assert "internals_chat" not in style_names
     assert "coding assistant" not in rendered
     assert "conversational assistant" in rendered
     assert "summarize_results" in style_names

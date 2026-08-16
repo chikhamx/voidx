@@ -18,7 +18,6 @@ from voidx.agent.application.agents import (
     AgentDef,
     child_agent_descriptions_for_llm,
     get_agent,
-    get_visible_agents,
 )
 from voidx.agent.application.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
 from voidx.agent.adapters.langgraph.runtime.convergence import is_step_hint_message
@@ -237,7 +236,6 @@ def test_orchestrator_has_direct_edit_tools():
     assert get_agent("plan") is None
     assert get_agent("implement") is None
     assert get_agent("review") is None
-    assert get_visible_agents() == [agent]
     assert "skill" in tool_ids
     assert agent.can_write is True
 def test_agent_def_no_longer_renders_tool_contract():

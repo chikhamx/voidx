@@ -130,19 +130,18 @@ pub fn hash_image_tree(root: &std::path::Path) -> std::io::Result<String> {
     use sha2::{Digest, Sha256};
     use std::fs;
 
-    fn collect_files(root: &std::path::Path, dir: &std::path::Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    fn collect_files(dir: &std::path::Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
         for entry in fs::read_dir(dir)? {
             let path = entry?.path();
             let metadata = fs::metadata(&path)?;
             if metadata.is_dir() {
-                collect_files(root, &path, files)?;
+                collect_files(&path, files)?;
             } else if metadata.is_file()
                 && !matches!(
                     path.file_name().and_then(|name| name.to_str()),
                     Some("manifest.json") | Some(".gitkeep")
                 )
             {
-                let _ = root;
                 files.push(path);
             }
         }
@@ -151,7 +150,7 @@ pub fn hash_image_tree(root: &std::path::Path) -> std::io::Result<String> {
 
     let root = root.canonicalize()?;
     let mut files = Vec::new();
-    collect_files(&root, &root, &mut files)?;
+    collect_files(&root, &mut files)?;
     files.sort_by(|left, right| left.cmp(right));
 
     let mut digest = Sha256::new();
@@ -372,14 +371,12 @@ pub fn validate_installed_runtime(
         .get("image_fingerprint")
         .and_then(Value::as_str)
         .ok_or_else(|| "backend manifest has no image fingerprint".to_string())?;
+    if fingerprint.len() != 64 || !fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("backend manifest has an invalid image fingerprint".to_string());
+    }
     let runtime_dir = runtime_version_dir(data_root, fingerprint);
     if !runtime_dir.is_dir() {
         return Err(format!("backend runtime is missing: {}", runtime_dir.display()));
-    }
-    let actual_fingerprint = hash_image_tree(&runtime_dir)
-        .map_err(|error| format!("hash installed backend runtime: {error}"))?;
-    if actual_fingerprint != fingerprint {
-        return Err("installed backend runtime fingerprint mismatch".to_string());
     }
     let (python, site_packages) = runtime_paths_for_manifest(&runtime_dir, manifest)?;
     if !python.is_file() {
@@ -463,7 +460,7 @@ pub fn acquire_runtime_install_lock(data_root: &std::path::Path) -> Result<Runti
     use std::fs::OpenOptions;
     use std::io::ErrorKind;
     use std::thread;
-    use std::time::{Duration, Instant};
+    use std::time::{Duration, Instant, SystemTime};
 
     let runtime = runtime_root(data_root);
     std::fs::create_dir_all(&runtime)
@@ -472,8 +469,37 @@ pub fn acquire_runtime_install_lock(data_root: &std::path::Path) -> Result<Runti
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {
         match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(file) => return Ok(RuntimeInstallLock { path, _file: file }),
+            Ok(mut file) => {
+                use std::io::Write;
+                let _ = writeln!(file, "{}", std::process::id());
+                return Ok(RuntimeInstallLock { path, _file: file });
+            }
             Err(error) if error.kind() == ErrorKind::AlreadyExists && Instant::now() < deadline => {
+                let stale = match std::fs::read_to_string(&path) {
+                    Ok(contents) => match contents.trim().parse::<u64>() {
+                        Ok(pid) if pid <= i32::MAX as u64 => {
+                            #[cfg(unix)]
+                            {
+                                unsafe { libc::kill(pid as libc::pid_t, 0) != 0 }
+                            }
+                            #[cfg(not(unix))]
+                            {
+                                false
+                            }
+                        }
+                        Ok(_) => true,
+                        Err(_) => std::fs::metadata(&path)
+                            .and_then(|metadata| metadata.modified())
+                            .ok()
+                            .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+                            .is_some_and(|age| age > Duration::from_secs(30)),
+                    },
+                    Err(_) => false,
+                };
+                if stale {
+                    let _ = std::fs::remove_file(&path);
+                    continue;
+                }
                 thread::sleep(Duration::from_millis(100));
             }
             Err(error) if error.kind() == ErrorKind::AlreadyExists => {
@@ -681,6 +707,13 @@ pub fn is_project_root(path: &std::path::Path) -> bool {
 }
 
 pub fn is_usable_workspace(path: &std::path::Path) -> bool {
-    path.exists() && path.is_dir() && path.parent().is_some()
+    path.exists()
+        && path.is_dir()
+        && path.parent().is_some()
+        && !path.ancestors().any(|ancestor| {
+            ancestor
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("app"))
+        })
 }
-

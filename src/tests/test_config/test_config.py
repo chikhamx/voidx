@@ -294,8 +294,6 @@ async def test_custom_providers_are_legacy_no_ops(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     settings = Settings(str(tmp_path))
 
-    settings.add_custom_provider("legacy", protocol="openai", base_url="https://legacy.example")
-    settings.add_custom_model("legacy", "legacy-model")
 
     assert settings.list_custom_providers() == []
     assert await settings.list_custom_models("legacy") == []

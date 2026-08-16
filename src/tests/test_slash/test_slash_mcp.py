@@ -11,7 +11,6 @@ from tests.test_slash.context import command_context
 from voidx.config import McpServerConfig, Settings
 from voidx.tooling.domain.web import WebToolRoute
 from voidx.mcp.schema import McpToolDef
-from voidx.presentation.commands import filter_commands
 
 
 class FakePromptApp:
@@ -42,11 +41,6 @@ class FakeMcpManager:
 
     def statuses(self):
         return []
-
-
-def test_mcp_enable_disable_commands_are_in_palette():
-    assert ("/mcp disable", "Disable an MCP server") in filter_commands("/mcp d")
-    assert ("/mcp enable", "Enable an MCP server") in filter_commands("/mcp e")
 
 
 @pytest.mark.asyncio
@@ -222,8 +216,3 @@ async def test_mcp_manual_command_sets_auto_false(tmp_path):
     saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
     assert saved["mcpServers"]["tavily"]["auto"] is False
     assert settings.get_mcp_server("tavily").auto is False
-
-
-def test_mcp_auto_manual_commands_are_in_palette():
-    assert ("/mcp auto", "Mark an MCP server for auto-discovery") in filter_commands("/mcp a")
-    assert ("/mcp manual", "Mark an MCP server for manual discovery only") in filter_commands("/mcp m")

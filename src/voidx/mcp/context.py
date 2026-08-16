@@ -62,20 +62,6 @@ def render_mcp_tool_context(server: str, status: str, tools: list[McpToolDef]) -
     return "\n".join(lines)
 
 
-def has_mcp_tool_context(content: Any) -> bool:
-    if isinstance(content, str):
-        return _MCP_TOOL_CONTEXT_MARKER_RE.search(content) is not None
-    if isinstance(content, list):
-        return any(
-            isinstance(item, dict)
-            and item.get("type") == "text"
-            and isinstance(item.get("text"), str)
-            and _MCP_TOOL_CONTEXT_MARKER_RE.search(item["text"]) is not None
-            for item in content
-        )
-    return False
-
-
 def strip_mcp_tool_context(content: Any) -> Any:
     if isinstance(content, str):
         return _strip_mcp_tool_context_text(content)

@@ -35,7 +35,7 @@ export function historyPrev(currentText: string): string | null {
   return entries[browseIndex];
 }
 
-export function historyNext(currentText: string): string | null {
+export function historyNext(): string | null {
   if (browseIndex === null) return null;
   if (browseIndex >= entries.length - 1) {
     const restored = draft;

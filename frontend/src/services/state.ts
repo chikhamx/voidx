@@ -1,6 +1,5 @@
 import type { ProfileSummary, SlashCommand } from "../utils/types";
 import type { RefCandidate, RefToken } from "../ui/reference";
-import type { SettingsSnapshot } from "../ui/settings";
 import { iconSvg } from "../utils/icons";
 import { renderRuntimeProfile } from "../ui/mode";
 

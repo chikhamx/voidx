@@ -2,10 +2,12 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { handleItem } from "../../src/main";
 import { appendMessageItem, appendThoughtItem, handleStatusItem, handleToolItem } from "../../src/utils/render";
+import { resetFileChangeCards } from "../../src/utils/render-file-changes";
 
 beforeEach(() => {
   const transcript = document.querySelector("#transcript");
   if (transcript) transcript.innerHTML = "";
+  resetFileChangeCards();
   const todo = document.querySelector("#todo-panel");
   if (todo) {
     todo.innerHTML = "";
@@ -73,28 +75,28 @@ describe("handleToolItem", () => {
     expect(item.querySelector(".tool-spinner").textContent).toBe("running");
   });
 
-  it("renders args as JSON in pre element", () => {
+  it("shows a file path in the collapsed row without an args block", () => {
     handleToolItem("item.started", "t2", {
       tool_call_id: "c2",
       tool_name: "read",
       args: { path: "/tmp/file.txt" },
     });
     const transcript = document.querySelector("#transcript");
-    const args = transcript.querySelector(".tool-args");
-    expect(args).not.toBeNull();
-    expect(args.textContent).toContain("path");
-    expect(args.textContent).toContain("/tmp/file.txt");
+    const item = transcript.querySelector(".tool-item");
+    expect(item.querySelector(".tool-summary").textContent).toContain("file.txt");
+    expect(item.querySelector(".tool-args")).toBeNull();
   });
 
-  it("renders string args as-is", () => {
+  it("shows string search arguments in the collapsed row", () => {
     handleToolItem("item.started", "t3", {
       tool_call_id: "c3",
       tool_name: "search",
       args: "pattern",
     });
     const transcript = document.querySelector("#transcript");
-    const args = transcript.querySelector(".tool-args");
-    expect(args.textContent).toBe("pattern");
+    const item = transcript.querySelector(".tool-item");
+    expect(item.querySelector(".tool-summary").textContent).toContain('"pattern"');
+    expect(item.querySelector(".tool-args")).toBeNull();
   });
 
   it("uses label when tool_name missing", () => {
@@ -254,7 +256,7 @@ describe("handleToolItem", () => {
       diff_text: "--- a\n+++ b\n@@ -1,2 +1,2 @@\n-old\n+new\n ctx",
     });
     const transcript = document.querySelector("#transcript");
-    const diff = transcript.querySelector(".diff-content");
+    const diff = transcript.querySelector(".file-change-diff");
     expect(diff).not.toBeNull();
     expect(diff.children[0].className).toBe("diff-meta");
     expect(diff.children[1].className).toBe("diff-meta");
@@ -284,6 +286,23 @@ describe("handleToolItem", () => {
     expect(group.querySelector(".tool-group-name").textContent).toContain("ran 1 command, read 1 file");
     expect(group.querySelector(".tool-group-args").textContent).toBe("");
     expect(group.querySelector(".tool-group-body").hidden).toBe(true);
+  });
+
+  it("does not classify web searches as file reads", () => {
+    handleToolItem("item.started", "t-search-1", {
+      tool_call_id: "c-search-1",
+      tool_name: "websearch",
+      args: { query: "voidx" },
+    });
+    handleToolItem("item.started", "t-search-2", {
+      tool_call_id: "c-search-2",
+      tool_name: "websearch",
+      args: { query: "streaming" },
+    });
+
+    const summary = document.querySelector(".tool-group-name")?.textContent || "";
+    expect(summary).toContain("searched 2 times");
+    expect(summary).not.toContain("read");
   });
 
   it("starts a new tool group after a non-tool transcript item", () => {
@@ -386,8 +405,232 @@ describe("handleToolItem", () => {
     });
     const transcript = document.querySelector("#transcript");
     const summary = transcript.querySelector(".tool-summary");
-    expect(summary.textContent).toContain("ran");
+    expect(summary.textContent).not.toContain("ran");
     expect(summary.textContent).toContain(cmd);
+  });
+  it("shows primary tool arguments in the collapsed row without repeating JSON in the body", () => {
+    const cases = [
+      {
+        itemId: "primary-command",
+        callId: "primary-command-call",
+        tool_name: "bash",
+        raw_args: { command: "pytest -q" },
+        expected: "pytest -q",
+      },
+      {
+        itemId: "primary-read",
+        callId: "primary-read-call",
+        tool_name: "read",
+        args: { path: "/src/main.py" },
+        expected: "main.py",
+      },
+      {
+        itemId: "primary-search",
+        callId: "primary-search-call",
+        tool_name: "search",
+        args: { query: "render tool", path: "/src" },
+        expected: '"render tool"',
+      },
+    ];
+
+    for (const item of cases) {
+      handleToolItem("item.started", item.itemId, {
+        tool_call_id: item.callId,
+        tool_name: item.tool_name,
+        args: item.args,
+        raw_args: item.raw_args,
+      });
+    }
+
+    const items = [...document.querySelectorAll<HTMLElement>(".tool-item")];
+    expect(items).toHaveLength(cases.length);
+    for (const [index, item] of items.entries()) {
+      const summary = item.querySelector<HTMLElement>(".tool-summary");
+      const body = item.querySelector<HTMLElement>(".tool-body");
+      expect(summary?.textContent).toContain(cases[index].expected);
+      expect(body?.querySelector(".tool-args")).toBeNull();
+    }
+  });
+
+  it("shows command output in the expanded body without repeating the command", () => {
+    handleToolItem("item.started", "command-output", {
+      tool_call_id: "command-output-call",
+      tool_name: "bash",
+      raw_args: { command: "pytest -q" },
+    });
+    handleToolItem("item.delta", "command-output", {
+      tool_call_id: "command-output-call",
+      detail: "2 passed",
+    });
+
+    const item = document.querySelector<HTMLElement>(".tool-item");
+    const body = item?.querySelector<HTMLElement>(".tool-body");
+    expect(item?.querySelector(".tool-summary")?.textContent).toContain("pytest -q");
+    expect(body?.textContent).toContain("2 passed");
+    expect(body?.textContent).not.toBe("pytest -q");
+    expect(body?.querySelector(".tool-args")).toBeNull();
+  });
+
+  it("normalizes formatted live arguments and keeps results only in the expanded body", () => {
+    handleItem("item.started", {
+      kind: "tool",
+      item_id: "live-command",
+      turn_id: "turn-live",
+      data: {
+        tool_call_id: "live-command-call",
+        tool_name: "bash",
+        args: 'command="[cyan]pytest -q[/cyan]"',
+      },
+    });
+    handleItem("item.delta", {
+      kind: "tool",
+      item_id: "live-command",
+      turn_id: "turn-live",
+      data: {
+        tool_call_id: "live-command-call",
+        detail: "2 passed",
+      },
+    });
+    handleItem("item.completed", {
+      kind: "tool",
+      item_id: "live-command",
+      turn_id: "turn-live",
+      data: {
+        tool_call_id: "live-command-call",
+        ok: true,
+      },
+    });
+
+    const item = document.querySelector<HTMLElement>(".tool-item");
+    const summary = item?.querySelector<HTMLElement>(".tool-summary");
+    const body = item?.querySelector<HTMLElement>(".tool-body");
+    expect(summary?.textContent).toContain("pytest -q");
+    expect(summary?.textContent).not.toContain("command=");
+    expect(summary?.textContent).not.toContain("[cyan]");
+    expect(body?.querySelector(".tool-args")).toBeNull();
+    item?.querySelector<HTMLElement>(".tool-header")?.click();
+    expect(body?.hidden).toBe(false);
+    expect(body?.textContent).toContain("2 passed");
+    expect(body?.textContent).not.toContain("pytest -q");
+  });
+
+  it("summarizes common tool primary arguments", () => {
+    const cases = [
+      { tool_name: "write", args: { file_path: "/src/write.py" }, expected: "write.py" },
+      { tool_name: "edit", args: { file_path: "/src/edit.py" }, expected: "edit.py" },
+      { tool_name: "find", args: { pattern: "*.py", path: "/src" }, expected: "*.py" },
+      { tool_name: "list_dir", args: { path: "/src" }, expected: "src" },
+      { tool_name: "powershell", raw_args: { command: "Get-ChildItem" }, expected: "Get-ChildItem" },
+      { tool_name: "custom_tool", args: { target: "bundle" }, expected: "bundle" },
+    ];
+
+    for (const [index, item] of cases.entries()) {
+      handleToolItem("item.started", `primary-extra-${index}`, {
+        tool_call_id: `primary-extra-call-${index}`,
+        tool_name: item.tool_name,
+        args: item.args,
+        raw_args: item.raw_args,
+      });
+      const rendered = document.querySelectorAll<HTMLElement>(".tool-item")[index];
+      expect(rendered.querySelector(".tool-summary")?.textContent).toContain(item.expected);
+      expect(rendered.querySelector(".tool-args")).toBeNull();
+    }
+  });
+
+  it("keeps fragmented unified diffs in the file change card", () => {
+    handleToolItem("item.started", "fragmented-diff", {
+      tool_call_id: "fragmented-diff-call",
+      tool_name: "replace",
+    }, "turn-fragmented-diff");
+    handleToolItem("item.delta", "fragmented-diff", {
+      tool_call_id: "fragmented-diff-call",
+      diff_text: "--- a/src/app.ts\n+++ b/src/app.ts\n@@ -1,1 +1,1 @@\n-old\n+new",
+    }, "turn-fragmented-diff");
+    handleToolItem("item.delta", "fragmented-diff", {
+      tool_call_id: "fragmented-diff-call",
+      diff_text: "@@ -4,1 +4,2 @@\n-old2\n+new2\n+new3",
+    }, "turn-fragmented-diff");
+
+    expect(document.querySelectorAll(".file-change-card")).toHaveLength(1);
+    expect(document.querySelector(".tool-body .diff-content")).toBeNull();
+    expect(document.querySelector(".file-change-card")?.textContent).toContain("+3");
+    expect(document.querySelector(".file-change-card")?.textContent).toContain("-2");
+
+  });
+  it("keeps plain diff output for another tool after a file card", () => {
+    handleToolItem("item.started", "card-tool", {
+      tool_call_id: "card-tool-call",
+      tool_name: "replace",
+    }, "turn-mixed-diff");
+    handleToolItem("item.delta", "card-tool", {
+      tool_call_id: "card-tool-call",
+      diff_text: "--- a/src/card.ts\n+++ b/src/card.ts\n@@ -1,1 +1,1 @@\n-old\n+new",
+    }, "turn-mixed-diff");
+
+    handleToolItem("item.started", "plain-tool", {
+      tool_call_id: "plain-tool-call",
+      tool_name: "custom_tool",
+    }, "turn-mixed-diff");
+    handleToolItem("item.delta", "plain-tool", {
+      tool_call_id: "plain-tool-call",
+      diff_text: "+plain output",
+    }, "turn-mixed-diff");
+
+    const plainTool = document.querySelector<HTMLElement>("[data-tool-id='plain-tool-call']");
+    expect(document.querySelector(".file-change-card")).not.toBeNull();
+    expect(plainTool?.querySelector(".tool-body .diff-content")).not.toBeNull();
+  });
+
+  it("removes a legacy diff fallback when a later unified diff completes the card", () => {
+    handleToolItem("item.started", "fallback-diff", {
+      tool_call_id: "fallback-diff-call",
+      tool_name: "replace",
+    }, "turn-fallback-diff");
+    handleToolItem("item.delta", "fallback-diff", {
+      tool_call_id: "fallback-diff-call",
+      diff_text: "+legacy output",
+    }, "turn-fallback-diff");
+    expect(document.querySelector(".tool-body .diff-content")).not.toBeNull();
+
+    handleToolItem("item.delta", "fallback-diff", {
+      tool_call_id: "fallback-diff-call",
+      diff_text: "--- a/src/app.ts\n+++ b/src/app.ts\n@@ -1,1 +1,1 @@\n-old\n+new",
+    }, "turn-fallback-diff");
+
+    expect(document.querySelector(".file-change-card")).not.toBeNull();
+    expect(document.querySelector(".tool-body .diff-content")).toBeNull();
+  });
+
+  it("renders parsed tool diffs as a file change card", () => {
+    handleToolItem("item.started", "ts-file-card", {
+      tool_call_id: "cs-file-card",
+      tool_name: "replace",
+      args: { file_path: "/src/manager.py" },
+    });
+    handleToolItem("item.delta", "ts-file-card", {
+      tool_call_id: "cs-file-card",
+      diff_text: "--- a/manager.py\n+++ b/manager.py\n@@ -1,1 +1,1 @@\n-old\n+new",
+    }, "turn-file-card");
+
+    const transcript = document.querySelector("#transcript");
+    expect(transcript.querySelector(".file-change-card")).not.toBeNull();
+    expect(transcript.querySelector(".tool-body .diff-content")).toBeNull();
+    expect(transcript.querySelector(".file-change-path").textContent).toBe("manager.py");
+  });
+
+
+  it("starts a new tool group when the turn id changes", () => {
+    handleToolItem("item.started", "turn-a-tool", {
+      tool_call_id: "turn-a-call",
+      tool_name: "bash",
+    }, "turn-a");
+    handleToolItem("item.started", "turn-b-tool", {
+      tool_call_id: "turn-b-call",
+      tool_name: "read",
+    }, "turn-b");
+
+    const transcript = document.querySelector("#transcript");
+    expect(transcript.querySelectorAll(".tool-group")).toHaveLength(2);
   });
 
   it("shows accumulated diff stats in the row header when diff_text streams in", () => {

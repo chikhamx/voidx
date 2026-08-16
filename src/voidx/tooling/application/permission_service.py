@@ -359,8 +359,6 @@ class PermissionService:
     def _sandbox_label(self) -> str:
         return self.sandbox_mode
 
-    def _sandbox_short(self) -> str:
-        return self.sandbox_mode
 
     def _approval_label(self) -> str:
         return ""

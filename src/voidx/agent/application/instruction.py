@@ -118,11 +118,17 @@ class InstructionService:
         self._system_paths = paths
         return paths
 
-    async def system(self) -> list[str]:
-        """Read all system instruction files. Returns list of
-        'Instructions from: <path>\n<content>' strings."""
-        paths = await self.system_paths()
-        instructions = await self._read_all(paths)
+    async def system(self, *, include_files: bool = True) -> list[str]:
+        """Read system instructions. Returns list of
+        'Instructions from: <path>\n<content>' strings.
+
+        ``include_files=False`` skips AGENTS.md/CLAUDE.md file loading but
+        keeps the Available Skills and MCP server sections.
+        """
+        instructions: list[str] = []
+        if include_files:
+            paths = await self.system_paths()
+            instructions = await self._read_all(paths)
         available_skills = await self.available_skills_section()
         if available_skills:
             instructions.append(available_skills)

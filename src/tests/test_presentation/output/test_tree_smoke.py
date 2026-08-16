@@ -439,3 +439,64 @@ def test_turn_with_ansi_prefix_closing_tag_does_not_crash():
         assert not plain.rstrip().endswith("[/]"), (
             f"Wrapper closing tag leaked: {plain!r}"
         )
+
+
+
+def test_render_tail_walks_only_the_visible_root_suffix(monkeypatch):
+    tree = OutputTree()
+    for index in range(1_000):
+        tree.new_node(
+            tree.root,
+            node_type="message",
+            header=f"history line {index}",
+            collapsed=False,
+        )
+
+    tree.render(80)
+    tree.new_node(
+        tree.root,
+        node_type="message",
+        header="latest line",
+        collapsed=False,
+    )
+
+    original_walk = tree._walk_render
+    walked: list[str] = []
+
+    def tracked_walk(node, *args, **kwargs):
+        walked.append(node.id)
+        return original_walk(node, *args, **kwargs)
+
+    monkeypatch.setattr(tree, "_walk_render", tracked_walk)
+    tail = tree.render_tail(80, 5)
+
+    assert len(walked) <= 5
+    assert tail == tree.render(80)[-5:]
+
+
+
+def test_render_root_tail_excludes_prefix_without_full_render(monkeypatch):
+    tree = OutputTree()
+    for index in range(1_000):
+        tree.new_node(
+            tree.root,
+            node_type="message",
+            header=f"history line {index}",
+            collapsed=False,
+        )
+    tree.new_node(
+        tree.root,
+        node_type="startup",
+        header="startup banner",
+        collapsed=False,
+    )
+
+    def fail_full_render(_width: int):
+        raise AssertionError("root-tail rendering must not use full render")
+
+    monkeypatch.setattr(tree, "render", fail_full_render)
+
+    tail = tree.render_root_tail(80, 1, len(tree.root.children), 5)
+
+    assert "startup banner" in "\n".join(tail)
+    assert "history line 0" not in "\n".join(tail)

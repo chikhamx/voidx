@@ -280,6 +280,33 @@ async def test_first_message_is_persisted_so_intake_fires_once(monkeypatch) -> N
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("profile", ["goal", "loop"])
+async def test_autonomous_first_message_is_saved_before_idle_turn(monkeypatch, profile: str) -> None:
+    order: list[str] = []
+    from voidx.agent.adapters.persistence.session_repository import MessageRow
+
+    async def fake_save_message(_row: MessageRow) -> int:
+        order.append("save")
+        return 1
+
+    async def fake_idle_turn(*_args, **_kwargs) -> None:
+        order.append("run")
+
+    monkeypatch.setattr(
+        "voidx.agent.adapters.persistence.session_repository.save_message",
+        fake_save_message,
+    )
+    service = _service(profile)
+    if profile == "goal":
+        monkeypatch.setattr(service, "_run_goal_idle_turn", fake_idle_turn)
+    else:
+        monkeypatch.setattr(service, "_run_loop_idle_turn", fake_idle_turn)
+
+    assert await service.route_first_message("start", thread_id="") is True
+    assert order == ["save", "run"]
+
+
+@pytest.mark.asyncio
 async def test_goal_intake_failure_persists_first_message(monkeypatch) -> None:
     saved: list[tuple[str, str]] = []
     from voidx.agent.adapters.persistence.session_repository import MessageRow

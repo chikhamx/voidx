@@ -415,12 +415,6 @@ async def test_save_profile_persists_model_in_db_and_only_current_profile_in_jso
 
     try:
         await settings.save_profile(profile)
-        settings.add_custom_model("custom", "another-model")
-        settings.add_custom_provider(
-            "another-provider",
-            protocol="openai",
-            base_url="https://another.example/v1",
-        )
 
         saved = json.loads((tmp_path / ".voidx" / "settings.json").read_text(encoding="utf-8"))
         assert saved == {"current_profile": profile_name}

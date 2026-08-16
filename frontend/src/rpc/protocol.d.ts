@@ -28,6 +28,10 @@ export type Data = {
 export type Message = string;
 export type Id2 = number | string | null;
 export type Jsonrpc3 = string;
+export type AfterTurnId = number | null;
+export type BeforeTurnId = number | null;
+export type HasEarlier = boolean;
+export type HasLater = boolean;
 export type AgentName = string | null;
 export type AgentRunId = string | null;
 export type BodyLines = string[];
@@ -64,6 +68,7 @@ export type ToolCallId = string | null;
 export type Nodes = TranscriptNode[];
 export type Revision = number;
 export type ThreadId = string;
+export type Windowed = boolean;
 export type ActiveThreadId = string;
 export type AiApprovalCount = number;
 export type Model = string;
@@ -196,9 +201,14 @@ export interface WorkspaceSnapshot {
  * Transcript snapshot for a single thread.
  */
 export interface ThreadSnapshot {
+  after_turn_id?: AfterTurnId;
+  before_turn_id?: BeforeTurnId;
+  has_earlier?: HasEarlier;
+  has_later?: HasLater;
   nodes?: Nodes;
   revision?: Revision;
   thread_id: ThreadId;
+  windowed?: Windowed;
   [k: string]: unknown;
 }
 export interface TranscriptNode {

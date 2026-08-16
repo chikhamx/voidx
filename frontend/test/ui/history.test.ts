@@ -70,8 +70,8 @@ describe("historyPrev/historyNext navigation", () => {
   it("walks back then forward, restoring the draft", () => {
     expect(historyPrev("my draft")).toBe("three");
     expect(historyPrev("three")).toBe("two");
-    expect(historyNext("two")).toBe("three");
-    expect(historyNext("three")).toBe("my draft");
+    expect(historyNext()).toBe("three");
+    expect(historyNext()).toBe("my draft");
   });
 
   it("returns null at the oldest entry and stays put", () => {
@@ -83,14 +83,14 @@ describe("historyPrev/historyNext navigation", () => {
   });
 
   it("returns null when moving next past the newest entry", () => {
-    expect(historyNext("")).toBe(null);
+    expect(historyNext()).toBe(null);
   });
 
   it("resets navigation on new push", () => {
     expect(historyPrev("draft")).toBe("three");
     pushHistory("four");
     expect(historyPrev("new draft")).toBe("four");
-    expect(historyNext("four")).toBe("new draft");
+    expect(historyNext()).toBe("new draft");
   });
 
   it("resetHistoryNavigation exits browsing so next prev starts newest", () => {
@@ -115,7 +115,7 @@ describe("isHistoryBrowsing", () => {
   it("becomes false after walking forward past newest", () => {
     pushHistory("x");
     historyPrev("");
-    historyNext("x");
+    historyNext();
     expect(isHistoryBrowsing()).toBe(false);
   });
 });

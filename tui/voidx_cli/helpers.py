@@ -27,8 +27,6 @@ _ENTER_TERMINAL_SEQUENCE = f"{_DISABLE_MOUSE_REPORTING}\x1b[?2004h\x1b[?25l"
 _EXIT_TERMINAL_SEQUENCE = f"{_DISABLE_MOUSE_REPORTING}\x1b[?2004l\x1b[?25h"
 
 
-def _ctrl(key: str) -> bytes:
-    return bytes([ord(key) - 0x60])
 
 
 def _is_printable(data: bytes) -> bool:
@@ -36,8 +34,6 @@ def _is_printable(data: bytes) -> bool:
     return len(data) == 1 and 0x20 <= data[0] <= 0x7E
 
 
-def _is_utf8_continuation(b: int) -> bool:
-    return 0x80 <= b <= 0xBF
 
 
 def _utf8_len(first: int) -> int:

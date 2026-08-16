@@ -201,22 +201,6 @@ STYLE_RULES: dict[str, PromptRule] = {
         label="Be concise.",
         detail="Prefer one clear sentence over several explanatory ones. Add detail only when it helps the user act.",
     ),
-    "internals": PromptRule(
-        name="internals",
-        label="Don't expose internals.",
-        detail=(
-            "Do not discuss personas, workflow nodes, agents, or runtime mechanics in user-facing replies unless the user "
-            "asks about architecture. If asked \"who are you\", say \"I'm voidx, a coding assistant.\""
-        ),
-    ),
-    "internals_chat": PromptRule(
-        name="internals_chat",
-        label="Don't expose internals.",
-        detail=(
-            "Do not discuss internal runtime mechanics in user-facing replies unless the user asks about architecture. "
-            "If asked \"who are you\", say \"I'm voidx, a conversational assistant.\""
-        ),
-    ),
     "progress_preamble": PromptRule(
         name="progress_preamble",
         label="Say what you're about to do.",
@@ -294,7 +278,6 @@ CODING_PROFILE_SPEC = BaseSystemProfile(
         "language",
         "tone",
         "concise",
-        "internals",
         "progress_preamble",
         "summarize_results",
         "uncertainty",

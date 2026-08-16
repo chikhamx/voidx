@@ -80,6 +80,7 @@ class UiEventItemAdapter:
     def __init__(self, thread_id: str, turn_id: str) -> None:
         self._thread_id = thread_id
         self._turn_id = turn_id
+        self._turn_active = False
         # tool_call_id → item_id (for correlating tool started/finished/result)
         self._tool_items: dict[str, str] = {}
         # stream_id → (item_id, accumulated_text)
@@ -106,6 +107,30 @@ class UiEventItemAdapter:
 
     # ── Item builders ────────────────────────────────────────────────────
 
+    def _ensure_turn_id(self) -> str:
+        if not self._turn_id:
+            self._turn_id = _uid()
+        return self._turn_id
+
+    def _begin_turn(self) -> str:
+        if self._turn_active or not self._turn_id:
+            self._turn_id = _uid()
+        self._turn_active = True
+        self._tool_items.clear()
+        self._stream_items.clear()
+        self._subagent_items.clear()
+        self._status_items.clear()
+        return self._turn_id
+
+    def _retire_turn(self, notification: JsonRpcNotification) -> JsonRpcNotification:
+        self._turn_active = False
+        self._turn_id = ""
+        self._tool_items.clear()
+        self._stream_items.clear()
+        self._subagent_items.clear()
+        self._status_items.clear()
+        return notification
+
     def _item_notification(
         self,
         item_id: str,
@@ -117,7 +142,7 @@ class UiEventItemAdapter:
             method=f"item.{lifecycle}",
             params={
                 "item_id": item_id,
-                "turn_id": self._turn_id,
+                "turn_id": self._ensure_turn_id(),
                 "thread_id": self._thread_id,
                 "kind": kind,
                 "lifecycle": lifecycle,
@@ -141,6 +166,7 @@ class UiEventItemAdapter:
                 "tool_call_id": event.tool_call_id,
                 "label": event.label,
                 "args": event.args,
+                "raw_args": event.raw_args,
                 "tool_name": event.tool_name,
             },
         )
@@ -487,39 +513,42 @@ class UiEventItemAdapter:
             "turn.started",
             {
                 "thread_id": event.thread_id or self._thread_id,
-                "turn_id": self._turn_id,
+                "turn_id": self._begin_turn(),
                 "text": event.text,
                 "metadata": event.metadata.model_dump(mode="json"),
             },
         )
 
     def _on_turn_completed(self, event: TurnCompleted) -> JsonRpcNotification:
-        return self._notification(
+        notification = self._notification(
             "turn.completed",
             {
                 "thread_id": event.thread_id or self._thread_id,
-                "turn_id": self._turn_id,
+                "turn_id": self._ensure_turn_id(),
             },
         )
+        return self._retire_turn(notification)
 
     def _on_turn_failed(self, event: TurnFailed) -> JsonRpcNotification:
-        return self._notification(
+        notification = self._notification(
             "turn.failed",
             {
                 "thread_id": event.thread_id or self._thread_id,
-                "turn_id": self._turn_id,
+                "turn_id": self._ensure_turn_id(),
                 "message": event.message,
             },
         )
+        return self._retire_turn(notification)
 
     def _on_turn_cancelled(self, event: TurnCancelled) -> JsonRpcNotification:
-        return self._notification(
+        notification = self._notification(
             "turn.cancelled",
             {
                 "thread_id": event.thread_id or self._thread_id,
-                "turn_id": self._turn_id,
+                "turn_id": self._ensure_turn_id(),
             },
         )
+        return self._retire_turn(notification)
 
     def _on_capture_started(self, event: CaptureStarted) -> JsonRpcNotification:
         return self._notification("capture.started", {})

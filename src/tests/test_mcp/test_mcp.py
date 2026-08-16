@@ -1,5 +1,6 @@
 from tests.tool_registry import build_registry
 import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -518,7 +519,9 @@ async def test_builtin_web_mcp_server_lists_tools():
         command=sys.executable,
         args=["-m", "voidx.tooling.adapters.mcp_web_server"],
         cwd=src_path,
-        env={"PYTHONPATH": src_path},
+        env={"PYTHONPATH": os.pathsep.join(
+            filter(None, [src_path, os.environ.get("PYTHONPATH", "")])
+        )},
     ))
 
     await client.start()

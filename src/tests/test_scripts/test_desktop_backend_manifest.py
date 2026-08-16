@@ -164,3 +164,54 @@ def test_desktop_build_restores_backend_resource_placeholder() -> None:
     assert "restore_backend_resource_placeholder()" in build_script
     assert "trap restore_backend_resource_placeholder EXIT" in build_script
     assert 'touch "$BACKEND_RESOURCE_DIR/.gitkeep"' in build_script
+
+
+def test_desktop_build_uses_portable_locale_for_macos_bundling() -> None:
+    build_script = (Path(__file__).resolve().parents[3] / "desktop" / "build.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "export LC_ALL=C" in build_script
+    assert "export LANG=C" in build_script
+    assert "export LC_CTYPE=C" in build_script
+
+
+def test_desktop_build_clears_stale_macos_dmg_outputs() -> None:
+    build_script = (Path(__file__).resolve().parents[3] / "desktop" / "build.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'find "$BUNDLE_DIR/macos"' in build_script
+    assert '"voidx_*.dmg"' in build_script
+    assert '"rw.*.dmg"' in build_script
+
+
+def test_desktop_build_does_not_skip_release_metadata_checks() -> None:
+    build_script = (Path(__file__).resolve().parents[3] / "desktop" / "build.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "--skip-checks" not in build_script
+
+
+def test_desktop_build_detaches_stale_macos_dmg_mounts_before_cleanup() -> None:
+    build_script = (Path(__file__).resolve().parents[3] / "desktop" / "build.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "detach_stale_macos_dmg_mounts" in build_script
+    assert 'hdiutil detach "$device"' in build_script
+    assert build_script.index("detach_stale_macos_dmg_mounts") < build_script.index(
+        'find "$BUNDLE_DIR/macos"'
+    )
+
+
+def test_desktop_build_uses_hdiutil_retry_wrapper_on_macos() -> None:
+    root = Path(__file__).resolve().parents[3]
+    build_script = (root / "desktop" / "build.sh").read_text(encoding="utf-8")
+    wrapper = (root / "desktop" / "tools" / "hdiutil").read_text(encoding="utf-8")
+
+    assert 'export PATH="$DESKTOP_DIR/tools:$PATH"' in build_script
+    assert '"$status" -eq 2' in wrapper
+    assert '"$status" -eq 16' in wrapper
+    assert 'exec /usr/bin/hdiutil "$@"' in wrapper

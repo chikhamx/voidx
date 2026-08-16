@@ -37,9 +37,6 @@ class SkillDefinition(BaseModel):
     def name(self) -> str:
         return self.meta.name
 
-    @property
-    def source_dir(self) -> Path:
-        return self.path.parent
 
 
 

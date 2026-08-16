@@ -5,6 +5,20 @@ from __future__ import annotations
 from voidx.presentation.protocol.v2.methods import MethodParamsError
 
 
+def _parse_turn_limit(value: object, *, default: int | None) -> int | None:
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 50:
+        raise MethodParamsError("turn_limit must be an integer between 1 and 50")
+    return value
+
+
+def _parse_thread_id(value: object) -> str:
+    if not isinstance(value, str) or not value:
+        raise MethodParamsError("thread_id must be a non-empty string")
+    return value
+
+
 class SessionMethods:
     """Session/command-related JSON-RPC handlers, mixed into GatewaySession."""
 
@@ -31,6 +45,7 @@ class SessionMethods:
             runtime_profile=profile,
             temporary=True,
         )
+        await self._activate_dock(thread_id)
         self._active_thread_id = thread_id
         await self.broadcast_snapshot()
         return {
@@ -94,13 +109,38 @@ class SessionMethods:
         return {"ok": True}
 
     async def _method_session_switch(self, params: dict) -> dict:
-        thread_id = params.get("thread_id", "")
-        await self.switch_thread(thread_id)
+        thread_id = _parse_thread_id(params.get("thread_id", ""))
+        turn_limit = _parse_turn_limit(params.get("turn_limit"), default=None)
+        self._remember_current_client_snapshot_limit(turn_limit)
+        await self.switch_thread(thread_id, turn_limit=turn_limit)
         info = self._threads.get(self._active_thread_id)
         return {
             "active_thread_id": self._active_thread_id,
             "runtime_profile": info.runtime_profile if info else "coding",
         }
+
+    async def _method_transcript_page(self, params: dict) -> dict:
+        thread_id = _parse_thread_id(params.get("thread_id", ""))
+        if thread_id not in self._threads:
+            raise MethodParamsError(
+                f"thread not found: {thread_id}",
+                code=-32000,
+            )
+        before_turn_id = params.get("before_turn_id")
+        if (
+            before_turn_id is not None
+            and (isinstance(before_turn_id, bool) or not isinstance(before_turn_id, int))
+        ):
+            raise MethodParamsError("before_turn_id must be an integer or null")
+        turn_limit = _parse_turn_limit(params.get("turn_limit"), default=20)
+        self._remember_current_client_snapshot_limit(turn_limit)
+        snapshot = await self._windowed_thread_snapshot(
+            thread_id,
+            before_turn_id=before_turn_id,
+            turn_limit=turn_limit or 20,
+        )
+        return snapshot.model_dump()
+
 
     async def _method_session_list(self, params: dict) -> dict:
         await self.sync_persisted_threads()

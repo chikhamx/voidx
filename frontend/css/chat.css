@@ -359,6 +359,150 @@
   opacity: 0.6;
 }
 
+/* === 文件变更卡片 === */
+.file-change-card {
+  align-self: flex-start;
+  background: var(--vx-bg-surface);
+  border: 1px solid var(--vx-border);
+  border-radius: var(--vx-radius-md);
+  box-shadow: var(--vx-shadow-xs);
+  max-width: 100%;
+  overflow: hidden;
+  width: 100%;
+}
+
+.file-change-header {
+  align-items: center;
+  background: var(--vx-bg-subtle);
+  border-bottom: 1px solid var(--vx-border);
+  color: var(--vx-text-primary);
+  display: flex;
+  font-size: var(--vx-text-sm);
+  gap: var(--vx-space-2);
+  padding: var(--vx-space-2) var(--vx-space-3);
+}
+
+.file-change-title { font-weight: 600; }
+
+.file-change-stats,
+.file-change-row-stats {
+  align-items: center;
+  display: inline-flex;
+  font-family: var(--vx-font-mono);
+  font-size: var(--vx-text-xs);
+  gap: var(--vx-space-2);
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.file-change-list { display: grid; }
+
+.file-change-entry + .file-change-entry {
+  border-top: 1px solid var(--vx-border);
+}
+
+.file-change-row {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--vx-text-secondary);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: var(--vx-space-2);
+  min-width: 0;
+  padding: 9px var(--vx-space-3);
+  text-align: left;
+  width: 100%;
+}
+
+.file-change-row:hover { background: var(--vx-bg-hover); }
+.file-change-row:focus-visible { position: relative; z-index: 1; }
+
+.file-change-operation {
+  border-radius: var(--vx-radius-sm);
+  display: inline-flex;
+  flex: 0 0 20px;
+  font-family: var(--vx-font-mono);
+  font-size: var(--vx-text-xs);
+  font-weight: 700;
+  justify-content: center;
+  line-height: 20px;
+  min-height: 20px;
+}
+
+.file-change-operation-created {
+  background: var(--vx-diff-add-bg);
+  color: var(--vx-diff-add);
+}
+
+.file-change-operation-modified {
+  background: var(--vx-accent-soft);
+  color: var(--vx-accent);
+}
+
+.file-change-operation-deleted {
+  background: var(--vx-diff-del-bg);
+  color: var(--vx-diff-del);
+}
+
+.file-change-path {
+  color: var(--vx-text-primary);
+  font-family: var(--vx-font-mono);
+  font-size: var(--vx-text-sm);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-change-chevron {
+  color: var(--vx-text-dim);
+  flex: 0 0 14px;
+  font-size: 18px;
+  line-height: 1;
+  text-align: center;
+}
+
+.file-change-detail {
+  border-top: 1px solid var(--vx-border);
+  padding: 0 var(--vx-space-3) var(--vx-space-2) 44px;
+}
+
+.file-change-diff {
+  background: var(--vx-bg-subtle);
+  border: 1px solid var(--vx-border);
+  border-radius: var(--vx-radius-sm);
+  color: var(--vx-text-secondary);
+  font-family: var(--vx-font-mono);
+  font-size: var(--vx-text-xs);
+  margin: var(--vx-space-2) 0 0;
+  max-height: 420px;
+  overflow: auto;
+  padding: var(--vx-space-2);
+  white-space: pre;
+}
+
+.file-change-diff > div { min-height: 1.4em; }
+
+.file-change-expand {
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--vx-border);
+  color: var(--vx-accent);
+  cursor: pointer;
+  display: block;
+  font-size: var(--vx-text-xs);
+  padding: var(--vx-space-2) var(--vx-space-3);
+  text-align: left;
+  width: 100%;
+}
+
+.file-change-expand:hover { background: var(--vx-bg-hover); }
+
+.file-change-added { color: var(--vx-diff-add); }
+.file-change-removed { color: var(--vx-diff-del); }
+
 /* === Diff 项 === */
 .diff-item {
   align-self: flex-start;

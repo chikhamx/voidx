@@ -18,14 +18,6 @@ def _normalize_choices(choices: list[str | tuple[str, str, str]]) -> list[tuple[
 
 
 class _ChoicePromptMixin:
-    def _init_choice_prompt_state(self) -> None:
-        self._choice_queue: asyncio.Queue[str | None] = asyncio.Queue()
-        self._choice_state.prompt_lock = asyncio.Lock()
-        self._active_choice: list[tuple[str, str, str]] | None = None
-        self._choice_prompt: str = ""
-        self._choice_selected: int = 0
-        self._choice_details: list[dict[str, Any]] = []
-        self._choice_anchor: str = ""
 
     def _prompt_lock_for_current_loop(self) -> asyncio.Lock:
         lock = self._choice_state.prompt_lock

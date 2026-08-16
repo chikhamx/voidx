@@ -28,6 +28,7 @@ from voidx.presentation.output.events.schema import (
 )
 from voidx.presentation.protocol import UiSubmitCommand
 from voidx.presentation.protocol.v2.envelope import (
+    JsonRpcError,
     JsonRpcNotification,
     JsonRpcRequest,
     JsonRpcResult,
@@ -141,6 +142,82 @@ async def test_v2_multi_session_switch_uses_target_thread_transcript(tmp_path):
     assert params["active_snapshot"]["nodes"][0]["header"] == "Target thread content"
     assert params["active_snapshot"]["nodes"][0]["payload"]["raw_text"] == "from t2 transcript"
     assert all("current tree should not leak" not in node["header"] for node in params["active_snapshot"]["nodes"])
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+
+
+
+
+@pytest.mark.asyncio
+async def test_v2_snapshot_reuses_active_transcript_conversion(monkeypatch):
+    dock = BottomInputDock()
+    session = GatewaySession(lambda: dock.tree, thread_id="t1")
+    calls = 0
+
+    from voidx.presentation.gateway.session import core as gateway_core
+
+    original = gateway_core.tree_to_snapshot
+
+    def counted_tree_to_snapshot(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(gateway_core, "tree_to_snapshot", counted_tree_to_snapshot)
+
+    await session._build_workspace_snapshot(sync_persisted=False)
+    await session._build_workspace_snapshot(sync_persisted=False)
+    assert calls == 1
+
+    dock.tree.new_node(
+        dock.tree.root,
+        node_type="message",
+        header="changed",
+        collapsed=False,
+    )
+    await session._build_workspace_snapshot(sync_persisted=False)
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_v2_switch_replaces_shared_dock_with_target_transcript(tmp_path):
+    import voidx.persistence.sqlite as store
+
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+    store.DATA_DIR = tmp_path / ".voidx-dock"
+
+    await replace_transcript(
+        "t2",
+        [
+            TranscriptNodeRow(
+                session_id="t2",
+                turn_id=0,
+                node_id=0,
+                sort_order=0,
+                node_type="message",
+                header="Target reply",
+                body_lines=[],
+                status="done",
+                metadata={"payload": {"raw_text": "target reply"}},
+            ),
+        ],
+        turn_count=1,
+    )
+
+    dock = BottomInputDock()
+    dock.start_turn("Old session")
+    dock.append_message("old reply")
+    session = GatewaySession(lambda: dock.tree, thread_id="t1", dock=dock)
+    await session.register_thread("t2", title="Second thread")
+
+    await session.switch_thread("t2")
+
+    headers = [node.header for node in dock.tree.root.children]
+    assert any("Target reply" in header for header in headers)
+    assert all("old reply" not in header for header in headers)
     if store._conn is not None:
         store._conn.close()
     store._conn = None
@@ -610,3 +687,303 @@ async def test_v2_guidance_submit_returns_failure_when_handler_rejects():
     assert first.result == {"ok": True}
     assert isinstance(second, JsonRpcResult)
     assert second.result == {"ok": False}
+
+
+async def _replace_thread_with_turns(session_id: str, turn_count: int) -> None:
+    rows = [
+        TranscriptNodeRow(
+            session_id=session_id,
+            turn_id=turn_id,
+            node_id=0,
+            sort_order=0,
+            node_type="turn",
+            header=f"turn {turn_id}",
+            status="done",
+        )
+        for turn_id in range(turn_count)
+    ]
+    await replace_transcript(session_id, rows, turn_count=turn_count)
+
+
+@pytest.mark.asyncio
+async def test_v2_switch_with_turn_limit_broadcasts_windowed_snapshot(tmp_path):
+    import voidx.persistence.sqlite as store
+
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+    store.DATA_DIR = tmp_path / ".voidx-window"
+
+    await _replace_thread_with_turns("t2", 4)
+    session = GatewaySession(lambda: BottomInputDock().tree, thread_id="t1")
+    client = FakeClient()
+    await session.connect(client)
+    await session.register_thread("t2", title="Second thread")
+
+    await session._method_session_switch({"thread_id": "t2", "turn_limit": 2})
+
+    message = _parse(client.messages[-1])
+    snapshot = message["params"]["active_snapshot"]
+    assert snapshot["thread_id"] == "t2"
+    assert snapshot["windowed"] is True
+    assert [node["header"] for node in snapshot["nodes"]] == ["turn 2", "turn 3"]
+    assert snapshot["before_turn_id"] == 2
+    assert snapshot["after_turn_id"] == 3
+    assert snapshot["has_earlier"] is True
+    assert snapshot["has_later"] is False
+
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+
+
+@pytest.mark.asyncio
+async def test_v2_switch_without_turn_limit_keeps_full_snapshot_fallback(tmp_path):
+    import voidx.persistence.sqlite as store
+
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+    store.DATA_DIR = tmp_path / ".voidx-full"
+
+    await _replace_thread_with_turns("t2", 3)
+    session = GatewaySession(lambda: BottomInputDock().tree, thread_id="t1")
+    client = FakeClient()
+    await session.connect(client)
+    await session.register_thread("t2", title="Second thread")
+
+    await session._method_session_switch({"thread_id": "t2"})
+
+    snapshot = _parse(client.messages[-1])["params"]["active_snapshot"]
+    assert snapshot["windowed"] is False
+    assert [node["header"] for node in snapshot["nodes"]] == ["turn 0", "turn 1", "turn 2"]
+
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+
+
+@pytest.mark.asyncio
+async def test_v2_transcript_page_does_not_change_active_thread(tmp_path):
+    import voidx.persistence.sqlite as store
+
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+    store.DATA_DIR = tmp_path / ".voidx-page"
+
+    await _replace_thread_with_turns("t2", 4)
+    session = GatewaySession(lambda: BottomInputDock().tree, thread_id="t1")
+    await session.register_thread("t2", title="Second thread")
+
+    result = await session._method_transcript_page({
+        "thread_id": "t2",
+        "before_turn_id": 2,
+        "turn_limit": 1,
+    })
+
+    assert session.active_thread_id == "t1"
+    assert result["thread_id"] == "t2"
+    assert result["windowed"] is True
+    assert [node["header"] for node in result["nodes"]] == ["turn 1"]
+    assert result["before_turn_id"] == 1
+    assert result["after_turn_id"] == 1
+    assert result["has_earlier"] is True
+    assert result["has_later"] is True
+
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+
+
+@pytest.mark.asyncio
+async def test_v2_transcript_page_is_registered_with_dispatch(tmp_path):
+    import voidx.persistence.sqlite as store
+
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+    store.DATA_DIR = tmp_path / ".voidx-page-dispatch"
+
+    await _replace_thread_with_turns("t2", 2)
+    session = GatewaySession(lambda: BottomInputDock().tree, thread_id="t1")
+    await session.register_thread("t2", title="Second thread")
+
+    result = await session.dispatch_request(JsonRpcRequest(
+        id=42,
+        method="transcript.page",
+        params={"thread_id": "t2", "turn_limit": 1},
+    ))
+
+    assert isinstance(result, JsonRpcResult)
+    assert result.result["thread_id"] == "t2"
+    assert result.result["windowed"] is True
+
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+
+
+@pytest.mark.asyncio
+async def test_v2_window_preference_survives_terminal_snapshot(tmp_path):
+    import voidx.persistence.sqlite as store
+
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+    store.DATA_DIR = tmp_path / ".voidx-terminal-window"
+
+    await _replace_thread_with_turns("t2", 4)
+    session = GatewaySession(lambda: BottomInputDock().tree, thread_id="t1")
+    client = FakeClient()
+    await session.connect(client)
+    await session.register_thread("t2", title="Second thread")
+    client.messages.clear()
+
+    result = await session.dispatch_request(JsonRpcRequest(
+        id=43,
+        method="session.switch",
+        params={"thread_id": "t2", "turn_limit": 2},
+    ), client=client)
+
+    assert isinstance(result, JsonRpcResult)
+    client.messages.clear()
+    await session.broadcast_event(TurnCompleted())
+
+    snapshot = _parse(client.messages[-1])["params"]["active_snapshot"]
+    assert snapshot["windowed"] is True
+    assert [node["header"] for node in snapshot["nodes"]] == ["turn 2", "turn 3"]
+
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+
+
+@pytest.mark.asyncio
+async def test_v2_window_preference_is_isolated_per_client(tmp_path):
+    import voidx.persistence.sqlite as store
+
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+    store.DATA_DIR = tmp_path / ".voidx-client-window"
+
+    await _replace_thread_with_turns("t2", 4)
+    session = GatewaySession(lambda: BottomInputDock().tree, thread_id="t1")
+    window_client = FakeClient()
+    legacy_client = FakeClient()
+    await session.connect(window_client)
+    await session.connect(legacy_client)
+    await session.register_thread("t2", title="Second thread")
+    window_client.messages.clear()
+    legacy_client.messages.clear()
+
+    result = await session.dispatch_request(JsonRpcRequest(
+        id=44,
+        method="session.switch",
+        params={"thread_id": "t2", "turn_limit": 2},
+    ), client=window_client)
+
+    assert isinstance(result, JsonRpcResult)
+    window_client.messages.clear()
+    legacy_client.messages.clear()
+    await session.broadcast_event(TurnCompleted())
+
+    window_snapshot = _parse(window_client.messages[-1])["params"]["active_snapshot"]
+    legacy_snapshot = _parse(legacy_client.messages[-1])["params"]["active_snapshot"]
+    assert window_snapshot["windowed"] is True
+    assert legacy_snapshot["windowed"] is False
+
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["session.switch", "transcript.page"])
+@pytest.mark.parametrize("thread_id", ["", [], {}, True])
+async def test_v2_session_methods_reject_invalid_thread_id(method, thread_id):
+    session = GatewaySession(lambda: BottomInputDock().tree, thread_id="t1")
+    params = {"thread_id": thread_id}
+    if method == "transcript.page":
+        params["turn_limit"] = 1
+    result = await session.dispatch_request(JsonRpcRequest(
+        id=45,
+        method=method,
+        params=params,
+    ))
+
+    assert isinstance(result, JsonRpcError)
+    assert result.error.code == -32602
+
+
+@pytest.mark.asyncio
+async def test_v2_transcript_page_records_window_preference_for_terminal_snapshot(tmp_path):
+    import voidx.persistence.sqlite as store
+
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+    store.DATA_DIR = tmp_path / ".voidx-page-window"
+
+    await _replace_thread_with_turns("t2", 4)
+    session = GatewaySession(lambda: BottomInputDock().tree, thread_id="t2")
+    client = FakeClient()
+    await session.connect(client)
+    await session.register_thread("t2", title="Second thread")
+    client.messages.clear()
+
+    result = await session.dispatch_request(JsonRpcRequest(
+        id=46,
+        method="transcript.page",
+        params={"thread_id": "t2", "turn_limit": 2},
+    ), client=client)
+
+    assert isinstance(result, JsonRpcResult)
+    await session.broadcast_event(TurnCompleted())
+
+    snapshot = _parse(client.messages[-1])["params"]["active_snapshot"]
+    assert snapshot["windowed"] is True
+    assert [node["header"] for node in snapshot["nodes"]] == ["turn 2", "turn 3"]
+
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+
+
+@pytest.mark.asyncio
+async def test_v2_session_switch_without_turn_limit_resets_client_window_preference(tmp_path):
+    import voidx.persistence.sqlite as store
+
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+    store.DATA_DIR = tmp_path / ".voidx-switch-full"
+
+    await _replace_thread_with_turns("t2", 4)
+    session = GatewaySession(lambda: BottomInputDock().tree, thread_id="t1")
+    client = FakeClient()
+    await session.connect(client)
+    await session.register_thread("t2", title="Second thread")
+
+    result = await session.dispatch_request(JsonRpcRequest(
+        id=47,
+        method="session.switch",
+        params={"thread_id": "t2", "turn_limit": 2},
+    ), client=client)
+    assert isinstance(result, JsonRpcResult)
+    result = await session.dispatch_request(JsonRpcRequest(
+        id=48,
+        method="session.switch",
+        params={"thread_id": "t2"},
+    ), client=client)
+    assert isinstance(result, JsonRpcResult)
+
+    client.messages.clear()
+    await session.broadcast_event(TurnCompleted())
+    snapshot = _parse(client.messages[-1])["params"]["active_snapshot"]
+    assert snapshot["windowed"] is False
+
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None

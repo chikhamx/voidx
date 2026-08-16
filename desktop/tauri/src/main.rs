@@ -48,6 +48,33 @@ fn get_backend_status(state: State<'_, AppState>) -> serde_json::Value {
 }
 
 #[tauri::command]
+async fn wait_gateway_url(state: State<'_, AppState>) -> Result<String, String> {
+    let gateway_url = Arc::clone(&state.gateway_url);
+    let backend_status = Arc::clone(&state.backend_status);
+    tauri::async_runtime::spawn_blocking(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+        loop {
+            if let Ok(slot) = gateway_url.lock() {
+                if let Some(url) = slot.clone() {
+                    return Ok(url);
+                }
+            }
+            if let Ok(status) = backend_status.lock() {
+                if let BackendStatus::Failed { error } = &*status {
+                    return Err(error.clone());
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err("timed out waiting for desktop backend".to_string());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    })
+    .await
+    .map_err(|error| format!("desktop backend wait task failed: {error}"))?
+}
+
+#[tauri::command]
 fn restart_backend(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -396,6 +423,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_gateway_url,
             get_backend_status,
+            wait_gateway_url,
             restart_backend
         ])
         .build(tauri::generate_context!())

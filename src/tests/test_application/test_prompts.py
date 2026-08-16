@@ -36,7 +36,7 @@ def test_base_system_prompt_has_canonical_rules():
     assert "### Collaboration Rules" in rendered
     assert "### Delegation Rules" not in rendered
     assert "## Workflow Runtime" not in rendered
-    assert "Do not discuss personas, workflow nodes, agents, or runtime mechanics in user-facing replies" in rendered
+    assert "Do not discuss personas, workflow nodes, agents, or runtime mechanics in user-facing replies" not in rendered
     assert "Preserve user work in a dirty tree" in rendered
     assert "Subagents do not interact with the user" not in rendered
     assert "Follow user requests unless they conflict with higher-priority instructions or safety constraints." in rendered
@@ -49,7 +49,6 @@ def test_base_system_prompt_has_canonical_rules():
         "tone",
         "language",
         "concise",
-        "internals",
         "progress_preamble",
         "summarize_results",
         "uncertainty",

@@ -48,6 +48,7 @@ def build_gateway_session(
         usage_stats_provider=usage_stats_provider,
         mcp_catalog_provider=mcp_catalog_provider,
         session_repository=session_repository,
+        dock=active_dock,
     )
 
 

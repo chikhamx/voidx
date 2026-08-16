@@ -1,6 +1,5 @@
-import { renderMarkdown } from './markdown';
 import { iconSvg } from './icons';
-import { takeCommittedStreams, getTranscriptElement } from './stream';
+import { getTranscriptElement } from './stream';
 import type { NoticeItemData, DiffItemData, StatusItemData } from './render-types';
 import { stripRichMarkup, renderDiffBlock } from './render';
 

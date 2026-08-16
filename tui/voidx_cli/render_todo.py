@@ -30,8 +30,6 @@ class _TodoRendererMixin:
         row_budget = 1 + _TODO_PINNED_MAX_ITEMS
         return max(1, min(row_budget, available_rows))
 
-    def _pinned_todo_row_count(self, width: int, max_rows: int | None = None) -> int:
-        return len(self._render_pinned_todo_elements(width, max_rows=max_rows))
 
     def _render_pinned_todo_elements(
         self,

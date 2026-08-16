@@ -406,6 +406,23 @@ class PureTui(
         except asyncio.CancelledError:
             raise
 
+    def _sync_restored_render_state(self) -> tuple[int, int] | None:
+        restored_range = dock.restored_root_child_range()
+        if restored_range is None:
+            if self._restored_range_key is not None:
+                self._restored_range_key = None
+                self._restored_committed_line_count = 0
+                self._restored_startup_flushed = False
+            return None
+        start, end = restored_range
+        key = (id(dock.tree), start, end)
+        if self._restored_range_key != key:
+            self._restored_range_key = key
+            self._restored_committed_line_count = 0
+            self._restored_startup_flushed = False
+            self._committed_line_count = 0
+        return restored_range
+
     def _flush_committed(self, *, force: bool = False) -> None:
         """Flush completed content to terminal scrollback.
 
@@ -420,34 +437,79 @@ class PureTui(
             force = True
         width = self._frame_width()
         echo_lines = _guidance_echo_lines(dock.consume_guidance_echoes())
-        tree_lines = dock.tree.render(width)
-        total = len(tree_lines)
+        restored_range = self._sync_restored_render_state()
 
-        # After a dock.reset() the tree shrinks below the old committed
-        # count.  If a transient node was removed, keep already-flushed
-        # history committed instead of replaying it from the top.
-        if self._committed_line_count > total:
-            self._committed_line_count = total
+        if restored_range is not None:
+            restored_start, restored_end = restored_range
+            prefix_lines: list[str] = []
+            if force and not self._restored_startup_flushed and restored_start:
+                prefix_lines = dock.tree.render_root_slice(width, 0, restored_start)
+                self._restored_startup_flushed = True
 
-        if force:
-            flush_limit = total
+            current_end = len(dock.tree.root.children)
+            added_lines = (
+                dock.tree.render_root_slice(width, restored_end, current_end)
+                if current_end > restored_end
+                else []
+            )
+            committed_added = self._restored_committed_line_count
+            if committed_added > len(added_lines):
+                committed_added = len(added_lines)
+                self._restored_committed_line_count = committed_added
+
+            if force:
+                flush_limit = len(added_lines)
+            else:
+                is_busy = self._busy
+                was_busy = self._was_busy
+                self._was_busy = is_busy
+                if was_busy and not is_busy:
+                    flush_limit = len(added_lines)
+                else:
+                    flush_limit = min(
+                        dock.safe_flush_root_slice_line_count(
+                            width,
+                            restored_end,
+                            current_end,
+                            committed_added,
+                        ),
+                        len(added_lines),
+                    )
+
+            flush_lines = [
+                *prefix_lines,
+                *added_lines[committed_added:flush_limit],
+            ]
+            self._restored_committed_line_count = flush_limit
         else:
-            is_busy = self._busy
-            was_busy = self._was_busy
-            self._was_busy = is_busy
-            if was_busy and not is_busy:
+            tree_lines = dock.tree.render(width)
+            total = len(tree_lines)
+
+            # After a dock.reset() the tree shrinks below the old committed
+            # count.  If a transient node was removed, keep already-flushed
+            # history committed instead of replaying it from the top.
+            if self._committed_line_count > total:
+                self._committed_line_count = total
+
+            if force:
                 flush_limit = total
             else:
-                flush_limit = min(
-                    dock.safe_flush_line_count(width, self._committed_line_count),
-                    total,
-                )
+                is_busy = self._busy
+                was_busy = self._was_busy
+                self._was_busy = is_busy
+                if was_busy and not is_busy:
+                    flush_limit = total
+                else:
+                    flush_limit = min(
+                        dock.safe_flush_line_count(width, self._committed_line_count),
+                        total,
+                    )
 
-        if flush_limit <= self._committed_line_count and not echo_lines:
-            return
+            if flush_limit <= self._committed_line_count and not echo_lines:
+                return
 
-        flush_lines = tree_lines[self._committed_line_count:flush_limit]
-        self._committed_line_count = flush_limit
+            flush_lines = tree_lines[self._committed_line_count:flush_limit]
+            self._committed_line_count = flush_limit
 
         if not flush_lines and not echo_lines:
             return

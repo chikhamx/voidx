@@ -59,15 +59,22 @@ document.body.innerHTML = `
           <button type="button" class="vx-nav-item vx-hidden-action" id="btn-integrations" hidden>插件</button>
         </nav>
         <div class="vx-sidebar-section" id="temporary-session-section" hidden>
-          <div class="vx-sidebar-heading"><span>临时会话</span></div>
+          <div class="vx-sidebar-heading"><span class="vx-sidebar-row-icon">•</span><span>临时会话</span></div>
           <div class="vx-session-list" id="temporary-session-list"></div>
         </div>
         <div class="vx-sidebar-section vx-project-session-section" id="project-session-section">
           <div class="vx-sidebar-heading vx-project-heading">
-            <span class="vx-sidebar-row-icon"><svg viewBox="0 0 20 20" aria-hidden="true"></svg></span><span class="vx-project-heading-label">项目</span>
+            <span class="vx-project-heading-label">项目</span>
             <button type="button" class="vx-project-add" id="btn-open-workspace"></button>
           </div>
           <div class="vx-session-list" id="session-list"></div>
+        </div>
+        <div class="vx-sidebar-section" id="recent-session-section" hidden>
+          <button type="button" class="vx-sidebar-heading vx-recent-heading" id="recent-session-heading" aria-expanded="true" aria-controls="recent-session-list">
+            <span>最近会话</span>
+            <span class="vx-sidebar-heading-chevron" aria-hidden="true"></span>
+          </button>
+          <div class="vx-session-list" id="recent-session-list"></div>
         </div>
         <div class="vx-sidebar-footer">
           <button type="button" class="vx-nav-item" id="btn-settings">设置</button>

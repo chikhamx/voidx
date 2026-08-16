@@ -17,7 +17,6 @@ from voidx.agent.application.agents import (
     AgentDef,
     child_agent_descriptions_for_llm,
     get_agent,
-    get_visible_agents,
 )
 from voidx.agent.application.prompts import BASE_SYSTEM, PERSONA_MODEL, persona_prompt
 from voidx.agent.adapters.langgraph.runtime.convergence import is_step_hint_message
@@ -403,7 +402,7 @@ async def test_graph_authorization_blocks_lsp_format_in_plan_mode(tmp_path):
 async def test_prepare_renders_plan_mode_constraint_without_mode_prompt(tmp_path):
     graph = _graph(tmp_path)
 
-    async def empty_system():
+    async def empty_system(**_kwargs):
         return []
 
     async def empty_workflow_context(*_args, **_kwargs):

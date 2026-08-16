@@ -11,7 +11,12 @@ import {
   renderTodoPanel,
   appendNoticeItem,
 } from "../../src/utils/render";
-import { setTranscriptElement, _resetForTest as resetStreams } from "../../src/utils/stream";
+import {
+  setTranscriptElement,
+  _resetForTest as resetStreams,
+  appendStreamText,
+  commitStream,
+} from "../../src/utils/stream";
 
 describe("stripRichMarkup", () => {
   it("strips [bold] tags", () => {
@@ -239,12 +244,12 @@ describe("renderNodeElement", () => {
 });
 
 describe("renderTranscript", () => {
-  it("does not persist assistant thinking from transcript snapshot payload", () => {
+  it("preserves assistant thinking when rebuilding from a transcript snapshot", () => {
     resetStreams();
     const root = document.createElement("div");
     setTranscriptElement(root);
 
-    renderTranscript(root, {
+    const snapshot = {
       nodes: [
         {
           node_type: "assistant",
@@ -256,13 +261,111 @@ describe("renderTranscript", () => {
           body_lines: ["final answer"],
         },
       ],
+    };
+    renderTranscript(root, snapshot);
+    renderTranscript(root, snapshot);
+
+    const thought = root.querySelector(".thought-item");
+    expect(thought).not.toBeNull();
+    expect(thought?.textContent).toContain("checking context");
+    expect(root.querySelector(".stream-buffer .markdown-body")?.textContent).toContain("final answer");
+  });
+
+  it("deduplicates a committed Markdown reply against its snapshot source", () => {
+    resetStreams();
+    const root = document.createElement("div");
+    setTranscriptElement(root);
+
+    appendStreamText("reply-markdown", "**第一条回复**", "text");
+    commitStream("reply-markdown");
+
+    const snapshot = {
+      nodes: [
+        {
+          node_type: "assistant",
+          id: "assistant-markdown",
+          payload: { raw_text: "**第一条回复**" },
+          body_lines: ["**第一条回复**"],
+        },
+      ],
+    };
+    renderTranscript(root, snapshot);
+    renderTranscript(root, snapshot);
+
+    expect(root.querySelectorAll(".stream-buffer")).toHaveLength(1);
+    expect(root.textContent).toContain("第一条回复");
+  });
+
+  it("restores formatted tool arguments in a snapshot without an args body", () => {
+    resetStreams();
+    const root = document.createElement("div");
+    setTranscriptElement(root);
+
+    renderTranscript(root, {
+      nodes: [
+        { node_type: "turn", id: "turn-tool-summary", header: "request" },
+        {
+          node_type: "tool_call",
+          id: "tool-summary",
+          tool_call_id: "tool-summary-call",
+          status: "done",
+          payload: {
+            tool_name: "bash",
+            args: 'command="[cyan]pytest -q[/cyan]"',
+            raw_args: { command: "pytest -q" },
+            summary: "2 passed",
+          },
+        },
+      ],
     });
 
-    const thinking = root.querySelector(".stream-thinking");
-    expect(thinking).not.toBeNull();
-    expect(thinking.hidden).toBe(true);
-    expect(thinking.textContent).not.toContain("checking context");
-    expect(root.querySelector(".markdown-body").textContent).toContain("final answer");
+    const item = root.querySelector<HTMLElement>(".tool-item");
+    expect(item?.querySelector(".tool-summary")?.textContent).toContain("pytest -q");
+    expect(item?.querySelector(".tool-body .tool-args")).toBeNull();
+    item?.querySelector<HTMLElement>(".tool-header")?.click();
+    expect(item?.querySelector(".tool-body")?.textContent).toContain("2 passed");
+  });
+
+  it("restores one file change card for tool diffs in a snapshot turn", () => {
+    resetStreams();
+    const root = document.createElement("div");
+    setTranscriptElement(root);
+    const snapshot = {
+      nodes: [
+        { node_type: "turn", id: "turn-files", header: "user request" },
+        {
+          node_type: "tool_call",
+          id: "tool-files-1",
+          tool_call_id: "call-files-1",
+          status: "done",
+          payload: {
+            tool_name: "replace",
+            diff_text: "--- a/src/one.ts\n+++ b/src/one.ts\n@@ -1,1 +1,1 @@\n-old\n+new",
+          },
+        },
+        {
+          node_type: "tool_call",
+          id: "tool-files-2",
+          tool_call_id: "call-files-2",
+          status: "done",
+          payload: {
+            tool_name: "write",
+            diff_text: "--- a/src/two.ts\n+++ b/src/two.ts\n@@ -1,1 +1,1 @@\n-old\n+new",
+          },
+        },
+      ],
+    };
+
+    renderTranscript(root, snapshot);
+
+    expect(root.querySelectorAll(".file-change-card")).toHaveLength(1);
+    expect(root.querySelectorAll(".file-change-row")).toHaveLength(2);
+    expect(root.querySelector(".tool-body .diff-content")).toBeNull();
+
+    renderTranscript(root, snapshot);
+
+    expect(root.querySelectorAll(".file-change-card")).toHaveLength(1);
+    expect(root.querySelectorAll(".file-change-row")).toHaveLength(2);
   });
 
 

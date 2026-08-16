@@ -78,7 +78,7 @@ export function appendStreamText(
   }
 }
 
-export function commitStream(streamId: string): {
+export function commitStream(streamId: string, retain = true): {
   text: string;
   thinking: string;
   el: HTMLElement;
@@ -103,7 +103,9 @@ export function commitStream(streamId: string): {
     el: stream.el,
   };
   streams.delete(streamId);
-  committedEls.push(stream.el);
+  if (retain) {
+    committedEls.push(stream.el);
+  }
   return result;
 }
 

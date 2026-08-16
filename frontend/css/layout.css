@@ -193,9 +193,14 @@ body.is-desktop.is-mac .vx-sidebar {
   gap: 2px;
 }
 
+.vx-sidebar-footer {
+  margin-top: auto;
+}
+
 .vx-sidebar-section {
   display: grid;
   gap: var(--vx-space-1);
+  margin-top: var(--vx-space-2);
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
 }
@@ -205,11 +210,12 @@ body.is-desktop.is-mac .vx-sidebar {
   grid-template-rows: auto auto;
 }
 
-.vx-project-session-section { flex: 1; }
-
-.vx-project-session-section > .vx-session-list {
-  padding-left: var(--vx-space-4);
+.vx-project-session-section { flex: 0 1 auto; }
+#project-session-section + #recent-session-section {
+  margin-top: 0;
 }
+
+
 
 .vx-mode-picker {
   -webkit-app-region: no-drag;
@@ -236,8 +242,8 @@ body.is-desktop.is-mac .vx-sidebar {
   cursor: pointer;
   display: flex;
   font: inherit;
-  font-size: var(--vx-text-sm);
-  font-weight: 550;
+  font-size: var(--vx-text-base);
+  font-weight: 600;
   gap: var(--vx-space-2);
   justify-content: space-between;
   min-height: 32px;
@@ -331,7 +337,7 @@ body.is-desktop.is-mac .vx-sidebar {
   cursor: pointer;
   display: flex;
   font: inherit;
-  font-size: var(--vx-text-sm);
+  font-size: 13px;
   gap: var(--vx-space-2);
   min-height: 32px;
   padding: 0 var(--vx-space-2);
@@ -355,7 +361,7 @@ body.is-desktop.is-mac .vx-sidebar {
   border: 0;
   box-shadow: none;
   color: var(--vx-text-primary);
-  font-weight: 550;
+  font-weight: 400;
   min-height: 32px;
   padding: 0 var(--vx-space-2);
 }
@@ -399,12 +405,38 @@ body.is-desktop.is-mac .vx-sidebar {
   color: var(--vx-text-muted);
   display: flex;
   font-size: var(--vx-text-xs);
-  font-weight: 600;
+  font-weight: 500;
   gap: var(--vx-space-2);
-  letter-spacing: 0.04em;
   min-height: 28px;
   padding: 0 var(--vx-space-2);
-  text-transform: uppercase;
+}
+
+.vx-recent-heading {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+
+.vx-recent-heading:hover {
+  background: var(--vx-bg-hover);
+  color: var(--vx-text-primary);
+}
+
+.vx-sidebar-heading-chevron {
+  border-bottom: 1.5px solid currentColor;
+  border-right: 1.5px solid currentColor;
+  flex: 0 0 auto;
+  height: 6px;
+  margin-left: auto;
+  transform: rotate(45deg) translateY(-1px);
+  transition: transform var(--vx-transition-fast);
+  width: 6px;
+}
+
+.vx-recent-heading[aria-expanded="false"] .vx-sidebar-heading-chevron {
+  transform: rotate(-45deg) translateY(1px);
 }
 
 .vx-project-heading { cursor: default; }
@@ -447,7 +479,11 @@ body.is-desktop.is-mac .vx-sidebar {
 .vx-directory-group { margin-bottom: var(--vx-space-1); }
 
 .vx-directory-group.active .vx-directory-row {
-  background: var(--vx-bg-active);
+  background: transparent;
+}
+
+.vx-directory-group.active .vx-directory-row:hover {
+  background: var(--vx-bg-hover);
 }
 
 .vx-directory-group:not(.collapsed) .vx-session-children {
@@ -456,7 +492,7 @@ body.is-desktop.is-mac .vx-sidebar {
 
 .vx-directory-row {
   color: var(--vx-text-primary);
-  font-weight: 550;
+  font-weight: 400;
   min-height: 30px;
   position: relative;
 }
@@ -499,7 +535,7 @@ body.is-desktop.is-mac .vx-sidebar {
 .vx-session-item {
   display: grid;
   gap: var(--vx-space-2);
-  grid-template-columns: 16px minmax(0, 1fr) max-content;
+  grid-template-columns: minmax(0, 1fr) max-content;
   min-height: 30px;
   position: relative;
 }
@@ -676,11 +712,13 @@ body.is-desktop.is-mac .vx-sidebar {
 .vx-main {
   background: var(--vx-bg-canvas);
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
-  flex: 1;
   min-height: 0;
   min-width: 0;
+  width: 0;
 }
+
 
 .vx-main .transcript { flex: 1; }
 
@@ -762,20 +800,25 @@ body.is-desktop.is-mac .vx-sidebar {
 
 /* === Dock（右侧面板） === */
 .vx-dock {
-  background: var(--vx-bg-canvas);
+  background-color: var(--vx-bg-canvas);
   border-left: 1px solid var(--vx-border);
   display: flex;
+  flex: 0 0 var(--vx-dock-width);
   flex-direction: column;
-  flex-shrink: 0;
   overflow: hidden;
-  transition: width var(--vx-transition);
+  position: relative;
+  transition: width var(--vx-transition), flex-basis var(--vx-transition);
   width: var(--vx-dock-width);
+  z-index: 2;
 }
+
 
 .vx-dock.collapsed {
   border-left: 0;
+  flex-basis: var(--vx-dock-collapsed);
   width: var(--vx-dock-collapsed);
 }
+
 
 .vx-dock.collapsed .vx-dock-content { display: none; }
 
@@ -839,7 +882,7 @@ body.is-desktop.is-mac .vx-sidebar {
 }
 
 .vx-dock-content {
-  background: var(--vx-bg-canvas);
+  background-color: var(--vx-bg-canvas);
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -891,6 +934,9 @@ body.is-desktop.is-mac .vx-sidebar {
     width: 100%;
   }
 
+  .vx-dock { flex-basis: 100%; }
+  .vx-dock.collapsed { flex-basis: 0; }
+
   .vx-empty-state h1 { font-size: var(--vx-text-2xl); }
 }
 
@@ -913,20 +959,3 @@ body.is-desktop.is-mac .vx-sidebar {
 .vx-chat-header-mode[data-profile="chat"] { color: var(--vx-mode-chat); }
 .vx-chat-header-mode[data-profile="goal"] { color: var(--vx-mode-goal); }
 .vx-chat-header-mode[data-profile="loop"] { color: var(--vx-mode-loop); }
-
-.vx-sidebar-row-icon { position: relative; }
-
-.vx-session-profile-dot {
-  background: var(--vx-mode-coding);
-  border: 1px solid var(--vx-bg-app);
-  border-radius: 50%;
-  bottom: -1px;
-  height: 6px;
-  position: absolute;
-  right: -1px;
-  width: 6px;
-}
-
-.vx-session-profile-dot[data-profile="chat"] { background: var(--vx-mode-chat); }
-.vx-session-profile-dot[data-profile="goal"] { background: var(--vx-mode-goal); }
-.vx-session-profile-dot[data-profile="loop"] { background: var(--vx-mode-loop); }

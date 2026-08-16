@@ -233,7 +233,7 @@ class GatewayServer:
             return
 
         if isinstance(msg, JsonRpcRequest):
-            result = await self._session.dispatch_request(msg)
+            result = await self._session.dispatch_request(msg, client=client)
             await client.send_text(result.model_dump_json(), priority=True)
         elif isinstance(msg, JsonRpcResult):
             result = msg.result if isinstance(msg.result, dict) else {}

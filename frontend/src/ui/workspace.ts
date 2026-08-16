@@ -1,7 +1,6 @@
 import {
   MIN_SIDEBAR_WIDTH,
   MAX_SIDEBAR_WIDTH,
-  uiState,
 } from "../services/state";
 import { switchWorkspace } from "../services/connection";
 

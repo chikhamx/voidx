@@ -7,7 +7,6 @@ from voidx.llm.adapters import langchain_model_factory as provider
 from voidx.llm.adapters import http_model_discovery as adapter
 from voidx.llm.adapters.http_model_discovery import HttpModelDiscovery
 from voidx.llm.application.model_catalog import ModelCatalog
-from voidx.llm.application.provider_service import get_resolver_structured_output_method
 from voidx.llm.domain.model import ModelConfig
 from voidx.llm.providers.base import ProviderSpec
 from voidx.llm.providers.catalog import PROVIDER_SPECS
@@ -143,11 +142,3 @@ async def test_slash_builtin_providers_follow_explicit_catalog_order():
 
 def test_builtin_catalog_is_immutable_tuple():
     assert isinstance(PROVIDER_SPECS, tuple)
-
-
-def test_service_exposes_resolver_structured_output_capability():
-    class CapabilityModel:
-        resolver_structured_output_method = "json_mode"
-
-    assert get_resolver_structured_output_method(CapabilityModel()) == "json_mode"
-    assert get_resolver_structured_output_method(object()) is None

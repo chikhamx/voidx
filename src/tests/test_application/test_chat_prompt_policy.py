@@ -44,15 +44,9 @@ def test_coding_prompt_policy_keeps_default_base_system_spec():
     assert policy.base_system_spec() is None
 
 
-def test_chat_prompt_policy_directive_states_bound_tools_and_restrictions():
+def test_chat_prompt_policy_has_no_profile_directive():
     policy = ChatPromptPolicy()
-    sections = policy.profile_sections(None)
-    assert len(sections) == 1
-    directive = sections[0].content
-
-    assert "read-only" in directive.lower() or "read only" in directive.lower()
-    assert "shell" in directive.lower() or "write" in directive.lower()
-    assert "mcp" in directive.lower()
+    assert policy.profile_sections(None) == []
 
 
 def test_chat_profile_carries_chat_prompt_policy():

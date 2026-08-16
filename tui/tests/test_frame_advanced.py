@@ -291,3 +291,127 @@ def test_typing_redraws_input_region_without_rewriting_transcript(tmp_path, monk
 
     assert "startup banner" not in fake_stdout.text
     assert "x" in fake_stdout.text
+
+
+def test_transcript_viewport_conversion_does_not_scan_full_history(tmp_path, monkeypatch):
+    tui = _tui(tmp_path)
+    lines = [f"history line {index}" for index in range(1_000)]
+    converted: list[str] = []
+
+    def tracked_text_from_line(line: str):
+        converted.append(line)
+        return Text(line)
+
+    monkeypatch.setattr(
+        "voidx_cli.render_frame.text_from_line",
+        tracked_text_from_line,
+    )
+
+    elements = tui._transcript_elements_for_rows(lines, width=80, row_limit=5)
+
+    assert elements
+    assert len(converted) <= 37
+    assert converted[0] == lines[-1]
+
+
+
+def test_render_impl_uses_tree_tail_for_restored_long_history(tmp_path, monkeypatch):
+    tui = _tui(tmp_path)
+    tui._console = Console(file=None, force_terminal=False, width=80, height=12, _environ={})
+    restored = type(dock.tree)()
+    for index in range(1_000):
+        restored.new_node(
+            parent=restored.root,
+            node_type="message",
+            header=f"restored line {index}",
+            collapsed=False,
+        )
+    dock.restore_tree(restored)
+
+    def fail_full_render(_width: int):
+        raise AssertionError("full tree render must not be used for the active viewport")
+
+    monkeypatch.setattr(dock.tree, "render", fail_full_render)
+
+    with tui._console.capture() as capture:
+        tui._console.print(tui._render_impl(height=12))
+
+    rendered = capture.get()
+    assert "restored line 999" in rendered
+    assert "restored line 0" not in rendered
+
+
+
+def test_force_flush_skips_restored_long_history(tmp_path, monkeypatch):
+    tui = _tui(tmp_path)
+    tui._tty = False
+    tui._console = Console(file=None, force_terminal=False, width=80, height=12, _environ={})
+    restored = type(dock.tree)()
+    for index in range(1_000):
+        restored.new_node(
+            parent=restored.root,
+            node_type="message",
+            header=f"restored line {index}",
+            collapsed=False,
+        )
+    dock.restore_tree(restored)
+
+    def fail_full_render(_width: int):
+        raise AssertionError("restored history must not be flushed by full render")
+
+    monkeypatch.setattr(dock.tree, "render", fail_full_render)
+    tui._flush_committed(force=True)
+
+    assert tui._committed_line_count == 0
+
+
+
+def test_restored_history_flushes_new_output_without_replaying_history(
+    tmp_path, monkeypatch
+):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+
+    tui = _tui(tmp_path)
+    tui._tty = False
+    tui._console = Console(file=None, force_terminal=False, width=80, height=12, _environ={})
+    restored = type(dock.tree)()
+    for index in range(1_000):
+        restored.new_node(
+            parent=restored.root,
+            node_type="message",
+            header=f"restored line {index}",
+            collapsed=False,
+        )
+    dock.restore_tree(restored)
+    tui._flush_committed(force=True)
+
+    dock.append_message("new output")
+    monkeypatch.setattr(
+        dock.tree,
+        "render",
+        lambda _width: (_ for _ in ()).throw(
+            AssertionError("restored flush must not use full render")
+        ),
+    )
+    tui._flush_committed(force=True)
+
+    assert "new output" in fake_stdout.text
+    fake_stdout.text = ""
+    tui._flush_committed(force=True)
+    assert fake_stdout.text == ""
+
+
+
+def test_thinking_stream_lookup_uses_only_stream_node_subtree(monkeypatch):
+    dock.begin_capture()
+    dock.start_turn("inspect")
+    dock.set_stream("thinking now", phase="thinking")
+
+    def fail_full_line_map(_width: int):
+        raise AssertionError("thinking lookup must not render the full tree")
+
+    monkeypatch.setattr(dock.tree, "render_with_line_map", fail_full_line_map)
+    lines = dock.active_thinking_stream_lines(80)
+
+    assert any("thinking now" in line for line in lines)

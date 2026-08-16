@@ -366,12 +366,6 @@ class _FrameRendererMixin:
         # blank rows are part of the transcript and must still count.
         return ansi[:-1] if ansi.endswith("\n") else ansi
 
-    def _move_to_frame_top_sequence(self) -> str:
-        if not self._has_rendered_frame:
-            return ""
-        if self._last_frame_rows <= 0:
-            return ""
-        return f"\x1b[{self._last_frame_rows}A"
 
     def _move_to_frame_end_sequence(self) -> str:
         if not self._has_rendered_frame:
@@ -474,15 +468,63 @@ class _FrameRendererMixin:
         body_limit = max(render_height - fixed_lines, 0)
 
         # Transcript — only render uncommitted (active) lines.
-        # Committed lines have already been flushed to terminal scrollback.
-        tree_lines = dock.tree.render(width)
+        # Restored history stays in the viewport; only new, uncommitted root
+        # blocks participate in the active frame after the restore boundary.
         committed = self._committed_line_count
-        thinking_line_ids = dock.active_thinking_stream_line_ids(width)
-        active_lines = [
-            line
-            for index, line in enumerate(tree_lines[committed:], start=committed)
-            if index not in thinking_line_ids
-        ]
+        restored_range = self._sync_restored_render_state()
+        if restored_range is not None:
+            restored_start, restored_end = restored_range
+            history_start = restored_start if self._restored_startup_flushed else 0
+            current_end = len(dock.tree.root.children)
+            tail_limit = max(body_limit * 2, body_limit + 32)
+            history_lines, history_line_map = dock.tree.render_root_tail_with_line_map(
+                width,
+                history_start,
+                restored_end,
+                tail_limit,
+            )
+            added_lines, added_line_map = dock.tree.render_root_slice_with_line_map(
+                width,
+                restored_end,
+                current_end,
+            )
+            committed_added = min(
+                self._restored_committed_line_count,
+                len(added_lines),
+            )
+            thinking_node_id = dock.active_thinking_stream_node_id()
+            active_lines = [
+                line
+                for index, line in enumerate(history_lines)
+                if history_line_map.get(index) != thinking_node_id
+            ]
+            active_lines.extend(
+                line
+                for index, line in enumerate(added_lines[committed_added:], start=committed_added)
+                if added_line_map.get(index) != thinking_node_id
+            )
+        else:
+            use_tail = committed == 0 and dock.tree.node_count >= 256
+            if use_tail:
+                tail_limit = max(body_limit * 2, body_limit + 32)
+                tree_lines, tail_line_map = dock.tree.render_tail_with_line_map(
+                    width,
+                    tail_limit,
+                )
+                thinking_node_id = dock.active_thinking_stream_node_id()
+                active_lines = [
+                    line
+                    for index, line in enumerate(tree_lines)
+                    if tail_line_map.get(index) != thinking_node_id
+                ]
+            else:
+                tree_lines = dock.tree.render(width)
+                thinking_line_ids = dock.active_thinking_stream_line_ids(width)
+                active_lines = [
+                    line
+                    for index, line in enumerate(tree_lines[committed:], start=committed)
+                    if index not in thinking_line_ids
+                ]
 
         elements: list = self._transcript_elements_for_rows(
             active_lines,
@@ -519,12 +561,20 @@ class _FrameRendererMixin:
         if not lines or row_limit <= 0:
             return []
 
+        target_rows = row_limit + min(max(row_limit, 8), 32)
         renderables: list[Text] = []
-        for line in lines:
+        visual_rows = 0
+        for line in reversed(lines):
             try:
-                renderables.append(text_from_line(line))
+                rendered = text_from_line(line)
             except Exception:
-                renderables.append(Text(line))
+                rendered = Text(line)
+            renderables.insert(0, rendered)
+            visual_rows = _rendered_row_count(
+                self._capture_renderable(Group(*renderables), width)
+            )
+            if visual_rows >= target_rows:
+                break
 
         ansi = self._capture_renderable(Group(*renderables), width)
         if not ansi:

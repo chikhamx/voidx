@@ -342,6 +342,40 @@
     "ThreadSnapshot": {
       "description": "Transcript snapshot for a single thread.",
       "properties": {
+        "after_turn_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Turn Id"
+        },
+        "before_turn_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Before Turn Id"
+        },
+        "has_earlier": {
+          "default": false,
+          "title": "Has Earlier",
+          "type": "boolean"
+        },
+        "has_later": {
+          "default": false,
+          "title": "Has Later",
+          "type": "boolean"
+        },
         "nodes": {
           "items": {
             "$ref": "#/$defs/TranscriptNode"
@@ -357,6 +391,11 @@
         "thread_id": {
           "title": "Thread Id",
           "type": "string"
+        },
+        "windowed": {
+          "default": false,
+          "title": "Windowed",
+          "type": "boolean"
         }
       },
       "required": [

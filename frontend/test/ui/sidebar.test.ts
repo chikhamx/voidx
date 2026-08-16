@@ -82,7 +82,7 @@ function expandWorkspace(workspace = "") {
     expect(document.querySelector('#session-list .vx-session-item[data-thread-id="legacy"]')).not.toBeNull();
   });
 
-  it("keeps profiled sessions in the project tree with mode dots", () => {
+  it("keeps profiled sessions in the project tree without mode dots", () => {
     renderSidebar([
       { thread_id: "chat", title: "Chat", status: "idle", runtime_profile: "chat", workspace: "/tmp/voidx" },
       { thread_id: "goal", title: "Goal", status: "idle", runtime_profile: "goal", workspace: "/tmp/voidx" },
@@ -91,8 +91,7 @@ function expandWorkspace(workspace = "") {
 
     expect(document.querySelector('#session-list .vx-session-item[data-thread-id="chat"]')).not.toBeNull();
     expect(document.querySelector('#session-list .vx-session-item[data-thread-id="goal"]')).not.toBeNull();
-    expect(document.querySelector('#session-list .vx-session-item[data-thread-id="chat"] .vx-session-profile-dot')?.getAttribute("data-profile")).toBe("chat");
-    expect(document.querySelector('#session-list .vx-session-item[data-thread-id="goal"] .vx-session-profile-dot')?.getAttribute("data-profile")).toBe("goal");
+    expect(document.querySelector(".vx-session-profile-dot")).toBeNull();
   });
 
 
@@ -296,7 +295,7 @@ describe("renderSidebar", () => {
 
     renderSidebar(threads, "t1", "voidx");
     expandWorkspace();
-    expect(document.querySelectorAll(".vx-session-item")).toHaveLength(2);
+    expect(document.querySelectorAll("#session-list .vx-session-item")).toHaveLength(2);
 
     renderSidebar(threads, "t1", "voidx");
 
@@ -429,7 +428,7 @@ describe("renderSidebar", () => {
     renderSidebar(threads, "t1", "voidx");
     expandWorkspace();
 
-    expect(document.querySelectorAll(".vx-session-item")).toHaveLength(5);
+    expect(document.querySelectorAll("#session-list .vx-session-item")).toHaveLength(5);
     expect(document.querySelector(".vx-session-item[data-thread-id='t6']")).toBeNull();
 
     let expand = document.querySelector(".vx-workspace-expand-more");
@@ -439,7 +438,7 @@ describe("renderSidebar", () => {
 
     expand.click();
 
-    expect(document.querySelectorAll(".vx-session-item")).toHaveLength(10);
+    expect(document.querySelectorAll("#session-list .vx-session-item")).toHaveLength(10);
     expect(document.querySelector(".vx-session-item[data-thread-id='t10']")).not.toBeNull();
     expect(document.querySelector(".vx-session-item[data-thread-id='t11']")).toBeNull();
     expect(document.querySelector(".vx-workspace-collapse")).not.toBeNull();
@@ -447,7 +446,7 @@ describe("renderSidebar", () => {
     expand = document.querySelector(".vx-workspace-expand-more");
     expand.click();
 
-    expect(document.querySelectorAll(".vx-session-item")).toHaveLength(13);
+    expect(document.querySelectorAll("#session-list .vx-session-item")).toHaveLength(13);
     expect(document.querySelector(".vx-session-item[data-thread-id='t13']")).not.toBeNull();
     expect(document.querySelector(".vx-workspace-expand-more")).toBeNull();
 
@@ -518,17 +517,17 @@ describe("renderSidebar", () => {
     expect(title.className).toContain("vx-session-title");
   });
 
-  it("renders real svg icons for workspace and session rows", () => {
+  it("renders icons for workspace rows but not for session rows", () => {
     renderSidebar([
       { thread_id: "t1", title: "A", status: "idle", workspace: "/Users/me/workspace/voidx" },
     ], "t1", "voidx");
 
     expandWorkspace();
     const groupIcon = document.querySelector(".vx-workspace-session-row .vx-sidebar-row-icon svg");
-    const sessionIcon = document.querySelector(".vx-session-item .vx-sidebar-row-icon svg");
+    const sessionItem = document.querySelector("#session-list .vx-session-item");
 
     expect(groupIcon).not.toBeNull();
-    expect(sessionIcon).not.toBeNull();
+    expect(sessionItem.querySelector(":scope > .vx-sidebar-row-icon")).toBeNull();
     expect(document.querySelector("#session-list").textContent).not.toContain("▣");
   });
 
@@ -741,7 +740,7 @@ describe("filterSessions", () => {
     expect(visibleGroups).toHaveLength(1);
     expect(visibleGroups[0].dataset.workspace).toBe("/tmp/B");
 
-    const visible = [...document.querySelectorAll(".vx-session-item")].filter(
+    const visible = [...document.querySelectorAll("#session-list .vx-session-item")].filter(
       (el) => !el.hidden,
     );
     expect(visible).toHaveLength(1);
@@ -757,7 +756,7 @@ describe("filterSessions", () => {
     filterSessions("fallback");
 
     const visibleGroups = [...document.querySelectorAll(".vx-workspace-session-group")].filter((group) => !group.hidden);
-    const visibleItems = [...document.querySelectorAll(".vx-session-item")].filter((item) => !item.hidden);
+    const visibleItems = [...document.querySelectorAll("#session-list .vx-session-item")].filter((item) => !item.hidden);
     expect(visibleGroups).toHaveLength(1);
     expect(visibleItems).toHaveLength(1);
     expect(visibleItems[0].textContent).toContain("Fallback workspace");
@@ -772,7 +771,7 @@ describe("filterSessions", () => {
     expandWorkspace();
     filterSessions("");
 
-    const visible = [...document.querySelectorAll(".vx-session-item")].filter(
+    const visible = [...document.querySelectorAll("#session-list .vx-session-item")].filter(
       (el) => !el.hidden,
     );
     expect(visible).toHaveLength(2);
@@ -967,5 +966,128 @@ describe("session item actions", () => {
     expect(styles).toMatch(/\.vx-session-item:hover \.vx-session-actions,[\s\S]*\.vx-session-actions:focus-within \{[^}]*opacity: 1;[^}]*pointer-events: auto;[^}]*\}/);
     expect(styles).toMatch(/\.vx-session-action-icon \{[^}]*height: 24px;[^}]*width: 24px;[^}]*\}/);
     expect(styles).toMatch(/\.vx-session-action-icon:hover,[\s\S]*\.vx-session-action-icon:focus-visible \{[^}]*background: var\(--vx-bg-hover\);[^}]*color: var\(--vx-text-primary\);[^}]*\}/);
+  });
+});
+
+describe("recent sessions", () => {
+  const iso = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60000).toISOString();
+
+  it("renders up to five recent sessions across workspaces, newest first", () => {
+    renderSidebar([
+      { thread_id: "old-1", title: "Old 1", status: "idle", workspace: "/tmp/A", updated_at: iso(60) },
+      { thread_id: "new-1", title: "New 1", status: "idle", workspace: "/tmp/B", updated_at: iso(1) },
+      { thread_id: "mid-1", title: "Mid 1", status: "idle", workspace: "/tmp/A", updated_at: iso(10) },
+      { thread_id: "new-2", title: "New 2", status: "idle", workspace: "/tmp/C", updated_at: iso(2) },
+      { thread_id: "mid-2", title: "Mid 2", status: "idle", workspace: "/tmp/B", updated_at: iso(20) },
+      { thread_id: "new-3", title: "New 3", status: "idle", workspace: "/tmp/A", updated_at: iso(3) },
+      { thread_id: "old-2", title: "Old 2", status: "idle", workspace: "/tmp/C", updated_at: iso(120) },
+    ], null, "voidx");
+
+    const items = [...document.querySelectorAll<HTMLElement>("#recent-session-list .vx-session-item")];
+    expect(items.map((item) => item.dataset.threadId)).toEqual(["new-1", "new-2", "new-3", "mid-1", "mid-2"]);
+  });
+
+  it("excludes temporary sessions from the recent list", () => {
+    renderSidebar([
+      { thread_id: "temp", title: "未命名会话", status: "idle", temporary: true, message_count: 0, workspace: "/tmp/proj" },
+      { thread_id: "real", title: "Real", status: "idle", workspace: "/tmp/proj", updated_at: iso(5) },
+    ], "real", "proj");
+
+    expect(document.querySelector('#recent-session-list .vx-session-item[data-thread-id="temp"]')).toBeNull();
+    expect(document.querySelector('#recent-session-list .vx-session-item[data-thread-id="real"]')).not.toBeNull();
+  });
+
+  it("hides the recent section when there are no sessions", () => {
+    renderSidebar([], null, "voidx");
+
+    expect(document.querySelector<HTMLElement>("#recent-session-section")?.hidden).toBe(true);
+  });
+
+
+  it("collapses and expands recent sessions from its heading", () => {
+    renderSidebar([
+      { thread_id: "t1", title: "Alpha", status: "idle", workspace: "/tmp/proj", updated_at: iso(5) },
+    ], "t1", "proj");
+
+    const heading = document.querySelector<HTMLElement>(".vx-recent-heading")!;
+    const list = document.querySelector<HTMLElement>("#recent-session-list")!;
+    expect(list.hidden).toBe(false);
+    expect(heading.getAttribute("aria-expanded")).toBe("true");
+
+    heading.click();
+    expect(list.hidden).toBe(true);
+    expect(heading.getAttribute("aria-expanded")).toBe("false");
+
+    heading.click();
+    expect(list.hidden).toBe(false);
+    expect(heading.getAttribute("aria-expanded")).toBe("true");
+  });
+  it("hides the recent section while filtering and restores it when cleared", () => {
+    renderSidebar([
+      { thread_id: "t1", title: "Alpha", status: "idle", workspace: "/tmp/proj", updated_at: iso(5) },
+    ], "t1", "proj");
+
+    expect(document.querySelector<HTMLElement>("#recent-session-section")?.hidden).toBe(false);
+    filterSessions("alpha");
+    expect(document.querySelector<HTMLElement>("#recent-session-section")?.hidden).toBe(true);
+    filterSessions("");
+    expect(document.querySelector<HTMLElement>("#recent-session-section")?.hidden).toBe(false);
+  });
+
+  it("syncs running status across recent and workspace copies", () => {
+    renderSidebar([
+      { thread_id: "t1", title: "S1", status: "idle", workspace: "/tmp/proj", updated_at: iso(5) },
+    ], "t1", "proj");
+    expandWorkspace();
+
+    updateThreadStatus("t1", "running");
+
+    const items = [...document.querySelectorAll<HTMLElement>('.vx-session-item[data-thread-id="t1"]')];
+    expect(items.length).toBeGreaterThan(1);
+    expect(items.every((item) => item.classList.contains("running"))).toBe(true);
+  });
+  it("syncs active highlight across recent and workspace copies on click", () => {
+    const cb = vi.fn();
+    onThreadSelect(cb);
+    renderSidebar([
+      { thread_id: "t1", title: "S1", status: "idle", workspace: "/tmp/proj", updated_at: iso(5) },
+    ], "t1", "proj");
+    expandWorkspace();
+
+    const recentCopy = document.querySelector<HTMLElement>('#recent-session-list .vx-session-item[data-thread-id="t1"]')!;
+    recentCopy.click();
+
+    const copies = [...document.querySelectorAll<HTMLElement>('.vx-session-item[data-thread-id="t1"]')];
+    expect(copies.length).toBeGreaterThan(1);
+    expect(copies.every((item) => item.classList.contains("active"))).toBe(true);
+    expect(cb).toHaveBeenCalledWith("t1");
+  });
+});
+
+describe("sidebar typography", () => {
+  it("uses regular font weight for sidebar rows", () => {
+    const styles = readStylesCSS();
+
+    expect(styles).toMatch(/\.vx-directory-row \{[^}]*font-weight: 400;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-new-chat \{[^}]*font-weight: 400;[^}]*\}/);
+  });
+
+  it("keeps the recent heading typography from overriding sidebar heading styles", () => {
+    const styles = readStylesCSS();
+
+    expect(styles).not.toMatch(/\.vx-recent-heading\s*\{[^}]*font:\s*inherit;/);
+  });
+
+  it("does not use the selected-session background for the current workspace row", () => {
+    const styles = readStylesCSS();
+
+    expect(styles).toMatch(/\.vx-directory-group\.active \.vx-directory-row \{[^}]*background:\s*transparent;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-directory-group\.active \.vx-directory-row:hover \{[^}]*background:\s*var\(--vx-bg-hover\);[^}]*\}/);
+  });
+
+  it("lays out session rows without a leading icon column", () => {
+    const styles = readStylesCSS();
+
+    expect(styles).toMatch(/\.vx-session-item \{[^}]*grid-template-columns: minmax\(0, 1fr\) max-content;[^}]*\}/);
   });
 });

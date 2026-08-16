@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const tauriMocks = vi.hoisted(() => ({
   openDialog: vi.fn(),
   invoke: vi.fn(),
+  listen: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -16,7 +17,12 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: tauriMocks.invoke,
 }));
 
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: tauriMocks.listen,
+}));
+
 import { handleNotification, initModelControls, resolveWsUrl, _resetWorkbenchForTest } from "../../src/main";
+import { isDesktopRuntime } from "../../src/services/connection";
 import { initPermissionControls, populateCustomModelDropdown, populatePermissionDropdown } from "../../src/ui/model";
 import { initStateDom, setConnectionStatus, uiState } from "../../src/services/state";
 import { _resetForTest as resetDock, initDock, switchTab, toggleDock, getActiveTab } from "../../src/ui/dock";
@@ -71,6 +77,7 @@ beforeEach(() => {
   _resetWorkbenchForTest();
   tauriMocks.openDialog.mockReset();
   tauriMocks.invoke.mockReset();
+  tauriMocks.listen.mockReset();
   delete window.__TAURI_INTERNALS__;
   delete window.__TAURI__;
   initDock();
@@ -112,6 +119,32 @@ describe("workbench shell", () => {
     expect(document.querySelector("#btn-integrations").hidden).toBe(true);
   });
 
+  it("orders temporary sessions before projects and recent sessions", () => {
+    for (const root of [document, readIndexDOM()]) {
+      const sectionIds = [...root.querySelectorAll("#sidebar > .vx-sidebar-section")]
+        .map((section) => section.id);
+      expect(sectionIds).toEqual([
+        "temporary-session-section",
+        "project-session-section",
+        "recent-session-section",
+      ]);
+    }
+  });
+
+  it("keeps the dock opaque and in its own flex column", () => {
+    const styles = readStylesCSS();
+
+    expect(styles).toMatch(/\.vx-main \{[^}]*flex: 1 1 auto;[^}]*min-width: 0;[^}]*width: 0;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-dock \{[^}]*background-color: var\(--vx-bg-canvas\);[^}]*flex: 0 0 var\(--vx-dock-width\);[^}]*position: relative;[^}]*z-index: 2;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-dock-content \{[^}]*background-color: var\(--vx-bg-canvas\);[^}]*\}/);
+  });
+
+  it("keeps the recent heading close to the project section", () => {
+    const styles = readStylesCSS();
+
+    expect(styles).toMatch(/#project-session-section\s*\+\s*#recent-session-section\s*\{[^}]*margin-top:\s*0;[^}]*\}/);
+  });
+
   it("places the mode picker first in the sidebar above new session", () => {
     for (const root of [document, readIndexDOM()]) {
       const titlebarLeft = root.querySelector(".vx-titlebar-left");
@@ -151,6 +184,22 @@ describe("workbench shell", () => {
       if (dot && parent) parent.insertBefore(dot, nextSibling ?? null);
       initStateDom();
     }
+  });
+
+  it("accepts the backend initial snapshot when no thread is active", () => {
+    handleNotification("workspace.snapshot", {
+      threads: [],
+      active_thread_id: "",
+      active_snapshot: { thread_id: "", revision: 1, nodes: [] },
+      provider: "openai",
+      model: "gpt-5",
+      workspace: "/Users/chikham/workspace/voidx",
+    });
+
+    expect(uiState.workspace).toBe("/Users/chikham/workspace/voidx");
+    expect(uiState.provider).toBe("openai");
+    expect(uiState.model).toBe("gpt-5");
+    expect(document.querySelector(".vx-workspace-session-name").textContent).toBe("voidx");
   });
 
 
@@ -270,7 +319,80 @@ describe("workbench shell", () => {
     const url = await resolveWsUrl();
 
     expect(url).toBe("ws://127.0.0.1:12345/?token=test");
-    expect(tauriMocks.invoke).toHaveBeenCalledWith("get_gateway_url");
+    expect(tauriMocks.invoke).toHaveBeenCalledWith("wait_gateway_url");
+  });
+
+  it("recognizes the tauri protocol before desktop globals are injected", () => {
+    expect(isDesktopRuntime({ location: { protocol: "tauri:" } })).toBe(true);
+  });
+
+  it("uses the desktop blocking gateway handshake when available", async () => {
+    tauriMocks.invoke.mockImplementation((command: string) => {
+      if (command === "wait_gateway_url") {
+        return Promise.resolve("ws://127.0.0.1:54321/?token=wait");
+      }
+      return Promise.resolve(null);
+    });
+
+    await expect(resolveWsUrl()).resolves.toBe("ws://127.0.0.1:54321/?token=wait");
+    expect(tauriMocks.invoke).toHaveBeenCalledWith("wait_gateway_url");
+  });
+
+  it("keeps waiting while the desktop backend is still starting", async () => {
+    vi.useFakeTimers();
+    let gatewayChecks = 0;
+    tauriMocks.invoke.mockImplementation((command: string) => {
+      if (command === "get_gateway_url") {
+        gatewayChecks += 1;
+        return Promise.resolve(gatewayChecks > 60 ? "ws://127.0.0.1:54321/?token=ready" : null);
+      }
+      if (command === "get_backend_status") {
+        return Promise.resolve({ status: "starting" });
+      }
+      return Promise.resolve(null);
+    });
+
+    const pending = resolveWsUrl();
+    await vi.advanceTimersByTimeAsync(31_000);
+
+    await expect(pending).resolves.toBe("ws://127.0.0.1:54321/?token=ready");
+    vi.useRealTimers();
+  });
+
+  it("keeps waiting when the optional backend status query is unavailable", async () => {
+    vi.useFakeTimers();
+    let gatewayChecks = 0;
+    tauriMocks.invoke.mockImplementation((command: string) => {
+      if (command === "get_gateway_url") {
+        gatewayChecks += 1;
+        return Promise.resolve(gatewayChecks > 2 ? "ws://127.0.0.1:54321/?token=ready" : null);
+      }
+      if (command === "get_backend_status") {
+        return Promise.reject(new Error("status command unavailable"));
+      }
+      return Promise.resolve(null);
+    });
+
+    const pending = resolveWsUrl();
+    await vi.advanceTimersByTimeAsync(1_500);
+
+    await expect(pending).resolves.toBe("ws://127.0.0.1:54321/?token=ready");
+    vi.useRealTimers();
+  });
+
+  it("resolves from the desktop backend-ready event when polling has no url", async () => {
+    tauriMocks.invoke.mockImplementation((command: string) => {
+      if (command === "get_gateway_url") return Promise.resolve(null);
+      if (command === "get_backend_status") return Promise.resolve({ status: "starting" });
+      return Promise.resolve(null);
+    });
+    tauriMocks.listen.mockImplementation(async (_event: string, handler: Function) => {
+      queueMicrotask(() => handler({ payload: { url: "ws://127.0.0.1:54321/?token=event" } }));
+      return () => {};
+    });
+
+    await expect(resolveWsUrl()).resolves.toBe("ws://127.0.0.1:54321/?token=event");
+    expect(tauriMocks.listen).toHaveBeenCalledWith("backend_ready", expect.any(Function));
   });
 
   it("keeps sidebar rows aligned in the workbench layout", () => {
@@ -282,8 +404,8 @@ describe("workbench shell", () => {
     expect(styles).toContain(".vx-session-children {\n  display: grid;");
     expect(styles).toContain("padding-left: var(--vx-space-4);");
     expect(styles).toMatch(/\.vx-sidebar-section \{[^}]*min-height: 0;[^}]*\}/);
-    expect(styles).toContain(".vx-project-session-section { flex: 1; }");
-    expect(styles).toMatch(/\.vx-session-item \{[^}]*grid-template-columns: 16px minmax\(0, 1fr\) max-content;[^}]*\}/);
+    expect(styles).toContain(".vx-project-session-section { flex: 0 1 auto; }");
+    expect(styles).toMatch(/\.vx-session-item \{[^}]*grid-template-columns: minmax\(0, 1fr\) max-content;[^}]*\}/);
     expect(styles).toMatch(/\.vx-session-time \{[^}]*justify-self: end;[^}]*\}/);
     expect(styles).toMatch(/\.vx-nav-item,[\s\S]*\.vx-directory-row,[\s\S]*\.vx-session-item \{[^}]*padding: 0 var\(--vx-space-2\);[^}]*\}/);
     expect(styles).toMatch(/\.vx-sidebar-heading \{[^}]*color: var\(--vx-text-muted\);[^}]*font-size: var\(--vx-text-xs\);[^}]*min-height: 28px;[^}]*\}/);
@@ -298,7 +420,6 @@ describe("workbench shell", () => {
 
     expect(styles).toMatch(/\.vx-titlebar-left\s*\{[^}]*background:\s*var\(--vx-bg-app\);[^}]*\}/);
     expect(styles).toMatch(/\.vx-titlebar-left\s*\{[^}]*overflow:\s*visible;[^}]*\}/);
-    expect(styles).toMatch(/\.vx-project-session-section > \.vx-session-list\s*\{[^}]*padding-left:\s*var\(--vx-space-4\);[^}]*\}/);
     expect(styles).toMatch(/\.vx-sidebar\s*\{[^}]*background:\s*var\(--vx-bg-app\);[^}]*padding:\s*var\(--vx-titlebar-height\) var\(--vx-space-2\) var\(--vx-space-2\);[^}]*\}/);
     expect(styles).toMatch(/\.vx-sidebar > \.vx-mode-picker\s*\{[^}]*min-height:\s*32px;[^}]*\}/);
     const responsiveStart = styles.indexOf("@media (max-width: 899px)");

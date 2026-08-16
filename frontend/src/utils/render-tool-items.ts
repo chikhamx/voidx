@@ -1,8 +1,8 @@
-import { takeCommittedStreams, getTranscriptElement } from './stream';
-import type { TranscriptNode } from '../rpc/protocol';
+import { getTranscriptElement } from './stream';
 import { iconSvg } from './icons';
 import { TOOL_GROUP_PREVIEW_LIMIT, type ToolInfo, type ToolItemData } from './render-types';
 import { formatElapsed, truncateText, renderDiffBlock } from './render';
+import { renderFileChanges } from './render-file-changes';
 
 const SVG_ICONS: Record<string, string> = {
   read: iconSvg("book", 14, 2),
@@ -19,17 +19,20 @@ function getToolGroupSummary(tools: ToolInfo[]): { icon: string; text: string } 
   }
 
   let reads = 0;
+  let searches = 0;
   let writes = 0;
   let commands = 0;
   let others = 0;
 
   for (const tool of tools) {
     const name = (tool.tool_name || "").toLowerCase();
-    if (name.includes("read") || name.includes("view") || name.includes("search") || name.includes("find") || name.includes("list") || name.includes("locate")) {
+    if (name.includes("search") || name.includes("find") || name.includes("locate")) {
+      searches += 1;
+    } else if (name.includes("read") || name.includes("view") || name.includes("list")) {
       reads += 1;
     } else if (name.includes("write") || name.includes("replace") || name.includes("edit")) {
       writes += 1;
-    } else if (name.includes("command") || name.includes("run") || name.includes("bash") || name.includes("cmd") || name.includes("terminal")) {
+    } else if (name.includes("command") || name.includes("run") || name.includes("bash") || name.includes("cmd") || name.includes("terminal") || name.includes("powershell")) {
       commands += 1;
     } else {
       others += 1;
@@ -40,9 +43,18 @@ function getToolGroupSummary(tools: ToolInfo[]): { icon: string; text: string } 
   if (writes) parts.push(`edited ${writes} ${writes > 1 ? "files" : "file"}`);
   if (commands) parts.push(`ran ${commands} ${commands > 1 ? "commands" : "command"}`);
   if (reads) parts.push(`read ${reads} ${reads > 1 ? "files" : "file"}`);
+  if (searches) parts.push(`searched ${searches} ${searches > 1 ? "times" : "time"}`);
   if (others) parts.push(`ran ${others} ${others > 1 ? "tools" : "tool"}`);
 
-  const icon = writes ? SVG_ICONS.write : commands ? SVG_ICONS.command : reads ? SVG_ICONS.read : SVG_ICONS.tool;
+  const icon = writes
+    ? SVG_ICONS.write
+    : commands
+      ? SVG_ICONS.command
+      : searches
+        ? SVG_ICONS.search
+        : reads
+          ? SVG_ICONS.read
+          : SVG_ICONS.tool;
   return { icon, text: parts.join(", ") };
 }
 
@@ -52,11 +64,79 @@ interface ToolHeaderInfo {
   target?: string;
 }
 
+const FORMATTED_ARG_TAG = /\\?\[\/?(?:bold|dim|italic|underline|strike|red|green|yellow|blue|magenta|cyan|white|black|#[0-9a-f]{6})\]/gi;
+
+type ToolArgs = Record<string, unknown>;
+
+function cleanFormattedArg(value: string): string {
+  return value
+    .replace(FORMATTED_ARG_TAG, "")
+    .replace(/\\([\[\]])/g, "$1")
+    .trim();
+}
+
+function unquoteArg(value: string): string {
+  const trimmed = cleanFormattedArg(value);
+  if (trimmed.length >= 2) {
+    const first = trimmed[0];
+    const last = trimmed[trimmed.length - 1];
+    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+      return trimmed.slice(1, -1).replace(/\\([\\"'])/g, "$1");
+    }
+  }
+  return trimmed;
+}
+
+function parseFormattedArgs(value: string): ToolArgs {
+  const normalized = cleanFormattedArg(value);
+  const parsed: ToolArgs = {};
+  const pairPattern = /([A-Za-z_][\w-]*)\s*=\s*(?:"((?:\\.|[^"])*)"|'((?:\\.|[^'])*)'|([^,\s]+))/g;
+  let matched = false;
+  let match: RegExpExecArray | null;
+  while ((match = pairPattern.exec(normalized)) !== null) {
+    matched = true;
+    parsed[match[1]] = unquoteArg(match[2] ?? match[3] ?? match[4] ?? "");
+  }
+  return matched ? parsed : (normalized ? { args: normalized } : {});
+}
+
+function normalizedToolArgs(data: ToolItemData): ToolArgs {
+  if (typeof data.raw_args === "object" && data.raw_args !== null && Object.keys(data.raw_args).length > 0) {
+    return data.raw_args as ToolArgs;
+  }
+  if (typeof data.args === "object" && data.args !== null) {
+    return data.args as ToolArgs;
+  }
+  if (typeof data.args === "string") {
+    return parseFormattedArgs(data.args);
+  }
+  return {};
+}
+
+function argValue(args: ToolArgs, names: string[]): string {
+  const lowerNames = new Set(names.map((name) => name.toLowerCase()));
+  for (const [key, value] of Object.entries(args)) {
+    if (!lowerNames.has(key.toLowerCase()) || value == null || value === "") continue;
+    return typeof value === "string" ? cleanFormattedArg(value) : String(value);
+  }
+  return "";
+}
+
 function getToolItemHeaderInfo(data: ToolItemData): ToolHeaderInfo {
   const toolName = (data.tool_name || "").toLowerCase();
-  const args: Record<string, any> = typeof data.args === "object" && data.args !== null ? data.args : {};
-  const rawArgs: Record<string, any> = typeof data.raw_args === "object" && data.raw_args !== null ? data.raw_args : {};
-  const path = String(args.path || args.file_path || args.TargetFile || args.target_file || args.AbsolutePath || args.absolute_path || args.DirectoryPath || args.directory_path || args.SearchPath || args.search_path || "");
+  const args = normalizedToolArgs(data);
+  const path = argValue(args, [
+    "path",
+    "file_path",
+    "TargetFile",
+    "target_file",
+    "AbsolutePath",
+    "absolute_path",
+    "DirectoryPath",
+    "directory_path",
+    "SearchPath",
+    "search_path",
+  ]);
   const filename = path ? path.substring(path.lastIndexOf("/") + 1) : "";
 
   if (toolName.includes("read") || toolName.includes("view")) {
@@ -64,8 +144,8 @@ function getToolItemHeaderInfo(data: ToolItemData): ToolHeaderInfo {
   }
 
   if (toolName.includes("search")) {
-    const query = String(args.query || args.Query || "");
-    const searchPath = String(args.path || args.Path || "");
+    const query = argValue(args, ["query", "Query", "pattern", "args"]);
+    const searchPath = argValue(args, ["path", "Path", "SearchPath", "search_path"]);
     const dirname = searchPath ? searchPath.substring(searchPath.lastIndexOf("/") + 1) : "";
     const queryTruncated = query.length > 20 ? query.slice(0, 20) + "..." : query;
     const location = dirname ? ` in ${dirname}` : "";
@@ -76,8 +156,8 @@ function getToolItemHeaderInfo(data: ToolItemData): ToolHeaderInfo {
   }
 
   if (toolName.includes("find")) {
-    const query = String(args.query || args.Query || "");
-    const searchPath = String(args.path || args.Path || "");
+    const query = argValue(args, ["query", "Query", "pattern", "args"]);
+    const searchPath = argValue(args, ["path", "Path", "SearchPath", "search_path"]);
     const dirname = searchPath ? searchPath.substring(searchPath.lastIndexOf("/") + 1) : "";
     const queryTruncated = query.length > 20 ? query.slice(0, 20) + "..." : query;
     const location = dirname ? ` in ${dirname}` : "";
@@ -99,20 +179,26 @@ function getToolItemHeaderInfo(data: ToolItemData): ToolHeaderInfo {
     return { icon: SVG_ICONS.write, verb: "edited", target: filename || "file" };
   }
 
-  if (toolName.includes("command") || toolName.includes("run") || toolName.includes("bash") || toolName.includes("cmd") || toolName.includes("terminal")) {
-    const cmd = String(args.command || args.CommandLine || args.command_line || rawArgs.command || "");
+  if (toolName.includes("command") || toolName.includes("run") || toolName.includes("bash") || toolName.includes("cmd") || toolName.includes("terminal") || toolName.includes("powershell")) {
+    const cmd = argValue(args, ["command", "CommandLine", "command_line", "cmd", "args"]);
     return cmd
-      ? { icon: SVG_ICONS.command, verb: "ran", target: cmd }
-      : { icon: SVG_ICONS.command, verb: "ran command" };
+      ? { icon: SVG_ICONS.command, verb: "", target: cmd }
+      : { icon: SVG_ICONS.command, verb: "command" };
   }
 
-  return { icon: SVG_ICONS.tool, verb: data.tool_name || data.label || "tool" };
+  const argument = summarizeArgs(data);
+  return {
+    icon: SVG_ICONS.tool,
+    verb: data.tool_name || data.label || "tool",
+    target: argument || undefined,
+  };
 }
 
-function createToolGroup(): HTMLElement {
+function createToolGroup(turnId = ""): HTMLElement {
   const group = document.createElement("div");
   group.className = "tool-group";
   group.dataset.visibleCount = String(TOOL_GROUP_PREVIEW_LIMIT);
+  if (turnId) group.dataset.turnId = turnId;
 
   const header = document.createElement("div");
   header.className = "tool-group-header";
@@ -147,11 +233,14 @@ function createToolGroup(): HTMLElement {
   return group;
 }
 
-function latestToolGroup(transcriptEl: HTMLElement): HTMLElement {
+function latestToolGroup(transcriptEl: HTMLElement, turnId = ""): HTMLElement {
   let curr = transcriptEl.lastElementChild as HTMLElement | null;
   while (curr) {
     if (curr.classList.contains("tool-group")) {
-      return curr;
+      if (!turnId || !curr.dataset.turnId || curr.dataset.turnId === turnId) {
+        return curr;
+      }
+      break;
     }
     if (
       curr.classList.contains("message-item") ||
@@ -160,9 +249,13 @@ function latestToolGroup(transcriptEl: HTMLElement): HTMLElement {
     ) {
       break;
     }
+    if (curr.classList.contains("file-change-card")) {
+      curr = curr.previousElementSibling as HTMLElement | null;
+      continue;
+    }
     curr = curr.previousElementSibling as HTMLElement | null;
   }
-  const group = createToolGroup();
+  const group = createToolGroup(turnId);
   transcriptEl.append(group);
   return group;
 }
@@ -240,9 +333,14 @@ function updateToolStats(el: HTMLElement): void {
 }
 
 
-export function handleToolItem(method: string, itemId: string, data: ToolItemData): void {
-  let el: HTMLElement | null = document.querySelector<HTMLElement>(`[data-tool-id="${data.tool_call_id}"]`);
+export function handleToolItem(
+  method: string,
+  itemId: string,
+  data: ToolItemData,
+  turnId = "",
+): void {
   const transcriptEl = getTranscriptElement();
+  let el: HTMLElement | null = transcriptEl?.querySelector<HTMLElement>(`[data-tool-id="${data.tool_call_id}"]`) || null;
   if (method === "item.started") {
     el = document.createElement("div");
     el.className = "tool-item";
@@ -255,10 +353,7 @@ export function handleToolItem(method: string, itemId: string, data: ToolItemDat
 
     const chevron = document.createElement("span");
     chevron.className = "tool-chevron";
-    const hasArgs = !!data.args && (typeof data.args === "string" ? data.args.trim() !== "" : Object.keys(data.args).length > 0);
-    const isCmd = data.tool_name === "run_command" || data.tool_name === "command" || data.tool_name === "bash";
-    const expandable = hasArgs || isCmd;
-    chevron.innerHTML = iconSvg(expandable ? "chevron-right" : "dot", 12, 2);
+    chevron.innerHTML = iconSvg("dot", 12, 2);
 
     const name = document.createElement("span");
     name.className = "tool-name";
@@ -274,6 +369,7 @@ export function handleToolItem(method: string, itemId: string, data: ToolItemDat
       const target = document.createElement("span");
       target.className = "tool-target";
       target.textContent = summaryInfo.target;
+      target.title = summaryInfo.target;
       summary.append(target);
     }
 
@@ -305,17 +401,9 @@ export function handleToolItem(method: string, itemId: string, data: ToolItemDat
     body.hidden = true;
     el.append(body);
 
-    if (data.args) {
-      const args = document.createElement("pre");
-      args.className = "tool-args";
-      args.textContent = typeof data.args === "string"
-        ? data.args
-        : JSON.stringify(data.args, null, 2);
-      body.append(args);
-    }
 
     if (transcriptEl) {
-      const group = latestToolGroup(transcriptEl);
+      const group = latestToolGroup(transcriptEl, turnId);
       group.querySelector(".tool-group-body")?.append(el);
       updateToolGroupSummary(group, data);
       renderToolGroupVisibility(group);
@@ -327,8 +415,18 @@ export function handleToolItem(method: string, itemId: string, data: ToolItemDat
     const chev = el.querySelector<HTMLElement>(".tool-chevron");
     if (method === "item.delta") {
       if (data.diff_text) {
-        const diff = renderDiffBlock(data.diff_text);
-        body.append(diff);
+        const sourceId = data.tool_call_id || itemId;
+        const renderedAsFileCard = renderFileChanges(
+          turnId,
+          String(data.diff_text),
+          String(sourceId || ""),
+        );
+        if (renderedAsFileCard) {
+          body.querySelectorAll(".diff-content").forEach((diff) => diff.remove());
+        } else {
+          const diff = renderDiffBlock(data.diff_text);
+          body.append(diff);
+        }
         let adds = Number(el.dataset.diffAdds || 0);
         let dels = Number(el.dataset.diffDels || 0);
         for (const line of String(data.diff_text).split("\n")) {
@@ -384,14 +482,23 @@ export function handleToolItem(method: string, itemId: string, data: ToolItemDat
 
 
 function summarizeArgs(data: ToolItemData): string {
-  if (data.tool_name === "bash") {
-    const cmd = typeof data.raw_args?.command === "string"
-      ? data.raw_args.command
-      : "";
-    return cmd.length > 60 ? cmd.slice(0, 60) + "..." : cmd;
-  }
-  const args = data.args || "";
-  const s = typeof args === "string" ? args : JSON.stringify(args);
-  return s.length > 40 ? s.slice(0, 40) + "..." : s;
+  const args = normalizedToolArgs(data);
+  const primary = argValue(args, [
+    "command",
+    "CommandLine",
+    "command_line",
+    "cmd",
+    "path",
+    "file_path",
+    "query",
+    "pattern",
+    "target",
+    "url",
+    "name",
+    "args",
+  ]);
+  const fallback = primary || Object.values(args).find((value) => value != null && value !== "");
+  const text = typeof fallback === "string" ? fallback : fallback == null ? "" : String(fallback);
+  return text.length > 60 ? text.slice(0, 60) + "..." : text;
 }
 

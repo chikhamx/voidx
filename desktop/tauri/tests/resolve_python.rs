@@ -2,7 +2,12 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use voidx_desktop::{bundled_backend_command_args, default_install_dir, resolve_python};
+use voidx_desktop::{
+    bundled_backend_command_args,
+    default_install_dir,
+    resolve_python,
+    validate_installed_runtime,
+};
 
 /// Serialize tests that mutate process-global env vars. cargo test runs
 /// threads in parallel; `set_var` is not thread-safe.
@@ -343,4 +348,58 @@ fn install_backend_image_does_not_activate_incomplete_source() {
     )
     .is_err());
     assert!(!data_root.path().join("runtime/current.json").exists());
+}
+
+#[test]
+fn runtime_install_lock_reclaims_a_dead_owner() {
+    let data_root = tempfile::tempdir().unwrap();
+    let runtime = voidx_desktop::runtime_root(data_root.path());
+    std::fs::create_dir_all(&runtime).unwrap();
+    std::fs::write(runtime.join("install.lock"), b"4294967295\n").unwrap();
+
+    let lock = voidx_desktop::acquire_runtime_install_lock(data_root.path()).unwrap();
+
+    assert!(!runtime.join("install.lock").metadata().unwrap().len().eq(&0));
+    drop(lock);
+    assert!(!runtime.join("install.lock").exists());
+}
+
+
+#[test]
+fn validate_installed_runtime_checks_paths_without_rehashing_contents() {
+    let data_root = tempfile::tempdir().unwrap();
+    let fingerprint = "a".repeat(64);
+    let runtime = data_root
+        .path()
+        .join("runtime/versions")
+        .join(&fingerprint);
+    let python = runtime.join("python/bin/python");
+    let site_packages = runtime.join("site-packages");
+    std::fs::create_dir_all(python.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(&site_packages).unwrap();
+    std::fs::write(&python, b"changed after install").unwrap();
+
+    let manifest = serde_json::json!({
+        "image_fingerprint": fingerprint,
+        "python_relative": "python/bin/python",
+        "site_packages_relative": "site-packages"
+    });
+
+    let paths = validate_installed_runtime(data_root.path(), &manifest).unwrap();
+    assert_eq!(paths.0, python);
+    assert_eq!(paths.1, site_packages);
+}
+
+
+#[test]
+fn validate_installed_runtime_rejects_invalid_fingerprint_before_path_lookup() {
+    let data_root = tempfile::tempdir().unwrap();
+    let manifest = serde_json::json!({
+        "image_fingerprint": "../escape",
+        "python_relative": "python/bin/python",
+        "site_packages_relative": "site-packages"
+    });
+
+    let error = validate_installed_runtime(data_root.path(), &manifest).unwrap_err();
+    assert_eq!(error, "backend manifest has an invalid image fingerprint");
 }

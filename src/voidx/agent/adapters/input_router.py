@@ -290,8 +290,8 @@ class LangGraphAutonomousInputRouter:
         parent = thread_id or getattr(session, "id", "") or self._execution.session_id or ""
         if not parent:
             return False
-        await self._run_loop_idle_turn(user_input, parent=parent, session=session)
         await self._persist_first_message(user_input, session=session)
+        await self._run_loop_idle_turn(user_input, parent=parent, session=session)
         return True
 
     async def _handle_goal_first_message(
@@ -307,6 +307,6 @@ class LangGraphAutonomousInputRouter:
         parent = thread_id or getattr(session, "id", "") or self._execution.session_id or ""
         if not parent:
             return False
-        await self._run_goal_idle_turn(user_input, parent=parent, session=session)
         await self._persist_first_message(user_input, session=session)
+        await self._run_goal_idle_turn(user_input, parent=parent, session=session)
         return True

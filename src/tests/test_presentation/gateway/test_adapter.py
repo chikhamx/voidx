@@ -47,6 +47,7 @@ from voidx.presentation.output.events.schema import (
     ToolFinished,
     ToolResultAppended,
     ToolStarted,
+    TurnCompleted,
     TurnStarted,
     WarningAppended,
 )
@@ -106,6 +107,25 @@ async def test_tool_started_to_item_started():
     assert params["data"]["tool_call_id"] == "tc1"
     assert params["data"]["label"] == "read file"
 
+
+
+@pytest.mark.asyncio
+async def test_tool_started_forwards_raw_args_for_structured_summaries():
+    adapter = _adapter()
+    raw_args = {"command": "pytest -q", "cwd": "/tmp"}
+    msg = await adapter.handle(
+        ToolStarted(
+            tool_call_id="tc-raw",
+            label="run command",
+            tool_name="bash",
+            args='command="pytest -q", cwd="/tmp"',
+            raw_args=raw_args,
+        )
+    )
+
+    data = _item_params(msg)["data"]
+    assert data["args"] == 'command="pytest -q", cwd="/tmp"'
+    assert data["raw_args"] == raw_args
 
 @pytest.mark.asyncio
 async def test_tool_finished_to_item_completed():
@@ -596,3 +616,35 @@ async def test_guidance_message_appended_renders_exactly_once():
     params = _item_params(msg)
     assert params["kind"] == "message"
     assert params["data"] == {"text": "keep going", "style": "guidance"}
+
+
+@pytest.mark.asyncio
+async def test_empty_turn_id_is_generated_and_shared_by_stream_lifecycle():
+    adapter = UiEventItemAdapter(thread_id="t1", turn_id="")
+
+    turn_started = await adapter.handle(TurnStarted(text="hello"))
+    first_turn_id = turn_started.params["turn_id"]
+    assert first_turn_id
+
+    notifications = [
+        await adapter.handle(AssistantStreamStarted(stream_id="s1")),
+        await adapter.handle(
+            AssistantStreamUpdated(
+                stream_id="s1", text="thinking...", phase="thinking"
+            )
+        ),
+        await adapter.handle(
+            AssistantStreamUpdated(
+                stream_id="s1", text="● answer", phase="text"
+            )
+        ),
+        await adapter.handle(AssistantStreamCommitted(stream_id="s1")),
+    ]
+    assert all(notification.params["turn_id"] == first_turn_id for notification in notifications)
+
+    turn_completed = await adapter.handle(TurnCompleted())
+    assert turn_completed.params["turn_id"] == first_turn_id
+
+    next_turn_started = await adapter.handle(TurnStarted(text="next"))
+    assert next_turn_started.params["turn_id"]
+    assert next_turn_started.params["turn_id"] != first_turn_id

@@ -81,22 +81,6 @@ Hard rules:
 - Otherwise answer directly and conversationally.
 """
 
-_CHAT_DIRECTIVE = """\
-You are operating in chat profile. This is a constrained conversation session,
-not a coding workspace.
-
-Available tools:
-- websearch and webfetch for web lookups
-- MCP tools registered by the current MCP integration
-- read-only filesystem tools (read, find, search, lsp) only when a workspace is bound
-
-Restrictions:
-- No shell execution (bash, powershell) and no local writes (write, replace, manage, delete, move)
-- No git mutation, agent, or subagent tools
-- Tool denials are final; explain the limit to the user and continue without tools when denied
-
-Answer directly using the bound tools. Do not attempt to invoke tools outside the bound set."""
-
 
 class PromptPolicy(Protocol):
     def base_system_spec(self) -> BaseSystemProfile | None: ...
@@ -124,7 +108,7 @@ class ChatPromptPolicy:
         return CHAT_PROFILE_SPEC
 
     def profile_sections(self, turn_context: object | None) -> list[ContextSection]:
-        return [_section("Profile Directive", _CHAT_DIRECTIVE)]
+        return []
 
     def suppress_sections(self) -> set[str]:
         return {"Persona", "Workflow Runtime", "Current Task State"}

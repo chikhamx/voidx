@@ -53,6 +53,7 @@ describe("desktop runtime profile creation", () => {
     const socket = fakeSocket();
     _setSocket(socket);
     await import("../../src/main");
+    uiState.workspace = "/tmp/imcore-sdk";
     uiState.runtimeProfile = "chat";
 
     document.querySelector("#btn-new-chat").click();
@@ -60,7 +61,7 @@ describe("desktop runtime profile creation", () => {
     const message = socket.send.mock.calls
       .map(([data]) => JSON.parse(data))
       .find((entry) => entry.method === "session.create");
-    expect(message.params).toEqual({ directory: "", profile: "chat" });
+    expect(message.params).toEqual({ directory: "/tmp/imcore-sdk", profile: "chat" });
   });
 });
 
@@ -516,7 +517,7 @@ describe("desktop runtime profile switching", () => {
     expect(uiState.isRunning).toBe(false);
   });
 
-  it("does not treat a transient turn node as a final user confirmation", async () => {
+  it("does not consume a transient turn node as a duplicate local message", async () => {
     const { _resetWorkbenchForTest, handleNotification } = await import("../../src/main");
     _resetWorkbenchForTest();
     const socket = fakeSocket();
@@ -540,9 +541,95 @@ describe("desktop runtime profile switching", () => {
     handleNotification("workspace.snapshot", turnSnapshot);
     handleNotification("workspace.snapshot", turnSnapshot);
 
-    expect(document.querySelectorAll("#transcript .message-text")).toHaveLength(1);
+    expect(document.querySelectorAll("#transcript .message-user")).toHaveLength(1);
+    expect(document.querySelectorAll("#transcript .message-text")).toHaveLength(0);
     expect(document.querySelector("#transcript").textContent).toContain("暂态输入");
   });
+
+  it("keeps a persisted user turn before its assistant reply after snapshot refresh", async () => {
+    const { _resetWorkbenchForTest, handleNotification } = await import("../../src/main");
+    _resetWorkbenchForTest();
+    const socket = fakeSocket();
+    _setSocket(socket);
+    uiState.sessionId = "chat-thread";
+    uiState.runtimeProfile = "chat";
+
+    document.querySelector("#input").value = "你好";
+    document.querySelector("#composer").dispatchEvent(
+      new SubmitEvent("submit", { bubbles: true, cancelable: true }),
+    );
+
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "chat-thread",
+      threads: [{ thread_id: "chat-thread", runtime_profile: "chat" }],
+      active_snapshot: {
+        thread_id: "chat-thread",
+        revision: 1,
+        nodes: [
+          { id: "turn-1", node_type: "turn", header: "❯ 你好", body_lines: [] },
+          {
+            id: "assistant-1",
+            node_type: "assistant",
+            payload: { raw_text: "你好，我是 voidx。" },
+            body_lines: ["你好，我是 voidx。"],
+          },
+        ],
+      },
+    });
+
+    const items = Array.from(document.querySelector("#transcript").children);
+    expect(items.map((item) => item.className)).toEqual([
+      "message-item message-user",
+      "stream-buffer",
+    ]);
+    expect(items[0].textContent).toContain("你好");
+    expect(items[1].textContent).toContain("你好，我是 voidx。");
+  });
+
+  it("does not append a committed reply again after a snapshot includes it", async () => {
+    const { _resetWorkbenchForTest, handleNotification } = await import("../../src/main");
+    _resetWorkbenchForTest();
+    const socket = fakeSocket();
+    _setSocket(socket);
+    uiState.sessionId = "chat-thread";
+    uiState.runtimeProfile = "chat";
+
+    appendStreamText("reply-1", "第一条回复", "text");
+    commitStream("reply-1");
+    document.querySelector("#input").value = "第二条消息";
+    document.querySelector("#composer").dispatchEvent(
+      new SubmitEvent("submit", { bubbles: true, cancelable: true }),
+    );
+
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "chat-thread",
+      threads: [{ thread_id: "chat-thread", runtime_profile: "chat" }],
+      active_snapshot: {
+        thread_id: "chat-thread",
+        revision: 2,
+        nodes: [
+          { id: "turn-1", node_type: "turn", header: "❯ 第一条问题", body_lines: [] },
+          {
+            id: "assistant-1",
+            node_type: "assistant",
+            payload: { raw_text: "第一条回复" },
+            body_lines: ["第一条回复"],
+          },
+          { id: "turn-2", node_type: "turn", header: "❯ 第二条消息", body_lines: [] },
+        ],
+      },
+    });
+
+    const items = Array.from(document.querySelector("#transcript").children);
+    expect(items.map((item) => item.className)).toEqual([
+      "message-item message-user",
+      "stream-buffer",
+      "message-item message-user",
+    ]);
+    expect(document.querySelectorAll("#transcript .stream-buffer")).toHaveLength(1);
+    expect(document.querySelector("#transcript").textContent).toContain("第一条回复");
+  });
+
 
   it("updates the active thread runtime state from a snapshot status", async () => {
     const { _resetWorkbenchForTest, handleNotification } = await import("../../src/main");
@@ -1078,4 +1165,212 @@ describe("strict metadata boundaries and complete reset", () => {
     expect(document.querySelector("#btn-send").getAttribute("aria-label")).toBe("Send");
     expect(callback).not.toHaveBeenCalled();
   });
+});
+
+
+  it("requests a bounded transcript window when switching threads", async () => {
+    const socket = fakeSocket();
+    _setSocket(socket);
+    const { switchThread } = await import("../../src/main");
+
+    const pending = switchThread("thread-windowed");
+    const request = socket.send.mock.calls
+      .map(([data]) => JSON.parse(data))
+      .find((entry) => entry.method === "session.switch");
+
+    expect(request.params).toEqual({
+      thread_id: "thread-windowed",
+      turn_limit: 20,
+    });
+
+    const client = await import("../../src/rpc/client");
+    client._resolvePendingForTest(request.id, {
+      active_thread_id: "thread-windowed",
+    });
+    await pending;
+  });
+
+  it("loads and prepends an earlier transcript page at the top of a windowed snapshot", async () => {
+    const socket = fakeSocket();
+    _setSocket(socket);
+    const { handleNotification } = await import("../../src/main");
+    const transcript = document.querySelector("#transcript");
+
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "thread-windowed",
+      threads: [{ thread_id: "thread-windowed", runtime_profile: "coding" }],
+      active_snapshot: {
+        thread_id: "thread-windowed",
+        revision: 1,
+        windowed: true,
+        before_turn_id: 2,
+        after_turn_id: 3,
+        has_earlier: true,
+        has_later: false,
+        nodes: [{ node_type: "turn", id: "turn-2", header: "later page" }],
+      },
+    });
+
+    Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 100 });
+    Object.defineProperty(transcript, "clientHeight", { configurable: true, value: 50 });
+    transcript.scrollTop = 0;
+    transcript.dispatchEvent(new Event("scroll"));
+
+    const request = socket.send.mock.calls
+      .map(([data]) => JSON.parse(data))
+      .find((entry) => entry.method === "transcript.page");
+    expect(request.params).toEqual({
+      thread_id: "thread-windowed",
+      before_turn_id: 2,
+      turn_limit: 20,
+    });
+
+    const client = await import("../../src/rpc/client");
+    client._resolvePendingForTest(request.id, {
+      thread_id: "thread-windowed",
+      revision: 2,
+      windowed: true,
+      before_turn_id: 0,
+      after_turn_id: 1,
+      has_earlier: false,
+      has_later: true,
+      nodes: [{ node_type: "turn", id: "turn-1", header: "earlier page" }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(transcript.textContent).toContain("earlier page");
+    expect(transcript.textContent).toContain("later page");
+    expect(transcript.querySelectorAll(".message-item")).toHaveLength(2);
+  });
+
+  it("drops an earlier page response after the active thread changes", async () => {
+    const socket = fakeSocket();
+    _setSocket(socket);
+    const { handleNotification, switchThread } = await import("../../src/main");
+    const transcript = document.querySelector("#transcript");
+
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "thread-windowed",
+      threads: [{ thread_id: "thread-windowed", runtime_profile: "coding" }],
+      active_snapshot: {
+        thread_id: "thread-windowed",
+        revision: 1,
+        windowed: true,
+        before_turn_id: 2,
+        has_earlier: true,
+        nodes: [{ node_type: "turn", id: "turn-2", header: "current page" }],
+      },
+    });
+    Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 100 });
+    transcript.scrollTop = 0;
+    transcript.dispatchEvent(new Event("scroll"));
+    const pageRequest = socket.send.mock.calls
+      .map(([data]) => JSON.parse(data))
+      .find((entry) => entry.method === "transcript.page");
+
+    const switchPending = switchThread("thread-other");
+    const switchRequest = socket.send.mock.calls
+      .map(([data]) => JSON.parse(data))
+      .find((entry) => entry.method === "session.switch" && entry.params.thread_id === "thread-other");
+    const client = await import("../../src/rpc/client");
+    client._resolvePendingForTest(switchRequest.id, { active_thread_id: "thread-other" });
+    await switchPending;
+    client._resolvePendingForTest(pageRequest.id, {
+      thread_id: "thread-windowed",
+      revision: 2,
+      windowed: true,
+      before_turn_id: 0,
+      nodes: [{ node_type: "turn", id: "turn-1", header: "stale page" }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(transcript.textContent).not.toContain("stale page");
+  });
+
+
+it("clears transcript window cursors when the workbench is reset", async () => {
+  const { handleNotification, _resetWorkbenchForTest } = await import("../../src/main");
+  _resetWorkbenchForTest();
+  const socket = fakeSocket();
+  _setSocket(socket);
+  const transcript = document.querySelector("#transcript");
+
+  handleNotification("workspace.snapshot", {
+    active_thread_id: "thread-reset-window",
+    threads: [{ thread_id: "thread-reset-window", runtime_profile: "coding" }],
+    active_snapshot: {
+      thread_id: "thread-reset-window",
+      revision: 1,
+      windowed: true,
+      before_turn_id: 2,
+      has_earlier: true,
+      nodes: [{ node_type: "turn", id: "turn-reset", header: "window before reset" }],
+    },
+  });
+
+  _resetWorkbenchForTest();
+  _setSocket(socket);
+  socket.send.mockClear();
+  uiState.sessionId = "thread-reset-window";
+  Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 100 });
+  transcript.scrollTop = 0;
+  transcript.dispatchEvent(new Event("scroll"));
+
+  expect(socket.send.mock.calls
+    .map(([data]) => JSON.parse(data))
+    .filter((entry) => entry.method === "transcript.page")).toHaveLength(0);
+});
+
+it("drops a page response after a newer snapshot for the same thread", async () => {
+  const { handleNotification, _resetWorkbenchForTest } = await import("../../src/main");
+  _resetWorkbenchForTest();
+  const socket = fakeSocket();
+  _setSocket(socket);
+  const transcript = document.querySelector("#transcript");
+
+  handleNotification("workspace.snapshot", {
+    active_thread_id: "thread-same",
+    threads: [{ thread_id: "thread-same", runtime_profile: "coding" }],
+    active_snapshot: {
+      thread_id: "thread-same",
+      revision: 1,
+      windowed: true,
+      before_turn_id: 2,
+      has_earlier: true,
+      nodes: [{ node_type: "turn", id: "turn-current", header: "current window" }],
+    },
+  });
+  Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 100 });
+  transcript.scrollTop = 0;
+  transcript.dispatchEvent(new Event("scroll"));
+  const pageRequest = socket.send.mock.calls
+    .map(([data]) => JSON.parse(data))
+    .find((entry) => entry.method === "transcript.page");
+
+  handleNotification("workspace.snapshot", {
+    active_thread_id: "thread-same",
+    threads: [{ thread_id: "thread-same", runtime_profile: "coding" }],
+    active_snapshot: {
+      thread_id: "thread-same",
+      revision: 2,
+      windowed: true,
+      before_turn_id: 4,
+      has_earlier: true,
+      nodes: [{ node_type: "turn", id: "turn-fresh", header: "fresh window" }],
+    },
+  });
+
+  const client = await import("../../src/rpc/client");
+  client._resolvePendingForTest(pageRequest.id, {
+    thread_id: "thread-same",
+    revision: 3,
+    windowed: true,
+    before_turn_id: 0,
+    has_earlier: false,
+    nodes: [{ node_type: "turn", id: "turn-stale", header: "stale page" }],
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  expect(transcript.textContent).toContain("fresh window");
+  expect(transcript.textContent).not.toContain("stale page");
 });

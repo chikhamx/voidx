@@ -160,3 +160,21 @@ async def test_execution_instruction_skill_summaries_follow_replaced_api(tmp_pat
 
     assert "- new" in await execution._instruction.available_skills_section()
     assert "- old" not in await execution._instruction.available_skills_section()
+
+
+@pytest.mark.asyncio
+async def test_system_include_files_false_skips_agents_but_keeps_skills_and_mcp(tmp_path):
+    agents = tmp_path / "AGENTS.md"
+    agents.write_text("project rule", encoding="utf-8")
+
+    service = InstructionService(
+        str(tmp_path),
+        skill_summaries_provider=lambda: ["- verify [auto]: Verify changes"],
+    )
+
+    full = await service.system()
+    assert any("project rule" in item for item in full)
+
+    without_files = await service.system(include_files=False)
+    assert all("project rule" not in item for item in without_files)
+    assert any("Available Skills" in item for item in without_files)
