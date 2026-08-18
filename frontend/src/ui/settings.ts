@@ -1,4 +1,8 @@
 import { getThemePreference, setThemePreference, type ThemePreference } from "./theme";
+import { createCustomSelect } from "./custom-select";
+import { inputRow, numberRow, rowBase, section } from "./form-rows";
+import { openProvidersModal } from "./providers";
+import { rpcCall } from "../rpc";
 import type { ProfileSummary } from "../utils/types";
 export type { ProfileSummary };
 
@@ -202,33 +206,10 @@ const DEFAULT_COMPACTION_TIMEOUT_SECONDS = 256;
 
 
 function collectModelPatch(value: (name: string) => string): Record<string, unknown> {
-  const provider = value("new_provider").trim();
-  const model = value("new_model").trim();
-  const baseUrl = value("new_base_url").trim();
-  const protocol = value("new_protocol").trim();
-  const apiKey = value("new_api_key").trim();
   const reasoningEffort = value("model_reasoning_effort").trim();
 
-  const modelPatch: Record<string, unknown> = {};
-  if (provider && model) {
-    modelPatch.provider = provider;
-    modelPatch.model = model;
-    if (baseUrl) modelPatch.base_url = baseUrl;
-    if (protocol) modelPatch.protocol = protocol;
-  }
-  if (reasoningEffort) modelPatch.reasoning_effort = reasoningEffort;
-
   const patch: Record<string, unknown> = {};
-  if (Object.keys(modelPatch).length > 0) patch.model = modelPatch;
-
-  if (provider && model && apiKey) {
-    patch.provider_secrets = {
-      provider,
-      profile_name: `${provider}/${model}`,
-      action: "set",
-      api_key: apiKey,
-    };
-  }
+  if (reasoningEffort) patch.model = { reasoning_effort: reasoningEffort };
 
   patch.compaction = {
     profile_name: value("compaction_profile"),
@@ -264,7 +245,6 @@ async function saveSettingsModal() {
 
 function renderModelTab(snapshot: SettingsSnapshot = {}): DocumentFragment {
   const model = snapshot.model || {};
-  const profiles = snapshot.profiles || [];
   const paths = snapshot.paths || {};
   const compaction = (snapshot.compaction || {}) as Record<string, unknown>;
   const permissions = snapshot.permissions || {};
@@ -289,28 +269,7 @@ function renderModelTab(snapshot: SettingsSnapshot = {}): DocumentFragment {
       selectRow("Profile", "ai_approval_profile", String(aiApproval.profile_name || ""), profileChoices),
       numberRow("Timeout（秒）", "ai_approval_timeout", Number(aiApproval.timeout_seconds || 12), 1, 60),
     ]),
-    section("已配置 Profiles", [
-      ...(profiles.length
-        ? profiles.map((p) => {
-            const nameEl = document.createElement("span");
-            nameEl.textContent = p.name;
-            const detailEl = document.createElement("span");
-            detailEl.className = "settings-readonly";
-            detailEl.textContent = `${p.provider}/${p.model}${p.configured ? " · key ✓" : " · key ✗"}`;
-            const row = rowBase(p.name);
-            row.append(nameEl);
-            row.append(detailEl);
-            return row;
-          })
-        : [readonlyRow("", "暂无已保存的 model profile")]),
-    ]),
-    section("新增模型 / 供应商", [
-      inputRow("Provider", "new_provider", ""),
-      inputRow("Model", "new_model", ""),
-      inputRow("Base URL", "new_base_url", ""),
-      selectRow("Protocol", "new_protocol", "", ["", "openai", "anthropic", "deepseek", "gemini"]),
-      secretRow("API key", "new_api_key", ""),
-    ]),
+    section("供应商 / 模型", [manageProvidersRow()]),
     section("存储位置", [
       readonlyRow("Workspace", paths.workspace_settings || ""),
       readonlyRow("Global", paths.global_settings || ""),
@@ -388,53 +347,12 @@ function renderAdvancedTab(snapshot: SettingsSnapshot = {}): DocumentFragment {
 
 // ── form helpers ────────────────────────────────────────────────────────
 
-function section(title: string, children: HTMLElement[]): HTMLElement {
-  const el = document.createElement("section");
-  el.className = "settings-section";
-  const heading = document.createElement("h3");
-  heading.textContent = title;
-  el.append(heading, ...children);
-  return el;
-}
-
 function readonlyRow(label: string, value: string): HTMLLabelElement {
   const row = rowBase(label);
   const span = document.createElement("span");
   span.className = "settings-readonly";
   span.textContent = value;
   row.append(span);
-  return row;
-}
-
-function inputRow(label: string, name: string, value: string): HTMLLabelElement {
-  const row = rowBase(label);
-  const input = document.createElement("input");
-  input.name = name;
-  input.value = value;
-  row.append(input);
-  return row;
-}
-
-function secretRow(label: string, name: string, value: string): HTMLLabelElement {
-  const row = rowBase(label);
-  const input = document.createElement("input");
-  input.type = "password";
-  input.name = name;
-  input.value = value;
-  input.autocomplete = "off";
-  row.append(input);
-  return row;
-}
-
-function numberRow(label: string, name: string, value: number, min: number, max: number): HTMLLabelElement {
-  const row = rowBase(label);
-  const input = document.createElement("input");
-  input.type = "number";
-  input.name = name;
-  input.value = String(value);
-  input.min = String(min);
-  input.max = String(max);
-  row.append(input);
   return row;
 }
 
@@ -451,8 +369,8 @@ function checkboxRow(label: string, name: string, value: boolean): HTMLLabelElem
 function themeRow(): HTMLLabelElement {
   const labels: Record<ThemePreference, string> = { system: "跟随系统", light: "浅色", dark: "深色" };
   const row = selectRow("主题", "ui_theme", getThemePreference(), ["system", "light", "dark"], (v) => labels[v as ThemePreference] ?? v);
-  row.querySelector("select")?.addEventListener("change", (e) => {
-    const value = (e.target as HTMLSelectElement).value;
+  row.querySelector('input[name="ui_theme"]')?.addEventListener("change", (e) => {
+    const value = (e.target as HTMLInputElement).value;
     if (value === "system" || value === "light" || value === "dark") setThemePreference(value);
   });
   return row;
@@ -460,25 +378,22 @@ function themeRow(): HTMLLabelElement {
 
 function selectRow(label: string, name: string, value: string, options: string[], optionLabel?: (value: string) => string): HTMLLabelElement {
   const row = rowBase(label);
-  const select = document.createElement("select");
-  select.name = name;
-  for (const optionValue of options) {
-    const option = document.createElement("option");
-    option.value = optionValue;
-    option.textContent = optionLabel ? optionLabel(optionValue) : optionValue || (optionValue ? optionValue : "none");
-    select.append(option);
-  }
-  select.value = value;
-  row.append(select);
+  row.append(createCustomSelect({ name, value, options: [...options], optionLabel }));
   return row;
 }
 
-function rowBase(label: string): HTMLLabelElement {
-  const row = document.createElement("label");
-  row.className = "settings-row";
-  const text = document.createElement("span");
-  text.textContent = label;
-  row.append(text);
+function manageProvidersRow(): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "vx-providers-entry-row";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.id = "btn-manage-providers";
+  btn.className = "settings-save";
+  btn.textContent = "管理供应商 / 模型…";
+  btn.addEventListener("click", () => {
+    void openProvidersModal(rpcCall("settings.get", {}) as Promise<SettingsSnapshot>);
+  });
+  row.append(btn);
   return row;
 }
 

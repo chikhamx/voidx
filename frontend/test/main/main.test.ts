@@ -601,6 +601,49 @@ describe("handleToolItem", () => {
     expect(document.querySelector(".tool-body .diff-content")).toBeNull();
   });
 
+  it("removes completed tool detail when a later unified diff renders as a file card", () => {
+    handleToolItem("item.started", "late-diff", {
+      tool_call_id: "late-diff-call",
+      tool_name: "replace",
+    }, "turn-late-diff");
+    handleToolItem("item.completed", "late-diff", {
+      tool_call_id: "late-diff-call",
+      ok: true,
+      detail: "File edited",
+    }, "turn-late-diff");
+    expect(document.querySelector(".tool-body .tool-detail")).not.toBeNull();
+
+    handleToolItem("item.delta", "late-diff", {
+      tool_call_id: "late-diff-call",
+      diff_text: "--- a/src/app.ts\n+++ b/src/app.ts\n@@ -1,1 +1,1 @@\n-old\n+new",
+    }, "turn-late-diff");
+
+    expect(document.querySelector(".file-change-card")).not.toBeNull();
+    expect(document.querySelector(".tool-body .tool-detail")).toBeNull();
+    expect(document.querySelector(".tool-body .diff-content")).toBeNull();
+    expect(document.querySelector(".tool-chevron circle")).not.toBeNull();
+  });
+
+  it("does not append completed detail after a unified diff file card", () => {
+    handleToolItem("item.started", "normal-diff", {
+      tool_call_id: "normal-diff-call",
+      tool_name: "replace",
+    }, "turn-normal-diff");
+    handleToolItem("item.delta", "normal-diff", {
+      tool_call_id: "normal-diff-call",
+      diff_text: "--- a/src/app.ts\n+++ b/src/app.ts\n@@ -1,1 +1,1 @@\n-old\n+new",
+    }, "turn-normal-diff");
+    handleToolItem("item.completed", "normal-diff", {
+      tool_call_id: "normal-diff-call",
+      ok: true,
+      detail: "File edited",
+    }, "turn-normal-diff");
+
+    expect(document.querySelector(".file-change-card")).not.toBeNull();
+    expect(document.querySelector(".tool-body .tool-detail")).toBeNull();
+    expect(document.querySelector(".tool-body .diff-content")).toBeNull();
+  });
+
   it("renders parsed tool diffs as a file change card", () => {
     handleToolItem("item.started", "ts-file-card", {
       tool_call_id: "cs-file-card",

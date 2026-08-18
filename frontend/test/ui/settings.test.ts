@@ -32,18 +32,18 @@ describe("renderSettingsModal", () => {
     const text = content.textContent;
     expect(text).toContain("openai");
     expect(text).toContain("gpt-5.5");
-    expect(text).toContain("key ✓");
   });
 
-  it("renders controls for adding a configured model profile", () => {
+  it("renders a manage-providers entry instead of the inline add form", () => {
     initSettingsModal();
     renderSettingsModal({ model: { provider: "deepseek", model: "deepseek-v4-flash" } });
 
     const content = document.querySelector("#settings-content");
-    expect(content.textContent).toContain("新增模型 / 供应商");
-    expect(document.querySelector('[name="new_provider"]')).not.toBeNull();
-    expect(document.querySelector('[name="new_model"]')).not.toBeNull();
-    expect(document.querySelector('[name="new_api_key"]')).not.toBeNull();
+    expect(content.textContent).toContain("供应商 / 模型");
+    expect(document.querySelector("#btn-manage-providers")).not.toBeNull();
+    expect(document.querySelector('[name="new_provider"]')).toBeNull();
+    expect(document.querySelector('[name="new_model"]')).toBeNull();
+    expect(document.querySelector('[name="new_api_key"]')).toBeNull();
   });
 
   it("uses a 256 second compaction timeout when settings omit it", () => {
@@ -181,32 +181,6 @@ describe("collectSettingsPatch", () => {
     expect(patch.code_ide).toBe("cursor");
   });
 
-  it("collects new model profile and provider secret from model tab", () => {
-    initSettingsModal();
-    renderSettingsModal({});
-    document.querySelector('[name="new_provider"]').value = "xunfei-coding-plan";
-    document.querySelector('[name="new_model"]').value = "astron-code-latest";
-    document.querySelector('[name="new_base_url"]').value = "https://spark-api-open.xf-yun.com/v1";
-    document.querySelector('[name="new_protocol"]').value = "openai";
-    document.querySelector('[name="new_api_key"]').value = "sk-test";
-
-    const patch = collectSettingsPatch();
-
-    expect(patch).toMatchObject({
-      model: {
-        provider: "xunfei-coding-plan",
-        model: "astron-code-latest",
-        base_url: "https://spark-api-open.xf-yun.com/v1",
-        protocol: "openai",
-      },
-      provider_secrets: {
-        provider: "xunfei-coding-plan",
-        profile_name: "xunfei-coding-plan/astron-code-latest",
-        action: "set",
-        api_key: "sk-test",
-      },
-    });
-  });
 });
 
 

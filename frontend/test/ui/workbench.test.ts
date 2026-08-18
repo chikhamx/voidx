@@ -131,6 +131,15 @@ describe("workbench shell", () => {
     }
   });
 
+  it("keeps transcript content below the desktop titlebar overlay", () => {
+    const styles = readStylesCSS();
+
+    expect(styles).toMatch(/\.vx-main-canvas \{[^}]*padding-top:\s*var\(--vx-titlebar-height\);[^}]*\}/);
+    expect(styles).toMatch(/\.transcript \{[^}]*padding:\s*var\(--vx-space-2\)[^}]*\}/);
+    expect(styles).not.toMatch(/\.transcript \{[^}]*padding:[^}]*var\(--vx-titlebar-height\)[^}]*\}/);
+    expect(styles).toMatch(/\.vx-titlebar-right \{[^}]*background:\s*var\(--vx-bg-canvas\);[^}]*\}/);
+  });
+
   it("keeps the dock opaque and in its own flex column", () => {
     const styles = readStylesCSS();
 
@@ -221,7 +230,7 @@ describe("workbench shell", () => {
     expect(transcript.children).toHaveLength(0);
     expect(emptyState.hidden).toBe(false);
     expect(mainCanvas.classList.contains("empty")).toBe(true);
-    expect(emptyState.textContent).toContain("让我们一起让世界变得更加美好！");
+    expect(emptyState.textContent).toContain("一起让世界变得更加美好！");
   });
 
   it("does not render the redundant configured permission pill in the composer", () => {
@@ -415,7 +424,7 @@ describe("workbench shell", () => {
     expect(styles).toContain(".vx-sidebar-row-icon");
   });
 
-  it("uses a continuous background across the titlebar left segment and sidebar", () => {
+  it("uses a desktop glass material across the titlebar left segment and sidebar", () => {
     const styles = readStylesCSS();
 
     expect(styles).toMatch(/\.vx-titlebar-left\s*\{[^}]*background:\s*var\(--vx-bg-app\);[^}]*\}/);
@@ -425,8 +434,8 @@ describe("workbench shell", () => {
     const responsiveStart = styles.indexOf("@media (max-width: 899px)");
     expect(styles.slice(0, responsiveStart)).not.toMatch(/body\.is-desktop \.vx-sidebar > \.vx-mode-picker\s*\{[^}]*padding-left:/);
     expect(styles).toMatch(/body\.is-desktop\.is-mac \.vx-titlebar-left\s*\{[^}]*background:\s*transparent;[^}]*\}/);
-    expect(styles).toMatch(/body\.is-desktop\.is-mac \.vx-sidebar\s*\{[^}]*background:\s*rgb\(242 242 237 \/ 0\.6\);[^}]*\}/);
-    expect(styles).toMatch(/:root\[data-theme=["']dark["']\] body\.is-desktop\.is-mac \.vx-sidebar\s*\{[^}]*background:\s*rgb\(20 20 18 \/ 0\.6\);[^}]*\}/);
+    expect(styles).toMatch(/body\.is-desktop\.is-mac \.vx-sidebar\s*\{[^}]*background:\s*rgb\(255 255 255 \/ 0\.3\);[^}]*-webkit-backdrop-filter:\s*saturate\(180%\) blur\(28px\);[^}]*backdrop-filter:\s*saturate\(180%\) blur\(28px\);[^}]*\}/);
+    expect(styles).toMatch(/:root\[data-theme=["']dark["']\] body\.is-desktop\.is-mac \.vx-sidebar\s*\{[^}]*background:\s*rgb\(28 28 30 \/ 0\.45\);[^}]*\}/);
     expect(styles).toMatch(/body\.is-desktop \.vx-titlebar-left\s*\{[^}]*padding-left:\s*80px;[^}]*\}/);
     expect(styles).toMatch(/@media \(max-width: 899px\) \{[\s\S]*?\.vx-sidebar\s*\{[^}]*display:\s*flex;[^}]*position:\s*absolute;[^}]*z-index:\s*11;[^}]*\}[\s\S]*?\.vx-sidebar > \.vx-mode-picker\s*\{[^}]*min-height:\s*var\(--vx-titlebar-height\);[^}]*\}[\s\S]*?body\.is-desktop \.vx-sidebar > \.vx-mode-picker\s*\{[^}]*padding-left:\s*calc\(80px - var\(--vx-space-2\)\);[^}]*\}[\s\S]*?\.vx-sidebar > :not\(\.vx-mode-picker\)\s*\{[^}]*display:\s*none;[^}]*\}/);
   });

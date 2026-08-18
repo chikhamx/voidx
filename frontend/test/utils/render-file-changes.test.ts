@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   parseUnifiedDiff,
+  parseSessionChangeSummary,
   renderFileChanges,
+  renderFileChangeSummary,
   resetFileChangeCards,
 } from "../../src/utils/render-file-changes";
 import {
@@ -69,6 +71,18 @@ describe("parseUnifiedDiff", () => {
   it("returns no files for non-unified diff text", () => {
     expect(parseUnifiedDiff("plain tool output")).toEqual([]);
   });
+
+  it("parses rich session change summary lines", () => {
+    const files = parseSessionChangeSummary([
+      "  [dim]Modified[/dim]  [cyan]README.md[/cyan]  [#A6E22E]+140[/#A6E22E] [#FF4689]−40[/#FF4689]",
+      "  [dim]Created[/dim]  [cyan]src/new.ts[/cyan]  [#A6E22E]+12[/#A6E22E] [#FF4689]−0[/#FF4689]",
+    ].join("\n"));
+
+    expect(files).toEqual([
+      expect.objectContaining({ path: "README.md", operation: "modified", added: 140, removed: 40 }),
+      expect.objectContaining({ path: "src/new.ts", operation: "created", added: 12, removed: 0 }),
+    ]);
+  });
 });
 
 describe("renderFileChanges", () => {
@@ -92,6 +106,41 @@ describe("renderFileChanges", () => {
     expect(document.querySelectorAll(".file-change-card")).toHaveLength(2);
   });
 
+  it("renders session change summaries as a compact file card", () => {
+    const rendered = renderFileChangeSummary("summary-1", [
+      "  [dim]Modified[/dim]  [cyan]README.md[/cyan]  [#A6E22E]+140[/#A6E22E] [#FF4689]−40[/#FF4689]",
+      "  [dim]Modified[/dim]  [cyan]AGENTS.md[/cyan]  [#A6E22E]+122[/#A6E22E] [#FF4689]−10[/#FF4689]",
+    ].join("\n"));
+
+    const card = document.querySelector<HTMLElement>(".file-change-card");
+
+    expect(rendered).toBe(true);
+    expect(card).not.toBeNull();
+    expect(card?.querySelectorAll(".file-change-row")).toHaveLength(2);
+    expect(card?.textContent).toContain("README.md");
+    expect(card?.textContent).toContain("AGENTS.md");
+    expect(card?.textContent).not.toContain("[dim]");
+    expect(card?.querySelector(".file-change-detail")).toBeNull();
+  });
+
+
+  it("renders a compact summary header and file-icon rows", () => {
+    renderFileChanges("turn-reference-card", DIFF);
+
+    const card = document.querySelector<HTMLElement>(".file-change-card");
+    const header = card?.querySelector<HTMLElement>(".file-change-header");
+    const firstRow = card?.querySelector<HTMLElement>(".file-change-row");
+
+    expect(header?.querySelector(".file-change-summary-icon svg")).not.toBeNull();
+    expect(header?.querySelector(".file-change-title")?.textContent).toBe("4 files changed");
+    expect(header?.querySelector(".file-change-stats")?.textContent).toContain("+5");
+    expect(header?.querySelector(".file-change-stats")?.textContent).toContain("-3");
+    expect(card?.querySelector(".file-change-operation")).toBeNull();
+    expect(card?.querySelectorAll(".file-change-file-icon svg")).toHaveLength(3);
+    expect(firstRow?.dataset.operation).toBe("created");
+    expect(firstRow?.querySelector(".file-change-row-stats .file-change-added")?.textContent).toBe("+2");
+    expect(firstRow?.querySelector(".file-change-row-stats .file-change-removed")?.textContent).toBe("-0");
+  });
   it("previews three files and expands to the complete list", () => {
     renderFileChanges("turn-2", DIFF);
 

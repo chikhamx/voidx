@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from voidx.agent.adapters.langgraph.runtime import thread_context
 from voidx.agent.adapters.langgraph.runtime.thread_context import (
     GuidanceEntry,
     _state_for_context,
@@ -67,3 +68,26 @@ async def test_state_for_context_isolates_threads_within_one_session():
     assert state_b is not state_a
     assert state_b.pending_guidance == []
     assert [entry.text for entry in state_a.pending_guidance] == ["only thread A"]
+
+
+@pytest.mark.asyncio
+async def test_clear_thread_execution_states_only_removes_target_session():
+    state_host = object()
+    state_thread = object()
+    state_other = object()
+    state_similar = object()
+    host = SimpleNamespace(
+        _thread_execution_states={
+            "host-1": state_host,
+            "host-1\x1fthread-a": state_thread,
+            "other": state_other,
+            "host-10\x1fthread-a": state_similar,
+        },
+    )
+
+    thread_context.clear_thread_execution_states(host, "host-1")
+
+    assert host._thread_execution_states == {
+        "other": state_other,
+        "host-10\x1fthread-a": state_similar,
+    }

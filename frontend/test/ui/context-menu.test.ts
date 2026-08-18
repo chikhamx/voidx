@@ -4,6 +4,8 @@ import {
   initContextMenu,
   _resetContextMenuForTest,
 } from "../../src/ui/context-menu";
+import { initProvidersModal, closeProvidersModal } from "../../src/ui/providers";
+import { _setSocket, _resolvePendingForTest } from "../../src/rpc/client";
 
 const openDialogMock = vi.fn();
 
@@ -119,7 +121,14 @@ describe("initContextMenu", () => {
     expect(clickSpy).toHaveBeenCalled();
   });
 
-  it("opens settings when model provider action is triggered", () => {
+  it("opens providers modal when model provider action is triggered", async () => {
+    const sent: Array<Record<string, unknown>> = [];
+    _setSocket({
+      readyState: WebSocket.OPEN,
+      addEventListener: () => {},
+      send: (data: string) => sent.push(JSON.parse(data)),
+    });
+    initProvidersModal();
     initContextMenu();
     const settingsBtn = document.querySelector("#btn-settings");
     const clickSpy = vi.fn();
@@ -133,7 +142,18 @@ describe("initContextMenu", () => {
     const modelItem = document.querySelector(".context-menu-item[data-action='model']");
     modelItem.click();
 
-    expect(clickSpy).toHaveBeenCalled();
+    await vi.waitFor(() => expect(sent.some((m) => m.method === "settings.get")).toBe(true));
+    const req = sent.find((m) => m.method === "settings.get")!;
+    _resolvePendingForTest(req.id as number, { settings: { profiles: [] } });
+
+    await vi.waitFor(() => {
+      const dialog = document.querySelector("#providers-dialog") as HTMLDialogElement;
+      expect(dialog.open || dialog.hasAttribute("open")).toBe(true);
+    });
+    expect(clickSpy).not.toHaveBeenCalled();
+
+    closeProvidersModal();
+    _setSocket(null);
   });
 
   it("opens native picker and inserts selected file attachments", async () => {

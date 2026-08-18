@@ -59,6 +59,7 @@ from voidx.agent.adapters.langgraph.runtime.tool_executor import AGENT_RESULT_PR
 from voidx.agent.adapters.langgraph.runtime.subagent import run_subagent as _run_subagent
 from voidx.agent.adapters.langgraph.runtime.thread_context import (
     GuidanceEntry,
+    clear_thread_execution_states,
     current_thread_execution_state,
 )
 from voidx.agent.domain.turn_context import TurnExecutionContext
@@ -866,6 +867,7 @@ class LangGraphExecution:
         old_session_id = self._session.id if self._session is not None else None
         if old_session_id:
             await self.agent_gateway.close_session(old_session_id)
+            clear_thread_execution_states(self, old_session_id)
         self._session = None
         self._session_date = session_date(None)
         self._session_msg_cache = []
@@ -877,7 +879,7 @@ class LangGraphExecution:
         self._current_messages = None
         self._pending_guidance.clear()
         if old_session_id:
-            self._schedule_clear_session_storage(old_session_id)
+            await self._clear_session_storage(old_session_id)
 
     def _schedule_clear_session_storage(self, session_id: str) -> None:
         task = asyncio.create_task(

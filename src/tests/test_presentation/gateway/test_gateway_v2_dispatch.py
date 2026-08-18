@@ -379,6 +379,37 @@ async def test_settings_update_notifies_runtime_model_switch(tmp_path):
     assert result.result["settings"]["model"]["model"] == "deepseek-v4-pro"
     assert applied == [("deepseek", "deepseek-v4-pro")]
 
+@pytest.mark.asyncio
+async def test_settings_update_does_not_broadcast_workspace_snapshot(tmp_path):
+    """settings.update 只通过响应返回状态,不应再广播完整 workspace.snapshot。
+
+    轻量状态变更(切模型/思考强度/权限等)不改变 transcript,广播全量快照
+    会迫使前端全量重绘对话与侧栏,长会话下导致主线程阻塞、界面卡死。
+    """
+    dock = BottomInputDock()
+    applied: list[tuple[str, str]] = []
+
+    async def apply_settings(settings):
+        cfg = await settings.build_config()
+        applied.append((cfg.model.provider, cfg.model.model))
+
+    session = GatewaySession(
+        lambda: dock.tree,
+        thread_id="t1",
+        workspace=str(tmp_path),
+        settings_update_handler=apply_settings,
+    )
+    client = FakeClient()
+    await session.connect(client)
+    baseline = len(client.messages)
+
+    result = await session.dispatch_request(JsonRpcRequest(id=182, method="settings.update", params={
+        "patch": {"model": {"reasoning_effort": "low"}}
+    }))
+
+    assert isinstance(result, JsonRpcResult)
+    new_messages = [_parse(m) for m in client.messages[baseline:]]
+    assert not any(msg.get("method") == "workspace.snapshot" for msg in new_messages)
 
 
 @pytest.mark.asyncio

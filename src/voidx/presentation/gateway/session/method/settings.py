@@ -217,7 +217,6 @@ class SettingsMethods:
             result = handler(settings)
             if inspect.isawaitable(result):
                 await result
-            await self.broadcast_snapshot()
 
         return {"ok": True, "settings": await self._desktop_settings_snapshot(settings)}
 

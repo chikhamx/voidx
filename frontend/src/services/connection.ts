@@ -8,6 +8,7 @@ import {
   transcriptEl,
 } from "./state";
 import type { SettingsSnapshot } from "../ui/settings";
+import { resetFileChangeCards } from "../utils/render-file-changes";
 
 export let socket: ReturnType<typeof createWorkerSocket> | null = null;
 export let reconnectAttempts = 0;
@@ -160,6 +161,7 @@ export async function switchWorkspace(workspace: string): Promise<void> {
   uiState.workspace = workspace;
   uiState.sessionId = "";
   uiState.isRunning = false;
+  resetFileChangeCards();
   transcriptEl.replaceChildren();
   syncEmptyState();
   setConnectionStatus("connecting");

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from voidx.agent.domain.ui_events import AssistantStreamCommitted, AssistantStreamUpdated, StatusFinished, StatusUpdated
+from voidx.agent.domain.ui_events import ErrorAppended, StatusFinished, StatusUpdated
 
 import asyncio
 from dataclasses import dataclass
@@ -36,6 +36,12 @@ class LlmRetryResult:
     failure_text: str = ""
 
 
+async def _emit_terminal_error(ui: Any, message: str) -> None:
+    if await ui.events.emit(ErrorAppended(message=message)):
+        return
+    ui.ui.error(message)
+
+
 async def handle_llm_exception(
     *,
     ui: Any,
@@ -58,10 +64,7 @@ async def handle_llm_exception(
                 detail=failure_text,
             ))
             await ui.events.emit(StatusFinished(status_id="llm:retry"))
-            await ui.events.emit(AssistantStreamUpdated(text=failure_text))
-            await ui.events.emit(AssistantStreamCommitted())
-        else:
-            ui.ui.error(failure_text)
+        await _emit_terminal_error(ui, failure_text)
         return LlmRetryResult("fail", failure_text)
 
     if kind == LLMErrorKind.TIMEOUT:
@@ -70,11 +73,7 @@ async def handle_llm_exception(
             failure_text = f"LLM call failed after {loop.timeout_retry_attempts} timeout(s): {_clean_error_message(error)}"
             if loop.retry_status_active and ui.via_events():
                 await ui.events.emit(StatusFinished(status_id="llm:retry"))
-            if ui.via_events():
-                await ui.events.emit(AssistantStreamUpdated(text=failure_text))
-                await ui.events.emit(AssistantStreamCommitted())
-            else:
-                ui.ui.error(failure_text)
+            await _emit_terminal_error(ui, failure_text)
             return LlmRetryResult("fail", failure_text)
 
     if loop.failed_attempts < max_retries:
@@ -97,9 +96,5 @@ async def handle_llm_exception(
     failure_text = f"LLM call failed after {max_retries + 1} attempts: {_clean_error_message(error)}"
     if loop.retry_status_active and ui.via_events():
         await ui.events.emit(StatusFinished(status_id="llm:retry"))
-    if ui.via_events():
-        await ui.events.emit(AssistantStreamUpdated(text=failure_text))
-        await ui.events.emit(AssistantStreamCommitted())
-    else:
-        ui.ui.error(failure_text)
+    await _emit_terminal_error(ui, failure_text)
     return LlmRetryResult("fail", failure_text)

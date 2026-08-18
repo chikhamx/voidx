@@ -72,6 +72,10 @@ export function appendThoughtItem(
     const prevText = mergeTarget.dataset.text || "";
     const prevElapsed = mergeTarget.dataset.elapsed ? parseInt(mergeTarget.dataset.elapsed, 10) : 0;
 
+    if (data.text && prevText.includes(data.text)) {
+      return;
+    }
+
     const combinedText = prevText ? (prevText + "\n\n" + (data.text || "")) : (data.text || "");
     const combinedElapsed = prevElapsed + (typeof data.elapsed === "number" ? data.elapsed : 0);
 
@@ -90,11 +94,6 @@ export function appendThoughtItem(
     }
 
     if (body && data.text) {
-      if (body.firstElementChild) {
-        const divider = document.createElement("div");
-        divider.className = "thought-divider";
-        body.append(divider);
-      }
       const md = renderMarkdown(data.text);
       md.className = "markdown-body";
       body.append(md);

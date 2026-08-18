@@ -225,6 +225,44 @@ describe("renderSidebar", () => {
     expect(currentGroup.querySelector(".vx-session-children").hidden).toBe(true);
     expect(otherGroup.querySelector(".vx-session-children").hidden).toBe(true);
   });
+  it("reuses existing session items when re-rendering the same thread list", () => {
+    const threads = [
+      { thread_id: "t1", title: "Session 1", status: "idle", workspace: "/tmp/voidx" },
+      { thread_id: "t2", title: "Session 2", status: "idle", workspace: "/tmp/voidx" },
+    ];
+
+    renderSidebar(threads, "t1", "voidx", "/tmp/voidx");
+    expandWorkspace("/tmp/voidx");
+    const first = document.querySelector('#session-list .vx-session-item[data-thread-id="t1"]');
+    expect(first).not.toBeNull();
+
+    renderSidebar(threads, "t1", "voidx", "/tmp/voidx");
+
+    const second = document.querySelector('#session-list .vx-session-item[data-thread-id="t1"]');
+    expect(second).toBe(first);
+    expect(document.querySelectorAll('#session-list .vx-session-item')).toHaveLength(2);
+  });
+
+  it("removes session items that left the thread list", () => {
+    const threads = [
+      { thread_id: "t1", title: "Session 1", status: "idle", workspace: "/tmp/voidx" },
+      { thread_id: "t2", title: "Session 2", status: "idle", workspace: "/tmp/voidx" },
+    ];
+
+    renderSidebar(threads, "t1", "voidx", "/tmp/voidx");
+    expandWorkspace("/tmp/voidx");
+    expect(document.querySelector('#session-list .vx-session-item[data-thread-id="t2"]')).not.toBeNull();
+
+    renderSidebar(
+      [{ thread_id: "t1", title: "Session 1", status: "idle", workspace: "/tmp/voidx" }],
+      "t1",
+      "voidx",
+      "/tmp/voidx",
+    );
+
+    expect(document.querySelector('#session-list .vx-session-item[data-thread-id="t2"]')).toBeNull();
+    expect(document.querySelector('#session-list .vx-session-item[data-thread-id="t1"]')).not.toBeNull();
+  });
 
   it("renders the current workspace before session metadata arrives", () => {
     renderSidebar([], "", "voidx", "/Users/me/workspace/voidx");

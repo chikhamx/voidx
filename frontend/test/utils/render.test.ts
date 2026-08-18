@@ -10,6 +10,8 @@ import {
   renderTranscript,
   renderTodoPanel,
   appendNoticeItem,
+  appendThoughtItem,
+  handleToolItem,
 } from "../../src/utils/render";
 import {
   setTranscriptElement,
@@ -271,6 +273,100 @@ describe("renderTranscript", () => {
     expect(root.querySelector(".stream-buffer .markdown-body")?.textContent).toContain("final answer");
   });
 
+  it("keeps assistant thought blocks before their replies after snapshot rebuild", () => {
+    resetStreams();
+    const root = document.createElement("div");
+    setTranscriptElement(root);
+
+    const snapshot = {
+      nodes: [
+        { node_type: "message", id: "before", payload: { style: "text", raw_text: "before" } },
+        {
+          node_type: "assistant",
+          id: "assistant-1",
+          payload: { raw_text: "first answer", thinking_text: "first thought" },
+          body_lines: ["first answer"],
+        },
+        { node_type: "message", id: "between", payload: { style: "text", raw_text: "between" } },
+        {
+          node_type: "assistant",
+          id: "assistant-2",
+          payload: { raw_text: "second answer", thinking_text: "second thought" },
+          body_lines: ["second answer"],
+        },
+      ],
+    };
+
+    renderTranscript(root, snapshot);
+    renderTranscript(root, snapshot);
+
+    const order = Array.from(root.children).map((el) => {
+      if (el.classList.contains("thought-item")) return el.dataset.itemId;
+      if (el.classList.contains("stream-buffer")) return el.dataset.streamId;
+      return el.dataset.itemId || el.className;
+    });
+    expect(order).toEqual([
+      "before",
+      "assistant-1-thought",
+      "assistant-1",
+      "between",
+      "assistant-2-thought",
+      "assistant-2",
+    ]);
+  });
+  it("keeps persisted thought nodes in transcript order", () => {
+    resetStreams();
+    const root = document.createElement("div");
+    setTranscriptElement(root);
+
+    const snapshot = {
+      nodes: [
+        { node_type: "turn", id: "turn-1", header: "request" },
+        {
+          node_type: "thought",
+          id: "thought-1",
+          payload: { raw_text: "first thought" },
+          body_lines: ["first thought"],
+        },
+        {
+          node_type: "assistant",
+          id: "assistant-1",
+          payload: { raw_text: "first answer" },
+          body_lines: ["first answer"],
+        },
+        {
+          node_type: "thought",
+          id: "thought-2",
+          payload: { raw_text: "second thought" },
+          body_lines: ["second thought"],
+        },
+        {
+          node_type: "assistant",
+          id: "assistant-2",
+          payload: { raw_text: "second answer" },
+          body_lines: ["second answer"],
+        },
+      ],
+    };
+
+    renderTranscript(root, snapshot);
+    renderTranscript(root, snapshot);
+
+    const order = Array.from(root.children).map((el) => {
+      if (el.classList.contains("thought-item")) return el.dataset.itemId;
+      if (el.classList.contains("stream-buffer")) return el.dataset.streamId;
+      return el.dataset.itemId || el.className;
+    });
+    expect(order).toEqual([
+      "turn-1",
+      "thought-1",
+      "assistant-1",
+      "thought-2",
+      "assistant-2",
+    ]);
+  });
+
+
   it("deduplicates a committed Markdown reply against its snapshot source", () => {
     resetStreams();
     const root = document.createElement("div");
@@ -367,7 +463,203 @@ describe("renderTranscript", () => {
     expect(root.querySelectorAll(".file-change-card")).toHaveLength(1);
     expect(root.querySelectorAll(".file-change-row")).toHaveLength(2);
   });
+  it("preserves a live file change card when the snapshot omits transient diff text", () => {
+    resetStreams();
+    const root = document.createElement("div");
+    setTranscriptElement(root);
 
+    handleToolItem("item.started", "tool-live", {
+      tool_call_id: "call-live",
+      tool_name: "replace",
+    }, "turn-live");
+    handleToolItem("item.delta", "tool-live", {
+      tool_call_id: "call-live",
+      diff_text: "--- a/src/live.ts\n+++ b/src/live.ts\n@@ -1,1 +1,1 @@\n-old\n+new",
+    }, "turn-live");
+    expect(root.querySelector(".file-change-card")).not.toBeNull();
+
+    renderTranscript(root, {
+      nodes: [
+        { node_type: "turn", id: "turn-live", header: "request" },
+        {
+          node_type: "tool_call",
+          id: "tool-live",
+          tool_call_id: "call-live",
+          status: "done",
+          payload: { tool_name: "replace", summary: "done" },
+        },
+      ],
+    });
+
+    expect(root.querySelector(".file-change-card")).not.toBeNull();
+  });
+
+  it("keeps a live file change card after its tool group when re-rendering a snapshot", () => {
+    resetStreams();
+    const root = document.createElement("div");
+    setTranscriptElement(root);
+
+    handleToolItem("item.started", "tool-live-order", {
+      tool_call_id: "call-live-order",
+      tool_name: "replace",
+    }, "turn-live-order");
+    handleToolItem("item.delta", "tool-live-order", {
+      tool_call_id: "call-live-order",
+      diff_text: "--- a/src/live.ts\n+++ b/src/live.ts\n@@ -1,1 +1,1 @@\n-old\n+new",
+    }, "turn-live-order");
+
+    renderTranscript(root, {
+      nodes: [
+        { node_type: "turn", id: "turn-live-order", header: "request" },
+        {
+          node_type: "tool_call",
+          id: "tool-live-order",
+          tool_call_id: "call-live-order",
+          status: "done",
+          payload: { tool_name: "replace", summary: "done" },
+        },
+      ],
+    });
+
+    const children = Array.from(root.children);
+    const groupIndex = children.findIndex((el) => el.classList.contains("tool-group"));
+    const cardIndex = children.findIndex((el) => el.classList.contains("file-change-card"));
+
+    expect(groupIndex).toBeGreaterThanOrEqual(0);
+    expect(cardIndex).toBe(groupIndex + 1);
+    expect(root.querySelectorAll(".file-change-card")).toHaveLength(1);
+    expect(root.querySelector(".file-change-path")?.textContent).toBe("src/live.ts");
+  });
+
+  it("keeps a live file change card directly after its tool group when later nodes render", () => {
+    resetStreams();
+    const root = document.createElement("div");
+    setTranscriptElement(root);
+
+    handleToolItem("item.started", "tool-live-followed", {
+      tool_call_id: "call-live-followed",
+      tool_name: "replace",
+    }, "turn-live-followed");
+    handleToolItem("item.delta", "tool-live-followed", {
+      tool_call_id: "call-live-followed",
+      diff_text: "--- a/src/live.ts\n+++ b/src/live.ts\n@@ -1,1 +1,1 @@\n-old\n+new",
+    }, "turn-live-followed");
+    appendStreamText("assistant-followed", "done", "text");
+    commitStream("assistant-followed", false);
+
+    renderTranscript(root, {
+      nodes: [
+        { node_type: "turn", id: "turn-live-followed", header: "request" },
+        {
+          node_type: "tool_call",
+          id: "tool-live-followed",
+          tool_call_id: "call-live-followed",
+          status: "done",
+          payload: { tool_name: "replace", summary: "done" },
+        },
+        {
+          node_type: "assistant",
+          id: "assistant-followed",
+          payload: { raw_text: "done" },
+          body_lines: ["done"],
+        },
+      ],
+    });
+
+    const children = Array.from(root.children);
+    const groupIndex = children.findIndex((el) => el.classList.contains("tool-group"));
+    const cardIndex = children.findIndex((el) => el.classList.contains("file-change-card"));
+    const assistantIndex = children.findIndex((el) => el.dataset.streamId === "assistant-followed");
+
+    expect(groupIndex).toBeGreaterThanOrEqual(0);
+    expect(cardIndex).toBe(groupIndex + 1);
+    expect(assistantIndex).toBe(cardIndex + 1);
+  });
+
+  it("does not insert a divider when thought items are merged", () => {
+    resetStreams();
+    const root = document.createElement("div");
+    setTranscriptElement(root);
+
+    appendThoughtItem("thought-1", { text: "first thought" });
+    appendThoughtItem("thought-2", { text: "second thought" });
+
+    expect(root.querySelectorAll(".thought-item")).toHaveLength(1);
+    expect(root.querySelector(".thought-divider")).toBeNull();
+    expect(root.textContent).toContain("first thought");
+    expect(root.textContent).toContain("second thought");
+  });
+
+
+  it("restores session change summaries as file change cards", () => {
+    resetStreams();
+    const root = document.createElement("div");
+    setTranscriptElement(root);
+
+    renderTranscript(root, {
+      nodes: [
+        { node_type: "turn", id: "turn-summary", header: "request" },
+        {
+          node_type: "message",
+          id: "change-summary",
+          payload: {
+            raw_text: [
+              "  [dim]Modified[/dim]  [cyan]README.md[/cyan]  [#A6E22E]+140[/#A6E22E] [#FF4689]−40[/#FF4689]",
+              "  [dim]Modified[/dim]  [cyan]AGENTS.md[/cyan]  [#A6E22E]+122[/#A6E22E] [#FF4689]−10[/#FF4689]",
+            ].join("\n"),
+          },
+        },
+      ],
+    });
+
+    expect(root.querySelectorAll(".file-change-card")).toHaveLength(1);
+    expect(root.querySelectorAll(".file-change-row")).toHaveLength(2);
+    expect(root.querySelector(".message-item.message-text")).toBeNull();
+    expect(root.textContent).toContain("README.md");
+    expect(root.textContent).toContain("AGENTS.md");
+    expect(root.textContent).not.toContain("[cyan]");
+    expect(root.textContent).not.toContain("[/#A6E22E]");
+
+  });
+
+  it("keeps session change summary cards before following assistant replies", () => {
+    resetStreams();
+    const root = document.createElement("div");
+    setTranscriptElement(root);
+
+    const snapshot = {
+      nodes: [
+        { node_type: "turn", id: "turn-summary-order", header: "request" },
+        {
+          node_type: "message",
+          id: "change-summary-order",
+          payload: {
+            raw_text: "  [dim]Modified[/dim]  [cyan]README.md[/cyan]  [#A6E22E]+140[/#A6E22E] [#FF4689]−40[/#FF4689]",
+          },
+        },
+        {
+          node_type: "assistant",
+          id: "assistant-after-summary",
+          payload: { raw_text: "done" },
+          body_lines: ["done"],
+        },
+      ],
+    };
+
+    renderTranscript(root, snapshot);
+    renderTranscript(root, snapshot);
+
+    const order = Array.from(root.children).map((el) => {
+      if (el.classList.contains("file-change-card")) return el.dataset.itemId;
+      if (el.classList.contains("stream-buffer")) return el.dataset.streamId;
+      return el.dataset.itemId || el.className;
+    });
+    expect(order).toEqual([
+      "turn-summary-order",
+      "change-summary-order",
+      "assistant-after-summary",
+    ]);
+  });
 
   it("restores a completed compaction divider from a status snapshot", () => {
     resetStreams();
@@ -411,6 +703,89 @@ describe("renderTranscript", () => {
     expect(row).not.toBeNull();
     expect(row.querySelector("summary").textContent).toContain("voidx plan");
     expect(row.textContent).toContain("Run tests");
+  });
+  it("reuses existing DOM nodes when re-rendering the same snapshot", () => {
+    resetStreams();
+    const root = document.createElement("div");
+    setTranscriptElement(root);
+
+    const snapshot = {
+      nodes: [
+        { node_type: "message", id: "m1", payload: { style: "text", raw_text: "hello" } },
+        { node_type: "message", id: "m2", payload: { style: "text", raw_text: "world" } },
+      ],
+    };
+    renderTranscript(root, snapshot);
+    const first = root.querySelector('[data-item-id="m1"]');
+    expect(first).not.toBeNull();
+
+    renderTranscript(root, snapshot);
+
+    const second = root.querySelector('[data-item-id="m1"]');
+    expect(second).toBe(first);
+    expect(root.querySelectorAll('[data-item-id]')).toHaveLength(2);
+  });
+
+  it("removes nodes missing from a re-rendered snapshot", () => {
+    resetStreams();
+    const root = document.createElement("div");
+    setTranscriptElement(root);
+
+    const first = { nodes: [
+      { node_type: "message", id: "keep", payload: { style: "text", raw_text: "keep me" } },
+      { node_type: "message", id: "drop", payload: { style: "text", raw_text: "drop me" } },
+    ] };
+    renderTranscript(root, first);
+    expect(root.querySelector('[data-item-id="drop"]')).not.toBeNull();
+
+    const second = { nodes: [
+      { node_type: "message", id: "keep", payload: { style: "text", raw_text: "keep me" } },
+    ] };
+    renderTranscript(root, second);
+
+    expect(root.querySelector('[data-item-id="drop"]')).toBeNull();
+    expect(root.querySelector('[data-item-id="keep"]')).not.toBeNull();
+  });
+  it("keeps tool groups in snapshot order when prepending earlier pages", () => {
+    resetStreams();
+    const root = document.createElement("div");
+    setTranscriptElement(root);
+
+    const page1 = {
+      nodes: [
+        { node_type: "turn", id: "turn-1", header: "request 1" },
+        {
+          node_type: "tool_call",
+          id: "tool-1",
+          tool_call_id: "call-1",
+          status: "done",
+          payload: { tool_name: "bash", args: "pytest" },
+        },
+        { node_type: "message", id: "msg-2", payload: { style: "user", raw_text: "second" } },
+      ],
+    };
+    renderTranscript(root, page1);
+
+    const merged = {
+      nodes: [
+        { node_type: "turn", id: "turn-0", header: "earlier request" },
+        { node_type: "turn", id: "turn-1", header: "request 1" },
+        {
+          node_type: "tool_call",
+          id: "tool-1",
+          tool_call_id: "call-1",
+          status: "done",
+          payload: { tool_name: "bash", args: "pytest" },
+        },
+        { node_type: "message", id: "msg-2", payload: { style: "user", raw_text: "second" } },
+      ],
+    };
+    renderTranscript(root, merged);
+
+    const order = Array.from(root.children).map((el) => (
+      el.classList.contains("tool-group") ? "tool-group" : (el.dataset.itemId || el.className)
+    ));
+    expect(order).toEqual(["turn-0", "turn-1", "tool-group", "msg-2"]);
   });
 });
 

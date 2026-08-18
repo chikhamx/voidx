@@ -1,5 +1,7 @@
 import { rpcCall } from "../rpc/client";
 import { addImageAttachment } from "./image-attachments";
+import { openProvidersModal } from "./providers";
+import type { SettingsSnapshot } from "./settings";
 
 type ContextMenuState = {
   menu: HTMLElement | null;
@@ -152,8 +154,7 @@ function openIntegrations(): void {
 }
 
 function openModelSettings(): void {
-  const btn = document.querySelector<HTMLButtonElement>("#btn-settings");
-  btn?.click();
+  void openProvidersModal(rpcCall("settings.get", {}) as Promise<SettingsSnapshot>);
 }
 
 function addFileCommand(): void {

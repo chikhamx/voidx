@@ -10,6 +10,7 @@ import {
 } from "../services/state";
 import type { ProfileSummary } from "../utils/types";
 import type { SettingsSnapshot } from "./settings";
+import { openProvidersModal } from "./providers";
 import { iconSvg } from "../utils/icons";
 
 export function initModelControls(): void {
@@ -99,8 +100,16 @@ export function populateCustomModelDropdown(): void {
   if (uiState.configuredProfiles.length === 0) {
     const emptyEl = document.createElement("div");
     emptyEl.className = "vx-model-dropdown-empty";
-    emptyEl.textContent = "无可用模型，请至设置中配置";
-    dropdownEl.append(emptyEl);
+    emptyEl.textContent = "无可用模型";
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "vx-model-dropdown-add";
+    addBtn.textContent = "添加供应商 / 模型";
+    addBtn.addEventListener("click", () => {
+      dropdownEl.hidden = true;
+      void openProvidersModal(rpcCall("settings.get", {}) as Promise<SettingsSnapshot>);
+    });
+    dropdownEl.append(emptyEl, addBtn);
     return;
   }
 

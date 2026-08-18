@@ -46,6 +46,8 @@ const workspaceVisibleCounts = new Map<string, number>();
 
 const expandedWorkspaces = new Set<string>();
 
+let renderedThreadIds: Set<string> | null = null;
+
 function _workspaceBasename(workspace: string): string {
   if (!workspace || workspace === ".") return currentProjectName || "Project";
   return _normalizeWorkspacePath(workspace).replace(/^.*[\\/]/, "") || workspace;
@@ -219,11 +221,22 @@ export function renderSidebar(
   projectName: string,
   workspacePath = "",
 ): void {
+  const prevWorkspacePath = currentWorkspacePath;
   currentThreads = threads;
   currentProjectName = projectName || "Project";
   currentWorkspacePath = _normalizeWorkspacePath(workspacePath || currentWorkspacePath);
   const list = document.querySelector<HTMLElement>("#session-list");
   if (!list) return;
+
+  const incomingIds = new Set(threads.map((thread) => thread.thread_id));
+  const sameThreadIds =
+    renderedThreadIds !== null &&
+    renderedThreadIds.size === incomingIds.size &&
+    Array.from(renderedThreadIds).every((id) => incomingIds.has(id));
+  if (sameThreadIds && prevWorkspacePath === currentWorkspacePath) {
+    updateSidebarIncrementally(threads, activeThreadId, currentProjectName);
+    return;
+  }
 
   const chatHeader = document.querySelector<HTMLElement>("#chat-header");
   if (chatHeader) {
@@ -289,8 +302,58 @@ export function renderSidebar(
   const activeTitle = activeThread ? (activeThread.title || activeThread.thread_id.slice(0, 8)) : (activeThreadId ? "New session" : null);
   _updateDocTitle();
 
+  renderedThreadIds = incomingIds;
+
   if (activeThreadId && activeTitle) {
     const wsName = activeThread ? _workspaceBasename(_threadWorkspace(activeThread)) : currentProjectName;
+    _renderChatHeaderTitle(wsName, activeTitle);
+  } else {
+    document.querySelector<HTMLElement>("#chat-header-title")?.replaceChildren();
+  }
+}
+
+function updateSidebarIncrementally(
+  threads: ThreadInfo[],
+  activeThreadId: string | null,
+  projectName: string,
+): void {
+  const chatHeader = document.querySelector<HTMLElement>("#chat-header");
+  if (chatHeader) {
+    chatHeader.hidden = !activeThreadId;
+  }
+
+  const header = document.querySelector<HTMLElement>(".vx-project-name");
+  if (header) header.textContent = projectName;
+
+  for (const item of document.querySelectorAll<HTMLElement>(".vx-session-item")) {
+    item.classList.remove("active");
+  }
+
+  for (const thread of threads) {
+    const items = document.querySelectorAll<HTMLElement>(
+      `.vx-session-item[data-thread-id="${thread.thread_id}"]`,
+    );
+    for (const item of items) {
+      if (thread.thread_id === activeThreadId) {
+        item.classList.add("active");
+      }
+      const titleEl = item.querySelector<HTMLElement>(".vx-session-title");
+      if (titleEl) {
+        titleEl.textContent = thread.title || thread.thread_id.slice(0, 8);
+      }
+      const timeEl = item.querySelector<HTMLElement>(".vx-session-time");
+      if (timeEl) {
+        timeEl.textContent = _formatSessionTime(thread.updated_at || thread.created_at);
+      }
+      _syncSessionStatusPresentation(item, thread.status);
+    }
+  }
+
+  const activeThread = threads.find((t) => t.thread_id === activeThreadId);
+  const activeTitle = activeThread ? (activeThread.title || activeThread.thread_id.slice(0, 8)) : (activeThreadId ? "New session" : null);
+  _updateDocTitle();
+  if (activeThreadId && activeTitle) {
+    const wsName = activeThread ? _workspaceBasename(_threadWorkspace(activeThread)) : projectName;
     _renderChatHeaderTitle(wsName, activeTitle);
   } else {
     document.querySelector<HTMLElement>("#chat-header-title")?.replaceChildren();
@@ -674,4 +737,5 @@ export function _resetForTest(): void {
   recentHeaderBound = false;
   workspaceVisibleCounts.clear();
   expandedWorkspaces.clear();
+  renderedThreadIds = null;
 }

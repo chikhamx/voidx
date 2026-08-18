@@ -28,8 +28,7 @@ from voidx.presentation.output.console import StreamingRenderer
 from voidx.presentation.output.dock import ANSI_LINE_PREFIX, BottomInputDock, set_dock
 from voidx.presentation.output.events import (
     AnsiAppended,
-    AssistantStreamCommitted,
-    AssistantStreamUpdated,
+    ErrorAppended,
     DockEventConsumer,
     StatusFinished,
     StatusUpdated,
@@ -249,8 +248,135 @@ async def test_call_llm_exhausts_retries_then_renders_assistant_error(tmp_path, 
         "retrying in 60s: Connection error 10.",
     ]
     assert any(
-        isinstance(event, AssistantStreamUpdated)
-        and "LLM call failed after 11 attempts: Connection error 11." in event.text
+        isinstance(event, ErrorAppended)
+        and event.message == "LLM call failed after 11 attempts: Connection error 11."
         for event in events
     )
-    assert any(isinstance(event, AssistantStreamCommitted) for event in events)
+
+
+@pytest.mark.asyncio
+async def test_non_retryable_llm_error_is_emitted_as_error_event():
+    from voidx.agent.adapters.langgraph.runtime.core.helpers import LLMErrorKind
+    from voidx.agent.adapters.langgraph.runtime.core.loop import (
+        LlmLoopState,
+        handle_llm_exception,
+    )
+
+    class RecordingEvents:
+        def __init__(self) -> None:
+            self.events = []
+
+        async def emit(self, event) -> bool:
+            self.events.append(event)
+            return True
+
+    class EventUi:
+        def __init__(self) -> None:
+            self.events = RecordingEvents()
+
+        def via_events(self) -> bool:
+            return True
+
+    ui = EventUi()
+    result = await handle_llm_exception(
+        ui=ui,
+        loop=LlmLoopState(context_tokens=0),
+        error=Exception("Error code: 403 - authorization failed"),
+        kind=LLMErrorKind.NON_RETRYABLE,
+        max_retries=10,
+        timeout_max_retries=1,
+    )
+
+    assert result.action == "fail"
+    assert [type(event) for event in ui.events.events] == [
+        StatusUpdated,
+        StatusFinished,
+        ErrorAppended,
+    ]
+    assert ui.events.events[-1].message == (
+        "LLM call failed (non-retryable): Error code: 403 - authorization failed"
+    )
+
+
+@pytest.mark.asyncio
+async def test_terminal_llm_error_prefers_error_event_when_event_bus_is_available():
+    from voidx.agent.adapters.langgraph.runtime.core.helpers import LLMErrorKind
+    from voidx.agent.adapters.langgraph.runtime.core.loop import (
+        LlmLoopState,
+        handle_llm_exception,
+    )
+
+    class RecordingEvents:
+        def __init__(self) -> None:
+            self.events = []
+
+        async def emit(self, event) -> bool:
+            self.events.append(event)
+            return True
+
+    class EventUi:
+        def __init__(self) -> None:
+            self.events = RecordingEvents()
+            self.errors = []
+            self.ui = self
+
+        def via_events(self) -> bool:
+            return False
+
+        def error(self, message: str) -> None:
+            self.errors.append(message)
+
+    ui = EventUi()
+    await handle_llm_exception(
+        ui=ui,
+        loop=LlmLoopState(context_tokens=0),
+        error=Exception("authorization failed"),
+        kind=LLMErrorKind.NON_RETRYABLE,
+        max_retries=10,
+        timeout_max_retries=1,
+    )
+
+    assert [type(event) for event in ui.events.events] == [ErrorAppended]
+    assert ui.events.events[0].message == (
+        "LLM call failed (non-retryable): authorization failed"
+    )
+    assert ui.errors == []
+
+
+@pytest.mark.asyncio
+async def test_terminal_llm_error_falls_back_when_event_bus_is_unavailable():
+    from voidx.agent.adapters.langgraph.runtime.core.helpers import LLMErrorKind
+    from voidx.agent.adapters.langgraph.runtime.core.loop import (
+        LlmLoopState,
+        handle_llm_exception,
+    )
+
+    class UnavailableEvents:
+        async def emit(self, event) -> bool:
+            return False
+
+    class EventUi:
+        def __init__(self) -> None:
+            self.events = UnavailableEvents()
+            self.errors = []
+            self.ui = self
+
+        def via_events(self) -> bool:
+            return False
+
+        def error(self, message: str) -> None:
+            self.errors.append(message)
+
+    ui = EventUi()
+    await handle_llm_exception(
+        ui=ui,
+        loop=LlmLoopState(context_tokens=0),
+        error=Exception("authorization failed"),
+        kind=LLMErrorKind.NON_RETRYABLE,
+        max_retries=10,
+        timeout_max_retries=1,
+    )
+
+    assert ui.errors == [
+        "LLM call failed (non-retryable): authorization failed"
+    ]

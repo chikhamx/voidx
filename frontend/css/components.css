@@ -161,6 +161,128 @@
   outline: none;
 }
 
+/* === 自定义下拉（vx-cselect，替代原生 select） === */
+.vx-cselect {
+  position: relative;
+}
+
+.vx-cselect-trigger {
+  align-items: center;
+  background: var(--vx-bg-subtle);
+  border: 1px solid var(--vx-border-strong);
+  border-radius: var(--vx-radius-sm);
+  color: var(--vx-text-primary);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-size: var(--vx-text-sm);
+  gap: var(--vx-space-2);
+  justify-content: space-between;
+  min-width: 180px;
+  padding: 6px 10px;
+  transition: background var(--vx-transition-fast), border-color var(--vx-transition-fast), box-shadow var(--vx-transition-fast);
+}
+
+.vx-cselect-trigger:hover {
+  background: var(--vx-bg-hover);
+}
+
+.vx-cselect-trigger:focus-visible {
+  border-color: var(--vx-border-focus);
+  box-shadow: 0 0 0 3px var(--vx-accent-soft);
+  outline: none;
+}
+
+.vx-cselect.open .vx-cselect-trigger {
+  border-color: var(--vx-border-focus);
+}
+
+.vx-cselect-chevron {
+  color: var(--vx-text-muted);
+  display: inline-flex;
+  flex-shrink: 0;
+  transition: transform var(--vx-transition-fast);
+}
+
+.vx-cselect.open .vx-cselect-chevron {
+  transform: rotate(180deg);
+}
+
+.vx-cselect-dropdown {
+  background: var(--vx-bg-elevated);
+  border: 1px solid var(--vx-border);
+  border-radius: var(--vx-radius-lg);
+  box-shadow: var(--vx-shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  min-width: 100%;
+  overflow-y: auto;
+  padding: 6px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 100;
+}
+
+.vx-cselect-dropdown.vx-cselect-dropup {
+  bottom: calc(100% + 6px);
+  top: auto;
+}
+
+.vx-cselect-dropdown[hidden] { display: none !important; }
+
+.vx-cselect-option {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--vx-radius-sm);
+  color: var(--vx-text-primary);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-size: var(--vx-text-sm);
+  gap: var(--vx-space-2);
+  justify-content: space-between;
+  padding: 8px 10px;
+  text-align: left;
+  transition: background var(--vx-transition-fast);
+  width: 100%;
+}
+
+.vx-cselect-option:hover,
+.vx-cselect-option.highlight {
+  background: var(--vx-bg-hover);
+}
+
+.vx-cselect-option.active {
+  background: var(--vx-accent-soft);
+  font-weight: 600;
+}
+
+.vx-cselect-option-check {
+  color: var(--vx-accent);
+  display: inline-flex;
+  flex-shrink: 0;
+  opacity: 0;
+}
+
+.vx-cselect-option.active .vx-cselect-option-check {
+  opacity: 1;
+}
+
+/* 数字输入框去原生 spinner，与自定义下拉统一观感 */
+.settings-row input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.settings-row input[type="number"]::-webkit-outer-spin-button,
+.settings-row input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
 .settings-readonly {
   color: var(--vx-text-muted);
   font-size: var(--vx-text-sm);
@@ -204,6 +326,61 @@
 
 .settings-save:hover { background: var(--vx-btn-primary-hover); }
 .settings-save:active { transform: scale(0.97); }
+/* === 供应商/模型管理（providers 弹窗） === */
+.vx-providers-entry-row {
+  display: flex;
+}
+
+.vx-provider-row {
+  align-items: center;
+  display: flex;
+  gap: var(--vx-space-3);
+  min-height: 32px;
+}
+
+.vx-provider-name {
+  color: var(--vx-text-primary);
+  font-size: var(--vx-text-sm);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vx-provider-row .settings-readonly {
+  flex: 1;
+  min-width: 0;
+}
+
+.vx-provider-delete {
+  background: transparent;
+  border: 0;
+  border-radius: var(--vx-radius-sm);
+  color: var(--vx-text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  font: inherit;
+  font-size: var(--vx-text-xs);
+  padding: 4px 8px;
+  transition: background var(--vx-transition-fast), color var(--vx-transition-fast);
+}
+
+.vx-provider-delete:hover {
+  background: var(--vx-error-soft);
+  color: var(--vx-error);
+}
+
+.vx-provider-delete.confirming {
+  background: var(--vx-error-soft);
+  color: var(--vx-error);
+  font-weight: 600;
+}
+
+.vx-providers-add-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
 
 /* 集成（插件） */
 .integrations-section { gap: var(--vx-space-2); }

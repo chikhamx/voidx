@@ -133,6 +133,10 @@ async def test_main_agent_hard_context_pressure_keeps_tools_and_does_not_force_f
     assert len(pressure_hints) == 1
     assert pressure_hints[0].additional_kwargs["pressure_level"] == "hard"
     assert result["convergence_forced"] is False
+    assert not any(
+        is_context_pressure_message(message)
+        for message in result["messages"]
+    )
 
 
 

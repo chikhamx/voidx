@@ -21,6 +21,7 @@ import {
   stripRichMarkup,
   snapshotTurnText,
 } from "./utils";
+import { resetFileChangeCards } from "./utils/render-file-changes";
 import type { TranscriptSnapshot, SlashCommand } from "./utils";
 
 import {
@@ -66,6 +67,7 @@ import {
   onGenerateDiff,
   initSettingsModal,
   openSettingsModal,
+  initProvidersModal,
   initIntegrationsPanel,
   openIntegrationsPanel,
   initContextMenu,
@@ -268,6 +270,12 @@ function removePendingLocalMessage(itemId: string): void {
   transcriptEl.querySelector<HTMLElement>(`[data-item-id="${itemId}"]`)?.remove();
 }
 
+function removePendingLocalMessageElements(): void {
+  for (const pending of pendingLocalMessages) {
+    transcriptEl.querySelector<HTMLElement>(`[data-item-id="${pending.itemId}"]`)?.remove();
+  }
+}
+
 function forgetPendingLocalMessages(): void {
   pendingLocalMessages = [];
   knownSnapshotUserNodeIds.clear();
@@ -344,6 +352,7 @@ async function saveSettings(patch: Record<string, unknown>): Promise<unknown> {
 
 function initializeSettingsModal(): void {
   initSettingsModal({ onSave: saveSettings });
+  initProvidersModal({ onSave: saveSettings });
 }
 
 initializeSettingsModal();
@@ -524,6 +533,7 @@ function loadEarlierTranscriptPage(): void {
         has_earlier: Boolean(page.has_earlier),
       };
       current.snapshot = mergedSnapshot;
+      removePendingLocalMessageElements();
       renderTranscript(transcriptEl, mergedSnapshot);
       restorePendingLocalMessages(threadId, mergedSnapshot);
       syncEmptyState();
@@ -726,6 +736,7 @@ function activateThread(threadId: string): void {
     threadContextGeneration += 1;
     clearCommittedStreams();
     clearActiveStreams();
+    resetFileChangeCards();
     forgetPendingLocalMessages();
     transcriptEl.replaceChildren();
     btnSendEl.classList.remove("guidance-pending");
@@ -1026,6 +1037,7 @@ function renderWorkspaceSnapshot(params: Record<string, unknown>): void {
     uiState.workspace,
   );
   const typedSnapshot = snapshotForRendering(activeThreadId, snapshot as TranscriptSnapshot);
+  removePendingLocalMessageElements();
   renderTranscript(transcriptEl, typedSnapshot);
   restorePendingLocalMessages(activeThreadId, typedSnapshot);
   syncEmptyState();
@@ -1359,6 +1371,7 @@ export function _resetWorkbenchForTest(): void {
   transcriptWindows.clear();
   clearCommittedStreams();
   clearActiveStreams();
+  resetFileChangeCards();
   localItemSequence = 0;
   forgetPendingLocalMessages();
   clearPasteEntries();

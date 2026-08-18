@@ -68,8 +68,8 @@ from voidx.agent.adapters.langgraph.runtime.context_pressure import (
 from voidx.agent.application.runtime_context import raw_semantic_messages
 from voidx.agent.adapters.persistence.session_repository import MessageRow, save_message
 from voidx.llm.message_markers import (
-    CONTEXT_PRESSURE_MARKER,
     GUIDANCE_MARKER,
+    is_context_pressure_message,
 )
 
 
@@ -167,9 +167,13 @@ class LlmTurn:
                         source="user",
                     )
                 )
-        state_messages = list(state["messages"])
+        request_pressure_hint: HumanMessage | None = None
+        state_messages = [
+            message
+            for message in state["messages"]
+            if not is_context_pressure_message(message)
+        ]
         compaction_happened = False
-        pending_pressure_delta: list[BaseMessage] = []
         raw_todo_state = (
             state["todo_state"]
             if "todo_state" in state
@@ -227,7 +231,6 @@ class LlmTurn:
                 assistant_msg,
                 compaction_happened=compaction_happened,
                 state_messages=state_messages,
-                pending_message_delta=pending_pressure_delta,
             )
 
         def _rerender_task_context(messages: list[BaseMessage], new_turn_state: str, task_state: TaskState | None = None) -> list[BaseMessage]:
@@ -249,6 +252,28 @@ class LlmTurn:
             builder.child_runs = agent_gateway.list_child_runs(root_run_id)
             builder.child_runs_sampled_at = time.time()
 
+        def request_messages() -> list[BaseMessage]:
+            messages = list(llm_messages)
+            if request_pressure_hint is not None:
+                messages.append(request_pressure_hint)
+            return messages
+
+        def update_request_pressure_hint(decision):
+            nonlocal request_pressure_hint
+            source_messages = list(state_messages)
+            if request_pressure_hint is not None:
+                source_messages.append(request_pressure_hint)
+            update = upsert_context_pressure_hint(source_messages, decision)
+            request_pressure_hint = next(
+                (
+                    message
+                    for message in reversed(update.state_messages)
+                    if is_context_pressure_message(message)
+                ),
+                None,
+            )
+            return update
+
         def estimate_llm_context_tokens(messages: list[BaseMessage]) -> int:
             return estimate_context_tokens_with_tools(
                 messages,
@@ -257,9 +282,14 @@ class LlmTurn:
             )
 
         async def apply_compaction_result(result: CompactionResult) -> tuple[list[BaseMessage], list[HumanMessage], bool, int]:
-            nonlocal compaction_happened, state_messages, runtime_task_state, persona
+            nonlocal compaction_happened, state_messages, runtime_task_state, persona, request_pressure_hint
             compaction_happened = True
-            state_messages = list(result.live_messages)
+            request_pressure_hint = None
+            state_messages = [
+                message
+                for message in result.live_messages
+                if not is_context_pressure_message(message)
+            ]
             if result.summary:
                 reprepare_state = {
                     **state,
@@ -303,27 +333,18 @@ class LlmTurn:
             loop.context_tokens,
             compaction_service=host._compaction,
         )
-        active_pressure = current_context_pressure(state_messages, pressure_decision.turn_id)
+        active_pressure = None
 
         async def apply_hard_pressure_fallback() -> None:
-            nonlocal state_messages, pending_pressure_delta, active_pressure
-            nonlocal llm_messages, convergence_messages, convergence_forced
-            hard_update = upsert_context_pressure_hint(
-                state_messages,
+            nonlocal active_pressure
+            hard_update = update_request_pressure_hint(
                 hard_pressure_decision(pressure_decision),
             )
-            state_messages = hard_update.state_messages
-            if hard_update.message_delta:
-                pending_pressure_delta = hard_update.message_delta
             active_pressure = current_context_pressure(
-                state_messages,
+                [request_pressure_hint] if request_pressure_hint is not None else [],
                 pressure_decision.turn_id,
             )
-            llm_messages, convergence_messages, convergence_forced = rebuild_llm_messages(
-                state_messages,
-                allow_inline_compaction=False,
-            )
-            loop.context_tokens = estimate_llm_context_tokens(llm_messages)
+            loop.context_tokens = estimate_llm_context_tokens(request_messages())
             host._usage_stats.update_context(loop.context_tokens)
             if hard_update.outcome in {"hint_injected", "hint_upgraded"} and host._ui.via_events():
                 await host._ui.events.emit(ContextPressureUpdated(
@@ -338,16 +359,13 @@ class LlmTurn:
                     hard_threshold=pressure_decision.hard_threshold,
                 ))
         if pressure_decision.should_inject:
-            pressure_update = upsert_context_pressure_hint(state_messages, pressure_decision)
-            state_messages = pressure_update.state_messages
-            pending_pressure_delta = pressure_update.message_delta
-            active_pressure = current_context_pressure(state_messages, pressure_decision.turn_id)
-            if pressure_update.message_delta:
-                llm_messages, convergence_messages, convergence_forced = rebuild_llm_messages(
-                    state_messages,
-                    allow_inline_compaction=getattr(host.config, "inline_compaction_enabled", False),
-                )
-                loop.context_tokens = estimate_llm_context_tokens(llm_messages)
+            pressure_update = update_request_pressure_hint(pressure_decision)
+            active_pressure = current_context_pressure(
+                [request_pressure_hint] if request_pressure_hint is not None else [],
+                pressure_decision.turn_id,
+            )
+            if request_pressure_hint is not None:
+                loop.context_tokens = estimate_llm_context_tokens(request_messages())
                 host._usage_stats.update_context(loop.context_tokens)
             if pressure_update.outcome in {"hint_injected", "hint_upgraded"} and host._ui.via_events():
                 await host._ui.events.emit(ContextPressureUpdated(
@@ -391,9 +409,10 @@ class LlmTurn:
                     turn_state,
                     runtime_task_state,
                 )
-                loop.context_tokens = estimate_llm_context_tokens(llm_messages)
+                request_llm_messages = request_messages()
+                loop.context_tokens = estimate_llm_context_tokens(request_llm_messages)
                 await save_context_frame(
-                    llm_messages,
+                    request_llm_messages,
                     loop.context_tokens,
                     convergence_messages,
                     convergence_forced,
@@ -407,13 +426,13 @@ class LlmTurn:
                 model_with_tools = host.model.bind_tools(tool_defs) if tool_defs else host.model
                 assistant_msg = await _stream_llm(
                     model_with_tools,
-                    llm_messages,
+                    request_llm_messages,
                     renderer,
                     resolve_protocol(host.config.model),
                     ui_port=host._ui,
                 )
                 log_llm_exchange(
-                    llm_messages,
+                    request_llm_messages,
                     assistant_msg,
                     model=host.config.model.model,
                     provider=host.config.model.provider,
@@ -425,7 +444,7 @@ class LlmTurn:
                     extract_token_usage(assistant_msg),
                     fallback_input_tokens=loop.context_tokens,
                     fallback_output_tokens=estimate_message_tokens(assistant_msg, host.config.model.model),
-                    messages=llm_messages,
+                    messages=request_llm_messages,
                     model=host.config.model.model,
                     cache_key=f"{host.config.model.provider}/{host.config.model.model}",
                 )
@@ -439,7 +458,7 @@ class LlmTurn:
                                 additional_kwargs={GUIDANCE_MARKER: True},
                             ),
                         ]
-                        loop.context_tokens = estimate_llm_context_tokens(llm_messages)
+                        loop.context_tokens = estimate_llm_context_tokens(request_messages())
                         host._usage_stats.update_context(loop.context_tokens)
                         continue
                     if loop.malformed_tool_call_attempts < 2 and compaction_happened:
@@ -462,7 +481,7 @@ class LlmTurn:
                                     additional_kwargs={GUIDANCE_MARKER: True},
                                 ),
                             ]
-                            loop.context_tokens = estimate_llm_context_tokens(llm_messages)
+                            loop.context_tokens = estimate_llm_context_tokens(request_messages())
                             host._usage_stats.update_context(loop.context_tokens)
                             continue
                     failure_msg = AIMessage(
@@ -559,7 +578,7 @@ class LlmTurn:
                             ok=False,
                         ))
                     return {
-                        "messages": list(pending_pressure_delta),
+                        "messages": [],
                         "step_count": step,
                         "should_continue": False,
                     }

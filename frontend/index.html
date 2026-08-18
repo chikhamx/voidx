@@ -122,7 +122,7 @@
         <section class="vx-main">
           <div class="vx-main-canvas">
             <section class="vx-empty-state" id="empty-state" aria-live="polite">
-              <h1>让我们一起让世界变得更加美好！</h1>
+              <h1>一起让世界变得更加美好！</h1>
               <div class="vx-empty-suggestions" id="empty-suggestions">
                 <button type="button" class="vx-suggestion-chip" data-prompt="帮我解释这段代码的工作原理">解释代码</button>
                 <button type="button" class="vx-suggestion-chip" data-prompt="帮我修复这个 bug：">修复 Bug</button>
@@ -282,6 +282,22 @@
           <footer class="settings-footer">
             <span id="settings-error" class="settings-error" role="alert"></span>
             <button type="button" id="settings-save" class="settings-save">保存</button>
+          </footer>
+        </form>
+      </dialog>
+      <!-- Providers / models manager modal -->
+      <dialog id="providers-dialog" class="settings-dialog providers-dialog">
+        <form id="providers-form" method="dialog">
+          <header class="settings-header">
+            <div>
+              <h2>供应商 / 模型</h2>
+              <p>管理已配置的模型供应商，或添加新的供应商</p>
+            </div>
+            <button type="button" id="providers-close" aria-label="Close providers"><svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 7 7 17M7 7l10 10"/></svg></button>
+          </header>
+          <div id="providers-content" class="settings-content"></div>
+          <footer class="settings-footer">
+            <span id="providers-error" class="settings-error" role="alert"></span>
           </footer>
         </form>
       </dialog>

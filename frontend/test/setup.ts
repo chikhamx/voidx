@@ -86,7 +86,7 @@ document.body.innerHTML = `
       <section class="vx-main">
         <div class="vx-main-canvas">
         <section class="vx-empty-state" id="empty-state" aria-live="polite">
-          <h1>让我们一起让世界变得更加美好！</h1>
+          <h1>一起让世界变得更加美好！</h1>
         </section>
         <div class="vx-chat-header-controls">
           <button type="button" class="vx-chat-header-btn" id="mode-status" hidden>状态</button>
@@ -219,6 +219,21 @@ document.body.innerHTML = `
         <footer class="settings-footer">
           <span id="settings-error" class="settings-error" role="alert"></span>
           <button type="button" id="settings-save" class="settings-save">保存</button>
+        </footer>
+      </form>
+    </dialog>
+    <dialog id="providers-dialog" class="settings-dialog providers-dialog">
+      <form id="providers-form" method="dialog">
+        <header class="settings-header">
+          <div>
+            <h2>供应商 / 模型</h2>
+            <p>管理已配置的模型供应商，或添加新的供应商</p>
+          </div>
+          <button type="button" id="providers-close" aria-label="Close providers">×</button>
+        </header>
+        <div id="providers-content" class="settings-content"></div>
+        <footer class="settings-footer">
+          <span id="providers-error" class="settings-error" role="alert"></span>
         </footer>
       </form>
     </dialog>

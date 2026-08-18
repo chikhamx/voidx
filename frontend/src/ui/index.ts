@@ -22,6 +22,7 @@ export { type IntegrationsSnapshot, closeIntegrationsPanel, initIntegrationsPane
 export { type FileCandidate, type McpCandidate, type RefCandidate, type RefToken, type RefTrigger, type SkillCandidate, fileInsertionText, findRefToken, mcpInsertionText, refInsertionText, renderRefMenu, skillInsertionText } from "./reference";
 export { applyRuntimeState, applySettingsRuntimeState, configuredProfilesFromSnapshot, initModelControls, initPermissionControls, initReasoningControls, parseProviderModel, populateCustomModelDropdown, populateModelControls, populateModelOptions, populatePermissionDropdown, populateReasoningDropdown, resolveProfileConfigured } from "./model";
 export { type SettingsSnapshot, closeSettingsModal, collectSettingsPatch, initSettingsModal, openSettingsModal, renderSettingsModal } from "./settings";
+export { closeProvidersModal, initProvidersModal, openProvidersModal, renderProvidersModal } from "./providers";
 export {
   type ThreadInfo,
   renderSidebar,

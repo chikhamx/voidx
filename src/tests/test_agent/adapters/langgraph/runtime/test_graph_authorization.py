@@ -1289,3 +1289,24 @@ async def test_blocked_permission_prompt_cannot_be_approved_with_yes(tmp_path):
 
     assert approved == []
     assert denied == [({"name": "bash", "args": {"command": "sudo true"}, "id": "call_blocked"}, "Blocked: sudo is blocked — privilege escalation")]
+
+
+@pytest.mark.asyncio
+async def test_clear_current_session_invalidates_cached_thread_states(tmp_path):
+    session = await create_session(workspace=str(tmp_path))
+    graph = _graph(tmp_path)
+    graph._session = session
+    try:
+        from voidx.agent.adapters.langgraph.runtime.thread_context import _state_for_context
+
+        state = await _state_for_context(graph, session.id, thread_id="web-thread")
+        state.session_msg_cache = [HumanMessage(content="old conversation")]
+
+        await graph.clear_current_session()
+
+        rebound = await _state_for_context(graph, session.id, thread_id="web-thread")
+        assert rebound is not state
+        assert rebound.session_msg_cache is None
+        assert await load_messages(session.id) == []
+    finally:
+        await delete_session(session.id)

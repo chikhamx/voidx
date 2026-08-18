@@ -141,6 +141,19 @@ def thread_execution_states(host: Any) -> dict[str, ThreadExecutionState]:
     return states
 
 
+def clear_thread_execution_states(host: Any, session_id: str) -> None:
+    """Drop all cached execution states belonging to one session."""
+    if not session_id:
+        return
+    states = getattr(host, "_thread_execution_states", None)
+    if not states:
+        return
+    prefix = f"{session_id}\x1f"
+    for key in list(states):
+        if key == session_id or key.startswith(prefix):
+            del states[key]
+
+
 async def _state_for_context(
     host: Any,
     session_id: str,

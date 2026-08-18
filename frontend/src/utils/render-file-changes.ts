@@ -1,4 +1,5 @@
 import { getTranscriptElement } from "./stream";
+import { iconSvg } from "./icons";
 
 export const FILE_CHANGE_PREVIEW_LIMIT = 3;
 
@@ -21,6 +22,60 @@ interface FileChangeCardState {
 }
 
 const cards = new Map<string, FileChangeCardState>();
+
+const RICH_TAG = /\[(\/)?(?:bold|dim|italic|underline|strike|red|green|yellow|blue|magenta|cyan|white|black|#[0-9A-Fa-f]{6})\]/g;
+const SESSION_CHANGE_LINE = /^\s*(Created|Modified|Deleted)\s+(.+?)\s+\+(\d+)\s+[−-](\d+)\s*$/i;
+
+function stripRichMarkup(text: unknown): string {
+  return String(text || "").replace(RICH_TAG, "");
+}
+
+export function parseSessionChangeSummary(text: string): FileChange[] {
+  const files: FileChange[] = [];
+  for (const rawLine of String(text || "").split("\n")) {
+    const line = stripRichMarkup(rawLine).trim();
+    if (!line) continue;
+    const match = line.match(SESSION_CHANGE_LINE);
+    if (!match) return [];
+    const operation = summaryOperation(match[1]);
+    files.push({
+      path: match[2].trim(),
+      operation,
+      added: Number(match[3]),
+      removed: Number(match[4]),
+      diffText: "",
+    });
+  }
+  return files;
+}
+
+export function renderFileChangeSummary(itemId: string, text: string): boolean {
+  const files = parseSessionChangeSummary(text);
+  if (files.length === 0) return false;
+  const key = itemId || `summary:${text}`;
+  let state = cards.get(key);
+  if (!state) {
+    state = {
+      card: createCard(),
+      files: new Map(),
+      legacyFiles: new Map(),
+      sources: new Map(),
+      expanded: false,
+    };
+    cards.set(key, state);
+  }
+  state.files = new Map(files.map((file) => [file.path, { ...file }]));
+  if (itemId) {
+    state.card.dataset.itemId = itemId;
+  }
+  const transcript = getTranscriptElement();
+  if (transcript && !state.card.isConnected) {
+    transcript.append(state.card);
+  }
+  renderCard(state);
+  if (transcript) transcript.scrollTop = transcript.scrollHeight;
+  return true;
+}
 
 export function parseUnifiedDiff(diffText: string): FileChange[] {
   const files: FileChange[] = [];
@@ -101,6 +156,9 @@ export function renderFileChanges(
       expanded: false,
     };
     cards.set(key, state);
+  }
+  if (turnId) {
+    state.card.dataset.turnId = turnId;
   }
 
   let currentFiles: FileChange[];
@@ -189,6 +247,11 @@ function renderCard(state: FileChangeCardState): void {
   const header = document.createElement("div");
   header.className = "file-change-header";
 
+  const summaryIcon = document.createElement("span");
+  summaryIcon.className = "file-change-summary-icon";
+  summaryIcon.innerHTML = iconSvg("git-compare", 18, 1.8);
+  summaryIcon.setAttribute("aria-hidden", "true");
+
   const title = document.createElement("span");
   title.className = "file-change-title";
   title.textContent = `${files.length} ${files.length === 1 ? "file" : "files"} changed`;
@@ -199,7 +262,7 @@ function renderCard(state: FileChangeCardState): void {
     statElement("file-change-added", `+${added}`),
     statElement("file-change-removed", `-${removed}`),
   );
-  header.append(title, stats);
+  header.append(summaryIcon, title, stats);
   state.card.append(header);
 
   const list = document.createElement("div");
@@ -236,9 +299,11 @@ function renderFileRow(file: FileChange): HTMLElement {
   row.dataset.operation = file.operation;
   row.setAttribute("aria-expanded", "false");
 
-  const operation = document.createElement("span");
-  operation.className = `file-change-operation file-change-operation-${file.operation}`;
-  operation.textContent = operationLabel(file.operation);
+  const fileIcon = document.createElement("span");
+  fileIcon.className = "file-change-file-icon";
+  fileIcon.innerHTML = iconSvg("file", 17, 1.7);
+  fileIcon.setAttribute("aria-hidden", "true");
+  fileIcon.title = operationLabel(file.operation);
 
   const path = document.createElement("span");
   path.className = "file-change-path";
@@ -255,7 +320,15 @@ function renderFileRow(file: FileChange): HTMLElement {
   const chevron = document.createElement("span");
   chevron.className = "file-change-chevron";
   chevron.textContent = "›";
-  row.append(operation, path, stats, chevron);
+  row.append(fileIcon, path, stats, chevron);
+
+  const hasDiff = Boolean(file.diffText);
+  if (!hasDiff) {
+    chevron.hidden = true;
+    row.disabled = true;
+    entry.append(row);
+    return entry;
+  }
 
   const detail = document.createElement("div");
   detail.className = "file-change-detail";
@@ -289,6 +362,13 @@ function statElement(className: string, text: string): HTMLSpanElement {
   element.className = className;
   element.textContent = text;
   return element;
+}
+
+function summaryOperation(value: string): FileChangeOperation {
+  const normalized = value.toLowerCase();
+  if (normalized === "created") return "created";
+  if (normalized === "deleted") return "deleted";
+  return "modified";
 }
 
 function operationLabel(operation: FileChangeOperation): string {

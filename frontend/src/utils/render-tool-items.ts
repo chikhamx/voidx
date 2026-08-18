@@ -422,7 +422,11 @@ export function handleToolItem(
           String(sourceId || ""),
         );
         if (renderedAsFileCard) {
-          body.querySelectorAll(".diff-content").forEach((diff) => diff.remove());
+          el.dataset.fileCard = "true";
+          body.querySelectorAll(".diff-content, .tool-detail").forEach((node) => node.remove());
+          if (chev && body.children.length === 0) {
+            chev.innerHTML = iconSvg("dot", 12, 2);
+          }
         } else {
           const diff = renderDiffBlock(data.diff_text);
           body.append(diff);
@@ -458,7 +462,7 @@ export function handleToolItem(
         elapsed.textContent = formatElapsed(data.elapsed);
         el.querySelector(".tool-header")?.append(elapsed);
       }
-      if (data.detail) {
+      if (data.detail && el.dataset.fileCard !== "true") {
         const detail = document.createElement("pre");
         detail.className = "tool-detail";
         detail.textContent = truncateText(data.detail);

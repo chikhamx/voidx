@@ -48,7 +48,8 @@ body.is-desktop .vx-titlebar-left {
 
 .vx-titlebar-right {
   align-items: center;
-  background: transparent;
+  background: var(--vx-bg-canvas);
+  border-bottom: 1px solid var(--vx-border);
   display: flex;
   flex: 1;
   gap: var(--vx-space-2);
@@ -180,11 +181,13 @@ body.is-desktop.is-mac .vx-titlebar-left {
 }
 
 body.is-desktop.is-mac .vx-sidebar {
-  background: rgb(242 242 237 / 0.6);
+  background: rgb(255 255 255 / 0.3);
+  -webkit-backdrop-filter: saturate(180%) blur(28px);
+  backdrop-filter: saturate(180%) blur(28px);
 }
 
 :root[data-theme="dark"] body.is-desktop.is-mac .vx-sidebar {
-  background: rgb(20 20 18 / 0.6);
+  background: rgb(28 28 30 / 0.45);
 }
 
 .vx-sidebar-nav,
@@ -727,12 +730,12 @@ body.is-desktop.is-mac .vx-sidebar {
   flex: 1;
   flex-direction: column;
   min-height: 0;
+  padding-top: var(--vx-titlebar-height);
 }
 
 .vx-main-canvas.empty {
   justify-content: center;
   padding-bottom: clamp(48px, 8vh, 120px);
-  padding-top: var(--vx-titlebar-height);
 }
 
 .vx-main-canvas.empty .transcript { display: none; }
