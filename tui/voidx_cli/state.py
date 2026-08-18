@@ -118,6 +118,7 @@ class RenderState:
     restored_range_key: tuple[int, int, int] | None = None
     restored_committed_line_count: int = 0
     restored_startup_flushed: bool = False
+    restored_history_retired: bool = False
     committed_line_count: int = 0
     visible_committed_rows: int = 0
     was_busy: bool = False
@@ -239,6 +240,7 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_restored_range_key": ("_render_state", "restored_range_key"),
     "_restored_committed_line_count": ("_render_state", "restored_committed_line_count"),
     "_restored_startup_flushed": ("_render_state", "restored_startup_flushed"),
+    "_restored_history_retired": ("_render_state", "restored_history_retired"),
     "_committed_line_count": ("_render_state", "committed_line_count"),
     "_visible_committed_rows": ("_render_state", "visible_committed_rows"),
     "_was_busy": ("_render_state", "was_busy"),

@@ -477,12 +477,15 @@ class _FrameRendererMixin:
             history_start = restored_start if self._restored_startup_flushed else 0
             current_end = len(dock.tree.root.children)
             tail_limit = max(body_limit * 2, body_limit + 32)
-            history_lines, history_line_map = dock.tree.render_root_tail_with_line_map(
-                width,
-                history_start,
-                restored_end,
-                tail_limit,
-            )
+            if self._restored_history_retired:
+                history_lines, history_line_map = [], {}
+            else:
+                history_lines, history_line_map = dock.tree.render_root_tail_with_line_map(
+                    width,
+                    history_start,
+                    restored_end,
+                    tail_limit,
+                )
             added_lines, added_line_map = dock.tree.render_root_slice_with_line_map(
                 width,
                 restored_end,

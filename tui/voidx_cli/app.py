@@ -413,6 +413,7 @@ class PureTui(
                 self._restored_range_key = None
                 self._restored_committed_line_count = 0
                 self._restored_startup_flushed = False
+                self._restored_history_retired = False
             return None
         start, end = restored_range
         key = (id(dock.tree), start, end)
@@ -420,7 +421,10 @@ class PureTui(
             self._restored_range_key = key
             self._restored_committed_line_count = 0
             self._restored_startup_flushed = False
+            self._restored_history_retired = False
             self._committed_line_count = 0
+            self._has_rendered_frame = False
+            self._invalidate_frame_cache()
         return restored_range
 
     def _flush_committed(self, *, force: bool = False) -> None:
@@ -452,6 +456,14 @@ class PureTui(
                 if current_end > restored_end
                 else []
             )
+            if (
+                self._tty
+                and not self._has_rendered_frame
+                and current_end > restored_end
+                and not echo_lines
+            ):
+                return
+
             committed_added = self._restored_committed_line_count
             if committed_added > len(added_lines):
                 committed_added = len(added_lines)
@@ -476,11 +488,27 @@ class PureTui(
                         len(added_lines),
                     )
 
+            restored_lines: list[str] = []
+            if (
+                self._tty
+                and restored_start
+                and flush_limit > committed_added
+                and not self._restored_history_retired
+            ):
+                restored_lines = dock.tree.render_root_slice(
+                    width,
+                    restored_start if self._restored_startup_flushed else 0,
+                    restored_end,
+                )
+
             flush_lines = [
                 *prefix_lines,
+                *restored_lines,
                 *added_lines[committed_added:flush_limit],
             ]
             self._restored_committed_line_count = flush_limit
+            if flush_limit > committed_added:
+                self._restored_history_retired = True
         else:
             tree_lines = dock.tree.render(width)
             total = len(tree_lines)

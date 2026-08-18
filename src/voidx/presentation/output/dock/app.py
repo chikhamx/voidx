@@ -234,6 +234,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._todo_state = None
         self._restored_root_child_start = history_start
         self._restored_root_child_end = len(self._tree.root.children)
+        self._needs_force_flush = False
         self.refresh()
 
     def restored_root_child_range(self) -> tuple[int, int] | None:

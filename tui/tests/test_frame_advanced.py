@@ -366,6 +366,23 @@ def test_force_flush_skips_restored_long_history(tmp_path, monkeypatch):
 
 
 
+def test_restore_tree_clears_stale_force_flush_after_reset():
+    dock.reset()
+    restored = type(dock.tree)()
+    restored.new_node(
+        parent=restored.root,
+        node_type="message",
+        header="restored history",
+        collapsed=False,
+    )
+
+    dock.restore_tree(restored, append=True)
+
+    assert dock.consume_clear_screen_request() is True
+    assert dock.consume_force_flush_request() is False
+
+
+
 def test_restored_history_flushes_new_output_without_replaying_history(
     tmp_path, monkeypatch
 ):
@@ -401,6 +418,138 @@ def test_restored_history_flushes_new_output_without_replaying_history(
     tui._flush_committed(force=True)
     assert fake_stdout.text == ""
 
+
+
+
+
+def test_resume_restore_does_not_replay_history_after_new_output(
+    tmp_path, monkeypatch
+):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 12)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._running = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=12, _environ={})
+
+    for text in ("history A", "history B", "history C"):
+        dock.tree.new_node(
+            parent=dock.tree.root,
+            node_type="message",
+            header=text,
+            collapsed=False,
+        )
+    tui._flush_committed(force=True)
+    fake_stdout.text = ""
+
+    restored = type(dock.tree)()
+    for text in ("history A", "history B", "history C"):
+        restored.new_node(
+            parent=restored.root,
+            node_type="message",
+            header=text,
+            collapsed=False,
+        )
+    dock.reset()
+    dock.restore_tree(restored, append=True)
+    tui._render_frame()
+
+    dock.start_turn("new user")
+    dock.append_message("new ai message")
+    tui._flush_committed()
+    tui._render_frame()
+
+    rendered = fake_stdout.text
+    assert rendered.index("new user") < rendered.index("new ai message")
+    assert rendered.rfind("history C") < rendered.index("new user")
+    assert rendered.count("history C") == 1
+
+
+
+
+def test_startup_restore_keeps_history_when_new_output_is_flushed(
+    tmp_path, monkeypatch
+):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 12)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._running = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=12, _environ={})
+    dock.tree.new_node(
+        parent=dock.tree.root,
+        node_type="startup",
+        header="startup banner",
+        collapsed=False,
+    )
+    restored = type(dock.tree)()
+    restored.new_node(
+        parent=restored.root,
+        node_type="message",
+        header="restored history",
+        collapsed=False,
+    )
+    dock.restore_tree(restored, append=True)
+
+    tui._flush_committed(force=True)
+    tui._render_frame()
+    dock.start_turn("new user")
+    dock.append_message("new ai message")
+    tui._flush_committed()
+
+    new_user_offset = fake_stdout.text.index("new user")
+    clear_offset = fake_stdout.text.rfind("\x1b[J", 0, new_user_offset)
+    history_offset = fake_stdout.text.find("restored history", clear_offset)
+    assert history_offset != -1
+    assert history_offset < new_user_offset
+
+
+def test_resume_does_not_retire_history_before_first_frame(
+    tmp_path, monkeypatch
+):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 12)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._running = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=12, _environ={})
+    restored = type(dock.tree)()
+    restored.new_node(
+        parent=restored.root,
+        node_type="message",
+        header="restored history",
+        collapsed=False,
+    )
+    tui._render_frame()
+    dock.reset()
+    dock.restore_tree(restored, append=True)
+    dock.start_turn("new user")
+    dock.append_message("new ai message")
+
+    tui._flush_committed()
+
+    assert tui._restored_history_retired is False
+
+    tui._render_frame()
+    assert "restored history" in fake_stdout.text
 
 
 def test_thinking_stream_lookup_uses_only_stream_node_subtree(monkeypatch):
