@@ -38,6 +38,12 @@ class FakeInputPorts:
     def start_turn(self, text: str) -> None:
         return None
 
+    def end_turn(self) -> None:
+        return None
+
+    def fail_turn(self, message: str) -> None:
+        return None
+
     def publish_message(self, message: str) -> None:
         return None
 

@@ -12,50 +12,64 @@
   background: var(--vx-bg-canvas);
 }
 
-/* === Titlebar（悬浮于 body 上方，侧栏贯通全高） === */
-.vx-titlebar {
-  align-items: stretch;
+/* === 三列内部标题栏 === */
+.vx-column-header {
+  align-items: center;
+  box-sizing: border-box;
   display: flex;
+  flex: 0 0 var(--vx-titlebar-height);
   height: var(--vx-titlebar-height);
-  left: 0;
-  min-height: var(--vx-titlebar-height);
-  padding: 0;
-  gap: 0;
-  position: absolute;
-  right: 0;
-  top: 0;
-  -webkit-app-region: drag;
+  min-width: 0;
   user-select: none;
-  z-index: 10;
+  -webkit-app-region: drag;
 }
 
 .vx-titlebar-left {
-  align-items: center;
   background: var(--vx-bg-app);
-  box-sizing: border-box;
-  display: flex;
   gap: var(--vx-space-1);
-  height: 100%;
-  padding-left: var(--vx-space-3);
-  width: var(--vx-sidebar-width);
-  flex-shrink: 0;
-  overflow: visible;
+  padding: 0 var(--vx-space-3);
 }
 
 body.is-desktop .vx-titlebar-left {
-  padding-left: 80px; /* macOS traffic lights */
+  padding-left: 80px;
 }
 
-.vx-titlebar-right {
-  align-items: center;
+.vx-main-header {
   background: var(--vx-bg-canvas);
-  border-bottom: 1px solid var(--vx-border);
-  display: flex;
-  flex: 1;
-  gap: var(--vx-space-2);
-  height: 100%;
-  padding: 0 var(--vx-space-3) 0 var(--vx-space-4);
-  min-width: 0;
+  padding: 0 var(--vx-space-4);
+}
+
+.vx-workbench-shell.sidebar-collapsed .vx-sidebar {
+  flex-basis: 0;
+  overflow: visible;
+  padding: 0;
+  width: 0;
+}
+
+.vx-workbench-shell.sidebar-collapsed .vx-sidebar > :not(.vx-column-header) {
+  display: none;
+}
+
+.vx-workbench-shell.sidebar-collapsed .vx-titlebar-left {
+  left: 0;
+  position: absolute;
+  top: 0;
+  width: max-content;
+  z-index: 3;
+}
+
+.vx-workbench-shell.sidebar-collapsed .vx-main-header {
+  padding-left: 132px;
+}
+
+body.is-desktop .vx-workbench-shell.sidebar-collapsed .vx-main-header {
+  padding-left: 200px;
+}
+
+.vx-workbench-shell.sidebar-collapsed .vx-sidebar-resizer {
+  flex-basis: 0;
+  pointer-events: none;
+  width: 0;
 }
 
 .vx-titlebar-center {
@@ -148,12 +162,14 @@ body.is-desktop .vx-titlebar-left {
   color: var(--vx-text-primary);
 }
 
-/* === Body 三列（占满全高，titlebar 悬浮其上） === */
-.vx-body {
+/* === 三列工作台 === */
+.vx-workbench-columns {
   background: var(--vx-bg-canvas);
   display: flex;
   flex: 1;
+  height: 100%;
   min-height: 0;
+  min-width: 0;
 }
 
 /* === Sidebar === */
@@ -161,17 +177,19 @@ body.is-desktop .vx-titlebar-left {
   background: var(--vx-bg-app);
   box-sizing: border-box;
   display: flex;
-  flex-direction: column;
   flex: 0 0 var(--vx-sidebar-width);
+  flex-direction: column;
   gap: var(--vx-space-2);
-  padding: var(--vx-titlebar-height) var(--vx-space-2) var(--vx-space-2);
-  width: var(--vx-sidebar-width);
   min-height: 0;
+  overflow: hidden;
+  padding: 0 var(--vx-space-2) var(--vx-space-2);
+  width: var(--vx-sidebar-width);
 }
+
 
 /* macOS 桌面端：侧栏区域透出窗口毛玻璃，主区保持不透明 */
 body.is-desktop.is-mac .vx-shell,
-body.is-desktop.is-mac .vx-body {
+body.is-desktop.is-mac .vx-workbench-columns {
   background: transparent;
 }
 
@@ -730,7 +748,7 @@ body.is-desktop.is-mac .vx-sidebar {
   flex: 1;
   flex-direction: column;
   min-height: 0;
-  padding-top: var(--vx-titlebar-height);
+  overflow: hidden;
 }
 
 .vx-main-canvas.empty {
@@ -803,11 +821,11 @@ body.is-desktop.is-mac .vx-sidebar {
 
 /* === Dock（右侧面板） === */
 .vx-dock {
-  background-color: var(--vx-bg-canvas);
-  border-left: 1px solid var(--vx-border);
+  background-color: var(--vx-bg-subtle);
   display: flex;
   flex: 0 0 var(--vx-dock-width);
   flex-direction: column;
+  min-height: 0;
   overflow: hidden;
   position: relative;
   transition: width var(--vx-transition), flex-basis var(--vx-transition);
@@ -817,17 +835,14 @@ body.is-desktop.is-mac .vx-sidebar {
 
 
 .vx-dock.collapsed {
-  border-left: 0;
-  flex-basis: var(--vx-dock-collapsed);
-  width: var(--vx-dock-collapsed);
+  flex-basis: 0;
+  visibility: hidden;
+  width: 0;
 }
-
-
-.vx-dock.collapsed .vx-dock-content { display: none; }
 
 .vx-dock-tabs {
   align-items: center;
-  border-bottom: 1px solid var(--vx-border);
+  background: var(--vx-bg-subtle);
   display: flex;
   gap: 2px;
   min-height: var(--vx-titlebar-height);
@@ -867,6 +882,7 @@ body.is-desktop.is-mac .vx-sidebar {
   margin-left: auto;
   padding: 0;
   width: 28px;
+  -webkit-app-region: no-drag;
 }
 
 .vx-dock-toggle:hover {
@@ -885,7 +901,7 @@ body.is-desktop.is-mac .vx-sidebar {
 }
 
 .vx-dock-content {
-  background-color: var(--vx-bg-canvas);
+  background-color: var(--vx-bg-subtle);
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -906,40 +922,39 @@ body.is-desktop.is-mac .vx-sidebar {
 /* === 响应式 === */
 @media (max-width: 899px) {
   .vx-sidebar {
-    display: flex;
-    height: var(--vx-titlebar-height);
-    left: 0;
-    padding: 0 var(--vx-space-2);
-    position: absolute;
-    top: 0;
-    z-index: 11;
+    flex-basis: 56px;
+    padding: 0;
+    width: 56px;
   }
 
-  .vx-sidebar > .vx-mode-picker {
-    min-height: var(--vx-titlebar-height);
+  .vx-workbench-shell.sidebar-collapsed .vx-sidebar {
+    flex-basis: 0;
+    overflow: visible;
+    width: 0;
   }
 
-  body.is-desktop .vx-sidebar > .vx-mode-picker {
-    padding-left: calc(80px - var(--vx-space-2));
-  }
-
-  .vx-sidebar > :not(.vx-mode-picker) {
+  .vx-workbench-shell:not(.sidebar-collapsed) .vx-sidebar > :not(.vx-column-header),
+  .vx-workbench-shell:not(.sidebar-collapsed) .vx-titlebar-left > :not(#titlebar-sidebar-toggle) {
     display: none;
   }
 
-  .vx-sidebar-resizer { display: none; }
-
-  .vx-titlebar-left { width: auto; border-right: 0; }
-
-  .vx-dock,
-  .vx-dock.collapsed {
-    margin-left: 0;
-    width: 100%;
+  .vx-workbench-shell:not(.sidebar-collapsed) .vx-titlebar-left {
+    justify-content: center;
+    padding: 0;
   }
 
-  .vx-dock { flex-basis: 100%; }
-  .vx-dock.collapsed { flex-basis: 0; }
+  body.is-desktop .vx-workbench-shell:not(.sidebar-collapsed) .vx-titlebar-left { padding-left: 0; }
+  .vx-sidebar-resizer { display: none; }
 
+  .vx-dock {
+    flex-basis: min(var(--vx-dock-width), 42vw);
+    width: min(var(--vx-dock-width), 42vw);
+  }
+
+  .vx-dock.collapsed {
+    flex-basis: 0;
+    width: 0;
+  }
   .vx-empty-state h1 { font-size: var(--vx-text-2xl); }
 }
 

@@ -80,11 +80,23 @@ class AgentService:
             if is_quiet:
                 self._slash_dispatcher.hide_command_output()
             self_displays = user_input.split(maxsplit=1)[0] in _SELF_DISPLAYING_COMMANDS
-            if not is_quiet and not self_displays:
+            turn_started = not is_quiet and not self_displays
+            if turn_started:
                 self._autonomous_router.start_turn(user_input)
-            dispatched = await self._slash_dispatcher.dispatch_slash(user_input)
+            try:
+                dispatched = await self._slash_dispatcher.dispatch_slash(user_input)
+            except asyncio.CancelledError:
+                if turn_started:
+                    self._autonomous_router.cancel_turn()
+                raise
+            except Exception as exc:
+                if turn_started:
+                    self._autonomous_router.fail_turn(str(exc) or "command failed")
+                raise
             if not dispatched:
                 self._autonomous_router.publish_message(f"[dim]Unknown command: {user_input}  — type [cyan]/help[/cyan] to see available commands[/dim]")
+            if turn_started:
+                self._autonomous_router.end_turn()
             if is_quiet:
                 self._slash_dispatcher.hide_command_output()
             return True, None

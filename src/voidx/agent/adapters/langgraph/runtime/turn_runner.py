@@ -154,7 +154,7 @@ class TurnRunner:
                 host._current_tree = host._ui.dock.tree
                 if host._ui.via_events():
                     host._turn_node = await host._ui.events.request(
-                        TurnStarted(text=turn_display_text, metadata=turn_metadata)
+                        TurnStarted(text=turn_display_text, raw_text=payload.raw_text, metadata=turn_metadata)
                     )
                     await host._ui.events.emit(StatusUpdated(
                         status_id="turn:analyzing",
@@ -165,7 +165,7 @@ class TurnRunner:
                     ))
                 else:
                     host._turn_node = host._ui.dock.start_turn(
-                        turn_display_text, metadata=turn_metadata
+                        turn_display_text, metadata=turn_metadata, raw_text=payload.raw_text
                     )
                 # Load session messages — use in-memory cache when available
                 force_resume_compaction = False

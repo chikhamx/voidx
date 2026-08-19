@@ -396,7 +396,7 @@ describe("handleToolItem", () => {
     expect(target.textContent).toBe("manager.py");
   });
 
-  it("shows full command in the row summary without hard truncation", () => {
+  it("keeps the full command in a truncatable row summary", () => {
     const cmd = "./test.py --backend -- src/tests/test_mcp/test_descriptions.py src/tests/test_mcp/test_mcp.py -q";
     handleToolItem("item.started", "ts2", {
       tool_call_id: "cs2",
@@ -405,6 +405,7 @@ describe("handleToolItem", () => {
     });
     const transcript = document.querySelector("#transcript");
     const summary = transcript.querySelector(".tool-summary");
+    expect(summary.classList).toContain("tool-summary-command");
     expect(summary.textContent).not.toContain("ran");
     expect(summary.textContent).toContain(cmd);
   });

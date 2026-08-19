@@ -159,9 +159,9 @@ class DockEventConsumer:
             case ResetRequested():
                 self._reset_turn_state()
                 return self._dock.reset()
-            case TurnStarted(text=text, metadata=metadata):
+            case TurnStarted(text=text, raw_text=raw_text, metadata=metadata):
                 self._reset_turn_state()
-                return self._dock.start_turn(text, metadata=metadata)
+                return self._dock.start_turn(text, metadata=metadata, raw_text=raw_text or None)
             case TurnCompleted():
                 self._dock.end_turn()
                 return None

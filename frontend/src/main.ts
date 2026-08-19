@@ -54,6 +54,7 @@ import {
   initDock,
   renderTodoInDock,
   switchTab,
+  openTerminalDrawer,
   initTerminal,
   appendTerminalOutput,
   onTerminalInput,
@@ -73,8 +74,20 @@ import {
   initContextMenu,
   initWorkspaceControls,
   initSidebarResizer,
+  initSidebarToggle,
+  _resetWorkspaceForTest,
+  _resetNavigationForTest,
+  initThreadNavigation,
+  recordThreadVisit,
   showRequest,
   showPromptItemRequest,
+  showConversationPrompt,
+  pendingConversationPrompt,
+  beginConversationPromptResponse,
+  failConversationPromptResponse,
+  resolveConversationPrompt,
+  completeConversationPrompt,
+  resetConversationPrompts,
   initModelControls,
   initPermissionControls,
   initReasoningControls,
@@ -91,7 +104,13 @@ import {
   resetHistoryNavigation,
   isHistoryBrowsing,
 } from "./ui/history";
-import type { ThreadInfo, SettingsSnapshot, IntegrationsSnapshot, RuntimeProfile } from "./ui";
+import type {
+  ConversationPrompt,
+  ThreadInfo,
+  SettingsSnapshot,
+  IntegrationsSnapshot,
+  RuntimeProfile,
+} from "./ui";
 import {
   showSlashMenu, hideSlashMenu, updateSlashMenu, runSlashCommand,
   refMenuVisible, hideRefMenu, updateRefMenu,
@@ -168,10 +187,11 @@ function snapshotUserEntries(snapshot: TranscriptSnapshot): SnapshotUserEntry[] 
     if (node.node_type === "turn") {
       const text = snapshotTurnText(node);
       if (text.trim()) {
+        const turnStyle = String(payload?.style || "").toLowerCase();
         entries.push({
           id: node.id,
           text: text.trim(),
-          style: "user",
+          style: turnStyle === "guidance" ? "guidance" : "user",
           rendered: true,
         });
       }
@@ -360,7 +380,9 @@ initContextMenu();
 registerNotificationHandlers();
 syncEmptyState();
 initWorkspaceControls();
+initSidebarToggle();
 initSidebarResizer();
+initThreadNavigation(switchThread);
 
 onTerminalStart(() => {
   rpcCall("terminal.start", { command: ["bash"] })
@@ -453,6 +475,46 @@ function showSessionError(action: string, error: unknown): void {
   });
   syncEmptyState();
   scrollToBottom();
+}
+
+function submitConversationPromptResponse(
+  prompt: ConversationPrompt,
+  value: string,
+  displayValue: string,
+): void {
+  const answer = value.trim();
+  const visibleAnswer = displayValue.trim();
+  if (!answer || !visibleAnswer || !isRpcConnected()) return;
+  if (uiState.sessionId !== prompt.threadId) return;
+  if (!beginConversationPromptResponse(prompt.requestId)) return;
+
+  const contextGeneration = threadContextGeneration;
+  const itemId = createLocalItemId("prompt-answer");
+  rememberPendingLocalMessage(prompt.threadId, itemId, visibleAnswer, "text");
+  appendMessageItem(itemId, { style: "text", text: visibleAnswer });
+  if (inputEl.value.trim() === visibleAnswer) inputEl.value = "";
+  syncEmptyState();
+  scrollToBottom();
+
+  rpcCall("session.respond", {
+    request_id: prompt.requestId,
+    thread_id: prompt.threadId,
+    value: answer,
+  })
+    .then((result: unknown) => {
+      if ((result as { ok?: boolean } | null)?.ok === false) {
+        throw new Error("后端未接受回答");
+      }
+      if (!isCurrentSendContext(prompt.threadId, contextGeneration)) return;
+      resolveConversationPrompt(prompt.requestId);
+    })
+    .catch((error: Error) => {
+      if (!isCurrentSendContext(prompt.threadId, contextGeneration)) return;
+      removePendingLocalMessage(itemId);
+      failConversationPromptResponse(prompt.requestId);
+      if (!inputEl.value) inputEl.value = visibleAnswer;
+      showSessionError("回答", error);
+    });
 }
 
 function openIntegrations(): void {
@@ -738,12 +800,14 @@ function activateThread(threadId: string): void {
     clearActiveStreams();
     resetFileChangeCards();
     forgetPendingLocalMessages();
+    resetConversationPrompts();
     transcriptEl.replaceChildren();
     btnSendEl.classList.remove("guidance-pending");
     setRunning(false);
     syncEmptyState();
   }
   uiState.sessionId = threadId;
+  recordThreadVisit(threadId);
 }
 
 function finishThreadActivation(generation: number, threadId: string): void {
@@ -1095,13 +1159,7 @@ export function handleNotification(
       params.terminal_id as string,
       params.data as string,
     );
-    const dock = document.querySelector("#dock");
-    if (dock?.classList.contains("collapsed")) {
-      dock.classList.remove("collapsed");
-      const strip = document.querySelector<HTMLElement>("#dock-strip");
-      if (strip) strip.setAttribute("hidden", "");
-    }
-    switchTab("terminal");
+    openTerminalDrawer();
     return;
   }
   if (method === "capture.started" || method === "capture.stopped") {
@@ -1202,10 +1260,27 @@ export function handleItem(
     return;
   }
   if (kind === "prompt") {
+    const type = data.prompt_type as string;
     if (method === "item.started") {
-      showPromptItemRequest(data);
-    } else if (method === "item.completed" && data.cleared) {
-      requestDialogEl.close();
+      if (type === "permission") {
+        showPromptItemRequest({
+          ...data,
+          thread_id: (params.thread_id as string) || uiState.sessionId,
+        });
+      } else {
+        showConversationPrompt(
+          itemId,
+          (params.thread_id as string) || uiState.sessionId,
+          data,
+          submitConversationPromptResponse,
+        );
+      }
+    } else if (method === "item.completed") {
+      if (type === "permission" && data.cleared) {
+        requestDialogEl.close();
+      } else {
+        completeConversationPrompt(data);
+      }
     }
     return;
   }
@@ -1296,6 +1371,14 @@ composerEl.addEventListener("submit", (event: SubmitEvent) => {
   }
   clearPasteEntries();
   clearImageAttachments();
+  const conversationPrompt = pendingConversationPrompt(uiState.sessionId);
+  if (conversationPrompt) {
+    hideSlashMenu();
+    hideRefMenu();
+    pushHistory(text);
+    submitConversationPromptResponse(conversationPrompt, text, text);
+    return;
+  }
   if (text.startsWith("/") && !isKnownSlashCommand(text)) {
     inputEl.value = "";
     hideSlashMenu();
@@ -1374,6 +1457,7 @@ export function _resetWorkbenchForTest(): void {
   resetFileChangeCards();
   localItemSequence = 0;
   forgetPendingLocalMessages();
+  resetConversationPrompts();
   clearPasteEntries();
   clearImageAttachments();
   _resetHistoryForTest();
@@ -1383,6 +1467,8 @@ export function _resetWorkbenchForTest(): void {
   _resetContextMenuForTest();
   _resetDialogForTest();
   _resetSidebarForTest();
+  _resetNavigationForTest();
+  _resetWorkspaceForTest();
   _resetModeControlsForTest();
   _resetWorkbenchStateForTest();
   _resetConnectionForTest();
@@ -1412,7 +1498,9 @@ export function _resetWorkbenchForTest(): void {
     resizer.classList.remove("dragging");
     resizer.dataset.initialized = "";
   }
+  initSidebarToggle();
   initSidebarResizer();
+  initThreadNavigation(switchThread);
   initModelControls();
   syncEmptyState();
 }

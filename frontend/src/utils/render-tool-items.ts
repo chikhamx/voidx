@@ -62,6 +62,7 @@ interface ToolHeaderInfo {
   icon: string;
   verb: string;
   target?: string;
+  command?: boolean;
 }
 
 const FORMATTED_ARG_TAG = /\\?\[\/?(?:bold|dim|italic|underline|strike|red|green|yellow|blue|magenta|cyan|white|black|#[0-9a-f]{6})\]/gi;
@@ -182,8 +183,8 @@ function getToolItemHeaderInfo(data: ToolItemData): ToolHeaderInfo {
   if (toolName.includes("command") || toolName.includes("run") || toolName.includes("bash") || toolName.includes("cmd") || toolName.includes("terminal") || toolName.includes("powershell")) {
     const cmd = argValue(args, ["command", "CommandLine", "command_line", "cmd", "args"]);
     return cmd
-      ? { icon: SVG_ICONS.command, verb: "", target: cmd }
-      : { icon: SVG_ICONS.command, verb: "command" };
+      ? { icon: SVG_ICONS.command, verb: "", target: cmd, command: true }
+      : { icon: SVG_ICONS.command, verb: "command", command: true };
   }
 
   const argument = summarizeArgs(data);
@@ -361,7 +362,7 @@ export function handleToolItem(
 
     const summaryInfo = getToolItemHeaderInfo(data);
     const summary = document.createElement("span");
-    summary.className = "tool-summary";
+    summary.className = summaryInfo.command ? "tool-summary tool-summary-command" : "tool-summary";
     summary.innerHTML = `<span class="tool-icon">${summaryInfo.icon}</span> `;
     summary.append(document.createTextNode(summaryInfo.verb));
     if (summaryInfo.target) {

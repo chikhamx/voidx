@@ -27,6 +27,7 @@
   flex-direction: column;
   gap: 0;
   max-height: min(78vh, 720px);
+  min-width: 0;
 }
 
 /* 弹窗头部 */
@@ -438,6 +439,7 @@
   font-size: var(--vx-text-lg);
   font-weight: 600;
   margin: 0;
+  overflow-wrap: anywhere;
   padding: var(--vx-space-5) var(--vx-space-5) 0;
 }
 
@@ -449,6 +451,113 @@
   overflow-y: auto;
   padding: var(--vx-space-4) var(--vx-space-5);
 }
+.request-permission-details {
+  color: var(--vx-text-secondary);
+  gap: var(--vx-space-4);
+}
+
+.request-permission-question,
+.request-permission-section,
+.request-parameters {
+  min-width: 0;
+}
+
+.request-permission-question {
+  background: var(--vx-bg-subtle);
+  border: 1px solid var(--vx-border);
+  border-radius: var(--vx-radius-md);
+  color: var(--vx-text-primary);
+  font-size: var(--vx-text-base);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  padding: var(--vx-space-3);
+}
+
+.request-permission-section {
+  display: grid;
+  gap: var(--vx-space-2);
+}
+
+.request-permission-section h3 {
+  color: var(--vx-text-primary);
+  font-size: var(--vx-text-sm);
+  font-weight: 600;
+  margin: 0;
+}
+
+.request-execution .request-tool-detail {
+  margin: 0;
+}
+
+.request-risk-section {
+  border-left: 3px solid var(--vx-warning);
+  padding-left: var(--vx-space-3);
+}
+
+.request-scope-section {
+  border-top: 1px solid var(--vx-border);
+  padding-top: var(--vx-space-3);
+}
+
+.request-parameters {
+  border-top: 1px solid var(--vx-border);
+  padding-top: var(--vx-space-3);
+}
+
+.request-parameters summary {
+  color: var(--vx-text-secondary);
+  cursor: pointer;
+  font-size: var(--vx-text-sm);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+  user-select: none;
+}
+
+.request-parameters summary:hover {
+  color: var(--vx-text-primary);
+}
+
+.request-parameters .request-tool-args {
+  margin-top: var(--vx-space-2);
+}
+
+.request-choice {
+  align-items: flex-start;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+}
+
+.request-choice-label {
+  font-weight: 600;
+}
+
+.request-choice-description {
+  color: var(--vx-text-muted);
+  font-size: var(--vx-text-xs);
+  font-weight: 400;
+  line-height: 1.4;
+  max-width: 100%;
+}
+
+.request-actions button:first-child .request-choice-description {
+  color: color-mix(in srgb, var(--vx-btn-primary-text) 78%, transparent);
+}
+
+.request-choice-cancel {
+  color: var(--vx-text-secondary);
+}
+
+.request-permission-details .request-tool-detail {
+  overflow-wrap: anywhere;
+}
+
+.request-permission-details .request-tool-args {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 
 .request-tool-detail {
   --request-risk-accent: var(--vx-border-strong);
@@ -535,6 +644,7 @@
   flex-wrap: wrap;
   gap: var(--vx-space-2);
   justify-content: flex-end;
+  min-width: 0;
   padding: var(--vx-space-3) var(--vx-space-5);
 }
 
@@ -547,9 +657,12 @@
   font: inherit;
   font-size: var(--vx-text-sm);
   font-weight: 500;
+  max-width: 100%;
   min-height: 32px;
-  padding: 0 var(--vx-space-4);
+  overflow-wrap: anywhere;
+  padding: var(--vx-space-2) var(--vx-space-4);
   transition: background var(--vx-transition-fast), border-color var(--vx-transition-fast);
+  white-space: normal;
 }
 
 .request-actions button:hover {
@@ -671,6 +784,49 @@
 .todo-item.done .todo-icon { color: var(--vx-success); }
 
 /* === 终端 === */
+.vx-terminal-drawer {
+  background: var(--vx-bg-subtle);
+  flex: 0 0 clamp(220px, 34vh, 360px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.vx-terminal-drawer[hidden] { display: none; }
+
+.vx-terminal-drawer-header {
+  align-items: center;
+  background: var(--vx-bg-subtle);
+  display: flex;
+  font-size: var(--vx-text-sm);
+  font-weight: 550;
+  height: 36px;
+  justify-content: space-between;
+  padding: 0 var(--vx-space-3);
+}
+
+.vx-terminal-drawer-close {
+  background: transparent;
+  border: 0;
+  border-radius: var(--vx-radius-sm);
+  color: var(--vx-text-muted);
+  cursor: pointer;
+  font-size: var(--vx-text-lg);
+  height: 28px;
+  width: 28px;
+}
+
+.vx-terminal-drawer-close:hover {
+  background: var(--vx-bg-hover);
+  color: var(--vx-text-primary);
+}
+
+.vx-terminal-drawer > .vx-terminal {
+  border: 0;
+  border-radius: 0;
+  height: calc(100% - 36px);
+  min-height: 0;
+}
+
 .vx-terminal {
   background: var(--vx-bg-canvas);
   border: 1px solid var(--vx-border);

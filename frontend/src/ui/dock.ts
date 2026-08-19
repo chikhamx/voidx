@@ -3,42 +3,109 @@ import type { DockTab } from "../utils/types";
 
 let activeTab: DockTab = "todo";
 
+function terminalDrawer(): HTMLElement | null {
+  return document.querySelector<HTMLElement>("#terminal-drawer");
+}
+
+function terminalEntry(): HTMLElement | null {
+  return document.querySelector<HTMLElement>("#terminal-toggle");
+}
+
+function updateTerminalToggleState(): void {
+  const expanded = Boolean(terminalDrawer() && !terminalDrawer()?.hidden);
+  document.querySelectorAll<HTMLElement>("[data-terminal-toggle]").forEach((button) => {
+    button.classList.toggle("active", expanded);
+    button.setAttribute("aria-expanded", String(expanded));
+  });
+}
+
+function focusTerminal(): void {
+  const pane = document.querySelector<HTMLElement>("#terminal-pane");
+  const target = pane?.querySelector<HTMLElement>("input, button, [tabindex]") || pane;
+  target?.focus();
+}
+
+export function openTerminalDrawer(focus = false): boolean {
+  const drawer = terminalDrawer();
+  if (!drawer) return false;
+  drawer.hidden = false;
+  updateTerminalToggleState();
+  if (focus) focusTerminal();
+  return true;
+}
+
+export function closeTerminalDrawer(restoreFocus = false): boolean {
+  const drawer = terminalDrawer();
+  if (!drawer) return false;
+  drawer.hidden = true;
+  updateTerminalToggleState();
+  if (restoreFocus) terminalEntry()?.focus();
+  return false;
+}
+
+export function toggleTerminalDrawer(): boolean {
+  const drawer = terminalDrawer();
+  if (!drawer) return false;
+  return drawer.hidden
+    ? openTerminalDrawer(true)
+    : closeTerminalDrawer(true);
+}
+
+function updateDockToggleState(): void {
+  const dock = document.querySelector<HTMLElement>("#dock");
+  const button = document.querySelector<HTMLElement>("#dock-toggle");
+  if (!dock || !button) return;
+  const expanded = !dock.classList.contains("collapsed");
+  button.setAttribute("aria-expanded", String(expanded));
+  button.setAttribute("aria-label", expanded ? "隐藏右侧栏" : "显示右侧栏");
+  button.title = expanded ? "隐藏右侧栏" : "显示右侧栏";
+}
+
 export function initDock(): void {
   const dock = document.querySelector<HTMLElement>("#dock");
   if (!dock || dock.dataset.initialized === "true") return;
   dock.dataset.initialized = "true";
 
-  const tabs = dock.querySelectorAll<HTMLElement>(".vx-dock-tab");
+  const tabs = dock.querySelectorAll<HTMLElement>(".vx-dock-tab[data-tab]");
   for (const tab of tabs) {
     tab.addEventListener("click", () => {
       switchTab(tab.dataset.tab as DockTab);
     });
   }
 
-  const toggleBtn = dock.querySelector<HTMLElement>("#dock-toggle");
-  if (toggleBtn) {
-    toggleBtn.addEventListener("click", () => {
-      toggleDock();
-    });
-  }
+  document.querySelector<HTMLElement>("#dock-toggle")?.addEventListener("click", () => {
+    toggleDock();
+  });
 
-  const titlebarToggle = document.querySelector<HTMLElement>("#titlebar-dock-toggle");
-  if (titlebarToggle) {
-    titlebarToggle.addEventListener("click", () => {
-      toggleDock();
+  document.querySelectorAll<HTMLElement>("[data-terminal-toggle]").forEach((button) => {
+    button.addEventListener("click", () => {
+      toggleTerminalDrawer();
     });
-  }
+  });
 
+  document.querySelectorAll<HTMLElement>("[data-terminal-close]").forEach((button) => {
+    button.addEventListener("click", () => {
+      closeTerminalDrawer(true);
+    });
+  });
+
+  updateTerminalToggleState();
+  updateDockToggleState();
   updateDockStrip();
 }
 
 export function switchTab(tab: DockTab): void {
+  if (tab === "terminal") {
+    openTerminalDrawer();
+    return;
+  }
   activeTab = tab;
 
-  const tabs = document.querySelectorAll<HTMLElement>(".vx-dock-tab");
-  for (const t of tabs) {
-    t.classList.toggle("active", t.dataset.tab === tab);
-    t.setAttribute("aria-selected", String(t.dataset.tab === tab));
+  const tabs = document.querySelectorAll<HTMLElement>(".vx-dock-tab[data-tab]");
+  for (const item of tabs) {
+    item.classList.toggle("active", item.dataset.tab === tab);
+    item.setAttribute("aria-selected", String(item.dataset.tab === tab));
+    item.tabIndex = item.dataset.tab === tab ? 0 : -1;
   }
 
   const panes = document.querySelectorAll<HTMLElement>(".vx-dock-pane");
@@ -82,6 +149,7 @@ export function toggleDock(): void {
   const dock = document.querySelector<HTMLElement>("#dock");
   if (!dock) return;
   dock.classList.toggle("collapsed");
+  updateDockToggleState();
   updateDockStrip();
 }
 
@@ -97,4 +165,8 @@ export function getActiveTab(): DockTab {
 
 export function _resetForTest(): void {
   activeTab = "todo";
+  const drawer = terminalDrawer();
+  if (drawer) drawer.hidden = true;
+  updateTerminalToggleState();
+  updateDockToggleState();
 }

@@ -6,9 +6,14 @@ from rich.cells import cell_len
 from rich.console import Console
 from rich.text import Text
 
+from voidx.presentation.output.console import StreamingRenderer
 from voidx.presentation.output.dock import dock
 from voidx.presentation.output.dock.formatting import text_from_line
-from voidx.presentation.output.console import StreamingRenderer
+from voidx.presentation.output.events import (
+    AssistantStreamCommitted,
+    AssistantStreamUpdated,
+    ui_events,
+)
 
 
 def test_stream_reply_aligns_with_user_turn_start():
@@ -165,6 +170,95 @@ def test_thinking_only_stream_not_flushed_to_scrollback():
         flushable = "\n".join(_rich_plain(line) for line in lines[:flush_limit])
 
         assert "thinking line" not in flushable
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_thinking_stream_updates_are_throttled(monkeypatch):
+    now = {"value": 100.0}
+    events = []
+    test_dock = dock
+    test_dock.begin_capture()
+    monkeypatch.setattr(
+        "voidx.presentation.output.console.streaming.time.monotonic",
+        lambda: now["value"],
+    )
+    monkeypatch.setattr(
+        ui_events,
+        "emitnowait",
+        lambda event: events.append(event) or True,
+    )
+
+    try:
+        renderer = StreamingRenderer(Console(), stream_to_dock=True)
+        renderer.feed_thinking("one")
+        now["value"] += 0.01
+        renderer.feed_thinking("two")
+        now["value"] += renderer.FLUSH_INTERVAL
+        renderer.feed_thinking("three")
+
+        updates = [event for event in events if isinstance(event, AssistantStreamUpdated)]
+        assert [event.text for event in updates] == ["one", "onetwothree"]
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_thinking_to_text_flushes_first_text_immediately(monkeypatch):
+    now = {"value": 100.0}
+    events = []
+    test_dock = dock
+    test_dock.begin_capture()
+    monkeypatch.setattr(
+        "voidx.presentation.output.console.streaming.time.monotonic",
+        lambda: now["value"],
+    )
+    monkeypatch.setattr(
+        ui_events,
+        "emitnowait",
+        lambda event: events.append(event) or True,
+    )
+
+    try:
+        renderer = StreamingRenderer(Console(), stream_to_dock=True)
+        renderer.feed_thinking("reasoning")
+        now["value"] += 0.01
+        renderer.feed_text("answer")
+
+        updates = [event for event in events if isinstance(event, AssistantStreamUpdated)]
+        assert updates[-1].phase == "text"
+        assert updates[-1].text == "● answer"
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_thinking_stream_done_commits_throttled_tail(monkeypatch):
+    now = {"value": 100.0}
+    events = []
+    test_dock = dock
+    test_dock.begin_capture()
+    monkeypatch.setattr(
+        "voidx.presentation.output.console.streaming.time.monotonic",
+        lambda: now["value"],
+    )
+    monkeypatch.setattr(
+        ui_events,
+        "emitnowait",
+        lambda event: events.append(event) or True,
+    )
+
+    try:
+        renderer = StreamingRenderer(Console(), stream_to_dock=True)
+        renderer.feed_thinking("head")
+        now["value"] += 0.01
+        renderer.feed_thinking("tail")
+        renderer.done()
+
+        updates = [event for event in events if isinstance(event, AssistantStreamUpdated)]
+        assert updates[-1].text == "headtail"
+        assert isinstance(events[-1], AssistantStreamCommitted)
     finally:
         test_dock.deactivate()
         test_dock.reset()

@@ -15,6 +15,21 @@ class UiAgentEventPublisher:
     def start_turn(self, text: str) -> None:
         self._ui.dock.start_turn(text)
 
+    def end_turn(self) -> None:
+        from voidx.presentation.output.events import TurnCompleted
+
+        self._ui.events.emitnowait(TurnCompleted())
+
+    def cancel_turn(self) -> None:
+        from voidx.presentation.output.events import TurnCancelled
+
+        self._ui.events.emitnowait(TurnCancelled())
+
+    def fail_turn(self, message: str) -> None:
+        from voidx.presentation.output.events import TurnFailed
+
+        self._ui.events.emitnowait(TurnFailed(message=message))
+
     def show_loop_waiting(self, wakeup_at: float) -> None:
         from voidx.presentation.output.events import StatusUpdated
 

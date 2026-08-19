@@ -64,6 +64,7 @@ class StreamingRenderer:
         if self._stream_started:
             return
         self._stream_started = True
+        self._last_flush = 0.0
         if self._headless:
             return
         if dock_state.dock.active and self._stream_to_dock:
@@ -77,20 +78,26 @@ class StreamingRenderer:
         if self._headless:
             return
         if dock_state.dock.active and self._stream_to_dock and self._phase == "thinking":
-            if not ui_events.emitnowait(AssistantStreamUpdated(
-                agent_id=self._agent_id,
-                text=self.get_thinking_text(),
-                phase="thinking",
-            )):
-                dock_state.dock.set_stream(self.get_thinking_text(), phase="thinking")
+            now = time.monotonic()
+            if now - self._last_flush >= self.FLUSH_INTERVAL:
+                if not ui_events.emitnowait(AssistantStreamUpdated(
+                    agent_id=self._agent_id,
+                    text=self.get_thinking_text(),
+                    phase="thinking",
+                )):
+                    dock_state.dock.set_stream(self.get_thinking_text(), phase="thinking")
+                self._last_flush = now
 
     def feed_text(self, text: str) -> None:
         if not self._stream_started:
             self.start()
-        if self._thinking and self._phase == "thinking":
+        switched_from_thinking = bool(self._thinking and self._phase == "thinking")
+        if switched_from_thinking:
             self._flush_thinking()
 
         self._phase = "text"
+        if switched_from_thinking:
+            self._last_flush = 0.0
 
         if self._first_text:
             self._first_text = False

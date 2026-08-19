@@ -87,8 +87,10 @@ describe("permission approval details", () => {
     expect(card.classList.contains("request-tool-risk-high")).toBe(true);
     expect(card.querySelector(".request-tool-title").textContent).toBe("bash");
     expect(card.querySelector(".request-tool-pattern").textContent).toBe("rm *");
-    expect(card.querySelector(".request-tool-args").textContent).toContain("rm -rf build");
-    expect(card.querySelector(".request-tool-args").tagName).toBe("PRE");
+    const parameters = document.querySelector(".request-parameters");
+    expect(parameters?.hasAttribute("open")).toBe(false);
+    expect(parameters?.querySelector(".request-tool-args")?.textContent).toContain("rm -rf build");
+    expect(parameters?.querySelector(".request-tool-args")?.tagName).toBe("PRE");
   });
 
   it("uses a neutral accent when risk metadata is missing", () => {
@@ -102,5 +104,83 @@ describe("permission approval details", () => {
     });
 
     expect(document.querySelector(".request-tool-detail")?.classList.contains("request-tool-risk-default")).toBe(true);
+  });
+});
+
+
+describe("permission approval hierarchy", () => {
+  it("shows the approval question before execution, risk, scope, and collapsed parameters", () => {
+    showPromptItemRequest({
+      prompt_type: "permission",
+      request_id: "permission-hierarchy-1",
+      interactive: true,
+      prompt: "是否允许执行这个命令？",
+      choices: [
+        ["允许一次", "y", "仅本次执行"],
+        ["拒绝", "n", "不要执行"],
+      ],
+      tools: [
+        {
+          name: "bash",
+          pattern: "npm run build",
+          args: { command: "npm run build", cwd: "/workspace" },
+          risk: {
+            level: "high",
+            tags: ["执行命令"],
+            reason: "命令会运行项目构建脚本",
+          },
+          allowed_scopes: ["once", "session"],
+          default_scope: "once",
+        },
+      ],
+    });
+
+    expect(document.querySelector("#request-title").textContent).toBe("权限审批");
+    expect(document.querySelector(".request-permission-question")?.textContent).toContain("是否允许执行这个命令？");
+
+    const sections = [...document.querySelectorAll("[data-permission-section]")]
+      .map((section) => section.getAttribute("data-permission-section"));
+    expect(sections).toEqual(["question", "execution", "risk", "scope", "parameters"]);
+
+    expect(document.querySelector(".request-execution")?.textContent).toContain("npm run build");
+    expect(document.querySelector(".request-risk-reason")?.textContent).toContain("命令会运行项目构建脚本");
+    expect(document.querySelector(".request-approval-scopes")?.textContent).toContain("once");
+    expect(document.querySelector(".request-approval-scopes")?.textContent).toContain("session");
+
+    const parameters = document.querySelector(".request-parameters");
+    expect(parameters?.tagName).toBe("DETAILS");
+    expect(parameters?.hasAttribute("open")).toBe(false);
+    expect(parameters?.querySelector("summary")?.textContent).toContain("参数详情");
+    expect(parameters?.querySelector(".request-tool-args")?.textContent).toContain("/workspace");
+
+    const buttons = [...document.querySelectorAll("#request-controls .request-choice")];
+    expect(buttons.map((button) => button.querySelector(".request-choice-label")?.textContent)).toEqual([
+      "允许一次",
+      "拒绝",
+    ]);
+    expect(buttons.map((button) => button.querySelector(".request-choice-description")?.textContent)).toEqual([
+      "仅本次执行",
+      "不要执行",
+    ]);
+  });
+
+  it("falls back to the actual command and states when no extra scope is provided", () => {
+    showPromptItemRequest({
+      prompt_type: "permission",
+      request_id: "permission-hierarchy-2",
+      interactive: true,
+      prompt: "是否允许运行构建命令？",
+      choices: [["允许", "y", "本次运行"]],
+      tools: [
+        {
+          name: "bash",
+          args: { command: "npm run build" },
+          risk: { level: "medium", reason: "会执行构建脚本" },
+        },
+      ],
+    });
+
+    expect(document.querySelector(".request-execution")?.textContent).toContain("npm run build");
+    expect(document.querySelector(".request-scope-section")?.textContent).toContain("未提供额外授权范围");
   });
 });

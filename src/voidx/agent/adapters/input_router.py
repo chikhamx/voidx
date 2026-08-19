@@ -33,6 +33,15 @@ class LangGraphAutonomousInputRouter:
     def start_turn(self, text: str) -> None:
         self._events.start_turn(text)
 
+    def end_turn(self) -> None:
+        self._events.end_turn()
+
+    def cancel_turn(self) -> None:
+        self._events.cancel_turn()
+
+    def fail_turn(self, message: str) -> None:
+        self._events.fail_turn(message)
+
     def publish_message(self, message: str) -> None:
         self._events.publish_message(message)
 

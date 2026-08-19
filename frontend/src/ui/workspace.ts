@@ -1,8 +1,29 @@
 import {
+  DEFAULT_SIDEBAR_WIDTH,
   MIN_SIDEBAR_WIDTH,
   MAX_SIDEBAR_WIDTH,
 } from "../services/state";
 import { switchWorkspace } from "../services/connection";
+
+let expandedSidebarWidth = DEFAULT_SIDEBAR_WIDTH;
+
+function workbenchShell(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(".vx-workbench-shell");
+}
+
+function sidebarToggle(): HTMLButtonElement | null {
+  return document.querySelector<HTMLButtonElement>("#titlebar-sidebar-toggle");
+}
+
+function updateSidebarToggle(): void {
+  const shell = workbenchShell();
+  const button = sidebarToggle();
+  if (!shell || !button) return;
+  const expanded = !shell.classList.contains("sidebar-collapsed");
+  button.setAttribute("aria-expanded", String(expanded));
+  button.setAttribute("aria-label", expanded ? "隐藏侧栏" : "显示侧栏");
+  button.title = expanded ? "隐藏侧栏" : "显示侧栏";
+}
 
 export function initWorkspaceControls(): void {
   document
@@ -17,11 +38,54 @@ export function setSidebarWidth(width: number): void {
     MIN_SIDEBAR_WIDTH,
     Math.min(MAX_SIDEBAR_WIDTH, Math.round(width)),
   );
-  const shell = document.querySelector<HTMLElement>(".vx-workbench-shell");
+  const shell = workbenchShell();
+  if (!shell?.classList.contains("sidebar-collapsed")) {
+    expandedSidebarWidth = clamped;
+  }
   (shell || document.documentElement).style.setProperty(
     "--vx-sidebar-width",
     `${clamped}px`,
   );
+}
+
+export function toggleSidebar(): boolean {
+  const shell = workbenchShell();
+  if (!shell) return false;
+
+  const collapsed = shell.classList.toggle("sidebar-collapsed");
+  if (!collapsed) {
+    setSidebarWidth(expandedSidebarWidth);
+  } else {
+    const inlineWidth = Number.parseFloat(shell.style.getPropertyValue("--vx-sidebar-width"));
+    if (Number.isFinite(inlineWidth) && inlineWidth > 0) {
+      expandedSidebarWidth = Math.max(
+        MIN_SIDEBAR_WIDTH,
+        Math.min(MAX_SIDEBAR_WIDTH, inlineWidth),
+      );
+    }
+    shell.style.setProperty("--vx-sidebar-width", "0px");
+  }
+  updateSidebarToggle();
+  return collapsed;
+}
+
+export function initSidebarToggle(): void {
+  const button = sidebarToggle();
+  if (!button) return;
+  if (button.dataset.initialized !== "true") {
+    button.dataset.initialized = "true";
+    button.addEventListener("click", () => {
+      toggleSidebar();
+    });
+  }
+  updateSidebarToggle();
+}
+
+export function _resetWorkspaceForTest(): void {
+  expandedSidebarWidth = DEFAULT_SIDEBAR_WIDTH;
+  const shell = workbenchShell();
+  shell?.classList.remove("sidebar-collapsed");
+  updateSidebarToggle();
 }
 
 export function initSidebarResizer(): void {

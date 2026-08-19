@@ -69,3 +69,37 @@ describe("design system entry", () => {
     }
   });
 });
+
+
+describe("chat overflow constraints", () => {
+  it("wraps regular tool summaries and only truncates command summaries", () => {
+    const chat = readProjectFile("css/chat.css");
+    const regularSummary = themeBlock(chat, ".tool-summary {");
+    const commandSummary = themeBlock(chat, ".tool-summary-command {");
+    const commandTarget = themeBlock(chat, ".tool-summary-command .tool-target {");
+
+    expect(regularSummary).not.toContain("display: inline-flex");
+    expect(regularSummary).toContain("overflow-wrap: anywhere");
+    expect(commandSummary).toContain("display: inline-flex");
+    expect(commandSummary).toContain("white-space: nowrap");
+    expect(commandTarget).toContain("text-overflow: ellipsis");
+  });
+});
+
+
+describe("request dialog overflow constraints", () => {
+  it("wraps long clarify questions and choices within the dialog", () => {
+    const components = readProjectFile("css/components.css");
+    const form = themeBlock(components, ".request-dialog form {");
+    const title = themeBlock(components, ".request-dialog h2 {");
+    const actions = themeBlock(components, ".request-actions {");
+    const choice = themeBlock(components, ".request-actions button {");
+
+    expect(form).toContain("min-width: 0");
+    expect(title).toContain("overflow-wrap: anywhere");
+    expect(actions).toContain("min-width: 0");
+    expect(choice).toContain("max-width: 100%");
+    expect(choice).toContain("overflow-wrap: anywhere");
+    expect(choice).toContain("white-space: normal");
+  });
+});

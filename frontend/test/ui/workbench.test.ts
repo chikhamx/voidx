@@ -27,6 +27,7 @@ import { initPermissionControls, populateCustomModelDropdown, populatePermission
 import { initStateDom, setConnectionStatus, uiState } from "../../src/services/state";
 import { _resetForTest as resetDock, initDock, switchTab, toggleDock, getActiveTab } from "../../src/ui/dock";
 import { _setSocket, _resetForTest as resetRpc } from "../../src/rpc";
+import { addImageAttachment } from "../../src/ui";
 
 function readCombinedStyles(filePath: string): string {
   let content = readFileSync(filePath, "utf8");
@@ -131,21 +132,97 @@ describe("workbench shell", () => {
     }
   });
 
-  it("keeps transcript content below the desktop titlebar overlay", () => {
+  it("lays out three full-height columns with in-column headers", () => {
     const styles = readStylesCSS();
 
-    expect(styles).toMatch(/\.vx-main-canvas \{[^}]*padding-top:\s*var\(--vx-titlebar-height\);[^}]*\}/);
-    expect(styles).toMatch(/\.transcript \{[^}]*padding:\s*var\(--vx-space-2\)[^}]*\}/);
-    expect(styles).not.toMatch(/\.transcript \{[^}]*padding:[^}]*var\(--vx-titlebar-height\)[^}]*\}/);
-    expect(styles).toMatch(/\.vx-titlebar-right \{[^}]*background:\s*var\(--vx-bg-canvas\);[^}]*\}/);
+    expect(styles).toMatch(/\.vx-workbench-columns \{[^}]*display:\s*flex;[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-column-header \{[^}]*flex:\s*0 0 var\(--vx-titlebar-height\);[^}]*height:\s*var\(--vx-titlebar-height\);[^}]*\}/);
+    expect(styles).toMatch(/\.vx-sidebar \{[^}]*background:\s*var\(--vx-bg-app\);[^}]*flex:\s*0 0 var\(--vx-sidebar-width\);[^}]*\}/);
+    expect(styles).toMatch(/\.vx-main \{[^}]*background:\s*var\(--vx-bg-canvas\);[^}]*flex:\s*1 1 auto;[^}]*min-width:\s*0;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-dock \{[^}]*background-color:\s*var\(--vx-bg-subtle\);[^}]*flex:\s*0 0 var\(--vx-dock-width\);[^}]*\}/);
+    expect(styles).not.toMatch(/\.vx-titlebar \{[^}]*position:\s*absolute;[^}]*\}/);
   });
 
   it("keeps the dock opaque and in its own flex column", () => {
     const styles = readStylesCSS();
 
     expect(styles).toMatch(/\.vx-main \{[^}]*flex: 1 1 auto;[^}]*min-width: 0;[^}]*width: 0;[^}]*\}/);
-    expect(styles).toMatch(/\.vx-dock \{[^}]*background-color: var\(--vx-bg-canvas\);[^}]*flex: 0 0 var\(--vx-dock-width\);[^}]*position: relative;[^}]*z-index: 2;[^}]*\}/);
-    expect(styles).toMatch(/\.vx-dock-content \{[^}]*background-color: var\(--vx-bg-canvas\);[^}]*\}/);
+    expect(styles).toMatch(/\.vx-dock \{[^}]*background-color: var\(--vx-bg-subtle\);[^}]*flex: 0 0 var\(--vx-dock-width\);[^}]*position: relative;[^}]*z-index: 2;[^}]*\}/);
+    expect(styles).toMatch(/\.vx-dock-content \{[^}]*background-color: var\(--vx-bg-subtle\);[^}]*\}/);
+  });
+
+  it("renders three independent workbench columns with their own headers", () => {
+    const root = readIndexDOM();
+    const workbench = root.querySelector(".vx-workbench-columns");
+    const sidebar = workbench?.querySelector(":scope > #sidebar");
+    const main = workbench?.querySelector(":scope > .vx-main");
+    const dock = workbench?.querySelector(":scope > #dock");
+
+    expect(workbench).not.toBeNull();
+    expect(sidebar?.querySelector(":scope > .vx-column-header")).not.toBeNull();
+    expect(main?.querySelector(":scope > .vx-column-header")).not.toBeNull();
+    expect(dock?.querySelector(":scope > .vx-column-header")).not.toBeNull();
+    expect(root.querySelector(".vx-workbench-shell > .vx-titlebar")).toBeNull();
+  });
+
+  it("places the terminal drawer at the bottom of the main conversation column", () => {
+    const root = readIndexDOM();
+    const main = root.querySelector(".vx-workbench-columns > .vx-main");
+    const drawer = main?.querySelector(":scope > #terminal-drawer");
+
+    expect(drawer).not.toBeNull();
+    expect(drawer?.querySelector("#terminal-pane")).not.toBeNull();
+    expect(root.querySelector("#dock #terminal-pane")).toBeNull();
+    expect(root.querySelector("#dock [data-terminal-toggle]")).not.toBeNull();
+  });
+
+
+  it("keeps the terminal drawer open across streamed output notifications", () => {
+    const drawer = document.querySelector("#terminal-drawer");
+    drawer.hidden = true;
+
+    handleNotification("terminal.output", { terminal_id: "term-stream", data: "first\n" });
+    handleNotification("terminal.output", { terminal_id: "term-stream", data: "second\n" });
+
+    expect(drawer.hidden).toBe(false);
+    expect(document.querySelector("#terminal-pane").textContent).toContain("first");
+    expect(document.querySelector("#terminal-pane").textContent).toContain("second");
+  });
+  it("separates workbench regions with backgrounds instead of structural borders", () => {
+    const styles = readStylesCSS();
+
+    expect(styles).not.toMatch(/\.vx-column-header \{[^}]*border-bottom:/);
+    expect(styles).not.toMatch(/\.vx-sidebar \{[^}]*border-right:/);
+    expect(styles).not.toMatch(/\.vx-dock \{[^}]*border-left:/);
+    expect(styles).not.toMatch(/\.vx-dock-tabs \{[^}]*border-bottom:/);
+    expect(styles).not.toMatch(/\.vx-terminal-drawer \{[^}]*border-top:/);
+    expect(styles).not.toMatch(/\.vx-terminal-drawer-header \{[^}]*border-bottom:/);
+    expect(styles).toMatch(/\.vx-dock-tabs \{[^}]*background:\s*var\(--vx-bg-subtle\);[^}]*\}/);
+    expect(styles).toMatch(/\.vx-terminal-drawer \{[^}]*background:\s*var\(--vx-bg-subtle\);[^}]*\}/);
+  });
+
+  it("renders right panel controls in the right column header", () => {
+    const dockHeader = readIndexDOM().querySelector("#dock > .vx-column-header");
+    expect(dockHeader?.querySelector('[data-tab="todo"]')).not.toBeNull();
+    expect(dockHeader?.querySelector('[data-tab="diff"]')).not.toBeNull();
+    expect(dockHeader?.querySelector('[data-tab="status"]')).not.toBeNull();
+    expect(dockHeader?.querySelector("[data-terminal-toggle]")).not.toBeNull();
+  });
+
+  it("fully hides the collapsed dock and keeps its toggle in the main header", () => {
+    const root = readIndexDOM();
+    const dock = root.querySelector("#dock");
+    const mainHeader = root.querySelector(".vx-main-header");
+    const styles = readStylesCSS();
+
+    expect(dock?.querySelector('[role="tablist"]')).not.toBeNull();
+    expect(dock?.querySelectorAll('[role="tab"]')).toHaveLength(3);
+    expect(mainHeader?.querySelector(":scope > #dock-toggle")).not.toBeNull();
+    expect(dock?.querySelector("#dock-toggle")).toBeNull();
+    expect(dock?.classList.contains("collapsed")).toBe(true);
+    expect(mainHeader?.querySelector("#dock-toggle")?.getAttribute("aria-expanded")).toBe("false");
+    expect(styles).toMatch(/\.vx-dock\.collapsed \{[^}]*flex-basis:\s*0;[^}]*width:\s*0;[^}]*\}/);
+    expect(styles).toMatch(/@media \(max-width: 899px\) \{[\s\S]*?\.vx-dock \{[^}]*flex-basis:\s*min\(var\(--vx-dock-width\), 42vw\);[^}]*\}[\s\S]*?\.vx-dock\.collapsed \{[^}]*flex-basis:\s*0;[^}]*width:\s*0;[^}]*\}/);
   });
 
   it("keeps the recent heading close to the project section", () => {
@@ -161,14 +238,16 @@ describe("workbench shell", () => {
       const switcher = root.querySelector("#runtime-profile-switcher");
       const nav = root.querySelector(".vx-sidebar-nav");
 
-      expect(sidebar?.firstElementChild).toBe(switcher);
+      expect(sidebar?.firstElementChild).toBe(titlebarLeft);
+      expect(titlebarLeft?.nextElementSibling).toBe(switcher);
       expect(switcher?.nextElementSibling).toBe(nav);
       expect(nav?.firstElementChild?.id).toBe("btn-new-chat");
       expect(switcher?.closest("#sidebar")).toBe(sidebar);
       expect(titlebarLeft?.contains(switcher)).toBe(false);
       expect(root.querySelector("#status-dot")).toBeNull();
-      expect(root.querySelector("#titlebar-sidebar-toggle")).toBeNull();
-      expect(titlebarLeft?.querySelector("button, input, select, textarea, a[href], [tabindex]")).toBeNull();
+      expect(titlebarLeft?.querySelector("#titlebar-sidebar-toggle")).not.toBeNull();
+      expect(titlebarLeft?.querySelector("#titlebar-history-back")).not.toBeNull();
+      expect(titlebarLeft?.querySelector("#titlebar-history-forward")).not.toBeNull();
       expect(switcher?.querySelector("#mode-trigger")).not.toBeNull();
       expect(
         [...switcher.querySelectorAll("[data-profile] .vx-mode-option-name")].map((el) => el.textContent.trim()),
@@ -420,24 +499,20 @@ describe("workbench shell", () => {
     expect(styles).toMatch(/\.vx-sidebar-heading \{[^}]*color: var\(--vx-text-muted\);[^}]*font-size: var\(--vx-text-xs\);[^}]*min-height: 28px;[^}]*\}/);
     expect(styles).toMatch(/\.vx-sidebar-row-icon \{[^}]*color: var\(--vx-text-muted\);[^}]*\}/);
     expect(styles).toMatch(/\.vx-sidebar-resizer \{[^}]*cursor: col-resize;[^}]*\}/);
-    expect(styles).toMatch(/\.vx-dock \{[^}]*border-left: 1px solid var\(--vx-border\);[^}]*width: var\(--vx-dock-width\);[^}]*\}/);
+    expect(styles).toMatch(/\.vx-dock \{[^}]*background-color: var\(--vx-bg-subtle\);[^}]*width: var\(--vx-dock-width\);[^}]*\}/);
     expect(styles).toContain(".vx-sidebar-row-icon");
   });
 
-  it("uses a desktop glass material across the titlebar left segment and sidebar", () => {
+  it("uses a desktop glass material across the left column", () => {
     const styles = readStylesCSS();
 
     expect(styles).toMatch(/\.vx-titlebar-left\s*\{[^}]*background:\s*var\(--vx-bg-app\);[^}]*\}/);
-    expect(styles).toMatch(/\.vx-titlebar-left\s*\{[^}]*overflow:\s*visible;[^}]*\}/);
-    expect(styles).toMatch(/\.vx-sidebar\s*\{[^}]*background:\s*var\(--vx-bg-app\);[^}]*padding:\s*var\(--vx-titlebar-height\) var\(--vx-space-2\) var\(--vx-space-2\);[^}]*\}/);
+    expect(styles).toMatch(/\.vx-sidebar\s*\{[^}]*background:\s*var\(--vx-bg-app\);[^}]*padding:\s*0 var\(--vx-space-2\) var\(--vx-space-2\);[^}]*\}/);
     expect(styles).toMatch(/\.vx-sidebar > \.vx-mode-picker\s*\{[^}]*min-height:\s*32px;[^}]*\}/);
-    const responsiveStart = styles.indexOf("@media (max-width: 899px)");
-    expect(styles.slice(0, responsiveStart)).not.toMatch(/body\.is-desktop \.vx-sidebar > \.vx-mode-picker\s*\{[^}]*padding-left:/);
     expect(styles).toMatch(/body\.is-desktop\.is-mac \.vx-titlebar-left\s*\{[^}]*background:\s*transparent;[^}]*\}/);
     expect(styles).toMatch(/body\.is-desktop\.is-mac \.vx-sidebar\s*\{[^}]*background:\s*rgb\(255 255 255 \/ 0\.3\);[^}]*-webkit-backdrop-filter:\s*saturate\(180%\) blur\(28px\);[^}]*backdrop-filter:\s*saturate\(180%\) blur\(28px\);[^}]*\}/);
     expect(styles).toMatch(/:root\[data-theme=["']dark["']\] body\.is-desktop\.is-mac \.vx-sidebar\s*\{[^}]*background:\s*rgb\(28 28 30 \/ 0\.45\);[^}]*\}/);
     expect(styles).toMatch(/body\.is-desktop \.vx-titlebar-left\s*\{[^}]*padding-left:\s*80px;[^}]*\}/);
-    expect(styles).toMatch(/@media \(max-width: 899px\) \{[\s\S]*?\.vx-sidebar\s*\{[^}]*display:\s*flex;[^}]*position:\s*absolute;[^}]*z-index:\s*11;[^}]*\}[\s\S]*?\.vx-sidebar > \.vx-mode-picker\s*\{[^}]*min-height:\s*var\(--vx-titlebar-height\);[^}]*\}[\s\S]*?body\.is-desktop \.vx-sidebar > \.vx-mode-picker\s*\{[^}]*padding-left:\s*calc\(80px - var\(--vx-space-2\)\);[^}]*\}[\s\S]*?\.vx-sidebar > :not\(\.vx-mode-picker\)\s*\{[^}]*display:\s*none;[^}]*\}/);
   });
 
   it("resizes the sidebar from the draggable boundary", () => {
@@ -858,6 +933,135 @@ describe("workbench shell", () => {
     expect(document.querySelector(".message-error")).not.toBeNull();
   });
 
+  it("renders Clarify in the conversation and posts a quick reply as a user message", () => {
+    const sentMessages = setupOpenSocket();
+    const dialog = document.querySelector("#request-dialog");
+
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "t1",
+      active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
+      threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
+      workspace: "<workspace>",
+    });
+    sentMessages.length = 0;
+
+    handleNotification("item.started", {
+      kind: "prompt",
+      item_id: "prompt-clarify-1",
+      thread_id: "t1",
+      turn_id: "turn-1",
+      data: {
+        prompt_type: "clarify",
+        clarify_id: "clarify-1",
+        question: "你希望采用哪种实现方式？",
+        options: ["直接实现", "先写设计文档"],
+      },
+    });
+
+    const prompt = document.querySelector('[data-prompt-request-id="clarify-1"]');
+    expect(dialog.open).toBe(false);
+    expect(prompt?.classList.contains("prompt-message")).toBe(true);
+    expect(prompt?.textContent).toContain("你希望采用哪种实现方式？");
+    expect([...prompt.querySelectorAll(".prompt-reply")].map((button) => button.textContent)).toEqual([
+      "直接实现",
+      "先写设计文档",
+    ]);
+
+    prompt.querySelector(".prompt-reply").click();
+
+    expect(sentPayloads(sentMessages).find((payload) => payload.method === "session.respond")).toMatchObject({
+      method: "session.respond",
+      params: { request_id: "clarify-1", thread_id: "t1", value: "直接实现" },
+    });
+    expect(sentPayloads(sentMessages).some((payload) => payload.method === "session.submit")).toBe(false);
+    expect(document.querySelector(".message-text")?.textContent).toContain("直接实现");
+    expect(prompt.querySelector(".prompt-replies")).toBeNull();
+  });
+
+  it("renders Checkpoint context as an assistant message", () => {
+    setupOpenSocket();
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "t1",
+      active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
+      threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
+      workspace: "<workspace>",
+    });
+
+    handleNotification("item.started", {
+      kind: "prompt",
+      item_id: "prompt-checkpoint-1",
+      thread_id: "t1",
+      turn_id: "turn-1",
+      data: {
+        prompt_type: "checkpoint",
+        checkpoint_id: "checkpoint-1",
+        plan: {
+          goal: "完成对话式审批",
+          plan_summary: "先改交互，再验证",
+          steps: ["增加测试", "实现交互"],
+          affected_files: ["frontend/src/main.ts"],
+          risks: ["回答不能误走 session.submit"],
+        },
+        choices: [{ label: "批准", value: "approved", description: "按计划实施" }],
+      },
+    });
+
+    const prompt = document.querySelector('[data-prompt-request-id="checkpoint-1"]');
+    expect(document.querySelector("#request-dialog").open).toBe(false);
+    expect(prompt?.textContent).toContain("完成对话式审批");
+    expect(prompt?.textContent).toContain("先改交互，再验证");
+    expect(prompt?.textContent).toContain("增加测试");
+    expect(prompt?.textContent).toContain("frontend/src/main.ts");
+    expect(prompt?.textContent).toContain("回答不能误走 session.submit");
+  });
+
+  it("submits a Goal Spec answer from the composer through session.respond", () => {
+    const sentMessages = setupOpenSocket();
+    const input = document.querySelector("#input");
+
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "t1",
+      active_snapshot: { thread_id: "t1", revision: 0, nodes: [] },
+      threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
+      workspace: "<workspace>",
+    });
+    sentMessages.length = 0;
+
+    handleNotification("item.started", {
+      kind: "prompt",
+      item_id: "prompt-goal-1",
+      thread_id: "t1",
+      turn_id: "turn-1",
+      data: {
+        prompt_type: "goal_spec",
+        prompt_id: "goal-1",
+        spec: {
+          objective: "发布桌面版",
+          acceptance_condition: "全部前端测试通过",
+          achievement_method: "先定向测试再完整验证",
+          max_attempts: 3,
+        },
+        choices: [{ label: "批准", value: "approved", description: "开始执行" }],
+      },
+    });
+
+    const prompt = document.querySelector('[data-prompt-request-id="goal-1"]');
+    expect(document.querySelector("#request-dialog").open).toBe(false);
+    expect(prompt?.textContent).toContain("发布桌面版");
+    expect(prompt?.textContent).toContain("全部前端测试通过");
+
+    input.value = "把最大尝试次数改成 5";
+    document.querySelector("#composer").dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
+
+    expect(sentPayloads(sentMessages).find((payload) => payload.method === "session.respond")).toMatchObject({
+      method: "session.respond",
+      params: { request_id: "goal-1", thread_id: "t1", value: "把最大尝试次数改成 5" },
+    });
+    expect(sentPayloads(sentMessages).some((payload) => payload.method === "session.submit")).toBe(false);
+    expect(document.querySelector(".message-text")?.textContent).toContain("把最大尝试次数改成 5");
+    expect(input.value).toBe("");
+  });
+
   it("does not open request dialog for status-only permission prompt notifications", () => {
     const dialog = document.querySelector("#request-dialog");
     const showModal = vi.spyOn(dialog, "showModal").mockImplementation(() => {});
@@ -893,7 +1097,8 @@ describe("workbench shell", () => {
     });
 
     expect(showModal).toHaveBeenCalled();
-    expect(document.querySelector("#request-title").textContent).toContain("允许写文件");
+    expect(document.querySelector("#request-title").textContent).toBe("权限审批");
+    expect(document.querySelector(".request-permission-question").textContent).toContain("允许写文件？");
     expect(document.querySelector("#request-controls").textContent).toContain("允许一次");
   });
 
@@ -1008,22 +1213,27 @@ describe("workbench shell", () => {
 
   it("sends prompt item responses through session.respond", () => {
     const sentMessages = setupOpenSocket();
-    const dialog = document.querySelector("#request-dialog");
-    vi.spyOn(dialog, "showModal").mockImplementation(() => {});
-    vi.spyOn(dialog, "close").mockImplementation(() => {});
+
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "t2",
+      active_snapshot: { thread_id: "t2", revision: 0, nodes: [] },
+      threads: [{ thread_id: "t2", title: "Default", workspace: "<workspace>" }],
+      workspace: "<workspace>",
+    });
 
     handleNotification("item.started", {
       kind: "prompt",
       item_id: "prompt-1",
+      thread_id: "t2",
+      turn_id: "turn-1",
       data: {
         prompt_type: "clarify",
         clarify_id: "cl_1",
-        thread_id: "t2",
         question: "选哪个方案？",
         options: ["直接实现", "先写文档"],
       },
     });
-    document.querySelector("#request-controls button").click();
+    document.querySelector('[data-prompt-request-id="cl_1"] .prompt-reply').click();
 
     expect(sentPayloads(sentMessages).find((payload) => payload.method === "session.respond")).toMatchObject({
       method: "session.respond",
@@ -1426,9 +1636,11 @@ describe("provider and model controls", () => {
 });
 
 describe("bottom panel", () => {
-  it("contains Todo Terminal Diff and Status tabs", () => {
-    const labels = [...document.querySelectorAll(".vx-dock-tab")].map((tab) => tab.textContent.trim());
-    expect(labels).toEqual(["Todo", "Terminal", "Diff", "Status"]);
+  it("contains Todo Diff Status tabs and a terminal drawer entry", () => {
+    const dock = document.querySelector("#dock");
+    const labels = [...dock.querySelectorAll(".vx-dock-tab[data-tab]")].map((tab) => tab.textContent.trim());
+    expect(labels).toEqual(["Todo", "Diff", "Status"]);
+    expect(dock.querySelector("[data-terminal-toggle]")?.textContent.trim()).toBe("Terminal");
   });
 
   it("does not show duplicate status rows below the composer", () => {
@@ -1510,5 +1722,153 @@ describe("AI approval permission mode", () => {
     populatePermissionDropdown();
     expect(dropdown.textContent).toContain("AI 审批");
     expect(dropdown.textContent).toContain("受限工具参数");
+  });
+});
+
+
+describe("turn-end snapshot reconciliation", () => {
+  function snapshotEnvelope(nodes, revision = 2, extra = {}) {
+    return {
+      active_thread_id: "t1",
+      active_snapshot: { thread_id: "t1", revision, nodes },
+      threads: [{ thread_id: "t1", title: "Default", workspace: "<workspace>" }],
+      workspace: "<workspace>",
+      provider: "deepseek",
+      model: "deepseek-chat",
+      profile_configured: true,
+      ...extra,
+    };
+  }
+
+  function submitText(input, send, sentMessages, socket, text) {
+    input.value = text;
+    send.click();
+    const submitMsg = sentPayloads(sentMessages).find((p) => p.method === "session.submit");
+    socket.onmessage({
+      data: JSON.stringify({ jsonrpc: "2.0", id: submitMsg.id, result: { ok: true } }),
+    } as MessageEvent);
+    return submitMsg;
+  }
+
+  it("absorbs the local echo when the snapshot turn carries raw_text with attachment tokens", () => {
+    const { sentMessages, socket } = setupOpenSocketWithHandle();
+    const input = document.querySelector("#input");
+    const send = document.querySelector("#btn-send");
+
+    handleNotification("workspace.snapshot", snapshotEnvelope([], 0));
+
+    addImageAttachment("clipboard-test", "data:image/png;base64,xx");
+    const submitMsg = submitText(input, send, sentMessages, socket, "看下这张图");
+    expect(submitMsg.params.text).toBe("看下这张图 [image-clipboard-test]");
+    expect(document.querySelectorAll(".message-text")).toHaveLength(1);
+
+    handleNotification("workspace.snapshot", snapshotEnvelope([{
+      id: "n1",
+      node_type: "turn",
+      status: "ok",
+      header: "[bold white]❯[/] 看下这张图",
+      body_lines: ["\\[attachments: .voidx/attachments/clipboard-test.png]"],
+      payload: { raw_text: "看下这张图 [image-clipboard-test]" },
+    }]));
+
+    const messages = [...document.querySelectorAll(".message-item")]
+      .filter((el) => el.textContent.includes("看下这张图"));
+    expect(messages).toHaveLength(1);
+    expect(messages[0].dataset.itemId).toBe("n1");
+  });
+
+  it("keeps streamed tool items in their group above the answer after the turn-end snapshot", () => {
+    const { sentMessages, socket } = setupOpenSocketWithHandle();
+    const input = document.querySelector("#input");
+    const send = document.querySelector("#btn-send");
+    const transcript = document.querySelector("#transcript");
+
+    handleNotification("workspace.snapshot", snapshotEnvelope([], 0));
+    submitText(input, send, sentMessages, socket, "查一下");
+
+    handleNotification("turn.started", { thread_id: "t1", turn_id: "turn-1" });
+    handleNotification("item.started", {
+      thread_id: "t1", turn_id: "turn-1", kind: "tool", item_id: "uid-tool-1",
+      data: { tool_call_id: "tc1", tool_name: "bash", args: { command: "ls" } },
+    });
+    handleNotification("item.completed", {
+      thread_id: "t1", turn_id: "turn-1", kind: "tool", item_id: "uid-tool-1",
+      data: { tool_call_id: "tc1", ok: true, elapsed: 1, detail: "done" },
+    });
+    handleNotification("item.started", {
+      thread_id: "t1", turn_id: "turn-1", kind: "assistant_stream", item_id: "s1",
+      data: { phase: "text" },
+    });
+    handleNotification("item.delta", {
+      thread_id: "t1", turn_id: "turn-1", kind: "assistant_stream", item_id: "s1",
+      data: { text: "回答内容", phase: "text" },
+    });
+    handleNotification("item.completed", {
+      thread_id: "t1", turn_id: "turn-1", kind: "assistant_stream", item_id: "s1", data: {},
+    });
+    handleNotification("turn.completed", { thread_id: "t1", turn_id: "turn-1" });
+
+    handleNotification("workspace.snapshot", snapshotEnvelope([
+      { id: "n1", node_type: "turn", status: "ok", header: "[bold white]❯[/] 查一下", payload: { raw_text: "查一下" } },
+      { id: "n3", node_type: "tool_call", status: "ok", tool_call_id: "tc1", header: "bash", payload: { tool_name: "bash", args: { command: "ls" } } },
+      { id: "n4", node_type: "tool_result", status: "ok", tool_call_id: "tc1", payload: { raw_text: "done" } },
+      { id: "n2", node_type: "assistant", status: "ok", payload: { raw_text: "回答内容" } },
+    ], 3));
+
+    expect(document.querySelectorAll("[data-tool-id=\"tc1\"]")).toHaveLength(1);
+    expect(document.querySelectorAll(".tool-group")).toHaveLength(1);
+
+    const order = [...transcript.children].map((el) => (
+      el.classList.contains("message-item") ? "message"
+        : el.classList.contains("tool-group") ? "group"
+          : el.classList.contains("stream-buffer") ? "stream"
+            : "other"
+    ));
+    expect(order).toEqual(["message", "group", "stream"]);
+  });
+
+  it("absorbs a pending chat guidance echo when the snapshot turn carries guidance style", () => {
+    const { sentMessages, socket } = setupOpenSocketWithHandle();
+    const input = document.querySelector("#input");
+    const send = document.querySelector("#btn-send");
+
+    handleNotification("workspace.snapshot", snapshotEnvelope([], 0, { runtime_profile: "chat" }));
+    handleNotification("turn.started", { thread_id: "t1", turn_id: "turn-1" });
+    submitText(input, send, sentMessages, socket, "继续执行");
+    expect(document.querySelectorAll(".message-guidance")).toHaveLength(1);
+
+    handleNotification("workspace.snapshot", snapshotEnvelope([{
+      id: "n1",
+      node_type: "turn",
+      status: "ok",
+      header: "[bold white]❯[/] 继续执行",
+      payload: { raw_text: "继续执行", style: "guidance" },
+    }], 4, { runtime_profile: "chat" }));
+
+    const messages = [...document.querySelectorAll(".message-item")]
+      .filter((el) => el.textContent.includes("继续执行"));
+    expect(messages).toHaveLength(1);
+    expect(messages[0].dataset.itemId).toBe("n1");
+  });
+});
+
+
+describe("collapsed sidebar titlebar", () => {
+  it("keeps all three titlebar controls at their expanded positions", () => {
+    const styles = readStylesCSS();
+    const root = readIndexDOM();
+    const collapsedSidebar = styles.match(/\.vx-workbench-shell\.sidebar-collapsed \.vx-sidebar \{([^}]*)\}/)?.[1] || "";
+    const collapsedTitlebar = styles.match(/\.vx-workbench-shell\.sidebar-collapsed \.vx-titlebar-left \{([^}]*)\}/)?.[1] || "";
+
+    expect(root.querySelectorAll(".vx-titlebar-left > .vx-titlebar-tool")).toHaveLength(3);
+    expect(collapsedSidebar).toContain("flex-basis: 0");
+    expect(collapsedSidebar).toContain("overflow: visible");
+    expect(collapsedSidebar).toContain("width: 0");
+    expect(collapsedTitlebar).toContain("left: 0");
+    expect(collapsedTitlebar).toContain("position: absolute");
+    expect(collapsedTitlebar).not.toContain("justify-content: center");
+    expect(collapsedTitlebar).not.toContain("padding: 0");
+    expect(styles).not.toContain(".vx-workbench-shell.sidebar-collapsed .vx-titlebar-left > :not(#titlebar-sidebar-toggle)");
+    expect(styles).toMatch(/\.vx-workbench-shell\.sidebar-collapsed \.vx-main-header \{[^}]*padding-left:/);
   });
 });

@@ -260,7 +260,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._clarify_nodes = {}
         self._goal_spec_nodes = {}
 
-    def start_turn(self, text: str, *, metadata: TurnMetadata | None = None) -> OutputNode:
+    def start_turn(self, text: str, *, metadata: TurnMetadata | None = None, raw_text: str | None = None) -> OutputNode:
         self.commit_stream()
         self._current_tool = None
         self._turn_in_progress = True
@@ -279,6 +279,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
             header=header,
             body_lines=body_lines,
             collapsed=False,
+            payload={"raw_text": raw_text if raw_text is not None else text},
         )
         self._mark_settled(self._current_turn)
         self.refresh()
@@ -337,6 +338,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
             header=header,
             body_lines=body_lines,
             collapsed=False,
+            payload={"raw_text": text, "style": "guidance"},
         )
         if self._stream_node is None:
             self._current_agent = None

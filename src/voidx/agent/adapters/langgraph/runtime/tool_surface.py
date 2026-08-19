@@ -20,7 +20,7 @@ from voidx.agent.adapters.langgraph.runtime.control_protocol import (
     resolve_control_protocol,
 )
 
-EXECUTION_ONLY_TOOLS = frozenset({"git", "lsp_format"})
+EXECUTION_ONLY_TOOLS = frozenset({"git", "lsp_format", "compact"})
 CHILD_BLOCKED_TOOLS = frozenset({"agent", "clarify", "checkpoint"})
 LIFECYCLE_TOOLS = frozenset({"turn", "goal", "loop"})
 

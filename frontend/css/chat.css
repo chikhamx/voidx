@@ -14,7 +14,28 @@
   scroll-behavior: smooth;
 }
 
-.message-item { max-width: 85%; }
+.transcript > * {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.message-item {
+  max-width: 85%;
+  min-width: 0;
+}
+
+.message-item,
+.stream-buffer,
+.thought-item,
+.status-item,
+.tool-group,
+.diff-item,
+.checkpoint-row,
+.subagent-card,
+.compaction-divider,
+.file-change-card {
+  overflow-wrap: anywhere;
+}
 
 /* === 用户消息 — 柔和胶囊气泡 === */
 .message-user,
@@ -146,6 +167,7 @@
   align-self: flex-start;
   display: grid;
   gap: var(--vx-space-1);
+  min-width: 0;
   width: 100%;
 }
 
@@ -156,6 +178,7 @@
   display: flex;
   font-size: var(--vx-text-sm);
   gap: var(--vx-space-2);
+  min-width: 0;
   user-select: none;
 }
 
@@ -262,15 +285,30 @@
 .tool-name { display: none; }
 .tool-summary {
   color: inherit;
-  display: inline-block;
+  flex: 1 1 auto;
   font-weight: normal;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tool-summary .tool-icon {
+  flex: 0 0 auto;
+  vertical-align: -2px;
+}
+
+.tool-summary-command {
+  display: inline-flex;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.tool-summary-command .tool-target {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-.tool-summary .tool-icon { vertical-align: -2px; }
 
 .tool-target {
   color: var(--vx-text-secondary);
@@ -652,4 +690,46 @@
 .vx-stat-arrow {
   color: var(--vx-text-dim);
   margin: 0 2px;
+}
+
+/* === 对话式确认与澄清 === */
+.prompt-message {
+  align-self: flex-start;
+  color: var(--vx-text-primary);
+  line-height: 1.65;
+  max-width: 100%;
+  min-width: 0;
+  width: 100%;
+}
+
+.prompt-message .markdown-body {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.prompt-replies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--vx-space-2);
+  margin-top: var(--vx-space-3);
+  max-width: 100%;
+}
+
+.prompt-reply {
+  background: var(--vx-bg-surface);
+  border: 1px solid var(--vx-border-strong);
+  border-radius: var(--vx-radius-full);
+  color: var(--vx-text-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--vx-text-sm);
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 7px 12px;
+  text-align: left;
+}
+
+.prompt-reply:hover {
+  background: var(--vx-bg-hover);
+  border-color: var(--vx-accent);
 }

@@ -38,6 +38,7 @@ class ResetRequested(UiEventBase):
 class TurnStarted(UiEventBase):
     kind: Literal["turn.started"] = "turn.started"
     text: str
+    raw_text: str = ""
     metadata: TurnMetadata = Field(default_factory=TurnMetadata)
 
 

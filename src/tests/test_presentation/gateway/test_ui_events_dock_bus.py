@@ -239,3 +239,116 @@ def test_dock_turn_metadata_clears_on_end_reset_and_restore(isolated_dock):
     isolated_dock.start_turn("loop", metadata=loop_metadata)
     isolated_dock.restore_tree(OutputTree())
     assert isolated_dock.current_turn_metadata.protocol == "turn"
+
+
+def test_turn_node_payload_preserves_raw_submit_text(isolated_dock):
+    from voidx.presentation.protocol.transcript import tree_to_snapshot
+
+    raw = "看下这张图 [image-clipboard-20260818]"
+    isolated_dock.start_turn(
+        "看下这张图\n[attachments: .voidx/attachments/clipboard-20260818.png]",
+        raw_text=raw,
+    )
+
+    snapshot = tree_to_snapshot(isolated_dock.tree)
+    turn = next(node for node in snapshot.nodes if node.node_type == "turn")
+    assert turn.payload.get("raw_text") == raw
+
+
+def test_turn_node_payload_defaults_to_display_text(isolated_dock):
+    from voidx.presentation.protocol.transcript import tree_to_snapshot
+
+    isolated_dock.start_turn("plain message")
+
+    snapshot = tree_to_snapshot(isolated_dock.tree)
+    turn = next(node for node in snapshot.nodes if node.node_type == "turn")
+    assert turn.payload.get("raw_text") == "plain message"
+
+
+def test_guidance_turn_payload_preserves_raw_text_and_style(isolated_dock):
+    from voidx.presentation.protocol.transcript import tree_to_snapshot
+
+    raw = "继续执行 [image-clipboard-x]"
+    isolated_dock.append_guidance_turn(raw)
+
+    snapshot = tree_to_snapshot(isolated_dock.tree)
+    turn = next(node for node in snapshot.nodes if node.node_type == "turn")
+    assert turn.payload.get("raw_text") == raw
+    assert turn.payload.get("style") == "guidance"
+
+
+def test_consumer_turn_started_forwards_raw_text(isolated_dock):
+    from voidx.presentation.protocol.transcript import tree_to_snapshot
+
+    consumer = DockEventConsumer(isolated_dock)
+    consumer.handle(TurnStarted(
+        text="看下这张图\n[attachments: .voidx/attachments/x.png]",
+        raw_text="看下这张图 [image-x]",
+    ))
+
+    snapshot = tree_to_snapshot(isolated_dock.tree)
+    turn = next(node for node in snapshot.nodes if node.node_type == "turn")
+    assert turn.payload.get("raw_text") == "看下这张图 [image-x]"
+
+
+@pytest.mark.asyncio
+async def test_event_publisher_end_turn_closes_dock_turn(isolated_dock):
+    from types import SimpleNamespace
+
+    from voidx.presentation.terminal.events import UiAgentEventPublisher
+
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        publisher = UiAgentEventPublisher(SimpleNamespace(dock=isolated_dock, events=bus))
+        publisher.start_turn("/model switch x")
+        assert isolated_dock.turn_in_progress is True
+
+        publisher.end_turn()
+        await bus.drain()
+
+        assert isolated_dock.turn_in_progress is False
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_event_publisher_fail_turn_closes_dock_turn(isolated_dock):
+    from types import SimpleNamespace
+
+    from voidx.presentation.terminal.events import UiAgentEventPublisher
+
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        publisher = UiAgentEventPublisher(SimpleNamespace(dock=isolated_dock, events=bus))
+        publisher.start_turn("/model switch x")
+        assert isolated_dock.turn_in_progress is True
+
+        publisher.fail_turn("boom")
+        await bus.drain()
+
+        assert isolated_dock.turn_in_progress is False
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_event_publisher_cancel_turn_closes_dock_turn(isolated_dock):
+    from types import SimpleNamespace
+
+    from voidx.presentation.terminal.events import UiAgentEventPublisher
+
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        publisher = UiAgentEventPublisher(SimpleNamespace(dock=isolated_dock, events=bus))
+        publisher.start_turn("/model switch x")
+        assert isolated_dock.turn_in_progress is True
+
+        publisher.cancel_turn()
+        await bus.drain()
+
+        assert isolated_dock.turn_in_progress is False
+    finally:
+        await bus.stop()

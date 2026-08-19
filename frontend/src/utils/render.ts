@@ -515,6 +515,10 @@ export function renderTranscript(root: HTMLElement, snapshot: TranscriptSnapshot
       ? toolEl
       : toolEl || existingById.get(node.id);
     if (existing) {
+      // 流式元素的 data-item-id 是适配器随机 id,与快照节点 id 不同步会被下方清理循环误删。
+      if (node.node_type === "tool_call" && existing.dataset.itemId !== node.id) {
+        existing.dataset.itemId = node.id;
+      }
       if (node.node_type === "tool_call" && payload?.diff_text) {
         handleToolItem("item.delta", node.id, {
           tool_call_id: node.tool_call_id ?? null,
@@ -641,7 +645,8 @@ export function renderTranscript(root: HTMLElement, snapshot: TranscriptSnapshot
         currentTurnId = node.id;
         const text = snapshotTurnText(node);
         if (text) {
-          appendMessageItem(node.id, { style: "user", text });
+          const style = String(payload?.style || "") === "guidance" ? "guidance" : "user";
+          appendMessageItem(node.id, { style, text });
         }
         break;
       }

@@ -84,6 +84,9 @@ class InteractiveInputPort(Protocol):
 class AgentEventPublisher(Protocol):
     def publish_message(self, message: str) -> None: ...
     def start_turn(self, text: str) -> None: ...
+    def end_turn(self) -> None: ...
+    def cancel_turn(self) -> None: ...
+    def fail_turn(self, message: str) -> None: ...
     def show_loop_waiting(self, wakeup_at: float) -> None: ...
     def clear_loop_waiting(self) -> None: ...
 
@@ -138,6 +141,15 @@ class NullAgentEventPublisher:
         return None
 
     def start_turn(self, text: str) -> None:
+        return None
+
+    def end_turn(self) -> None:
+        return None
+
+    def cancel_turn(self) -> None:
+        return None
+
+    def fail_turn(self, message: str) -> None:
         return None
 
     def show_loop_waiting(self, wakeup_at: float) -> None:

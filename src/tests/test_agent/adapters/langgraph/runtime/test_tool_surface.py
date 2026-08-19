@@ -40,7 +40,7 @@ def _coding_profile() -> RuntimeProfile:
 
 
 def test_coding_main_exposes_turn_but_hides_goal_loop_and_execution_only() -> None:
-    registry = _registry("read", "bash", "agent", "goal", "loop", "git", "lsp_format")
+    registry = _registry("read", "bash", "agent", "goal", "loop", "git", "lsp_format", "compact")
 
     surface = resolve_tool_surface(
         registry,
@@ -50,10 +50,23 @@ def test_coding_main_exposes_turn_but_hides_goal_loop_and_execution_only() -> No
     names = _names(surface)
     assert "turn" in names
     assert "read" in names and "bash" in names and "agent" in names
-    for hidden in ("goal", "loop", "git", "lsp_format"):
+    for hidden in ("goal", "loop", "git", "lsp_format", "compact"):
         assert hidden not in names
     assert surface.dropped["git"] == "execution_only"
     assert surface.dropped["lsp_format"] == "execution_only"
+    assert surface.dropped["compact"] == "execution_only"
+
+
+def test_compact_never_reaches_llm_surface() -> None:
+    registry = _registry("read", "compact")
+
+    surface = resolve_tool_surface(
+        registry,
+        ToolSurfaceContext(runtime_profile=_coding_profile(), tool_policy=_AllowAll()),
+    )
+
+    assert "compact" not in _names(surface)
+    assert surface.dropped["compact"] == "execution_only"
 
 
 def test_loop_profile_exposes_loop_in_idle_and_work() -> None:

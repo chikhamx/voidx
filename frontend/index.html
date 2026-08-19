@@ -22,29 +22,21 @@
   </head>
   <body>
     <main class="vx-shell vx-workbench-shell">
-      <!-- Titlebar -->
-      <header class="vx-titlebar" data-tauri-drag-region>
-        <div class="vx-titlebar-left" data-tauri-drag-region>
-        </div>
-        <div class="vx-titlebar-right" data-tauri-drag-region>
-          <div class="vx-chat-header" id="chat-header" hidden>
-            <span class="vx-chat-header-icon">
-              <svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
-            </span>
-            <span class="vx-chat-header-title" id="chat-header-title"></span>
-            <span class="vx-chat-header-mode" id="chat-header-mode" aria-live="polite"></span>
-            <button type="button" class="vx-chat-header-btn" id="mode-status" hidden>状态</button>
-            <button type="button" class="vx-chat-header-btn" id="mode-stop" hidden>停止</button>
-            <button type="button" class="vx-chat-header-btn" id="chat-header-options" title="Options" aria-label="会话选项"><svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5.5" cy="12" r="1.1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.1" fill="currentColor" stroke="none"/></svg></button>
-          </div>
-          <button type="button" class="vx-titlebar-tool" id="titlebar-dock-toggle" aria-label="Toggle right panel"><svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M14.5 4v16"/></svg></button>
-        </div>
-      </header>
-
-      <!-- Workbench body -->
-      <div class="vx-body">
+      <!-- Workbench columns -->
+      <div class="vx-workbench-columns">
         <!-- Left sidebar -->
         <aside class="vx-sidebar" id="sidebar">
+          <header class="vx-column-header vx-titlebar-left" data-tauri-drag-region>
+            <button type="button" class="vx-titlebar-tool" id="titlebar-sidebar-toggle" aria-label="隐藏侧栏" aria-expanded="true" title="隐藏侧栏">
+              <svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9.5 4v16"/></svg>
+            </button>
+            <button type="button" class="vx-titlebar-tool" id="titlebar-history-back" aria-label="后退" title="后退" disabled>
+              <svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14.5 6-6 6 6 6"/></svg>
+            </button>
+            <button type="button" class="vx-titlebar-tool" id="titlebar-history-forward" aria-label="前进" title="前进" disabled>
+              <svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 6 6 6-6 6"/></svg>
+            </button>
+          </header>
           <div class="vx-mode-picker" id="runtime-profile-switcher">
             <button type="button" class="vx-mode-trigger" id="mode-trigger" aria-haspopup="listbox" aria-expanded="false" aria-label="切换运行模式">
               <span class="vx-mode-trigger-label" id="mode-trigger-label">编码</span>
@@ -120,6 +112,17 @@
 
         <!-- Main area -->
         <section class="vx-main">
+          <header class="vx-column-header vx-main-header" data-tauri-drag-region>
+            <div class="vx-chat-header" id="chat-header" hidden>
+              <span class="vx-chat-header-icon"><svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></span>
+              <span class="vx-chat-header-title" id="chat-header-title"></span>
+              <span class="vx-chat-header-mode" id="chat-header-mode" aria-live="polite"></span>
+              <button type="button" class="vx-chat-header-btn" id="mode-status" hidden>状态</button>
+              <button type="button" class="vx-chat-header-btn" id="mode-stop" hidden>停止</button>
+              <button type="button" class="vx-chat-header-btn" id="chat-header-options" title="Options" aria-label="会话选项"><svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5.5" cy="12" r="1.1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.1" fill="currentColor" stroke="none"/></svg></button>
+            </div>
+            <button class="vx-dock-toggle" id="dock-toggle" aria-label="显示右侧栏" aria-controls="dock-content" aria-expanded="false"><svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M14.5 4v16"/></svg></button>
+          </header>
           <div class="vx-main-canvas">
             <section class="vx-empty-state" id="empty-state" aria-live="polite">
               <h1>一起让世界变得更加美好！</h1>
@@ -205,17 +208,25 @@
             <span id="context-provider-model"></span>
           </div>
         </div>
+          <section class="vx-terminal-drawer" id="terminal-drawer" aria-label="终端" hidden>
+            <header class="vx-terminal-drawer-header">
+              <span>终端</span>
+              <button type="button" class="vx-terminal-drawer-close" data-terminal-close aria-label="关闭终端">×</button>
+            </header>
+            <div class="vx-terminal" id="terminal-pane"></div>
+          </section>
         </section>
 
         <!-- Right sidebar (Dock) -->
         <aside class="vx-dock collapsed" id="dock">
-          <div class="vx-dock-tabs">
-            <button class="vx-dock-tab active" data-tab="todo" aria-selected="true">Todo</button>
-            <button class="vx-dock-tab" data-tab="terminal" aria-selected="false">Terminal</button>
-            <button class="vx-dock-tab" data-tab="diff" aria-selected="false">Diff</button>
-            <button class="vx-dock-tab" data-tab="status" aria-selected="false">Status</button>
-            <button class="vx-dock-toggle" id="dock-toggle" aria-label="Toggle right panel"><svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M14.5 4v16"/></svg></button>
-          </div>
+          <header class="vx-column-header vx-dock-tabs" data-tauri-drag-region>
+            <div class="vx-dock-tablist" role="tablist" aria-label="右侧面板">
+              <button class="vx-dock-tab active" id="dock-tab-todo" role="tab" data-tab="todo" aria-controls="dock-pane-todo" aria-selected="true">Todo</button>
+              <button class="vx-dock-tab" id="dock-tab-diff" role="tab" data-tab="diff" aria-controls="dock-pane-diff" aria-selected="false" tabindex="-1">Diff</button>
+              <button class="vx-dock-tab" id="dock-tab-status" role="tab" data-tab="status" aria-controls="dock-pane-status" aria-selected="false" tabindex="-1">Status</button>
+            </div>
+            <button type="button" class="vx-dock-tab" id="terminal-toggle" data-terminal-toggle aria-controls="terminal-drawer" aria-expanded="false">Terminal</button>
+          </header>
           <div class="vx-dock-strip" id="dock-strip" hidden>
             <span class="status-session" id="status-session"></span>
             <span id="strip-workspace">voidx</span>
@@ -223,16 +234,13 @@
             <span id="strip-ai-approval" hidden></span>
           </div>
           <div class="vx-dock-content" id="dock-content">
-            <div class="vx-dock-pane" data-pane="todo">
+            <div class="vx-dock-pane" id="dock-pane-todo" role="tabpanel" aria-labelledby="dock-tab-todo" data-pane="todo">
               <section class="todo-panel" id="todo-panel" aria-label="Task progress"></section>
             </div>
-            <div class="vx-dock-pane" data-pane="terminal" hidden>
-              <div class="vx-terminal" id="terminal-pane"></div>
-            </div>
-            <div class="vx-dock-pane" data-pane="diff" hidden>
+            <div class="vx-dock-pane" id="dock-pane-diff" role="tabpanel" aria-labelledby="dock-tab-diff" data-pane="diff" hidden>
               <div class="vx-diff-review" id="diff-pane"></div>
             </div>
-            <div class="vx-dock-pane" data-pane="status" hidden>
+            <div class="vx-dock-pane" id="dock-pane-status" role="tabpanel" aria-labelledby="dock-tab-status" data-pane="status" hidden>
               <dl class="vx-status-grid" id="status-panel">
                 <div><dt>Connection</dt><dd id="status-connection">disconnected</dd></div>
                 <div><dt>Session</dt><dd id="status-session-detail"></dd></div>

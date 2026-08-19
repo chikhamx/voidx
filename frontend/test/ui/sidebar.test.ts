@@ -667,8 +667,9 @@ describe("renderSidebar", () => {
 
     expect(document.querySelector(".vx-project-name")).toBeNull();
     const sidebar = document.querySelector("#sidebar");
-    expect(sidebar?.firstElementChild?.id).toBe("runtime-profile-switcher");
-    expect(sidebar?.firstElementChild?.nextElementSibling?.classList.contains("vx-sidebar-nav")).toBe(true);
+    expect(sidebar?.firstElementChild?.classList.contains("vx-column-header")).toBe(true);
+    expect(sidebar?.firstElementChild?.nextElementSibling?.id).toBe("runtime-profile-switcher");
+    expect(sidebar?.firstElementChild?.nextElementSibling?.nextElementSibling?.classList.contains("vx-sidebar-nav")).toBe(true);
   });
 });
 

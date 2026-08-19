@@ -28,15 +28,13 @@ if (typeof HTMLDialogElement !== "undefined") {
 
 document.body.innerHTML = `
   <main class="vx-shell vx-workbench-shell">
-    <header class="vx-titlebar">
-      <div class="vx-titlebar-left">
-      </div>
-      <div class="vx-titlebar-right">
-        <button type="button" class="vx-titlebar-tool" id="titlebar-dock-toggle" aria-label="Toggle right panel"><svg class="vx-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></button>
-      </div>
-    </header>
-    <div class="vx-body">
+    <div class="vx-workbench-columns">
       <aside class="vx-sidebar" id="sidebar">
+        <header class="vx-column-header vx-titlebar-left">
+          <button type="button" class="vx-titlebar-tool" id="titlebar-sidebar-toggle" aria-label="隐藏侧栏" aria-expanded="true"></button>
+          <button type="button" class="vx-titlebar-tool" id="titlebar-history-back" aria-label="后退" title="后退" disabled></button>
+          <button type="button" class="vx-titlebar-tool" id="titlebar-history-forward" aria-label="前进" title="前进" disabled></button>
+        </header>
         <div class="vx-mode-picker" id="runtime-profile-switcher">
           <button type="button" class="vx-mode-trigger" id="mode-trigger" aria-haspopup="listbox" aria-expanded="false"><span class="vx-mode-trigger-label" id="mode-trigger-label">编码</span></button>
           <div class="vx-mode-menu" id="mode-menu" role="listbox" hidden>
@@ -84,14 +82,20 @@ document.body.innerHTML = `
       </aside>
       <div class="vx-sidebar-resizer" id="sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="调整侧栏宽度"></div>
       <section class="vx-main">
+        <header class="vx-column-header vx-main-header">
+          <div class="vx-chat-header" id="chat-header" hidden>
+            <span class="vx-chat-header-title" id="chat-header-title"></span>
+            <span class="vx-chat-header-mode" id="chat-header-mode"></span>
+            <button type="button" class="vx-chat-header-btn" id="mode-status" hidden>状态</button>
+            <button type="button" class="vx-chat-header-btn" id="mode-stop" hidden>停止</button>
+            <button type="button" class="vx-chat-header-btn" id="chat-header-options"></button>
+          </div>
+          <button class="vx-dock-toggle" id="dock-toggle" aria-label="显示右侧栏" aria-controls="dock-content" aria-expanded="false"><svg class="vx-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></button>
+        </header>
         <div class="vx-main-canvas">
         <section class="vx-empty-state" id="empty-state" aria-live="polite">
           <h1>一起让世界变得更加美好！</h1>
         </section>
-        <div class="vx-chat-header-controls">
-          <button type="button" class="vx-chat-header-btn" id="mode-status" hidden>状态</button>
-          <button type="button" class="vx-chat-header-btn" id="mode-stop" hidden>停止</button>
-        </div>
         <div class="transcript" id="transcript" aria-live="polite"></div>
         <form class="composer" id="composer">
           <div class="attachment-strip" id="attachment-strip" hidden></div>
@@ -144,18 +148,22 @@ document.body.innerHTML = `
           <span id="context-workspace">voidx</span>
           <span id="context-provider-model"></span>
         </div>
-        </div>
+        <section class="vx-terminal-drawer" id="terminal-drawer" hidden>
+          <header class="vx-terminal-drawer-header"><span>终端</span><button type="button" data-terminal-close>×</button></header>
+          <div class="vx-terminal" id="terminal-pane"></div>
+        </section>
       </section>
 
       <!-- Right sidebar (Dock) -->
       <aside class="vx-dock collapsed" id="dock">
-        <div class="vx-dock-tabs">
-          <button class="vx-dock-tab active" data-tab="todo" aria-selected="true">Todo</button>
-          <button class="vx-dock-tab" data-tab="terminal" aria-selected="false">Terminal</button>
-          <button class="vx-dock-tab" data-tab="diff" aria-selected="false">Diff</button>
-          <button class="vx-dock-tab" data-tab="status" aria-selected="false">Status</button>
-          <button class="vx-dock-toggle" id="dock-toggle" aria-label="Toggle right panel"><svg class="vx-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></button>
-        </div>
+        <header class="vx-column-header vx-dock-tabs">
+          <div class="vx-dock-tablist" role="tablist" aria-label="右侧面板">
+            <button class="vx-dock-tab active" id="dock-tab-todo" role="tab" data-tab="todo" aria-controls="dock-pane-todo" aria-selected="true">Todo</button>
+            <button class="vx-dock-tab" id="dock-tab-diff" role="tab" data-tab="diff" aria-controls="dock-pane-diff" aria-selected="false" tabindex="-1">Diff</button>
+            <button class="vx-dock-tab" id="dock-tab-status" role="tab" data-tab="status" aria-controls="dock-pane-status" aria-selected="false" tabindex="-1">Status</button>
+          </div>
+          <button type="button" class="vx-dock-tab" id="terminal-toggle" data-terminal-toggle aria-controls="terminal-drawer" aria-expanded="false">Terminal</button>
+        </header>
         <div class="vx-dock-strip" id="dock-strip" hidden>
           <span class="status-session" id="status-session"></span>
           <span id="strip-workspace">voidx</span>
@@ -163,16 +171,13 @@ document.body.innerHTML = `
           <span id="strip-ai-approval" hidden></span>
         </div>
         <div class="vx-dock-content" id="dock-content">
-          <div class="vx-dock-pane" data-pane="todo">
+          <div class="vx-dock-pane" id="dock-pane-todo" role="tabpanel" aria-labelledby="dock-tab-todo" data-pane="todo">
             <section class="todo-panel" id="todo-panel" aria-label="Task progress"></section>
           </div>
-          <div class="vx-dock-pane" data-pane="terminal" hidden>
-            <div class="vx-terminal" id="terminal-pane"></div>
-          </div>
-          <div class="vx-dock-pane" data-pane="diff" hidden>
+          <div class="vx-dock-pane" id="dock-pane-diff" role="tabpanel" aria-labelledby="dock-tab-diff" data-pane="diff" hidden>
             <div class="vx-diff-review" id="diff-pane"></div>
           </div>
-          <div class="vx-dock-pane" data-pane="status" hidden>
+          <div class="vx-dock-pane" id="dock-pane-status" role="tabpanel" aria-labelledby="dock-tab-status" data-pane="status" hidden>
             <dl class="vx-status-grid" id="status-panel">
               <div><dt>Connection</dt><dd id="status-connection">disconnected</dd></div>
               <div><dt>Session</dt><dd id="status-session-detail"></dd></div>

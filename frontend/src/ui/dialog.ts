@@ -55,7 +55,7 @@ export function showRequest(request: Record<string, unknown>): void {
 export function renderRequest(req: UiRequest): void {
   requestDialogEl.dataset.responseMethod = req.response_method || "";
   requestDialogEl.dataset.responseThreadId = req.thread_id || "";
-  requestTitleEl.textContent = req.prompt;
+  requestTitleEl.textContent = req.kind === "permission" ? "权限审批" : req.prompt;
   requestDetailsEl.replaceChildren();
   requestControlsEl.replaceChildren();
 
@@ -158,14 +158,30 @@ export function showPromptItemRequest(data: Record<string, unknown>): void {
 }
 
 export function renderPermissionDetails(request: UiRequest): void {
-  requestDetailsEl.className = "request-details";
+  requestDetailsEl.className = "request-details request-permission-details";
   requestDetailsEl.replaceChildren();
-  if (!request.tools?.length) {
+
+  const question = document.createElement("section");
+  question.className = "request-permission-question";
+  question.dataset.permissionSection = "question";
+  question.textContent = request.prompt || "是否允许执行此操作？";
+  requestDetailsEl.append(question);
+
+  const tools = request.tools || [];
+  if (tools.length === 0) {
     return;
   }
-  for (const tool of request.tools) {
+
+  const execution = document.createElement("section");
+  execution.className = "request-permission-section request-execution";
+  execution.dataset.permissionSection = "execution";
+  const executionTitle = document.createElement("h3");
+  executionTitle.textContent = "将执行";
+  execution.append(executionTitle);
+
+  for (const tool of tools) {
     const riskLevel = tool.risk?.level || "default";
-    const block = document.createElement("section");
+    const block = document.createElement("div");
     block.className = `request-tool-detail request-tool-risk-${riskLevel}`;
 
     const heading = document.createElement("div");
@@ -174,56 +190,93 @@ export function renderPermissionDetails(request: UiRequest): void {
     title.className = "request-tool-title";
     title.textContent = tool.name;
     heading.append(title);
-    if (tool.pattern) {
+    const command = typeof tool.args?.command === "string" ? tool.args.command : "";
+    const executionText = tool.pattern || command;
+    if (executionText) {
       const pattern = document.createElement("div");
       pattern.className = "request-tool-pattern";
-      pattern.textContent = tool.pattern;
+      pattern.textContent = executionText;
       heading.append(pattern);
     }
     block.append(heading);
+    execution.append(block);
+  }
+  requestDetailsEl.append(execution);
 
-    if (tool.risk) {
-      const risk = document.createElement("div");
-      risk.className = `request-risk request-risk-${riskLevel}`;
-      const tags = tool.risk.tags?.length ? ` · ${tool.risk.tags.join(", ")}` : "";
-      risk.textContent = `Risk: ${riskLevel}${tags}`;
-      block.append(risk);
-      if (tool.risk.reason) {
-        const reason = document.createElement("div");
-        reason.className = "request-risk-reason";
-        reason.textContent = tool.risk.reason;
-        block.append(reason);
-      }
+  const riskSection = document.createElement("section");
+  riskSection.className = "request-permission-section request-risk-section";
+  riskSection.dataset.permissionSection = "risk";
+  const riskTitle = document.createElement("h3");
+  riskTitle.textContent = "风险";
+  riskSection.append(riskTitle);
+  for (const tool of tools) {
+    const riskLevel = tool.risk?.level || "default";
+    const risk = document.createElement("div");
+    risk.className = `request-risk request-risk-${riskLevel}`;
+    const tags = tool.risk?.tags?.length ? ` · ${tool.risk.tags.join(", ")}` : "";
+    risk.textContent = `${riskLevel}${tags}`;
+    riskSection.append(risk);
+    if (tool.risk?.reason) {
+      const reason = document.createElement("div");
+      reason.className = "request-risk-reason";
+      reason.textContent = tool.risk.reason;
+      riskSection.append(reason);
     }
-
-    const isBlockedRisk = riskLevel === "blocked";
-    if (!isBlockedRisk && tool.allowed_scopes?.length) {
-      const scopes = document.createElement("div");
-      scopes.className = "request-approval-scopes";
-      scopes.textContent = `Allowed scopes: ${tool.allowed_scopes.join(", ")}`;
-      block.append(scopes);
-    }
-
-    if (!isBlockedRisk && tool.default_scope) {
-      const defaultScope = document.createElement("div");
-      defaultScope.className = "request-default-scope";
-      defaultScope.textContent = `Default scope: ${tool.default_scope}`;
-      block.append(defaultScope);
-    }
-
     if (tool.ai_approval_failure) {
       const aiApproval = document.createElement("div");
       aiApproval.className = "request-risk-reason";
       aiApproval.textContent = tool.ai_approval_failure;
-      block.append(aiApproval);
+      riskSection.append(aiApproval);
     }
+  }
+  requestDetailsEl.append(riskSection);
 
+  const scopeSection = document.createElement("section");
+  scopeSection.className = "request-permission-section request-scope-section";
+  scopeSection.dataset.permissionSection = "scope";
+  const scopeTitle = document.createElement("h3");
+  scopeTitle.textContent = "授权范围";
+  scopeSection.append(scopeTitle);
+
+  let hasScopeInformation = false;
+  for (const tool of tools) {
+    if (tool.risk?.level === "blocked") continue;
+    if (tool.allowed_scopes?.length) {
+      const scopes = document.createElement("div");
+      scopes.className = "request-approval-scopes";
+      scopes.textContent = `可授权：${tool.allowed_scopes.join(", ")}`;
+      scopeSection.append(scopes);
+      hasScopeInformation = true;
+    }
+    if (tool.default_scope) {
+      const defaultScope = document.createElement("div");
+      defaultScope.className = "request-default-scope";
+      defaultScope.textContent = `默认范围：${tool.default_scope}`;
+      scopeSection.append(defaultScope);
+      hasScopeInformation = true;
+    }
+  }
+  if (!hasScopeInformation) {
+    const scopeFallback = document.createElement("div");
+    scopeFallback.className = "request-default-scope";
+    scopeFallback.textContent = "未提供额外授权范围";
+    scopeSection.append(scopeFallback);
+  }
+  requestDetailsEl.append(scopeSection);
+
+  const parameters = document.createElement("details");
+  parameters.className = "request-parameters";
+  parameters.dataset.permissionSection = "parameters";
+  const summary = document.createElement("summary");
+  summary.textContent = "参数详情";
+  parameters.append(summary);
+  for (const tool of tools) {
     const args = document.createElement("pre");
     args.className = "request-tool-args";
     args.textContent = JSON.stringify(tool.args || {}, null, 2);
-    block.append(args);
-    requestDetailsEl.append(block);
+    parameters.append(args);
   }
+  requestDetailsEl.append(parameters);
 }
 
 export function renderChoiceButtons(request: UiRequest): void {
@@ -232,7 +285,14 @@ export function renderChoiceButtons(request: UiRequest): void {
   for (const [label, value, desc] of request.choices || []) {
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = desc || label;
+    button.className = "request-choice";
+    const labelEl = document.createElement("span");
+    labelEl.className = "request-choice-label";
+    labelEl.textContent = label;
+    const descriptionEl = document.createElement("span");
+    descriptionEl.className = "request-choice-description";
+    descriptionEl.textContent = desc || "";
+    button.append(labelEl, descriptionEl);
     button.addEventListener("click", () =>
       sendResponse(request.request_id, value),
     );
@@ -248,13 +308,15 @@ export function renderChoiceButtons(request: UiRequest): void {
   }
   const cancel = document.createElement("button");
   cancel.type = "button";
-  cancel.textContent = "Cancel";
+  cancel.className = "request-choice-cancel";
+  cancel.textContent = "取消";
   cancel.addEventListener("click", () =>
     sendResponse(request.request_id, null),
   );
   actions.append(cancel);
   requestControlsEl.append(actions);
 }
+
 
 export function renderTextRequest(request: UiRequest): void {
   const input = request.secret
