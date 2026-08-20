@@ -67,3 +67,45 @@ class AgentProfileListDto(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     profiles: tuple[AgentProfileInfoDto, ...] = ()
+
+
+class AgentCatalogToolDto(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    description: str
+
+
+class AgentCatalogIntegrationDto(BaseModel):
+    """Checkbox-list entry for skills / MCP servers (UI consumes name+description)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    description: str
+
+
+class AgentCatalogNodeDto(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    description: str
+
+
+class AgentCatalogEdgeDto(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    source: str
+    target: str
+    condition: str
+    label: str = ""
+
+
+class AgentCatalogDto(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    tools: tuple[AgentCatalogToolDto, ...] = ()
+    skills: tuple[AgentCatalogIntegrationDto, ...] = ()
+    mcp_servers: tuple[AgentCatalogIntegrationDto, ...] = ()
+    builtin_nodes: tuple[AgentCatalogNodeDto, ...] = ()
+    default_edges: tuple[AgentCatalogEdgeDto, ...] = ()

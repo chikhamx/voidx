@@ -88,6 +88,7 @@ class GatewaySession(
         settings_factory: Callable[[str], Awaitable[object]] | None = None,
         skills_api_factory: SkillsApiFactory | None = None,
         skills_api_provider: Callable[[str], object] | None = None,
+        agent_tool_catalog_provider: Callable[[], list] | None = None,
         session_repository: SessionRepository | None = None,
         dock: Any | None = None,
     ) -> None:
@@ -109,6 +110,7 @@ class GatewaySession(
         self._settings_factory = settings_factory
         self._skills_api_factory = skills_api_factory
         self._skills_api_provider = skills_api_provider
+        self._agent_tool_catalog_provider = agent_tool_catalog_provider
         self._session_repository = session_repository
         self._dock = dock
         self._owner_id = uuid.uuid4().hex
@@ -791,6 +793,7 @@ class GatewaySession(
 
         # Agent profiles
         m.register("list-agent-profiles", self._method_agent_profiles_list)
+        m.register("agent-catalog", self._method_agent_profiles_catalog)
         m.register("get-agent-profile", self._method_agent_profiles_get)
         m.register("validate-agent-profile", self._method_agent_profiles_validate)
         m.register("save-agent-profile", self._method_agent_profiles_save)

@@ -10,6 +10,11 @@ from voidx.presentation.protocol.commands import UiCommand
 from voidx.presentation.protocol.requests import UiRequest
 from voidx.presentation.protocol.transcript import TranscriptSnapshot
 from voidx.presentation.protocol.v2.agent_profiles import (
+    AgentCatalogDto,
+    AgentCatalogEdgeDto,
+    AgentCatalogIntegrationDto,
+    AgentCatalogNodeDto,
+    AgentCatalogToolDto,
     AgentProfileDetailDto,
     AgentProfileDiagnosticDto,
     AgentProfileInfoDto,
@@ -31,7 +36,12 @@ from voidx.presentation.protocol.v2.threads import Item, ThreadInfo, TurnInfo
 
 def export_protocol_schema() -> dict[str, Any]:
     schema = TypeAdapter(
-        AgentProfileDetailDto
+        AgentCatalogDto
+        | AgentCatalogEdgeDto
+        | AgentCatalogIntegrationDto
+        | AgentCatalogNodeDto
+        | AgentCatalogToolDto
+        | AgentProfileDetailDto
         | AgentProfileDiagnosticDto
         | AgentProfileInfoDto
         | AgentProfileListDto

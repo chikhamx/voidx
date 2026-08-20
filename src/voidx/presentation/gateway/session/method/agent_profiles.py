@@ -21,6 +21,7 @@ from voidx.presentation.protocol.v2.envelope import (
     ERR_AGENT_PROFILE_READ_ONLY,
 )
 from voidx.presentation.protocol.v2.methods import MethodParamsError
+from voidx.agent.domain.automation.workflow_catalog import builtin_workflow_catalog
 
 
 class AgentProfileMethods:
@@ -29,6 +30,24 @@ class AgentProfileMethods:
     def _method_agent_profiles_list(self, params: dict) -> dict:
         profiles = list_agent_profiles(self._workspace or ".")
         return {"profiles": [self._public_profile(profile) for profile in profiles]}
+
+    def _method_agent_profiles_catalog(self, params: dict) -> dict:
+        settings = self._gateway_settings()
+        skills = (
+            self._skill_summaries(settings)
+            if self._skills_api_provider is not None
+            else []
+        )
+        tool_provider = self._agent_tool_catalog_provider
+        return {
+            "tools": tool_provider() if tool_provider is not None else [],
+            "skills": skills,
+            "mcp_servers": [
+                self._mcp_server_summary(server)
+                for server in settings.list_mcp_servers()
+            ],
+            **builtin_workflow_catalog(),
+        }
 
     def _method_agent_profiles_get(self, params: dict) -> dict:
         scope, name = self._scope_and_name(params, allow_bundled=True)

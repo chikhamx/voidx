@@ -53,6 +53,7 @@ class TerminalRunLoop:
         settings_factory: Callable[[str], Awaitable[object]] | None = None,
         skills_api_factory: Callable[[str], Awaitable[object]] | None = None,
         skills_api_provider: Callable[[str], object] | None = None,
+        agent_tool_catalog_provider: Callable[[], list] | None = None,
         session_repository: SessionRepository | None = None,
     ) -> None:
         self._status_reader = status_reader
@@ -73,6 +74,7 @@ class TerminalRunLoop:
         self._settings_factory = settings_factory
         self._skills_api_factory = skills_api_factory
         self._skills_api_provider = skills_api_provider
+        self._agent_tool_catalog_provider = agent_tool_catalog_provider
         self._session_repository = session_repository
         self._gateway_session = None
         self._thread_registry = GatewayThreadRegistryAdapter(lambda: self._gateway_session)
@@ -110,6 +112,7 @@ class TerminalRunLoop:
                     settings_factory=self._settings_factory,
                     skills_api_factory=self._skills_api_factory,
                     skills_api_provider=self._skills_api_provider,
+                    agent_tool_catalog_provider=self._agent_tool_catalog_provider,
                     settings_update_handler=self._frontend_binding.apply_settings_update,
                     usage_stats_provider=self._frontend_binding.usage_stats,
                     mcp_catalog_provider=self._integrations.mcp_catalog,

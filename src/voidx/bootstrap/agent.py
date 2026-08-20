@@ -310,6 +310,7 @@ def build_agent_app(
 ) -> AgentFacade:
     """Build the agent and its concrete terminal/web presentation."""
     from voidx.agent.adapters.persistence.session_adapter import SessionRepositoryAdapter
+    from voidx.bootstrap.agent_catalog import tool_catalog
     from voidx.bootstrap.permission import build_permission_service
     from voidx.bootstrap.tooling import build_external_managers, resolve_mcp_references
     from voidx.tooling.adapters.web_mcp import call_mcp_web_tool
@@ -353,6 +354,7 @@ def build_agent_app(
         settings_factory=build_settings,
         skills_api_factory=workspace_skills_api_factory,
         skills_api_provider=skills_api_provider,
+        agent_tool_catalog_provider=tool_catalog,
         session_repository=SessionRepositoryAdapter(),
     )
     return AgentFacade(run_loop=run_loop)

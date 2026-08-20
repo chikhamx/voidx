@@ -25,9 +25,12 @@ identity: newer secret prompt
 
 
 def _session(workspace: Path) -> GatewaySession:
+    from voidx.bootstrap.agent_catalog import tool_catalog
+
     return GatewaySession(
         lambda: BottomInputDock().tree,
         workspace=str(workspace),
+        agent_tool_catalog_provider=tool_catalog,
     )
 
 
@@ -318,3 +321,33 @@ async def test_get_agent_profile_unknown_is_stable_not_found(tmp_path: Path) -> 
     assert result.error.code == -32012
     assert result.error.message == "agent profile not found"
     assert result.error.data is None
+
+
+@pytest.mark.asyncio
+async def test_agent_catalog_method_returns_aggregated_metadata(tmp_path: Path) -> None:
+    session = _session(tmp_path)
+    assert "agent-catalog" in session.methods.registered_methods()
+
+    result = await _dispatch(session, 90, "agent-catalog", {})
+    assert isinstance(result, JsonRpcResult)
+    payload = result.result
+
+    tools = payload["tools"]
+    tool_ids = {tool["id"] for tool in tools}
+    assert {"read", "bash", "todo", "clarify"} <= tool_ids
+    for tool in tools:
+        assert set(tool) == {"id", "description"}
+
+    node_names = {node["name"] for node in payload["builtin_nodes"]}
+    assert node_names == {
+        "brainstorm", "design", "plan", "tdd", "verify", "review", "feedback", "debug",
+    }
+    edges = payload["default_edges"]
+    assert edges
+    for edge in edges:
+        assert edge["source"] in node_names
+        assert edge["target"] in node_names
+        assert edge["condition"].strip()
+
+    assert isinstance(payload["skills"], list)
+    assert isinstance(payload["mcp_servers"], list)

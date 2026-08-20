@@ -1,6 +1,11 @@
 /* generated from protocol.schema.json */
 
 export type VoidxUiProtocol =
+  | AgentCatalogDto
+  | AgentCatalogEdgeDto
+  | AgentCatalogIntegrationDto
+  | AgentCatalogNodeDto
+  | AgentCatalogToolDto
   | AgentProfileDetailDto
   | AgentProfileDiagnosticDto
   | AgentProfileInfoDto
@@ -21,6 +26,21 @@ export type VoidxUiProtocol =
   | TranscriptSnapshot
   | (UiChoiceRequest | UiTextRequest | UiPermissionRequest)
   | (UiSubmitCommand | UiCancelCommand);
+export type Description = string;
+export type Name = string;
+export type BuiltinNodes = AgentCatalogNodeDto[];
+export type Condition = string;
+export type Label = string;
+export type Source = string;
+export type Target = string;
+export type DefaultEdges = AgentCatalogEdgeDto[];
+export type Description1 = string;
+export type Name1 = string;
+export type McpServers = AgentCatalogIntegrationDto[];
+export type Skills = AgentCatalogIntegrationDto[];
+export type Description2 = string;
+export type Id = string;
+export type Tools = AgentCatalogToolDto[];
 export type Availability = "available" | "unavailable";
 export type ContentHash = string;
 export type Code = string;
@@ -30,10 +50,10 @@ export type Severity = "error" | "warning";
 export type Diagnostics = AgentProfileDiagnosticDto[];
 export type DisplayName = string;
 export type HitlMode = "interactive" | "autonomous";
-export type Name = string;
+export type Name2 = string;
 export type Revision = number;
 export type RunMode = string;
-export type Source = "bundled" | "global" | "project";
+export type Source1 = "bundled" | "global" | "project";
 export type ReadOnly = boolean;
 export type Yaml = string;
 export type Profiles = AgentProfileInfoDto[];
@@ -42,22 +62,22 @@ export type ContentHash1 = string;
 export type ProfileId = string;
 export type Revision1 = number;
 export type SnapshotHash = string;
-export type Source1 = "bundled" | "global" | "project";
+export type Source2 = "bundled" | "global" | "project";
 export type Diagnostics2 = AgentProfileDiagnosticDto[];
 export type Valid = boolean;
-export type Id = number | string;
+export type Id1 = number | string;
 export type Jsonrpc = string;
 export type Method = string;
 export type Jsonrpc1 = string;
 export type Method1 = string;
-export type Id1 = number | string;
+export type Id2 = number | string;
 export type Jsonrpc2 = string;
 export type Code1 = number;
 export type Data = {
   [k: string]: unknown;
 } | null;
 export type Message1 = string;
-export type Id2 = number | string | null;
+export type Id3 = number | string | null;
 export type Jsonrpc3 = string;
 export type AfterTurnId = number | null;
 export type BeforeTurnId = number | null;
@@ -71,7 +91,7 @@ export type Collapsed = boolean;
 export type Elapsed = number | null;
 export type Header = string;
 export type HeaderStyle = string;
-export type Id3 = string;
+export type Id4 = string;
 export type MessageId = number | null;
 export type Meta = string | null;
 export type NodeType =
@@ -153,12 +173,12 @@ export type ThreadId6 = string;
 export type AiApprovalFailure = string;
 export type AllowedScopes = string[];
 export type DefaultScope = string | null;
-export type Name1 = string;
+export type Name3 = string;
 export type Pattern = string;
 export type Risk = {
   [k: string]: unknown;
 } | null;
-export type Tools = PermissionToolDetail[];
+export type Tools1 = PermissionToolDetail[];
 export type Kind4 = "submit";
 export type RuntimeProfile1 = string;
 export type SessionId1 = string;
@@ -168,6 +188,39 @@ export type Workspace2 = string;
 export type Kind5 = "cancel";
 export type ThreadId8 = string;
 
+export interface AgentCatalogDto {
+  builtin_nodes?: BuiltinNodes;
+  default_edges?: DefaultEdges;
+  mcp_servers?: McpServers;
+  skills?: Skills;
+  tools?: Tools;
+  [k: string]: unknown;
+}
+export interface AgentCatalogNodeDto {
+  description: Description;
+  name: Name;
+  [k: string]: unknown;
+}
+export interface AgentCatalogEdgeDto {
+  condition: Condition;
+  label?: Label;
+  source: Source;
+  target: Target;
+  [k: string]: unknown;
+}
+/**
+ * Checkbox-list entry for skills / MCP servers (UI consumes name+description).
+ */
+export interface AgentCatalogIntegrationDto {
+  description: Description1;
+  name: Name1;
+  [k: string]: unknown;
+}
+export interface AgentCatalogToolDto {
+  description: Description2;
+  id: Id;
+  [k: string]: unknown;
+}
 export interface AgentProfileDetailDto {
   profile: AgentProfileInfoDto;
   read_only: ReadOnly;
@@ -180,10 +233,10 @@ export interface AgentProfileInfoDto {
   diagnostics?: Diagnostics;
   display_name: DisplayName;
   hitl_mode: HitlMode;
-  name: Name;
+  name: Name2;
   revision: Revision;
   run_mode: RunMode;
-  source: Source;
+  source: Source1;
   [k: string]: unknown;
 }
 export interface AgentProfileDiagnosticDto {
@@ -207,7 +260,7 @@ export interface AgentProfileSnapshotDto {
   profile_id: ProfileId;
   revision: Revision1;
   snapshot_hash: SnapshotHash;
-  source: Source1;
+  source: Source2;
   [k: string]: unknown;
 }
 export interface AgentProfileValidationDto {
@@ -217,7 +270,7 @@ export interface AgentProfileValidationDto {
   [k: string]: unknown;
 }
 export interface JsonRpcRequest {
-  id: Id;
+  id: Id1;
   jsonrpc?: Jsonrpc;
   method: Method;
   params?: Params;
@@ -236,7 +289,7 @@ export interface Params1 {
   [k: string]: unknown;
 }
 export interface JsonRpcResult {
-  id: Id1;
+  id: Id2;
   jsonrpc?: Jsonrpc2;
   result: Result;
   [k: string]: unknown;
@@ -246,7 +299,7 @@ export interface Result {
 }
 export interface JsonRpcError {
   error: ErrorPayload;
-  id: Id2;
+  id: Id3;
   jsonrpc?: Jsonrpc3;
   [k: string]: unknown;
 }
@@ -299,7 +352,7 @@ export interface TranscriptNode {
   elapsed?: Elapsed;
   header?: Header;
   header_style?: HeaderStyle;
-  id: Id3;
+  id: Id4;
   message_id?: MessageId;
   meta?: Meta;
   node_type: NodeType;
@@ -385,7 +438,7 @@ export interface UiPermissionRequest {
   prompt: Prompt2;
   request_id: RequestId2;
   thread_id?: ThreadId6;
-  tools?: Tools;
+  tools?: Tools1;
   [k: string]: unknown;
 }
 export interface PermissionToolDetail {
@@ -393,7 +446,7 @@ export interface PermissionToolDetail {
   allowed_scopes?: AllowedScopes;
   args?: Args;
   default_scope?: DefaultScope;
-  name: Name1;
+  name: Name3;
   pattern?: Pattern;
   risk?: Risk;
   [k: string]: unknown;

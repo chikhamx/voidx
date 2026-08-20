@@ -346,6 +346,17 @@ body.is-desktop.is-mac .vx-sidebar {
   visibility: visible;
 }
 
+.vx-mode-divider {
+  border-top: 1px solid var(--vx-border-subtle);
+  margin: 2px 4px;
+}
+
+.vx-mode-action {
+  color: var(--vx-text-primary);
+  font-size: var(--vx-text-sm);
+  font-weight: 500;
+}
+
 /* 侧栏行（导航 / 会话 / 目录） */
 .vx-nav-item,
 .vx-directory-row,

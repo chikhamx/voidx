@@ -95,7 +95,12 @@ import {
   applyRuntimeState,
   initTheme,
   initModeControls,
+  refreshModeMenu,
   renderRuntimeProfile,
+  openAgentStudio,
+  type AgentCatalog,
+  type AgentStudioRpc,
+  type AgentProfileDiagnostic,
 } from "./ui";
 import {
   pushHistory,
@@ -344,9 +349,23 @@ function handleRuntimeProfileSwitch(profile: RuntimeProfile): void {
   void openThreadForProfile(profile);
 }
 
+const agentStudioRpc: AgentStudioRpc = {
+  getCatalog: () => rpcCall("agent-catalog", {}) as Promise<AgentCatalog>,
+  validate: (params) => rpcCall("validate-agent-profile", params) as Promise<{ valid: boolean; diagnostics: AgentProfileDiagnostic[] }>,
+  save: (params) => rpcCall("save-agent-profile", params) as Promise<{ diagnostics?: AgentProfileDiagnostic[] }>,
+};
+
 function initializeModeControls(): void {
   initModeControls(handleRuntimeProfileSwitch, {
     listProfiles: () => rpcCall("list-agent-profiles", {}) as Promise<{ profiles: import("./ui").AgentProfileInfo[] }>,
+    onCreateAgent: () => {
+      void openAgentStudio({
+        rpc: agentStudioRpc,
+        onSaved: (profileName) => {
+          void refreshModeMenu().then(() => handleRuntimeProfileSwitch(profileName));
+        },
+      });
+    },
   });
   renderRuntimeProfile(uiState.runtimeProfile);
 }

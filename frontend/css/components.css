@@ -1036,3 +1036,198 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ── Agent Studio（自定义 Agent 配置页） ─────────────────────── */
+
+.vx-agent-studio {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.vx-agent-studio-header {
+  align-items: center;
+  border-bottom: 1px solid var(--vx-border);
+  display: flex;
+  gap: var(--vx-space-3);
+  padding: var(--vx-space-3) var(--vx-space-4);
+}
+
+.vx-agent-studio-back {
+  background: transparent;
+  border: 1px solid var(--vx-border-strong);
+  border-radius: var(--vx-radius-sm);
+  color: var(--vx-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--vx-text-sm);
+  padding: 4px 10px;
+}
+
+.vx-agent-studio-back:hover {
+  background: var(--vx-bg-hover);
+  color: var(--vx-text-primary);
+}
+
+.vx-agent-studio-title {
+  font-size: var(--vx-text-base);
+  font-weight: 600;
+}
+
+.vx-agent-studio-body {
+  display: grid;
+  gap: var(--vx-space-2);
+  margin: 0 auto;
+  max-width: 720px;
+  overflow-y: auto;
+  padding: var(--vx-space-4);
+  width: 100%;
+}
+
+.vx-agent-studio-actions {
+  align-items: flex-start;
+  border-top: 1px solid var(--vx-border);
+  display: flex;
+  gap: var(--vx-space-3);
+  padding: var(--vx-space-3) var(--vx-space-4);
+}
+
+.vx-agent-studio-actions button {
+  background: var(--vx-bg-surface);
+  border: 1px solid var(--vx-border-strong);
+  border-radius: var(--vx-radius-sm);
+  color: var(--vx-text-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--vx-text-sm);
+  padding: 6px 14px;
+}
+
+.vx-agent-studio-actions button:hover {
+  background: var(--vx-bg-hover);
+}
+
+#studio-diagnostics {
+  color: var(--vx-text-secondary);
+  flex: 1;
+  font-size: var(--vx-text-sm);
+  white-space: pre-wrap;
+}
+
+.vx-studio-hint {
+  color: var(--vx-text-dim);
+  font-size: var(--vx-text-xs);
+  margin: 0;
+}
+
+.vx-studio-checkbox-group {
+  display: grid;
+  gap: var(--vx-space-2);
+}
+
+.vx-studio-checkbox {
+  align-items: baseline;
+  cursor: pointer;
+  display: flex;
+  font-size: var(--vx-text-sm);
+  gap: var(--vx-space-2);
+}
+
+.vx-studio-dynamic-rows {
+  display: grid;
+  gap: var(--vx-space-2);
+}
+
+.vx-studio-dynamic-rows-label {
+  color: var(--vx-text-secondary);
+  font-size: var(--vx-text-sm);
+}
+
+.vx-studio-dynamic-rows-list {
+  display: grid;
+  gap: var(--vx-space-2);
+}
+
+.vx-studio-dynamic-row {
+  display: flex;
+  gap: var(--vx-space-2);
+}
+
+.vx-studio-dynamic-row input {
+  flex: 1;
+}
+
+.vx-studio-row-add,
+.vx-studio-row-remove,
+.vx-studio-step-add,
+.vx-studio-step-up,
+.vx-studio-step-down,
+.vx-studio-step-remove {
+  background: transparent;
+  border: 1px solid var(--vx-border-strong);
+  border-radius: var(--vx-radius-sm);
+  color: var(--vx-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--vx-text-xs);
+  padding: 4px 8px;
+}
+
+.vx-studio-row-add:hover,
+.vx-studio-row-remove:hover,
+.vx-studio-step-add:hover,
+.vx-studio-step-up:hover,
+.vx-studio-step-down:hover,
+.vx-studio-step-remove:hover {
+  background: var(--vx-bg-hover);
+  color: var(--vx-text-primary);
+}
+
+.vx-studio-step-list {
+  display: grid;
+  gap: var(--vx-space-3);
+}
+
+.vx-studio-step {
+  border: 1px solid var(--vx-border);
+  border-radius: var(--vx-radius-md);
+  display: grid;
+  gap: var(--vx-space-2);
+  padding: var(--vx-space-3);
+}
+
+.vx-studio-step-head {
+  align-items: center;
+  display: flex;
+  gap: var(--vx-space-2);
+}
+
+.vx-studio-step-order {
+  align-items: center;
+  background: var(--vx-bg-surface);
+  border: 1px solid var(--vx-border-strong);
+  border-radius: 50%;
+  display: inline-flex;
+  font-size: var(--vx-text-xs);
+  height: 22px;
+  justify-content: center;
+  width: 22px;
+}
+
+.vx-studio-step-ref {
+  flex: 1;
+}
+
+.vx-studio-step-custom {
+  display: grid;
+  gap: var(--vx-space-2);
+}
+
+.vx-studio-step-condition-row {
+  align-items: center;
+  color: var(--vx-text-secondary);
+  display: flex;
+  font-size: var(--vx-text-sm);
+  gap: var(--vx-space-2);
+}

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   _resetModeControlsForTest,
   initModeControls,
+  refreshModeMenu,
   renderRuntimeProfile,
   type AgentProfileInfo,
 } from "../../src/ui/mode";
@@ -112,6 +113,43 @@ describe("runtime profile controls", () => {
     expect(document.querySelector("#chat-header-mode")?.getAttribute("data-profile")).toBe("reviewer-v2");
   });
 
+  it("renders a create-custom-agent action at the menu bottom and routes clicks to onCreateAgent", async () => {
+    const listProfiles = vi.fn().mockResolvedValue({ profiles });
+    const onSwitch = vi.fn();
+    const onCreateAgent = vi.fn();
+    initModeControls(onSwitch, { listProfiles, onCreateAgent });
+
+    document.querySelector<HTMLButtonElement>("#mode-trigger")!.click();
+    await flush();
+
+    const action = document.querySelector<HTMLButtonElement>('#mode-menu [data-action="new-agent"]');
+    expect(action).not.toBeNull();
+    expect(action!.textContent).toContain("新建自定义 Agent");
+    action!.click();
+    await flush();
+
+    expect(onCreateAgent).toHaveBeenCalledTimes(1);
+    expect(onSwitch).not.toHaveBeenCalled();
+    expect(document.querySelector<HTMLElement>("#mode-menu")!.hidden).toBe(true);
+  });
+
+  it("refreshModeMenu re-fetches profiles and re-renders options", async () => {
+    const listProfiles = vi.fn()
+      .mockResolvedValueOnce({ profiles })
+      .mockResolvedValueOnce({ profiles: [...profiles, { ...profiles[0], name: "new-agent-1", display_name: "New Agent 1" }] });
+    initModeControls(vi.fn(), { listProfiles });
+
+    document.querySelector<HTMLButtonElement>("#mode-trigger")!.click();
+    await flush();
+    expect(document.querySelectorAll("#mode-menu [data-profile]")).toHaveLength(2);
+
+    await refreshModeMenu();
+
+    expect(listProfiles).toHaveBeenCalledTimes(2);
+    expect(document.querySelectorAll("#mode-menu [data-profile]")).toHaveLength(3);
+    expect(document.querySelector('[data-profile="new-agent-1"]')?.textContent).toContain("New Agent 1");
+  });
+
   it("keeps keyboard close behavior after async menu rendering", async () => {
     initModeControls(vi.fn(), { listProfiles: vi.fn().mockResolvedValue({ profiles }) });
     const trigger = document.querySelector<HTMLButtonElement>("#mode-trigger")!;
@@ -124,4 +162,16 @@ describe("runtime profile controls", () => {
     expect(menu.hidden).toBe(true);
     expect(document.activeElement).toBe(trigger);
   });
+
+  it("arrow keys can move focus onto the create action item", async () => {
+    const listProfiles = vi.fn().mockResolvedValue({ profiles: [profiles[0]] });
+    initModeControls(vi.fn(), { listProfiles, onCreateAgent: vi.fn() });
+    document.querySelector<HTMLButtonElement>("#mode-trigger")!.click();
+    await flush();
+
+    // 打开时聚焦首个可用选项（profile）；再按 ArrowDown 应落到动作项上
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+    expect(document.activeElement).toBe(document.querySelector('[data-action="new-agent"]'));
+  });
 });
+

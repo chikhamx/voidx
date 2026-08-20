@@ -21,10 +21,12 @@ export interface AgentProfileInfo {
 
 interface ModeControlsOptions {
   listProfiles?: () => Promise<{ profiles: AgentProfileInfo[] }>;
+  onCreateAgent?: () => void;
 }
 
 let boundSwitcher: HTMLElement | null = null;
 let switchCallback: ((profile: RuntimeProfile) => void) | null = null;
+let createAgentCallback: (() => void) | null = null;
 let listProfiles: (() => Promise<{ profiles: AgentProfileInfo[] }>) | null = null;
 let menuController: AbortController | null = null;
 let currentProfile = "coding";
@@ -38,7 +40,7 @@ function menuElements() {
 }
 
 function menuOptions(menu: HTMLElement): HTMLButtonElement[] {
-  return [...menu.querySelectorAll<HTMLButtonElement>("[data-profile]")].filter((option) => !option.disabled);
+  return [...menu.querySelectorAll<HTMLButtonElement>("[data-profile], [data-action]")].filter((option) => !option.disabled);
 }
 
 function focusSelectedOption(menu: HTMLElement): void {
@@ -87,6 +89,19 @@ function renderMenu(profiles: AgentProfileInfo[]): void {
     button.append(text);
     return button;
   }));
+  if (createAgentCallback) {
+    const divider = document.createElement("div");
+    divider.className = "vx-mode-divider";
+    divider.setAttribute("role", "separator");
+    const action = document.createElement("button");
+    action.type = "button";
+    action.className = "vx-mode-option vx-mode-action";
+    action.dataset.action = "new-agent";
+    action.setAttribute("role", "option");
+    action.setAttribute("aria-selected", "false");
+    action.textContent = "＋ 新建自定义 Agent…";
+    menu.append(divider, action);
+  }
   renderRuntimeProfile(currentProfile);
 }
 
@@ -95,6 +110,10 @@ async function refreshProfiles(): Promise<AgentProfileInfo[]> {
   const result = await listProfiles();
   renderMenu(result.profiles || []);
   return result.profiles || [];
+}
+
+export async function refreshModeMenu(): Promise<void> {
+  await refreshProfiles();
 }
 
 async function openMenu(): Promise<void> {
@@ -129,6 +148,12 @@ function handleSwitcherClick(event: Event): void {
     if (!menu) return;
     if (menu.hidden) void openMenu();
     else closeMenu();
+    return;
+  }
+  const actionButton = target?.closest<HTMLButtonElement>("[data-action]");
+  if (actionButton?.dataset.action === "new-agent" && !actionButton.disabled) {
+    closeMenu();
+    createAgentCallback?.();
     return;
   }
   const button = target?.closest<HTMLButtonElement>("[data-profile]");
@@ -169,6 +194,7 @@ export function initModeControls(
   const { switcher, menu } = menuElements();
   switchCallback = onSwitch;
   listProfiles = options.listProfiles ?? null;
+  createAgentCallback = options.onCreateAgent ?? null;
   if (!switcher || !menu) return;
   if (switcher !== boundSwitcher) {
     boundSwitcher?.removeEventListener("click", handleSwitcherClick);
@@ -198,6 +224,7 @@ export function _resetModeControlsForTest(): void {
   boundSwitcher?.removeEventListener("click", handleSwitcherClick);
   boundSwitcher = null;
   switchCallback = null;
+  createAgentCallback = null;
   listProfiles = null;
   profilesByName = new Map();
   currentProfile = "coding";

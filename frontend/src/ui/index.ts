@@ -54,7 +54,8 @@ export {
   onThreadDelete,
   onThreadRename,
 } from "./sidebar";
-export { type AgentProfileInfo, type RuntimeProfile, initModeControls, isRuntimeProfile, renderRuntimeProfile, runtimeProfileLabel, runtimeProfileRunMode } from "./mode";
+export { type AgentProfileInfo, type RuntimeProfile, initModeControls, isRuntimeProfile, refreshModeMenu, renderRuntimeProfile, runtimeProfileLabel, runtimeProfileRunMode } from "./mode";
+export { type AgentCatalog, type AgentProfileDiagnostic, type AgentStudioRpc, closeAgentStudio, openAgentStudio } from "./agent-studio";
 export { COMMAND_CATALOG, completeSlashInput, isKnownSlashCommand, matchSlashCommands, renderSlashMenu, setCommandCatalog } from "./slash";
 export {
   initTerminal,

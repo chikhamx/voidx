@@ -1,5 +1,134 @@
 {
   "$defs": {
+    "AgentCatalogDto": {
+      "properties": {
+        "builtin_nodes": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AgentCatalogNodeDto"
+          },
+          "title": "Builtin Nodes",
+          "type": "array"
+        },
+        "default_edges": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AgentCatalogEdgeDto"
+          },
+          "title": "Default Edges",
+          "type": "array"
+        },
+        "mcp_servers": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AgentCatalogIntegrationDto"
+          },
+          "title": "Mcp Servers",
+          "type": "array"
+        },
+        "skills": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AgentCatalogIntegrationDto"
+          },
+          "title": "Skills",
+          "type": "array"
+        },
+        "tools": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AgentCatalogToolDto"
+          },
+          "title": "Tools",
+          "type": "array"
+        }
+      },
+      "title": "AgentCatalogDto",
+      "type": "object"
+    },
+    "AgentCatalogEdgeDto": {
+      "properties": {
+        "condition": {
+          "title": "Condition",
+          "type": "string"
+        },
+        "label": {
+          "default": "",
+          "title": "Label",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "target": {
+          "title": "Target",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "target",
+        "condition"
+      ],
+      "title": "AgentCatalogEdgeDto",
+      "type": "object"
+    },
+    "AgentCatalogIntegrationDto": {
+      "description": "Checkbox-list entry for skills / MCP servers (UI consumes name+description).",
+      "properties": {
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "description"
+      ],
+      "title": "AgentCatalogIntegrationDto",
+      "type": "object"
+    },
+    "AgentCatalogNodeDto": {
+      "properties": {
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "description"
+      ],
+      "title": "AgentCatalogNodeDto",
+      "type": "object"
+    },
+    "AgentCatalogToolDto": {
+      "properties": {
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "description"
+      ],
+      "title": "AgentCatalogToolDto",
+      "type": "object"
+    },
     "AgentProfileDetailDto": {
       "properties": {
         "profile": {
@@ -1165,6 +1294,21 @@
     }
   },
   "anyOf": [
+    {
+      "$ref": "#/$defs/AgentCatalogDto"
+    },
+    {
+      "$ref": "#/$defs/AgentCatalogEdgeDto"
+    },
+    {
+      "$ref": "#/$defs/AgentCatalogIntegrationDto"
+    },
+    {
+      "$ref": "#/$defs/AgentCatalogNodeDto"
+    },
+    {
+      "$ref": "#/$defs/AgentCatalogToolDto"
+    },
     {
       "$ref": "#/$defs/AgentProfileDetailDto"
     },
