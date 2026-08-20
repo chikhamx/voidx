@@ -345,7 +345,9 @@ function handleRuntimeProfileSwitch(profile: RuntimeProfile): void {
 }
 
 function initializeModeControls(): void {
-  initModeControls(handleRuntimeProfileSwitch);
+  initModeControls(handleRuntimeProfileSwitch, {
+    listProfiles: () => rpcCall("list-agent-profiles", {}) as Promise<{ profiles: import("./ui").AgentProfileInfo[] }>,
+  });
   renderRuntimeProfile(uiState.runtimeProfile);
 }
 
@@ -1389,10 +1391,9 @@ composerEl.addEventListener("submit", (event: SubmitEvent) => {
   const threadId = uiState.sessionId;
   const sendContextGeneration = threadContextGeneration;
   const isGuidance = uiState.isRunning;
-  const isChatGuidance = isGuidance && uiState.runtimeProfile === "chat";
   const style = isGuidance ? "guidance" : "text";
   const itemId = createLocalItemId(isGuidance ? "guidance" : "user");
-  if (!isGuidance || isChatGuidance) {
+  if (!isGuidance) {
     rememberPendingLocalMessage(threadId, itemId, text, style);
     appendMessageItem(itemId, { style, text });
     syncEmptyState();

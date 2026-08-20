@@ -4,7 +4,7 @@ from tests.tool_registry import build_registry
 import pytest
 
 from voidx.agent.domain.task.state import ToolStatePatch
-from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext
+from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext, AgentToolRuntime
 from voidx.agent.adapters.tools.subagent import AgentTool
 from voidx.tooling.builtin.document import DocumentTool
 from voidx.tooling.adapters.lsp import LspTool
@@ -16,6 +16,7 @@ from voidx.tooling.adapters.skills import SkillsTool
 from voidx.agent.adapters.tools.todo import TodoWriteTool
 from voidx.agent.adapters.tools.automation.workflow import WorkflowTool
 from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
+from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 
 
 class EmptyTodoTracker:
@@ -69,6 +70,7 @@ async def test_todo_read_ignores_write_update_noise(tmp_path) -> None:
 async def test_workflow_done_ignores_enter_and_advance_noise(tmp_path) -> None:
     ctx = ToolContext(
         workspace=str(tmp_path),
+        runtime=AgentToolRuntime(workflow_dag=DEFAULT_WORKFLOW_DAG),
         workflow_runs=[WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE)],
     )
 

@@ -27,6 +27,11 @@ def voidx_global_skills_dir() -> Path:
     return voidx_home() / "skills"
 
 
+def voidx_global_agents_dir() -> Path:
+    """Global agent profiles directory (``~/.voidx/agents``)."""
+    return voidx_home() / "agents"
+
+
 def voidx_workspace_dir(workspace: str | Path = ".") -> Path:
     """Workspace-local voidx directory (``<workspace>/.voidx``)."""
     return Path(workspace).resolve() / VOIDX_DIR_NAME
@@ -35,6 +40,11 @@ def voidx_workspace_dir(workspace: str | Path = ".") -> Path:
 def voidx_workspace_skills_dir(workspace: str | Path = ".") -> Path:
     """Workspace-local skills directory (``<workspace>/.voidx/skills``)."""
     return voidx_workspace_dir(workspace) / "skills"
+
+
+def voidx_workspace_agents_dir(workspace: str | Path = ".") -> Path:
+    """Workspace-local agent profiles directory (``<workspace>/.voidx/agents``)."""
+    return voidx_workspace_dir(workspace) / "agents"
 
 
 # Workspace-relative file names (kept as strings for config loaders that

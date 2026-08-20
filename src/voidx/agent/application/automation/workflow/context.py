@@ -5,9 +5,8 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterable
 
-from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 from voidx.agent.application.automation.workflow.render import render_node_markdown
-from voidx.agent.domain.automation.workflow_schema import WorkflowNode
+from voidx.agent.domain.automation.workflow_schema import WorkflowDAG, WorkflowNode
 
 WORKFLOW_CONTEXT_MARKER = "VOIDX_WORKFLOW_CONTEXT"
 WORKFLOW_CONTEXT_SCOPE = "structured-workflow-runtime"
@@ -26,19 +25,20 @@ def workflow_context_cache_key(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-def render_workflow_instruction(node: WorkflowNode) -> str:
-    return render_node_markdown(node, DEFAULT_WORKFLOW_DAG)
+def render_workflow_instruction(node: WorkflowNode, dag: WorkflowDAG) -> str:
+    return render_node_markdown(node, dag)
 
 
 def render_workflow_context(
     nodes: Iterable[WorkflowNode],
+    dag: WorkflowDAG,
     *,
     active_names: Iterable[str] = (),
 ) -> str:
     del active_names
     rendered: list[str] = []
     for node in nodes:
-        rendered.append(render_workflow_instruction(node).strip())
+        rendered.append(render_workflow_instruction(node, dag).strip())
     body = "\n\n".join(item for item in rendered if item)
     if not body:
         return ""

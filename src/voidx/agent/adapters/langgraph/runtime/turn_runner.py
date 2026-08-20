@@ -262,14 +262,17 @@ class TurnRunner:
                         or current_state.session.id == default_session.id
                     ):
                         host._default_task_state = turn_task_state
-                reconciled_workflow_runs = reconcile_workflow_runs_for_turn(
-                    goal_resolution=intent_resolution,
-                    after_state=turn_task_state,
-                )
-                turn_task_state.workflow_runs = {
-                    run.name: run
-                    for run in reconciled_workflow_runs
-                }
+                workflow_dag = context.workflow_context.dag if context.workflow_context else None
+                if workflow_dag is not None:
+                    reconciled_workflow_runs = reconcile_workflow_runs_for_turn(
+                        goal_resolution=intent_resolution,
+                        after_state=turn_task_state,
+                        dag=workflow_dag,
+                    )
+                    turn_task_state.workflow_runs = {
+                        run.name: run
+                        for run in reconciled_workflow_runs
+                    }
 
                 # Sync resolved goal and workflow to host so status bar updates immediately
                 if host.model is not None:

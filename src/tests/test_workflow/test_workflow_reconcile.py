@@ -1,3 +1,5 @@
+from voidx.agent.domain.agent_profile import content_hash_of
+from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 from voidx.agent.domain.task.intent import TaskIntent
 from voidx.agent.domain.task.state import (
     GoalResolution,
@@ -8,6 +10,16 @@ from voidx.agent.domain.task.state import (
 )
 from voidx.agent.application.automation.workflow.reconcile import reconcile_workflow_runs_for_turn
 from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
+
+
+def _assert_only_dag_hash_backfilled(
+    updated: list[WorkflowRunState], original: WorkflowRunState
+) -> None:
+    assert len(updated) == 1
+    assert updated[0].dag_hash == content_hash_of(
+        DEFAULT_WORKFLOW_DAG.model_dump(mode="json")
+    )
+    assert updated[0].model_copy(update={"dag_hash": ""}) == original
 
 
 def _goal(desc: str = "agent_name semantic cleanup") -> GoalSpec:
@@ -49,7 +61,7 @@ def test_reconcile_advances_brainstorm_to_design_when_join_requests_design():
         goal_resolution=resolution,
         after_state=state,
         turn_count=7,
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     by_name = {item.name: item for item in updated}
     assert by_name["brainstorm"].status == WorkflowRunStatus.SATISFIED
@@ -68,9 +80,9 @@ def test_reconcile_does_not_advance_without_plan_join():
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,
         after_state=state,
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
-    assert updated == [run]
+    _assert_only_dag_hash_backfilled(updated, run)
 
 
 def test_reconcile_preserves_unrelated_active_workflow_runs():
@@ -88,9 +100,9 @@ def test_reconcile_preserves_unrelated_active_workflow_runs():
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,
         after_state=state,
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
-    assert updated == [verify]
+    _assert_only_dag_hash_backfilled(updated, verify)
 
 
 def test_reconcile_activates_plan_join_when_no_workflow_is_active():
@@ -102,7 +114,7 @@ def test_reconcile_activates_plan_join_when_no_workflow_is_active():
         goal_resolution=resolution,
         after_state=state,
         turn_count=2,
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     by_name = {item.name: item for item in updated}
     assert by_name["review"].status == WorkflowRunStatus.ACTIVE
@@ -124,7 +136,7 @@ def test_reconcile_clears_completed_workflow_runs_when_next_turn_has_no_join():
         goal_resolution=resolution,
         after_state=state,
         turn_count=12,
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     assert updated == []
 
@@ -138,7 +150,7 @@ def test_reconcile_advances_brainstorm_to_plan_when_join_requests_plan():
         goal_resolution=resolution,
         after_state=state,
         turn_count=3,
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     by_name = {item.name: item for item in updated}
     assert by_name["brainstorm"].status == WorkflowRunStatus.SATISFIED
@@ -157,7 +169,7 @@ def test_reconcile_supersedes_brainstorm_when_join_requests_tdd():
         goal_resolution=resolution,
         after_state=state,
         turn_count=11,
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     by_name = {item.name: item for item in updated}
     assert by_name["brainstorm"].status == WorkflowRunStatus.SATISFIED
@@ -176,7 +188,7 @@ def test_reconcile_keeps_debug_dag_transition_when_join_requests_tdd():
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,
         after_state=state,
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     by_name = {item.name: item for item in updated}
     assert by_name["debug"].status == WorkflowRunStatus.SATISFIED
@@ -198,7 +210,7 @@ def test_reconcile_satisfies_other_active_runs_when_target_is_already_active():
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,
         after_state=state,
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     by_name = {item.name: item for item in updated}
     assert by_name["brainstorm"].status == WorkflowRunStatus.SATISFIED
@@ -214,9 +226,9 @@ def test_reconcile_keeps_single_active_target_when_no_other_active_runs():
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,
         after_state=state,
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
-    assert updated == [design]
+    _assert_only_dag_hash_backfilled(updated, design)
 
 
 def test_reconcile_preserves_active_workflow_without_join_for_same_goal():
@@ -228,9 +240,9 @@ def test_reconcile_preserves_active_workflow_without_join_for_same_goal():
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,
         after_state=state,
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
-    assert updated == [tdd]
+    _assert_only_dag_hash_backfilled(updated, tdd)
 
 
 def test_reconcile_ignores_unknown_plan_join():
@@ -241,9 +253,9 @@ def test_reconcile_ignores_unknown_plan_join():
     updated = reconcile_workflow_runs_for_turn(
         goal_resolution=resolution,
         after_state=state,
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
-    assert updated == [run]
+    _assert_only_dag_hash_backfilled(updated, run)
 
 
 def test_reconcile_advances_verify_to_review_when_dag_edge_exists():
@@ -259,7 +271,7 @@ def test_reconcile_advances_verify_to_review_when_dag_edge_exists():
         goal_resolution=resolution,
         after_state=state,
         turn_count=5,
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     assert len(updated) == 2
     by_name = {r.name: r for r in updated}
@@ -281,7 +293,7 @@ def test_reconcile_advances_feedback_to_brainstorm_when_join_requests_brainstorm
         goal_resolution=resolution,
         after_state=state,
         turn_count=8,
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     by_name = {item.name: item for item in updated}
     assert by_name["feedback"].status == WorkflowRunStatus.SATISFIED
@@ -305,7 +317,7 @@ def test_reconcile_advances_feedback_to_plan_when_join_requests_plan_from_feedba
         goal_resolution=resolution,
         after_state=state,
         turn_count=9,
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     by_name = {item.name: item for item in updated}
     assert by_name["feedback"].status == WorkflowRunStatus.SATISFIED
@@ -325,7 +337,7 @@ def test_reconcile_picks_first_source_when_multiple_active_nodes_target_same_wor
         goal_resolution=resolution,
         after_state=state,
         turn_count=4,
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     by_name = {item.name: item for item in updated}
     assert "verify" in by_name

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from voidx.tooling.domain.capability import ToolCapability
 from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import ToolResult
 from voidx.tooling.ports.tool import ToolPlugin
@@ -19,37 +20,88 @@ class ToolDef(BaseModel):
     id: str
     description: str
     parameters: dict
+    capability: ToolCapability
 
 
 class ToolRegistry:
     """Manage an explicitly supplied catalog of tool plugins."""
 
-    def __init__(self, plugins: Iterable[ToolPlugin] = ()) -> None:
+    def __init__(
+        self,
+        plugins: Iterable[ToolPlugin] = (),
+        *,
+        capabilities: Mapping[str, ToolCapability] | None = None,
+    ) -> None:
         self._tools: dict[str, ToolDef] = {}
         self._instances: dict[str, ToolPlugin] = {}
-        for plugin in plugins:
-            self.register_plugin(plugin)
+        plugin_list = list(plugins)
+        capability_map = dict(capabilities or {})
+        plugin_ids = {plugin.id for plugin in plugin_list}
+        missing = sorted(plugin_ids - set(capability_map))
+        unknown = sorted(set(capability_map) - plugin_ids)
+        if missing:
+            raise ValueError(f"Missing tool capabilities: {', '.join(missing)}")
+        if unknown:
+            raise ValueError(f"Unknown tool capabilities: {', '.join(unknown)}")
+        for plugin in plugin_list:
+            self.register_plugin(plugin, capability=capability_map[plugin.id])
 
-    def register_plugin(self, plugin: ToolPlugin) -> None:
-        """Register a plugin and reject duplicate ids in a catalog build."""
+    def register_plugin(
+        self, plugin: ToolPlugin, *, capability: ToolCapability | None = None
+    ) -> None:
+        """Register a plugin and reject duplicate ids or missing metadata."""
         if plugin.id in self._instances:
             raise ValueError(f"Duplicate tool id: {plugin.id}")
-        self.register(plugin.id, plugin, plugin.description, plugin.parameters_schema())
+        if capability is None:
+            raise ValueError(f"Missing tool capability: {plugin.id}")
+        self.register(
+            plugin.id,
+            plugin,
+            plugin.description,
+            plugin.parameters_schema(),
+            capability=capability,
+        )
 
-    def register(self, tool_id: str, instance: ToolPlugin, description: str, parameters: dict) -> None:
+    def register(
+        self,
+        tool_id: str,
+        instance: ToolPlugin,
+        description: str,
+        parameters: dict,
+        *,
+        capability: ToolCapability | None = None,
+    ) -> None:
         """Register a runtime-bound tool instance and reject duplicate ids."""
         if tool_id in self._instances:
             raise ValueError(f"Duplicate tool id: {tool_id}")
-        self._tools[tool_id] = ToolDef(id=tool_id, description=description, parameters=parameters)
+        if capability is None:
+            raise ValueError(f"Missing tool capability: {tool_id}")
+        self._tools[tool_id] = ToolDef(
+            id=tool_id,
+            description=description,
+            parameters=parameters,
+            capability=capability,
+        )
         self._instances[tool_id] = instance
 
-    def replace(self, tool_id: str, instance: ToolPlugin, description: str, parameters: dict) -> None:
-        """Explicitly replace an existing runtime binding without changing catalog order."""
+    def replace(
+        self,
+        tool_id: str,
+        instance: ToolPlugin,
+        description: str,
+        parameters: dict,
+    ) -> None:
+        """Replace a runtime binding while preserving catalog metadata."""
         if tool_id not in self._instances:
             raise KeyError(f"Unknown tool id: {tool_id}")
-        self._tools[tool_id] = ToolDef(id=tool_id, description=description, parameters=parameters)
+        capability = self._tools[tool_id].capability
+        self._tools[tool_id] = ToolDef(
+            id=tool_id,
+            description=description,
+            parameters=parameters,
+            capability=capability,
+        )
         self._instances[tool_id] = instance
-
 
     def list(self) -> list[ToolDef]:
         return list(self._tools.values())

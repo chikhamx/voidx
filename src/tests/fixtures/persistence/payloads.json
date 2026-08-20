@@ -100,6 +100,7 @@
       "activated_turn": 0,
       "blocked_reason": "",
       "body_hash": "",
+      "dag_hash": "",
       "evidence": [],
       "goal": "",
       "goal_type": "",

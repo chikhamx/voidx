@@ -1,6 +1,12 @@
 [
   {
     "arg": "args",
+    "desc": "List or select agent profiles",
+    "method": "_agents",
+    "name": "/agents"
+  },
+  {
+    "arg": "args",
     "desc": "Allow a tool for this session",
     "method": "_cmd_allow",
     "name": "/allow"

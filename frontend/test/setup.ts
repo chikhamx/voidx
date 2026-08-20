@@ -37,12 +37,7 @@ document.body.innerHTML = `
         </header>
         <div class="vx-mode-picker" id="runtime-profile-switcher">
           <button type="button" class="vx-mode-trigger" id="mode-trigger" aria-haspopup="listbox" aria-expanded="false"><span class="vx-mode-trigger-label" id="mode-trigger-label">编码</span></button>
-          <div class="vx-mode-menu" id="mode-menu" role="listbox" hidden>
-            <button type="button" class="vx-mode-option" data-profile="chat" role="option" aria-selected="false"><span class="vx-mode-option-text"><span class="vx-mode-option-name">聊天</span><span class="vx-mode-option-desc">自由对话与问答</span></span><span class="vx-mode-option-check"></span></button>
-            <button type="button" class="vx-mode-option" data-profile="coding" role="option" aria-selected="true"><span class="vx-mode-option-text"><span class="vx-mode-option-name">编码</span><span class="vx-mode-option-desc">构建、调试与发布</span></span><span class="vx-mode-option-check"></span></button>
-            <button type="button" class="vx-mode-option" data-profile="goal" role="option" aria-selected="false"><span class="vx-mode-option-text"><span class="vx-mode-option-name">目标</span><span class="vx-mode-option-desc">按目标持续推进</span></span><span class="vx-mode-option-check"></span></button>
-            <button type="button" class="vx-mode-option" data-profile="loop" role="option" aria-selected="false"><span class="vx-mode-option-text"><span class="vx-mode-option-name">循环</span><span class="vx-mode-option-desc">周期性自动执行</span></span><span class="vx-mode-option-check"></span></button>
-          </div>
+          <div class="vx-mode-menu" id="mode-menu" role="listbox" hidden></div>
         </div>
         <nav class="vx-sidebar-nav" aria-label="Workspace navigation">
           <button type="button" class="vx-nav-item vx-new-chat" id="btn-new-chat">
@@ -219,6 +214,7 @@ document.body.innerHTML = `
           <button type="button" data-tab="preferences" class="settings-tab">偏好</button>
           <button type="button" data-tab="code" class="settings-tab">代码</button>
           <button type="button" data-tab="advanced" class="settings-tab">高级</button>
+          <button type="button" data-tab="agent-profiles" class="settings-tab">Agent Profiles</button>
         </nav>
         <div id="settings-content" class="settings-content"></div>
         <footer class="settings-footer">

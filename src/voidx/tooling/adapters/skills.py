@@ -213,6 +213,92 @@ class SkillsTool:
         return self._skills_api_provider(workspace).service
 
 
+
+
+class ReadOnlySkillsInput(BaseModel):
+    op: Literal["load", "list"] = Field(
+        description="Operation: 'list' enumerates allowed skills; 'load' fetches one allowed skill."
+    )
+    name: str | None = Field(
+        default=None,
+        description="Allowed skill name. Required for op=load.",
+    )
+
+
+class ReadOnlySkillsTool(SkillsTool):
+    id = "skill"
+    description = (
+        "List allowed skill instructions or load one allowed skill by name."
+    )
+
+    def __init__(
+        self,
+        skills_api_provider: Callable[[str], SkillsApi],
+        *,
+        allowed_names: frozenset[str],
+    ) -> None:
+        super().__init__(skills_api_provider)
+        self._allowed_names = frozenset(
+            normalize_skill_name(name) for name in allowed_names
+        )
+
+    def parameters_schema(self) -> dict:
+        return model_to_json_schema(ReadOnlySkillsInput)
+
+    async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+        try:
+            inp = ReadOnlySkillsInput.model_validate(args)
+        except Exception as exc:
+            return ToolResult(
+                output=f"Invalid arguments: {exc}",
+                metadata={"error": True, "reason": "invalid_skill_operation"},
+            )
+        if inp.op == "load":
+            name = normalize_skill_name(inp.name or "")
+            if name not in self._allowed_names:
+                return ToolResult(
+                    title="skill unavailable",
+                    output=f"Skill '{name}' is not available to this agent.",
+                    metadata={
+                        "error": True,
+                        "reason": "skill_not_allowed",
+                        "name": name,
+                    },
+                )
+            return self._execute_load(
+                SkillsInput(op="load", name=name),
+                ctx,
+            )
+        return self._execute_allowed_list(ctx)
+
+    def _execute_allowed_list(self, ctx: ToolContext) -> ToolResult:
+        service = self._skill_service_for(ctx.workspace)
+        skills = [
+            skill
+            for skill in service.list_skills()
+            if normalize_skill_name(skill.name) in self._allowed_names
+        ]
+        rows = []
+        structured = []
+        for skill in skills:
+            enabled = service.is_enabled(skill)
+            description = skill.meta.description.strip()
+            rows.append(
+                f"{skill.name}\t{skill.meta.scope}\t{enabled}\t{description}"
+            )
+            structured.append({
+                "name": skill.name,
+                "scope": skill.meta.scope,
+                "enabled": enabled,
+                "description": description,
+            })
+        output = "\n".join(rows) if rows else "(no allowed skills found)"
+        return ToolResult(
+            title=f"Skills: {len(skills)}",
+            output=output,
+            summary=f"listed {len(skills)} allowed skills",
+            metadata={"skills": structured, "count": len(skills)},
+        )
 def _looks_like_path(name: str) -> bool:
     return (
         "/" in name

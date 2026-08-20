@@ -9,6 +9,7 @@ from voidx.agent.adapters.langgraph.runtime.tool_surface import (
     resolve_tool_surface,
 )
 from voidx.tooling.application.registry import ToolRegistry
+from voidx.tooling.domain.capability import ToolCapability
 
 
 class _AllowAll:
@@ -27,7 +28,13 @@ class _Deny:
 def _registry(*tool_ids: str) -> ToolRegistry:
     registry = ToolRegistry()
     for tool_id in tool_ids:
-        registry.register(tool_id, object(), f"{tool_id} description", {"type": "object", "properties": {}})
+        registry.register(
+            tool_id,
+            object(),
+            f"{tool_id} description",
+            {"type": "object", "properties": {}},
+            capability=ToolCapability.ORCHESTRATION,
+        )
     return registry
 
 
@@ -158,6 +165,78 @@ def test_child_surface_blocks_delegation_and_lifecycle_but_keeps_message() -> No
         assert hidden not in names
 
 
+
+
+def test_profile_policy_uses_registry_capability_for_visibility() -> None:
+    from voidx.agent.domain.agent_profile import ResourcePolicy
+    from voidx.agent.domain.run_config import resolve_run_config
+    from voidx.agent.domain.tool_policy import CodingToolPolicy, ProfileToolPolicy
+
+    registry = ToolRegistry()
+    registry.register(
+        "clarify",
+        object(),
+        "clarify description",
+        {},
+        capability=ToolCapability.HITL_INTERACTION,
+    )
+    registry.register(
+        "workflow",
+        object(),
+        "workflow description",
+        {},
+        capability=ToolCapability.ORCHESTRATION,
+    )
+    policy = ProfileToolPolicy(
+        baseline=CodingToolPolicy(),
+        resource_policy=ResourcePolicy(hitl_mode="autonomous"),
+        run_config=resolve_run_config("single"),
+        snapshot_hash="snapshot-1",
+        phase="turn",
+    )
+
+    surface = resolve_tool_surface(
+        registry,
+        ToolSurfaceContext(runtime_profile=_coding_profile(), tool_policy=policy),
+    )
+
+    assert "clarify" not in _names(surface)
+    assert "workflow" in _names(surface)
+    assert surface.dropped["clarify"] == "policy"
+
+
+def test_tool_policy_bridge_normalizes_alias_and_registry_capability() -> None:
+    from voidx.agent.adapters.langgraph.runtime.tool_policy_bridge import (
+        check_tool_policy,
+    )
+    from voidx.agent.domain.agent_profile import ResourcePolicy
+    from voidx.agent.domain.run_config import resolve_run_config
+    from voidx.agent.domain.tool_policy import CodingToolPolicy, ProfileToolPolicy
+
+    registry = ToolRegistry()
+    registry.register(
+        "replace",
+        object(),
+        "replace description",
+        {},
+        capability=ToolCapability.EXECUTION_GATED,
+    )
+    policy = ProfileToolPolicy(
+        baseline=CodingToolPolicy(),
+        resource_policy=ResourcePolicy(tools_block=frozenset({"replace"})),
+        run_config=resolve_run_config("single"),
+        snapshot_hash="snapshot-1",
+        phase="turn",
+    )
+
+    decision = check_tool_policy(
+        policy, registry, "Edit", {"file_path": "example.py"}
+    )
+
+    assert not decision.allowed
+    assert decision.reason == "profile_blocked"
+    assert decision.canonical_tool == "replace"
+    assert decision.capability == "execution_gated"
 def test_policy_applies_to_protocol_injected_tools() -> None:
     registry = _registry("read")
 

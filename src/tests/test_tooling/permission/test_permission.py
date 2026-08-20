@@ -671,3 +671,27 @@ def test_engine_denies_non_approvable_tool(tmp_path):
 
     assert decision.action == "ask"
     assert decision.access_intents
+
+
+def test_execution_gated_mcp_call_requires_authorization(tmp_path):
+    context = PermissionContext(
+        workspace=str(tmp_path),
+        execution_gated=True,
+    )
+
+    decision = authorize_tool_call(
+        {
+            "name": "mcp",
+            "args": {
+                "op": "call",
+                "server": "github",
+                "tool": "create_issue",
+                "arguments": {"title": "Bug"},
+            },
+        },
+        context,
+    )
+
+    assert decision.action == "ask"
+    assert decision.pattern == "mcp:github:create_issue"
+    assert decision.source == "profile"

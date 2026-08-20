@@ -35,7 +35,7 @@ from tests.test_skills.conftest import _write_skill
 
 
 def test_workflow_service_select_from_start_returns_single_match():
-    service = WorkflowService()
+    service = WorkflowService(DEFAULT_WORKFLOW_DAG)
 
     review = service.select_from_start("review")
     debug = service.select_from_start("debug")
@@ -49,7 +49,7 @@ def test_workflow_service_select_from_start_returns_single_match():
 
 
 def test_builtin_workflow_nodes_declare_execution_contracts():
-    for node in WorkflowService().nodes():
+    for node in WorkflowService(DEFAULT_WORKFLOW_DAG).nodes():
         assert node.goal
         assert node.persona
         assert node.io.input
@@ -66,7 +66,7 @@ def test_builtin_workflow_nodes_declare_execution_contracts():
 
 
 def test_design_workflow_is_audience_aware():
-    service = WorkflowService()
+    service = WorkflowService(DEFAULT_WORKFLOW_DAG)
     design = service.get("design")
 
     assert design is not None
@@ -84,7 +84,7 @@ def test_design_workflow_is_audience_aware():
 
 
 def test_workflow_internal_subworkflows_are_structured_and_local():
-    service = WorkflowService()
+    service = WorkflowService(DEFAULT_WORKFLOW_DAG)
 
     tdd = service.get("tdd")
     debug = service.get("debug")
@@ -108,7 +108,7 @@ def test_workflow_internal_subworkflows_are_structured_and_local():
 
 
 def test_workflow_render_expands_execution_contract():
-    service = WorkflowService()
+    service = WorkflowService(DEFAULT_WORKFLOW_DAG)
     rendered = service.render_instruction(service.get("tdd"))
 
     assert "### Goal" in rendered
@@ -125,7 +125,7 @@ def test_workflow_render_expands_execution_contract():
 
 
 def test_workflow_prompts_are_capability_aware_and_repository_agnostic():
-    service = WorkflowService()
+    service = WorkflowService(DEFAULT_WORKFLOW_DAG)
     brainstorm = service.render_instruction(service.get("brainstorm"))
     plan = service.render_instruction(service.get("plan"))
     review = service.render_instruction(service.get("review"))
@@ -185,14 +185,14 @@ def test_workflow_state_summary_includes_transition_hint():
 
 
 def test_feedback_workflow_exposes_design_and_plan_exits():
-    assert workflow_transitions("feedback") == (
+    assert workflow_transitions("feedback", DEFAULT_WORKFLOW_DAG) == (
         "tdd",
         "verify",
         "brainstorm",
         "plan",
     )
 
-    edges = {edge.condition: edge for edge in workflow_edges("feedback")}
+    edges = {edge.condition: edge for edge in workflow_edges("feedback", DEFAULT_WORKFLOW_DAG)}
     assert edges["needs_design"].target == "brainstorm"
     assert edges["needs_plan"].target == "plan"
     assert "design" in edges["needs_design"].description.lower()
@@ -228,7 +228,7 @@ def test_advance_workflow_states_marks_satisfied_from_evidence():
             )
         ],
         turn_count=4,
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     tdd = next(item for item in states if item.name == "tdd")
     assert tdd.status == WorkflowRunStatus.SATISFIED
@@ -241,18 +241,18 @@ def test_advance_workflow_states_does_not_mark_pending_satisfied():
         [WorkflowRunState(name="tdd", status=WorkflowRunStatus.PENDING)],
         [{"workflow": "tdd", "kind": "satisfied"}],
         turn_count=4,
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     assert states[0].status == WorkflowRunStatus.PENDING
     assert "verify" not in [run.name for run in states]
 
 
 def test_workflow_terminal_exit_is_structured_and_terminal():
-    condition = workflow_terminal_condition()
+    condition = workflow_terminal_condition(DEFAULT_WORKFLOW_DAG)
 
     assert condition == DEFAULT_WORKFLOW_DAG.terminal_exit.condition
-    assert is_workflow_terminal_condition(f" {condition} ")
-    assert DEFAULT_WORKFLOW_DAG.terminal_exit_summary() in workflow_exit_summaries("tdd")
+    assert is_workflow_terminal_condition(f" {condition} ", DEFAULT_WORKFLOW_DAG)
+    assert DEFAULT_WORKFLOW_DAG.terminal_exit_summary() in workflow_exit_summaries("tdd", DEFAULT_WORKFLOW_DAG)
 
     states = advance_workflow_states(
         [
@@ -270,7 +270,7 @@ def test_workflow_terminal_exit_is_structured_and_terminal():
                 reason="terminal state verified",
             )
         ],
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     assert [run.name for run in states] == ["tdd"]
     assert states[0].status == WorkflowRunStatus.SATISFIED
@@ -280,15 +280,15 @@ def test_advance_workflow_states_initializes_missing_run_from_event_kind():
     blocked = advance_workflow_states(
         [],
         [{"workflow": "debug", "kind": "blocked", "reason": "needs repro"}],
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
     skipped = advance_workflow_states(
         [],
         [{"workflow": "review", "kind": "skipped"}],
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
     satisfied = advance_workflow_states(
         [],
         [{"workflow": "tdd", "kind": "satisfied"}],
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     assert blocked[0].status == WorkflowRunStatus.BLOCKED
     assert blocked[0].blocked_reason == "needs repro"
@@ -317,7 +317,7 @@ def test_advance_workflow_states_activates_transition_target():
             }
         ],
         turn_count=5,
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     by_name = {run.name: run for run in states}
     assert by_name["tdd"].status == WorkflowRunStatus.SATISFIED
@@ -357,7 +357,7 @@ def test_advance_workflow_states_routes_feedback_to_deferred_workflow(condition,
             )
         ],
         turn_count=8,
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     by_name = {run.name: run for run in states}
     assert by_name["feedback"].status == WorkflowRunStatus.SATISFIED
@@ -377,7 +377,7 @@ def test_advance_workflow_states_does_not_advance_without_evidence():
         transition_to=["verify"],
     )
 
-    states = advance_workflow_states([run], [], turn_count=6)
+    states = advance_workflow_states([run], [], turn_count=6, dag=DEFAULT_WORKFLOW_DAG)
 
     assert [item.name for item in states] == ["tdd"]
     assert states[0].status == WorkflowRunStatus.ACTIVE
@@ -400,7 +400,7 @@ def test_advance_workflow_states_does_not_repeat_transition_from_satisfied_node(
                 condition="implemented",
             )
         ],
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     assert [run.name for run in states] == ["tdd"]
     assert states[0].status == WorkflowRunStatus.SATISFIED
@@ -423,7 +423,7 @@ def test_advance_workflow_states_rejects_invalid_condition_without_satisfying_no
                 condition="approved",
             )
         ],
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     assert [run.name for run in states] == ["tdd"]
     assert states[0].status == WorkflowRunStatus.ACTIVE
@@ -445,7 +445,7 @@ def test_advance_workflow_states_allows_empty_evidence_before_transition():
                 condition="implemented",
             )
         ],
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     by_name = {run.name: run for run in states}
     assert by_name["tdd"].status == WorkflowRunStatus.SATISFIED
@@ -474,7 +474,7 @@ def test_advance_workflow_states_does_not_duplicate_existing_successor():
                 "condition": "implemented",
             }
         ],
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     assert [run.name for run in states].count("verify") == 1
     verification = next(run for run in states if run.name == "verify")
@@ -491,7 +491,7 @@ def test_blocked_or_skipped_workflow_does_not_trigger_successor():
             )
         ],
         [{"workflow": "tdd", "kind": "satisfied"}],
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
     skipped = advance_workflow_states(
         [
             WorkflowRunState(
@@ -501,7 +501,7 @@ def test_blocked_or_skipped_workflow_does_not_trigger_successor():
             )
         ],
         [{"workflow": "tdd", "kind": "skipped"}],
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     assert [run.name for run in blocked] == ["tdd"]
     assert blocked[0].status == WorkflowRunStatus.BLOCKED
@@ -526,7 +526,7 @@ def test_blocked_workflow_can_reactivate_when_condition_clears():
             )
         ],
         turn_count=7,
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     assert states[0].status == WorkflowRunStatus.ACTIVE
     assert states[0].blocked_reason == ""

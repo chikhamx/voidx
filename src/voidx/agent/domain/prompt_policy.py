@@ -151,8 +151,42 @@ class LoopPromptPolicy:
         return set()
 
 
+PROMPT_POLICY_REGISTRY: dict[str, type] = {
+    "coding": CodingPromptPolicy,
+    "chat": ChatPromptPolicy,
+    "goal": GoalPromptPolicy,
+    "loop": LoopPromptPolicy,
+}
+
+
+def resolve_prompt_policy(policy_id: str) -> PromptPolicy:
+    """Instantiate a registered prompt policy by id; YAML may only reference ids."""
+    policy_type = PROMPT_POLICY_REGISTRY.get(policy_id.strip().lower())
+    if policy_type is None:
+        raise ValueError(f"unknown prompt policy: {policy_id}")
+    return policy_type()
+
+
 __all__ = [
     "ChatPromptPolicy", "CodingPromptPolicy", "GoalPromptPolicy", "LoopPromptPolicy",
-    "PromptPolicy", "GOAL_EVALUATOR_DIRECTIVE", "GOAL_IDLE_DIRECTIVE", "GOAL_INTAKE_DIRECTIVE",
+    "PromptPolicy", "PROMPT_POLICY_REGISTRY", "resolve_prompt_policy",
+    "GOAL_EVALUATOR_DIRECTIVE", "GOAL_IDLE_DIRECTIVE", "GOAL_INTAKE_DIRECTIVE",
     "LOOP_IDLE_DIRECTIVE",
 ]
+
+
+def revive_prompt_policy(profile_id: str, persisted: object) -> PromptPolicy | None:
+    """Rebuild a prompt policy after persistence round-trips.
+
+    ``persisted`` is the serialized type name (RuntimeProfile dumps the policy
+    as ``type(policy).__name__``). Rows written before policies were persisted
+    carry no value; fall back to the profile id for the bundled four.
+    """
+    if isinstance(persisted, str) and persisted:
+        for policy_type in PROMPT_POLICY_REGISTRY.values():
+            if policy_type.__name__ == persisted:
+                return policy_type()
+        return None
+    if profile_id in PROMPT_POLICY_REGISTRY:
+        return resolve_prompt_policy(profile_id)
+    return None

@@ -1,178 +1,127 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  RUNTIME_PROFILES,
   _resetModeControlsForTest,
   initModeControls,
   renderRuntimeProfile,
+  type AgentProfileInfo,
 } from "../../src/ui/mode";
+
+const profiles: AgentProfileInfo[] = [
+  {
+    name: "reviewer-v2",
+    display_name: "Reviewer V2",
+    revision: 3,
+    content_hash: "abc",
+    source: "project",
+    run_mode: "review",
+    hitl_mode: "interactive",
+    availability: "available",
+    diagnostics: [],
+  },
+  {
+    name: "broken-custom",
+    display_name: "Broken Custom",
+    revision: 1,
+    content_hash: "def",
+    source: "global",
+    run_mode: "custom",
+    hitl_mode: "autonomous",
+    availability: "unavailable",
+    diagnostics: [{ path: "tools", code: "missing_tool", message: "Tool is not installed", severity: "error" }],
+  },
+];
+
+async function flush(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
 
 describe("runtime profile controls", () => {
   beforeEach(() => {
     document.querySelector("#runtime-profile-switcher")?.remove();
     document.querySelector("#chat-header-mode")?.remove();
-
     const switcher = document.createElement("div");
     switcher.id = "runtime-profile-switcher";
-    const trigger = document.createElement("button");
-    trigger.type = "button";
-    trigger.id = "mode-trigger";
-    trigger.setAttribute("aria-expanded", "false");
-    const triggerLabel = document.createElement("span");
-    triggerLabel.id = "mode-trigger-label";
-    trigger.append(triggerLabel);
-    const menu = document.createElement("div");
-    menu.id = "mode-menu";
-    menu.hidden = true;
-    for (const profile of RUNTIME_PROFILES) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.dataset.profile = profile;
-      button.textContent = profile;
-      menu.append(button);
-    }
-    switcher.append(trigger, menu);
+    switcher.innerHTML = `
+      <button id="mode-trigger" aria-expanded="false"><span id="mode-trigger-label"></span></button>
+      <div id="mode-menu" role="listbox" hidden></div>`;
     const badge = document.createElement("span");
     badge.id = "chat-header-mode";
     document.body.append(switcher, badge);
     _resetModeControlsForTest();
   });
 
-  it("binds all four profiles and emits the selected profile", () => {
+  it("loads the menu dynamically from list-agent-profiles and uses public metadata", async () => {
+    const listProfiles = vi.fn().mockResolvedValue({ profiles });
+    initModeControls(vi.fn(), { listProfiles });
+
+    document.querySelector<HTMLButtonElement>("#mode-trigger")!.click();
+    await flush();
+
+    expect(listProfiles).toHaveBeenCalledTimes(1);
+    expect(document.querySelectorAll("#mode-menu [data-profile]")).toHaveLength(2);
+    expect(document.querySelector('[data-profile="reviewer-v2"]')?.textContent).toContain("Reviewer V2");
+    expect(document.querySelector('[data-profile="reviewer-v2"]')?.textContent).toContain("review · interactive · project");
+    const unavailable = document.querySelector<HTMLButtonElement>('[data-profile="broken-custom"]')!;
+    expect(unavailable.disabled).toBe(true);
+    expect(unavailable.textContent).toContain("Tool is not installed");
+  });
+
+  it("refreshes before switching and only emits a still-available opaque profile id", async () => {
+    const listProfiles = vi.fn()
+      .mockResolvedValueOnce({ profiles })
+      .mockResolvedValueOnce({ profiles: [profiles[0]] });
     const onSwitch = vi.fn();
-    initModeControls(onSwitch);
+    initModeControls(onSwitch, { listProfiles });
 
-    document.querySelector<HTMLButtonElement>('[data-profile="goal"]')!.click();
+    document.querySelector<HTMLButtonElement>("#mode-trigger")!.click();
+    await flush();
+    document.querySelector<HTMLButtonElement>('[data-profile="reviewer-v2"]')!.click();
+    await flush();
 
-    expect(onSwitch).toHaveBeenCalledWith("goal");
-    expect(document.querySelectorAll("#runtime-profile-switcher [data-profile]")).toHaveLength(4);
+    expect(listProfiles).toHaveBeenCalledTimes(2);
+    expect(onSwitch).toHaveBeenCalledWith("reviewer-v2");
   });
 
-
-  it("removes the old listener before rebinding the same DOM", () => {
-    const oldCallback = vi.fn();
-    const newCallback = vi.fn();
-    initModeControls(oldCallback);
-
-    _resetModeControlsForTest();
-    initModeControls(newCallback);
-    document.querySelector<HTMLButtonElement>('[data-profile="chat"]')!.click();
-
-    expect(oldCallback).not.toHaveBeenCalled();
-    expect(newCallback).toHaveBeenCalledTimes(1);
-    expect(newCallback).toHaveBeenCalledWith("chat");
-  });
-
-  it("toggles the menu from the trigger and closes after selecting an option", () => {
+  it("does not switch when a profile becomes unavailable during the pre-switch refresh", async () => {
+    const listProfiles = vi.fn()
+      .mockResolvedValueOnce({ profiles: [profiles[0]] })
+      .mockResolvedValueOnce({ profiles: [{ ...profiles[0], availability: "unavailable", diagnostics: profiles[1].diagnostics }] });
     const onSwitch = vi.fn();
-    initModeControls(onSwitch);
+    initModeControls(onSwitch, { listProfiles });
 
-    const trigger = document.querySelector<HTMLButtonElement>("#mode-trigger")!;
-    const menu = document.querySelector<HTMLElement>("#mode-menu")!;
+    document.querySelector<HTMLButtonElement>("#mode-trigger")!.click();
+    await flush();
+    document.querySelector<HTMLButtonElement>('[data-profile="reviewer-v2"]')!.click();
+    await flush();
 
-    trigger.click();
-    expect(menu.hidden).toBe(false);
-    expect(trigger.getAttribute("aria-expanded")).toBe("true");
-
-    document.querySelector<HTMLButtonElement>('[data-profile="loop"]')!.click();
-    expect(onSwitch).toHaveBeenCalledWith("loop");
-    expect(menu.hidden).toBe(true);
-    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(onSwitch).not.toHaveBeenCalled();
+    expect(document.querySelector<HTMLButtonElement>('[data-profile="reviewer-v2"]')!.disabled).toBe(true);
   });
 
-  it("closes the menu on outside click and Escape", () => {
-    initModeControls(vi.fn());
+  it("renders arbitrary profile ids using the latest display name without id branching", async () => {
+    const listProfiles = vi.fn().mockResolvedValue({ profiles });
+    initModeControls(vi.fn(), { listProfiles });
+    document.querySelector<HTMLButtonElement>("#mode-trigger")!.click();
+    await flush();
 
-    const trigger = document.querySelector<HTMLButtonElement>("#mode-trigger")!;
-    const menu = document.querySelector<HTMLElement>("#mode-menu")!;
+    renderRuntimeProfile("reviewer-v2");
 
-    trigger.click();
-    expect(menu.hidden).toBe(false);
-
-    document.body.click();
-    expect(menu.hidden).toBe(true);
-
-    trigger.click();
-    expect(menu.hidden).toBe(false);
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
-    expect(menu.hidden).toBe(true);
+    expect(document.querySelector("#mode-trigger-label")?.textContent).toBe("Reviewer V2");
+    expect(document.querySelector("#chat-header-mode")?.textContent).toBe("Reviewer V2");
+    expect(document.querySelector("#chat-header-mode")?.getAttribute("data-profile")).toBe("reviewer-v2");
   });
 
-
-
-  it("keeps focus on an outside input when the menu is already closed", () => {
-    initModeControls(vi.fn());
-
-    const input = document.querySelector<HTMLTextAreaElement>("#input")!;
-    input.focus();
-    input.click();
-
-    expect(document.activeElement).toBe(input);
-  });
-
-  it("closes on outside input click without stealing its focus", () => {
-    initModeControls(vi.fn());
-
+  it("keeps keyboard close behavior after async menu rendering", async () => {
+    initModeControls(vi.fn(), { listProfiles: vi.fn().mockResolvedValue({ profiles }) });
     const trigger = document.querySelector<HTMLButtonElement>("#mode-trigger")!;
     const menu = document.querySelector<HTMLElement>("#mode-menu")!;
-    const input = document.querySelector<HTMLTextAreaElement>("#input")!;
-
     trigger.click();
+    await flush();
     expect(menu.hidden).toBe(false);
-
-    input.focus();
-    input.click();
-
-    expect(menu.hidden).toBe(true);
-    expect(document.activeElement).toBe(input);
-  });
-  it("focuses the selected option on open and returns focus to the trigger on Escape", () => {
-    initModeControls(vi.fn());
-    renderRuntimeProfile("goal");
-
-    const trigger = document.querySelector<HTMLButtonElement>("#mode-trigger")!;
-    const menu = document.querySelector<HTMLElement>("#mode-menu")!;
-    const selected = document.querySelector<HTMLButtonElement>('[data-profile="goal"]')!;
-
-    trigger.focus();
-    trigger.click();
-    expect(menu.hidden).toBe(false);
-    expect(document.activeElement).toBe(selected);
 
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(menu.hidden).toBe(true);
     expect(document.activeElement).toBe(trigger);
-  });
-
-  it("cycles focus through options with arrow keys while the menu is open", () => {
-    initModeControls(vi.fn());
-    renderRuntimeProfile("coding");
-
-    const trigger = document.querySelector<HTMLButtonElement>("#mode-trigger")!;
-    const options = [...document.querySelectorAll<HTMLButtonElement>("#mode-menu [data-profile]")];
-
-    trigger.click();
-    expect(document.activeElement).toBe(options[1]);
-
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
-    expect(document.activeElement).toBe(options[2]);
-
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }));
-    expect(document.activeElement).toBe(options[1]);
-
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }));
-    expect(document.activeElement).toBe(options[0]);
-  });
-  it("renders one selected option, a trigger label, and a profile badge", () => {
-    renderRuntimeProfile("loop");
-
-    for (const profile of RUNTIME_PROFILES) {
-      const button = document.querySelector<HTMLButtonElement>(`[data-profile="${profile}"]`)!;
-      expect(button.getAttribute("aria-selected")).toBe(String(profile === "loop"));
-    }
-    const label = document.querySelector<HTMLElement>("#mode-trigger-label")!;
-    expect(label.textContent).toBe("循环");
-    const badge = document.querySelector<HTMLElement>("#chat-header-mode")!;
-    expect(badge.textContent).toBe("Loop");
-    expect(badge.dataset.profile).toBe("loop");
   });
 });

@@ -1,4 +1,5 @@
 """Smoke tests for tool system — types, execution, error handling."""
+from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 
 import asyncio
 import json
@@ -60,7 +61,7 @@ class TestPlanCheckpoint:
 
         result = await PlanCheckpointTool().execute(
             {"goal": "Update runtime state handling"},
-            ToolContext(workspace=str(tmp_path), runtime=AgentToolRuntime(interaction=interact, events=PresentationToolUiEventPublisher())),
+            ToolContext(workspace=str(tmp_path), runtime=AgentToolRuntime(workflow_dag=DEFAULT_WORKFLOW_DAG, interaction=interact, events=PresentationToolUiEventPublisher())),
         )
 
         assert result.metadata["plan_decision"] == "approved"
@@ -94,7 +95,7 @@ class TestPlanCheckpoint:
                     "affected_files": ["src/voidx/tools/plan_checkpoint.py"],
                     "risks": ["Avoid duplicate JSON"],
                 },
-                ToolContext(workspace=str(tmp_path), runtime=AgentToolRuntime(interaction=interact, events=PresentationToolUiEventPublisher())),
+                ToolContext(workspace=str(tmp_path), runtime=AgentToolRuntime(workflow_dag=DEFAULT_WORKFLOW_DAG, interaction=interact, events=PresentationToolUiEventPublisher())),
             )
         finally:
             await ui_events.stop()
@@ -135,7 +136,7 @@ class TestPlanCheckpoint:
                     "affected_files": ["src/voidx/tools/plan_checkpoint.py"],
                     "risks": ["Avoid duplicate JSON"],
                 },
-                ToolContext(workspace=str(tmp_path), runtime=AgentToolRuntime(interaction=interact, events=PresentationToolUiEventPublisher())),
+                ToolContext(workspace=str(tmp_path), runtime=AgentToolRuntime(workflow_dag=DEFAULT_WORKFLOW_DAG, interaction=interact, events=PresentationToolUiEventPublisher())),
             )
         finally:
             await ui_events.stop()
@@ -194,7 +195,7 @@ class TestPlanCheckpoint:
             {"goal": "Fix runtime state handling"},
             ToolContext(
                 workspace=str(tmp_path),
-                runtime=AgentToolRuntime(interaction=interact),
+                runtime=AgentToolRuntime(workflow_dag=DEFAULT_WORKFLOW_DAG, interaction=interact),
                 workflow_runs=[
                     WorkflowRunState(name="debug", status=WorkflowRunStatus.ACTIVE),
                 ],
@@ -224,7 +225,7 @@ class TestPlanCheckpoint:
             {"goal": "Fix runtime state handling"},
             ToolContext(
                 workspace=str(tmp_path),
-                runtime=AgentToolRuntime(interaction=interact),
+                runtime=AgentToolRuntime(workflow_dag=DEFAULT_WORKFLOW_DAG, interaction=interact),
                 workflow_runs=[
                     WorkflowRunState(name="debug", status=WorkflowRunStatus.ACTIVE),
                 ],
@@ -241,7 +242,7 @@ class TestPlanCheckpoint:
             current_workflow_runs=[
                 WorkflowRunState(name="debug", status=WorkflowRunStatus.ACTIVE),
             ],
-        )
+        workflow_dag=DEFAULT_WORKFLOW_DAG)
 
         by_name = {run.name: run for run in update["workflow_runs"]}
         assert by_name["debug"].status == WorkflowRunStatus.SATISFIED
@@ -266,7 +267,7 @@ class TestPlanCheckpoint:
 
         result = await PlanCheckpointTool().execute(
             {"goal": "Refactor auth module"},
-            ToolContext(workspace=str(tmp_path), runtime=AgentToolRuntime(interaction=interact, events=PresentationToolUiEventPublisher())),
+            ToolContext(workspace=str(tmp_path), runtime=AgentToolRuntime(workflow_dag=DEFAULT_WORKFLOW_DAG, interaction=interact, events=PresentationToolUiEventPublisher())),
         )
 
         assert result.metadata["plan_decision"] == "rejected"
@@ -285,7 +286,7 @@ class TestPlanCheckpoint:
 
         result = await PlanCheckpointTool().execute(
             {"goal": "Add checkpoint document option"},
-            ToolContext(workspace=str(tmp_path), runtime=AgentToolRuntime(interaction=interact, events=PresentationToolUiEventPublisher())),
+            ToolContext(workspace=str(tmp_path), runtime=AgentToolRuntime(workflow_dag=DEFAULT_WORKFLOW_DAG, interaction=interact, events=PresentationToolUiEventPublisher())),
         )
 
         assert any(label == "Document first" for label, _, _ in requests[0].options)
@@ -305,7 +306,7 @@ class TestPlanCheckpoint:
             {"goal": "Document runtime state handling"},
             ToolContext(
                 workspace=str(tmp_path),
-                runtime=AgentToolRuntime(interaction=interact),
+                runtime=AgentToolRuntime(workflow_dag=DEFAULT_WORKFLOW_DAG, interaction=interact),
                 workflow_runs=[
                     WorkflowRunState(name="debug", status=WorkflowRunStatus.ACTIVE),
                 ],
@@ -330,7 +331,7 @@ class TestPlanCheckpoint:
 
         result = await PlanCheckpointTool().execute(
             {"goal": "Refactor auth module"},
-            ToolContext(workspace=str(tmp_path), runtime=AgentToolRuntime(interaction=interact, events=PresentationToolUiEventPublisher())),
+            ToolContext(workspace=str(tmp_path), runtime=AgentToolRuntime(workflow_dag=DEFAULT_WORKFLOW_DAG, interaction=interact, events=PresentationToolUiEventPublisher())),
         )
 
         assert result.metadata["plan_decision"] == "modified"
@@ -348,7 +349,7 @@ class TestPlanCheckpoint:
 
         result = await PlanCheckpointTool().execute(
             {"goal": "Refactor auth module"},
-            ToolContext(workspace=str(tmp_path), runtime=AgentToolRuntime(interaction=interact, events=PresentationToolUiEventPublisher())),
+            ToolContext(workspace=str(tmp_path), runtime=AgentToolRuntime(workflow_dag=DEFAULT_WORKFLOW_DAG, interaction=interact, events=PresentationToolUiEventPublisher())),
         )
 
         assert result.metadata["plan_decision"] == "modified"
@@ -368,7 +369,7 @@ class TestPlanCheckpoint:
 
         result = await PlanCheckpointTool().execute(
             {"goal": "Refactor auth module"},
-            ToolContext(workspace=str(tmp_path), runtime=AgentToolRuntime(interaction=interact, events=PresentationToolUiEventPublisher())),
+            ToolContext(workspace=str(tmp_path), runtime=AgentToolRuntime(workflow_dag=DEFAULT_WORKFLOW_DAG, interaction=interact, events=PresentationToolUiEventPublisher())),
         )
 
         assert result.metadata["plan_decision"] == "modified"
@@ -382,7 +383,7 @@ class TestPlanCheckpoint:
 
         result = await PlanCheckpointTool().execute(
             {"goal": "Refactor auth module"},
-            ToolContext(workspace=str(tmp_path), runtime=AgentToolRuntime(interaction=interact, events=PresentationToolUiEventPublisher())),
+            ToolContext(workspace=str(tmp_path), runtime=AgentToolRuntime(workflow_dag=DEFAULT_WORKFLOW_DAG, interaction=interact, events=PresentationToolUiEventPublisher())),
         )
 
         assert result.metadata["plan_decision"] == "rejected"
@@ -397,7 +398,7 @@ class TestPlanCheckpoint:
 
         result = await ClarifyTool().execute(
             {"question": "What should I do?"},
-            ToolContext(workspace=str(tmp_path), runtime=AgentToolRuntime(interaction=interact, events=PresentationToolUiEventPublisher())),
+            ToolContext(workspace=str(tmp_path), runtime=AgentToolRuntime(workflow_dag=DEFAULT_WORKFLOW_DAG, interaction=interact, events=PresentationToolUiEventPublisher())),
         )
 
         assert requests[0].timeout == 120.0
@@ -412,7 +413,7 @@ class TestPlanCheckpoint:
 
         result = await PlanCheckpointTool().execute(
             {"goal": "Refactor auth"},
-            ToolContext(workspace=str(tmp_path), runtime=AgentToolRuntime(interaction=interact, events=PresentationToolUiEventPublisher())),
+            ToolContext(workspace=str(tmp_path), runtime=AgentToolRuntime(workflow_dag=DEFAULT_WORKFLOW_DAG, interaction=interact, events=PresentationToolUiEventPublisher())),
         )
 
         assert requests[0].timeout == 120.0

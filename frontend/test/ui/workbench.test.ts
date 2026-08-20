@@ -249,9 +249,7 @@ describe("workbench shell", () => {
       expect(titlebarLeft?.querySelector("#titlebar-history-back")).not.toBeNull();
       expect(titlebarLeft?.querySelector("#titlebar-history-forward")).not.toBeNull();
       expect(switcher?.querySelector("#mode-trigger")).not.toBeNull();
-      expect(
-        [...switcher.querySelectorAll("[data-profile] .vx-mode-option-name")].map((el) => el.textContent.trim()),
-      ).toEqual(["聊天", "编码", "目标", "循环"]);
+      expect(switcher?.querySelectorAll("[data-profile]")).toHaveLength(0);
       expect(root.querySelector("#composer #runtime-profile-switcher")).toBeNull();
     }
   });
@@ -1827,7 +1825,7 @@ describe("turn-end snapshot reconciliation", () => {
     expect(order).toEqual(["message", "group", "stream"]);
   });
 
-  it("absorbs a pending chat guidance echo when the snapshot turn carries guidance style", () => {
+  it("renders guidance once when the snapshot turn carries guidance style", () => {
     const { sentMessages, socket } = setupOpenSocketWithHandle();
     const input = document.querySelector("#input");
     const send = document.querySelector("#btn-send");
@@ -1835,7 +1833,7 @@ describe("turn-end snapshot reconciliation", () => {
     handleNotification("workspace.snapshot", snapshotEnvelope([], 0, { runtime_profile: "chat" }));
     handleNotification("turn.started", { thread_id: "t1", turn_id: "turn-1" });
     submitText(input, send, sentMessages, socket, "继续执行");
-    expect(document.querySelectorAll(".message-guidance")).toHaveLength(1);
+    expect(document.querySelectorAll(".message-guidance")).toHaveLength(0);
 
     handleNotification("workspace.snapshot", snapshotEnvelope([{
       id: "n1",

@@ -1,6 +1,13 @@
 /* generated from protocol.schema.json */
 
 export type VoidxUiProtocol =
+  | AgentProfileDetailDto
+  | AgentProfileDiagnosticDto
+  | AgentProfileInfoDto
+  | AgentProfileListDto
+  | AgentProfileSaveDto
+  | AgentProfileSnapshotDto
+  | AgentProfileValidationDto
   | JsonRpcRequest
   | JsonRpcNotification
   | JsonRpcResult
@@ -14,6 +21,30 @@ export type VoidxUiProtocol =
   | TranscriptSnapshot
   | (UiChoiceRequest | UiTextRequest | UiPermissionRequest)
   | (UiSubmitCommand | UiCancelCommand);
+export type Availability = "available" | "unavailable";
+export type ContentHash = string;
+export type Code = string;
+export type Message = string;
+export type Path = string;
+export type Severity = "error" | "warning";
+export type Diagnostics = AgentProfileDiagnosticDto[];
+export type DisplayName = string;
+export type HitlMode = "interactive" | "autonomous";
+export type Name = string;
+export type Revision = number;
+export type RunMode = string;
+export type Source = "bundled" | "global" | "project";
+export type ReadOnly = boolean;
+export type Yaml = string;
+export type Profiles = AgentProfileInfoDto[];
+export type Diagnostics1 = AgentProfileDiagnosticDto[];
+export type ContentHash1 = string;
+export type ProfileId = string;
+export type Revision1 = number;
+export type SnapshotHash = string;
+export type Source1 = "bundled" | "global" | "project";
+export type Diagnostics2 = AgentProfileDiagnosticDto[];
+export type Valid = boolean;
 export type Id = number | string;
 export type Jsonrpc = string;
 export type Method = string;
@@ -21,11 +52,11 @@ export type Jsonrpc1 = string;
 export type Method1 = string;
 export type Id1 = number | string;
 export type Jsonrpc2 = string;
-export type Code = number;
+export type Code1 = number;
 export type Data = {
   [k: string]: unknown;
 } | null;
-export type Message = string;
+export type Message1 = string;
 export type Id2 = number | string | null;
 export type Jsonrpc3 = string;
 export type AfterTurnId = number | null;
@@ -66,7 +97,7 @@ export type StepInfo = string | null;
 export type Title = string;
 export type ToolCallId = string | null;
 export type Nodes = TranscriptNode[];
-export type Revision = number;
+export type Revision2 = number;
 export type ThreadId = string;
 export type Windowed = boolean;
 export type ActiveThreadId = string;
@@ -100,7 +131,7 @@ export type Lifecycle = "started" | "delta" | "completed";
 export type ThreadId3 = string;
 export type TurnId1 = string;
 export type Nodes1 = TranscriptNode[];
-export type Revision1 = number;
+export type Revision3 = number;
 export type RootId = string;
 export type SessionId = string;
 export type Choices = [unknown, unknown, unknown][];
@@ -122,7 +153,7 @@ export type ThreadId6 = string;
 export type AiApprovalFailure = string;
 export type AllowedScopes = string[];
 export type DefaultScope = string | null;
-export type Name = string;
+export type Name1 = string;
 export type Pattern = string;
 export type Risk = {
   [k: string]: unknown;
@@ -137,6 +168,54 @@ export type Workspace2 = string;
 export type Kind5 = "cancel";
 export type ThreadId8 = string;
 
+export interface AgentProfileDetailDto {
+  profile: AgentProfileInfoDto;
+  read_only: ReadOnly;
+  yaml: Yaml;
+  [k: string]: unknown;
+}
+export interface AgentProfileInfoDto {
+  availability: Availability;
+  content_hash: ContentHash;
+  diagnostics?: Diagnostics;
+  display_name: DisplayName;
+  hitl_mode: HitlMode;
+  name: Name;
+  revision: Revision;
+  run_mode: RunMode;
+  source: Source;
+  [k: string]: unknown;
+}
+export interface AgentProfileDiagnosticDto {
+  code: Code;
+  message: Message;
+  path: Path;
+  severity?: Severity;
+  [k: string]: unknown;
+}
+export interface AgentProfileListDto {
+  profiles?: Profiles;
+  [k: string]: unknown;
+}
+export interface AgentProfileSaveDto {
+  diagnostics?: Diagnostics1;
+  snapshot: AgentProfileSnapshotDto;
+  [k: string]: unknown;
+}
+export interface AgentProfileSnapshotDto {
+  content_hash: ContentHash1;
+  profile_id: ProfileId;
+  revision: Revision1;
+  snapshot_hash: SnapshotHash;
+  source: Source1;
+  [k: string]: unknown;
+}
+export interface AgentProfileValidationDto {
+  diagnostics?: Diagnostics2;
+  snapshot?: AgentProfileSnapshotDto | null;
+  valid: Valid;
+  [k: string]: unknown;
+}
 export interface JsonRpcRequest {
   id: Id;
   jsonrpc?: Jsonrpc;
@@ -172,9 +251,9 @@ export interface JsonRpcError {
   [k: string]: unknown;
 }
 export interface ErrorPayload {
-  code: Code;
+  code: Code1;
   data?: Data;
-  message: Message;
+  message: Message1;
   [k: string]: unknown;
 }
 /**
@@ -206,7 +285,7 @@ export interface ThreadSnapshot {
   has_earlier?: HasEarlier;
   has_later?: HasLater;
   nodes?: Nodes;
-  revision?: Revision;
+  revision?: Revision2;
   thread_id: ThreadId;
   windowed?: Windowed;
   [k: string]: unknown;
@@ -278,7 +357,7 @@ export interface Data1 {
 }
 export interface TranscriptSnapshot {
   nodes?: Nodes1;
-  revision?: Revision1;
+  revision?: Revision3;
   root_id?: RootId;
   session_id?: SessionId;
   [k: string]: unknown;
@@ -314,7 +393,7 @@ export interface PermissionToolDetail {
   allowed_scopes?: AllowedScopes;
   args?: Args;
   default_scope?: DefaultScope;
-  name: Name;
+  name: Name1;
   pattern?: Pattern;
   risk?: Risk;
   [k: string]: unknown;

@@ -24,6 +24,7 @@ from voidx.agent.ports.instructions import AvailableServersRenderer, render_avai
 from voidx.observability.tool_log import log_tool_event
 from voidx.platform.paths import voidx_home
 from voidx.agent.application.automation.workflow.service import WorkflowService
+from voidx.agent.domain.automation.workflow_schema import WorkflowDAG
 from voidx.agent.domain.automation.workflow import WorkflowRunState
 
 INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md"]  # CLAUDE.md for compat
@@ -35,6 +36,7 @@ class WorkflowRuntimeContext:
     active: list[str]
     content: str = ""
     runs: list[WorkflowRunState] = field(default_factory=list)
+    dag: WorkflowDAG | None = None
 
 
 @dataclass
@@ -54,6 +56,7 @@ class InstructionService:
         *,
         skill_summaries_provider=None,
         available_servers_renderer: AvailableServersRenderer = render_available_servers,
+        workflow_dag: WorkflowDAG | None = None,
     ) -> None:
         self._workspace = Path(workspace).resolve()
         self._settings = settings
@@ -70,7 +73,7 @@ class InstructionService:
         self._file_cache: dict[str, _FileContentCacheEntry] = {}
         self._available_mcp_servers: str | None = None
         self._mcp_description_provider = None
-        self._workflow_service = WorkflowService()
+        self._workflow_service = WorkflowService(workflow_dag) if workflow_dag is not None else None
         self._debug = False
 
     # ── public API ──────────────────────────────────────────────────────
@@ -161,8 +164,12 @@ class InstructionService:
         scope: str = "",
         active_names: list[str] | None = None,
         workflow_start: str | None = None,
+        workflow_dag: WorkflowDAG | None = None,
     ) -> WorkflowRuntimeContext:
-        service = self._workflow_service
+        if workflow_dag is None:
+            return WorkflowRuntimeContext(instructions=[], active=[], content="", runs=[])
+        dag = workflow_dag
+        service = WorkflowService(dag)
         nodes = await asyncio.to_thread(service.nodes)
 
         if workflow_start:
@@ -185,6 +192,7 @@ class InstructionService:
             active=[f"{match.name} ({match.reason})" for match in matches],
             content=service.context(active_names=active),
             runs=service.runs_from_matches(matches, goal_type=goal_type, scope=scope),
+            dag=dag,
         )
 
     async def resolve(

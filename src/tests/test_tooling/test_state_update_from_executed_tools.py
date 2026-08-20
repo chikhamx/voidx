@@ -1,4 +1,5 @@
 """Smoke tests for tool system — types, execution, error handling."""
+from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 
 import asyncio
 import json
@@ -61,7 +62,7 @@ class TestStateUpdateFromExecutedTools:
             _ExecutedTool(message=msg2, result=result2, tool_call={"name": "clarify"}),
         ]
 
-        update = _state_update_from_executed_tools(executed)
+        update = _state_update_from_executed_tools(executed, workflow_dag=DEFAULT_WORKFLOW_DAG)
         assert update["task_intent"] == "coding"
         assert update["current_goal"]["desc"] == "Refactor auth"
         assert "type" not in update["current_goal"]
@@ -84,7 +85,7 @@ class TestStateUpdateFromExecutedTools:
             _ExecutedTool(message=msg2, result=result2, tool_call={"name": "clarify"}),
         ]
 
-        update = _state_update_from_executed_tools(executed)
+        update = _state_update_from_executed_tools(executed, workflow_dag=DEFAULT_WORKFLOW_DAG)
         assert update["task_intent"] == "coding"
 
     def test_state_patch_updates_runtime_persona(self):
@@ -99,7 +100,7 @@ class TestStateUpdateFromExecutedTools:
 
         executed = [_ExecutedTool(message=msg, result=result, tool_call={"name": "workflow"})]
 
-        update = _state_update_from_executed_tools(executed)
+        update = _state_update_from_executed_tools(executed, workflow_dag=DEFAULT_WORKFLOW_DAG)
 
         assert update["persona"] == "implement"
 
@@ -119,7 +120,7 @@ class TestStateUpdateFromExecutedTools:
         )
 
         executed = [_ExecutedTool(message=msg, result=result, tool_call={"name": "clarify"})]
-        update = _state_update_from_executed_tools(executed, current_workflow_runs=current)
+        update = _state_update_from_executed_tools(executed, current_workflow_runs=current, workflow_dag=DEFAULT_WORKFLOW_DAG)
 
         assert [run.name for run in update["workflow_runs"]] == [
             "tdd",
@@ -132,7 +133,7 @@ class TestStateUpdateFromExecutedTools:
         msg = ToolMessage(content="r", tool_call_id="c1")
         result = ToolResult(output="r", metadata={})
         executed = [_ExecutedTool(message=msg, result=result, tool_call={"name": "read"})]
-        update = _state_update_from_executed_tools(executed)
+        update = _state_update_from_executed_tools(executed, workflow_dag=DEFAULT_WORKFLOW_DAG)
         assert update == {}
 
     def test_auto_advance_review_has_issues(self):
@@ -150,7 +151,7 @@ class TestStateUpdateFromExecutedTools:
             metadata={"agent": "review"},
         )
         executed = [_ExecutedTool(message=msg, result=result, tool_call={"name": "agent"})]
-        update = _state_update_from_executed_tools(executed, current_workflow_runs=current)
+        update = _state_update_from_executed_tools(executed, current_workflow_runs=current, workflow_dag=DEFAULT_WORKFLOW_DAG)
         assert "workflow_runs" in update
         by_name = {r.name: r for r in update["workflow_runs"]}
         assert by_name["review"].status == WorkflowRunStatus.SATISFIED
@@ -178,7 +179,7 @@ class TestStateUpdateFromExecutedTools:
             current_workflow_runs=current,
             current_workflow_route={"join": "review", "leave": "review"},
             turn_count=9,
-        )
+        workflow_dag=DEFAULT_WORKFLOW_DAG)
 
         by_name = {r.name: r for r in update["workflow_runs"]}
         assert by_name["review"].status == WorkflowRunStatus.SATISFIED
@@ -199,7 +200,7 @@ class TestStateUpdateFromExecutedTools:
             metadata={"exit_code": 1, "command": "pytest tests/"},
         )
         executed = [_ExecutedTool(message=msg, result=result, tool_call={"name": "bash"})]
-        update = _state_update_from_executed_tools(executed, current_workflow_runs=current)
+        update = _state_update_from_executed_tools(executed, current_workflow_runs=current, workflow_dag=DEFAULT_WORKFLOW_DAG)
 
 
         assert "workflow_runs" in update
@@ -223,7 +224,7 @@ class TestStateUpdateFromExecutedTools:
             metadata={"exit_code": 1, "command": "pytest tests/"},
         )
         executed = [_ExecutedTool(message=msg, result=result, tool_call={"name": "bash"})]
-        update = _state_update_from_executed_tools(executed, current_workflow_runs=current)
+        update = _state_update_from_executed_tools(executed, current_workflow_runs=current, workflow_dag=DEFAULT_WORKFLOW_DAG)
 
         assert update["should_continue"] is False
 
@@ -246,7 +247,7 @@ class TestStateUpdateFromExecutedTools:
             executed,
             current_workflow_runs=current,
             current_workflow_route={"join": "tdd", "leave": "verify"},
-        )
+        workflow_dag=DEFAULT_WORKFLOW_DAG)
 
         by_name = {r.name: r for r in update["workflow_runs"]}
         assert by_name["verify"].status == WorkflowRunStatus.SATISFIED
@@ -268,7 +269,7 @@ class TestStateUpdateFromExecutedTools:
             metadata={"agent": "review"},
         )
         executed = [_ExecutedTool(message=msg, result=result, tool_call={"name": "agent"})]
-        update = _state_update_from_executed_tools(executed, current_workflow_runs=current)
+        update = _state_update_from_executed_tools(executed, current_workflow_runs=current, workflow_dag=DEFAULT_WORKFLOW_DAG)
         assert "workflow_runs" not in update
 
     def test_explicit_advance_at_route_end_satisfies_without_successor(self):
@@ -312,7 +313,7 @@ class TestStateUpdateFromExecutedTools:
             current_workflow_runs=current,
             current_workflow_route={"join": "review", "leave": "review"},
             turn_count=7,
-        )
+        workflow_dag=DEFAULT_WORKFLOW_DAG)
 
         by_name = {run.name: run for run in update["workflow_runs"]}
         assert by_name["review"].status == WorkflowRunStatus.SATISFIED
@@ -342,13 +343,13 @@ class TestStateUpdateFromExecutedTools:
             current_workflow_runs=current,
             current_workflow_route={"join": "tdd", "leave": "review"},
             turn_count=4,
-        )
+        workflow_dag=DEFAULT_WORKFLOW_DAG)
         second = _state_update_from_executed_tools(
             executed,
             current_workflow_runs=first["workflow_runs"],
             current_workflow_route={"join": "tdd", "leave": "review"},
             turn_count=5,
-        )
+        workflow_dag=DEFAULT_WORKFLOW_DAG)
 
         first_review = {run.name: run for run in first["workflow_runs"]}["review"]
         assert first_review.status == WorkflowRunStatus.SATISFIED
@@ -395,7 +396,7 @@ class TestStateUpdateFromExecutedTools:
             executed,
             current_workflow_runs=current,
             current_workflow_route={"join": "tdd", "leave": "verify"},
-        )
+        workflow_dag=DEFAULT_WORKFLOW_DAG)
 
         by_name = {run.name: run for run in update["workflow_runs"]}
         assert list(by_name).count("tdd") == 1
@@ -411,7 +412,7 @@ def test_auto_advance_normalizes_active_workflow_name():
     events = auto_advance_events(
         [{"name": "bash", "result": result}],
         workflow_runs=[WorkflowRunState(name=" Verify ", status=WorkflowRunStatus.ACTIVE)],
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     assert events
     assert events[0].workflow == "verify"

@@ -1,5 +1,6 @@
 """Slash command domain mixins."""
 
+from voidx.presentation.slash.commands.agents import AgentsCommandsMixin
 from voidx.presentation.slash.commands.mode import ModeCommandsMixin
 from voidx.presentation.slash.commands.session import SessionCommandsMixin
 from voidx.presentation.slash.commands.model import ModelCommandsMixin
@@ -16,6 +17,7 @@ from voidx.presentation.slash.commands.loop_cmd import LoopCmdCommandsMixin
 from voidx.presentation.slash.commands.compact_model import CompactModelCommandsMixin
 
 __all__ = [
+    "AgentsCommandsMixin",
     "ModeCommandsMixin",
     "SessionCommandsMixin",
     "ModelCommandsMixin",

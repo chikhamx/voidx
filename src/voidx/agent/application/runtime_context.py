@@ -26,6 +26,7 @@ from voidx.agent.application.automation.workflow.service import (
     is_workflow_context_content,
     workflow_exit_summaries,
 )
+from voidx.agent.domain.automation.workflow_schema import WorkflowDAG
 from voidx.agent.domain.automation.workflow import WorkflowRunState, WorkflowRunStatus
 
 _CONTEXT_MARKER = "VOIDX_RUNTIME_CONTEXT"
@@ -181,6 +182,7 @@ class RuntimeContextBuilder:
         interaction_mode: str | InteractionMode,
         instructions: Iterable[str] = (),
         workflow_runs: Iterable[WorkflowRunState] = (),
+        workflow_dag: WorkflowDAG | None = None,
         active_workflow_summaries: Iterable[str] = (),
         summary: str | None = None,
         task_state: "TaskState | None" = None,
@@ -207,6 +209,7 @@ class RuntimeContextBuilder:
         self.interaction_mode = InteractionMode.parse(interaction_mode)
         self.instructions = [item for item in instructions if item.strip()]
         self.workflow_runs = list(workflow_runs)
+        self.workflow_dag = workflow_dag
         self.active_workflow_summaries = [item for item in active_workflow_summaries if item.strip()]
         self.summary = summary.strip() if summary else ""
         self.task_intent = ts.current_intent
@@ -320,7 +323,7 @@ class RuntimeContextBuilder:
         if active_workflow_names:
             lines.append(f"- Active workflows: {'; '.join(active_workflow_names)}")
         for workflow_name in active_workflow_names:
-            exits = workflow_exit_summaries(workflow_name)
+            exits = workflow_exit_summaries(workflow_name, self.workflow_dag) if self.workflow_dag is not None else []
             if exits:
                 lines.append(f"- Workflow transitions [{workflow_name}]: {'; '.join(exits)}")
         todo_lines = _render_task_state_todo_lines(self.todo_state)

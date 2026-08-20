@@ -71,12 +71,14 @@ class GoalService(AutonomousServiceBase[GoalSpec, GoalScheduler]):
         spec = spec.model_copy(update={"generation": new_generation()})
         await self._deactivate_current(parent, summary="Goal superseded by a new /goal start.")
         await self._store.discard_pending_outbox_prefix(f"goal:{parent}:")
+        resolved = await self._resolve_attempt_profile(parent, "goal")
         session_id = spec.goal_session_id(parent)
         await self._store.ensure_session(
             session_id,
             self._workspace,
-            profile="goal",
+            profile=resolved.snapshot.profile_id,
             root_session_id=parent,
+            profile_snapshot=resolved.snapshot,
         )
         goal_state = GoalState.from_spec(spec, run_id=spec.generation)
         await self._store.create_thread(
@@ -87,7 +89,7 @@ class GoalService(AutonomousServiceBase[GoalSpec, GoalScheduler]):
                 workspace=self._workspace,
                 lifecycle=LifecycleState.READY,
             ),
-            profile=GOAL_PROFILE,
+            profile=resolved,
             state=AgentThreadState(
                 thread_id=spec.goal_thread_id(parent),
                 lifecycle=LifecycleState.READY,

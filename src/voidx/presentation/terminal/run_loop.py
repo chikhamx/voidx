@@ -172,6 +172,7 @@ class TerminalRunLoop:
             code_ide=lambda: self._status_reader.runtime_status().code_ide,
             latest_action=lambda: self._status_reader.runtime_status().latest_action,
             runtime_profile=lambda: self._status_reader.runtime_status().session.runtime_profile,
+            profile_snapshot=lambda: self._status_reader.runtime_status().session.profile_snapshot,
             session_id=lambda: self._status_reader.runtime_status().session.session_id,
         )
 

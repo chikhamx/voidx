@@ -11,6 +11,7 @@ from voidx.tooling.adapters.lsp_post_edit import LspPostEditFormatter
 from voidx.tooling.adapters.plugins import build_integration_plugins
 from voidx.tooling.application.registry import ToolRegistry
 from voidx.tooling.builtin.plugins import build_builtin_plugins
+from voidx.bootstrap.tooling import TOOL_CAPABILITIES
 
 
 def build_registry(
@@ -68,7 +69,9 @@ def build_registry(
         (builtins | integrations | agent_plugins)[plugin_id]
         for plugin_id in ordered_ids
     ]
-    return ToolRegistry(plugins)
+    return ToolRegistry(
+        plugins, capabilities={plugin.id: TOOL_CAPABILITIES[plugin.id] for plugin in plugins}
+    )
 
 
 __all__ = ["build_registry"]

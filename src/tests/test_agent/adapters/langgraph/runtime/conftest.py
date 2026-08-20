@@ -3,6 +3,8 @@
 import pytest
 
 from voidx.agent.domain.turn_context import TurnExecutionContext
+from voidx.agent.domain.agent_profile import WorkflowRuntimeContext
+from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 from voidx.agent.adapters.langgraph.runtime.thread_context import (
     ThreadExecutionState,
     _CURRENT_THREAD_EXECUTION_STATE,
@@ -47,6 +49,12 @@ def bound_turn_execution_context(request, tmp_path):
             thread_id="test-thread",
             session_id="test-session",
             workspace=str(tmp_path),
+            workflow_context=WorkflowRuntimeContext(
+                dag=DEFAULT_WORKFLOW_DAG,
+                dag_revision=1,
+                dag_hash="test-default-workflow",
+                source="bundled",
+            ),
         ),
         workspace=str(tmp_path),
     )

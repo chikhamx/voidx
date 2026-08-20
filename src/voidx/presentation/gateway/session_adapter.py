@@ -38,6 +38,7 @@ def build_gateway_session(
         lambda: active_dock.tree,
         thread_id=session_id,
         runtime_profile=status.session.runtime_profile,
+        profile_snapshot=status.session.profile_snapshot,
         session_id=session_id,
         workspace=status.workspace,
         settings_factory=settings_factory,

@@ -465,14 +465,17 @@ def test_quit_command_is_in_palette():
 async def test_switch_profile_reuses_fresh_session_in_place(monkeypatch):
     from voidx.agent.adapters.persistence.session_repository import SessionInfo, update_session_profile
 
-    updated: list[tuple[str, str]] = []
+    updated: list[tuple[str, str, object]] = []
+    new_snapshot = SimpleNamespace(profile_id="chat", revision=2)
+    resolved = SimpleNamespace(snapshot=new_snapshot)
 
-    async def fake_update(session_id: str, profile: str) -> None:
-        updated.append((session_id, profile))
+    async def fake_update(session_id: str, profile: str, **kwargs) -> None:
+        updated.append((session_id, profile, kwargs["profile_snapshot"]))
 
     monkeypatch.setattr("voidx.agent.adapters.persistence.session_repository.update_session_profile", fake_update)
 
     session = SessionInfo(id="fresh", workspace=".", message_count=0)
+    old_snapshot = session.profile_snapshot
     calls: list[str] = []
 
     class Handler(SlashHandler):
@@ -480,10 +483,12 @@ async def test_switch_profile_reuses_fresh_session_in_place(monkeypatch):
             calls.append(args)
 
     graph = command_context(session=session)
-    await Handler(graph)._switch_profile("chat")
+    await Handler(graph)._switch_profile("chat", resolved_profile=resolved)
 
-    assert updated == [("fresh", "chat")]
+    assert updated == [("fresh", "chat", new_snapshot)]
     assert session.runtime_profile == "chat"
+    assert session.profile_snapshot is new_snapshot
+    assert session.profile_snapshot is not old_snapshot
     assert calls == []
 
 

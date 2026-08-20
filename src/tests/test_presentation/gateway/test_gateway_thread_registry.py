@@ -43,13 +43,23 @@ async def test_ensure_thread_preserves_runtime_profile() -> None:
             "title": "Chat",
             "directory": "/workspace",
             "runtime_profile": "chat",
+            "profile_snapshot": None,
         }
     ]
 
 
 
 
-def test_build_gateway_session_preserves_initial_runtime_profile() -> None:
+def test_build_gateway_session_restores_initial_profile_snapshot(monkeypatch) -> None:
+    snapshot = object()
+    resolved = object()
+    restored = []
+
+    def restore(workspace, profile_id, value):
+        restored.append((workspace, profile_id, value))
+        return resolved
+
+    monkeypatch.setattr("voidx.agent.facade.restore_session_runtime_profile", restore)
     status = RuntimePresentationStatus(
         provider="anthropic",
         model="test-model",
@@ -59,6 +69,7 @@ def test_build_gateway_session_preserves_initial_runtime_profile() -> None:
             session_id="chat-session",
             title="Chat",
             runtime_profile="chat",
+            profile_snapshot=snapshot,
             is_new=False,
         ),
     )
@@ -71,3 +82,5 @@ def test_build_gateway_session_preserves_initial_runtime_profile() -> None:
 
     assert thread.runtime_profile == "chat"
     assert gateway_session._runtime_state_provider()["runtime_profile"] == "chat"
+    assert restored == [("/workspace", "chat", snapshot)]
+    assert gateway_session.resolved_profile("chat-session") is resolved

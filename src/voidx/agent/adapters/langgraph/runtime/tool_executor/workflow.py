@@ -6,6 +6,7 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from voidx.agent.domain.task.intent import PersonaName
 from voidx.agent.domain.task.state import ToolStatePatch
 from voidx.agent.domain.automation.workflow import WorkflowRoute
+from voidx.agent.domain.automation.workflow_schema import WorkflowDAG
 from voidx.agent.application.automation.workflow.service import advance_workflow_states, auto_advance_events
 from voidx.agent.application.automation.workflow.route import (
     workflow_path_reaches,
@@ -30,6 +31,7 @@ def _state_update_from_executed_tools(
     current_workflow_runs: object = (),
     current_workflow_route: object = None,
     turn_count: int = 0,
+    workflow_dag: WorkflowDAG | None = None,
 ) -> dict:
     update: dict = {}
     merged_workflow_runs = _merge_workflow_runs_for_state(current_workflow_runs)
@@ -58,6 +60,7 @@ def _state_update_from_executed_tools(
                     merged_workflow_runs,
                     current_workflow_route=current_workflow_route,
                     turn_count=turn_count,
+                    workflow_dag=workflow_dag,
                 )
                 if route_limited is not None:
                     merged_workflow_runs = route_limited
@@ -78,13 +81,18 @@ def _state_update_from_executed_tools(
 
     # Auto-advance: detect structured tool result signals and drive DAG
     # transitions without explicit workflow.
-    auto_events = _auto_advance_from_executed(executed, merged_workflow_runs)
+    auto_events = (
+        _auto_advance_from_executed(executed, merged_workflow_runs, workflow_dag)
+        if workflow_dag is not None
+        else []
+    )
     if auto_events:
         merged_workflow_runs, stop_after_auto = _advance_auto_events_for_route(
             merged_workflow_runs,
             auto_events,
             current_workflow_route=current_workflow_route,
             turn_count=turn_count,
+            workflow_dag=workflow_dag,
         )
         workflow_runs_changed = True
         if stop_after_auto:
@@ -137,6 +145,7 @@ def _inline_compaction_summary(executed: list[_ExecutedTool]) -> str:
 def _auto_advance_from_executed(
     executed: list[_ExecutedTool],
     workflow_runs: list[WorkflowRunState],
+    workflow_dag: WorkflowDAG,
 ) -> list:
     """Check executed tools for auto-advance signals and return events."""
     tool_items = []
@@ -145,7 +154,7 @@ def _auto_advance_from_executed(
             "name": item.tool_call.get("name", ""),
             "result": item.result,
         })
-    return auto_advance_events(tool_items, workflow_runs=workflow_runs)
+    return auto_advance_events(tool_items, workflow_runs=workflow_runs, dag=workflow_dag)
 
 
 def _explicit_advance_route_limited_runs(
@@ -154,8 +163,9 @@ def _explicit_advance_route_limited_runs(
     *,
     current_workflow_route: object = None,
     turn_count: int = 0,
+    workflow_dag: WorkflowDAG | None = None,
 ) -> list[WorkflowRunState] | None:
-    if item.tool_call.get("name") != "workflow":
+    if workflow_dag is None or item.tool_call.get("name") != "workflow":
         return None
     metadata = getattr(item.result, "metadata", {}) or {}
     transition = metadata.get("workflow_transition") or {}
@@ -165,12 +175,13 @@ def _explicit_advance_route_limited_runs(
         return None
     workflow = str(transition.get("from") or "").strip().lower()
     condition = str(transition.get("condition") or "").strip().lower()
-    target = workflow_transition_target(workflow, condition)
+    target = workflow_transition_target(workflow, condition, workflow_dag)
     if not _auto_event_satisfies_route_terminal(
         workflow,
         target,
         route_start=workflow_route_start(current_workflow_route),
         route_end=workflow_route_end(current_workflow_route),
+        workflow_dag=workflow_dag,
     ):
         return None
     event = WorkflowStateEvent(
@@ -191,27 +202,30 @@ def _advance_auto_events_for_route(
     *,
     current_workflow_route: object = None,
     turn_count: int = 0,
+    workflow_dag: WorkflowDAG,
 ) -> tuple[list[WorkflowRunState], bool]:
     route_start = workflow_route_start(current_workflow_route)
     route_end = workflow_route_end(current_workflow_route)
     runs = list(workflow_runs)
     should_stop = False
     for event in auto_events:
-        target = workflow_transition_target(event.workflow, event.condition)
+        target = workflow_transition_target(event.workflow, event.condition, workflow_dag)
         if _auto_event_satisfies_route_terminal(
             event.workflow,
             target,
             route_start=route_start,
             route_end=route_end,
+            workflow_dag=workflow_dag,
         ):
             runs = _satisfy_workflow_without_transition(runs, event, turn_count=turn_count)
             should_stop = True
             continue
-        runs = advance_workflow_states(runs, [event])
+        runs = advance_workflow_states(runs, [event], dag=workflow_dag)
         if _auto_event_should_stop_after_transition(
             event.ok,
             target,
             route_end=route_end,
+            workflow_dag=workflow_dag,
         ):
             should_stop = True
     return runs, should_stop
@@ -223,12 +237,13 @@ def _auto_event_satisfies_route_terminal(
     *,
     route_start: str,
     route_end: str,
+    workflow_dag: WorkflowDAG,
 ) -> bool:
     if not route_end or workflow != route_end:
         return False
     if not target:
         return True
-    if route_start and route_start != route_end and workflow_path_reaches(target, route_end):
+    if route_start and route_start != route_end and workflow_path_reaches(target, route_end, workflow_dag):
         return False
     return True
 
@@ -238,9 +253,10 @@ def _auto_event_should_stop_after_transition(
     target: str,
     *,
     route_end: str,
+    workflow_dag: WorkflowDAG,
 ) -> bool:
     if route_end:
-        return bool(target) and target != route_end and not workflow_path_reaches(target, route_end)
+        return bool(target) and target != route_end and not workflow_path_reaches(target, route_end, workflow_dag)
     return ok is False
 
 

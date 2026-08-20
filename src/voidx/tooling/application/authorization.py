@@ -45,7 +45,7 @@ def authorize_tool_call(tool_call: dict, context: PermissionContext) -> Permissi
         return _decision(classified, "deny", "sandbox", "Permission state not ready.", context=context)
     if session_action == "deny":
         return _decision(classified, "deny", "session", _reason_for(classified, "deny"), context=context)
-    if is_always_allowed_tool(classified.name):
+    if is_always_allowed_tool(classified.name) and not context.execution_gated:
         return _decision(classified, "allow", "preset", _reason_for(classified, "allow"), context=context)
 
     sandbox_action, reason, access_intents = sandbox_precheck_action(classified, context)
@@ -62,6 +62,15 @@ def authorize_tool_call(tool_call: dict, context: PermissionContext) -> Permissi
         if session_action == "allow" and context.sandbox_mode == "workspace-write":
             return _decision(classified, "allow", "session", _reason_for(classified, "allow"), context=context)
         return _decision(classified, "ask", "sandbox", reason or _reason_for(classified, "ask"), context=context, access_intents=access_intents)
+
+    if context.execution_gated:
+        return _decision(
+            classified,
+            "ask",
+            "profile",
+            "Profile requires execution authorization.",
+            context=context,
+        )
 
     if session_action:
         reason = _reason_for(classified, session_action)

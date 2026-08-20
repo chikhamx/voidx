@@ -29,6 +29,11 @@ from voidx.tooling.application.execution import (
 )
 from voidx.tooling.domain.file_tracking import FileStateStore
 from voidx.tooling.domain.result import ToolResult
+from voidx.agent.adapters.langgraph.runtime.tool_policy_bridge import (
+    check_tool_policy,
+    tool_policy_metadata,
+)
+from voidx.agent.domain.tool_policy import ToolPolicyDecision
 
 from .types import ToolResultOk, _ExecutedTool, _task_state_for_state, _tool_result_ok
 from .guards import (
@@ -142,6 +147,30 @@ async def _apply_pending_turn_stop_commit(host: Any, result: dict) -> dict:
     }
 
 
+
+
+def _profile_policy_denial(
+    tool_call: dict, decision: ToolPolicyDecision
+) -> _ExecutedTool:
+    output = f"Tool denied: {decision.reason}"
+    return _ExecutedTool(
+        message=ToolMessage(
+            content=output,
+            tool_call_id=tool_call.get("id", ""),
+            status="error",
+        ),
+        result=ToolResult(
+            output=output,
+            metadata={
+                "error": True,
+                "tool_denied": True,
+                **tool_policy_metadata(decision),
+            },
+        ),
+        tool_call=tool_call,
+        todo_state=None,
+        runtime_guard_eligible=False,
+    )
 UI_EVENT_BUS_TIMEOUT_KIND = "ui_event_bus_timeout"
 TOOL_HEARTBEAT_INITIAL_SECONDS = 15.0
 TOOL_HEARTBEAT_INTERVAL_SECONDS = 15.0
@@ -207,12 +236,15 @@ class ToolExecutorAdapter:
         runtime_task_state_ref = [runtime_task_state, runtime_goal, runtime_workflow_runs]
 
         permission = host._permission
+        workflow_context = getattr(thread_state.turn_context, "workflow_context", None)
+        workflow_dag = getattr(workflow_context, "dag", None)
         agent_runtime = AgentToolRuntime(
             loop_control=getattr(thread_state.turn_context, "loop_controller", None),
             goal_control=getattr(thread_state.turn_context, "goal_controller", None),
             goal_intake=getattr(thread_state.turn_context, "goal_intake_controller", None),
             loop_intake=getattr(thread_state.turn_context, "loop_intake_controller", None),
             workflow_repeat_state=host._workflow_repeat_tracker,
+            workflow_dag=workflow_dag,
             subagent_transport=getattr(host, "agent_gateway", None),
             run_id=(
                 getattr(host, "agent_gateway", None).ensure_root(session_id)
@@ -224,7 +256,12 @@ class ToolExecutorAdapter:
             access_grants=permission.get_access_grants,
             revocation_epoch=lambda: permission.revocation_epoch,
         )
-        bind_agent_tool_runtime(host.tools, agent_runtime)
+        from voidx.agent.adapters.langgraph.runtime.thread_context import (
+            tool_registry_for,
+        )
+
+        tools = tool_registry_for(host)
+        bind_agent_tool_runtime(tools, agent_runtime)
 
         authorization_runtime = AuthorizationRuntime(
             read_files=list(permission.sandbox_readable_files),
@@ -244,7 +281,7 @@ class ToolExecutorAdapter:
             ),
         )
         host._scoped_tools_binder(
-            host.tools,
+            tools,
             authorization=authorization_runtime,
             files=FileStateStore(
                 mtimes=host._file_mtimes,
@@ -318,22 +355,9 @@ class ToolExecutorAdapter:
             state_context = current_thread_execution_state()
             tool_policy = getattr(state_context, "tool_policy", None) if state_context else None
             if tool_policy is not None:
-                decision = tool_policy.check_tool_call(tid, targs)
+                decision = check_tool_policy(tool_policy, tools, tid, targs)
                 if not decision.allowed:
-                    return _ExecutedTool(
-                        message=ToolMessage(
-                            content=f"Tool denied: {decision.reason}",
-                            tool_call_id=tc.get("id", ""),
-                            status="error",
-                        ),
-                        result=ToolResult(
-                            output=f"Tool denied: {decision.reason}",
-                            metadata={"error": True, "tool_denied": True, "reason": decision.reason},
-                        ),
-                        tool_call=tc,
-                        todo_state=None,
-                        runtime_guard_eligible=False,
-                    )
+                    return _profile_policy_denial(tc, decision)
             cid = tc.get("id", "")
             tool_event_id = cid or f"{tid}:{id(tc)}"
 
@@ -405,7 +429,7 @@ class ToolExecutorAdapter:
                     )
                     if tid == "loop" and tool_ctx.runtime.loop_control is not None:
                         return await LoopTool().execute(targs, tool_ctx)
-                    return await host.tools.execute_tool(tid, targs, tool_ctx)
+                    return await tools.execute_tool(tid, targs, tool_ctx)
 
                 try:
                     if lease_factory is not None:
@@ -536,6 +560,7 @@ class ToolExecutorAdapter:
                     current_workflow_runs=runtime_task_state_ref[2],
                     current_workflow_route=runtime_task_state_ref[0].workflow_route,
                     turn_count=turn_count,
+                    workflow_dag=workflow_dag,
                 )
                 cycle_workflow_changed = cycle_workflow_changed or "workflow_runs" in segment_update
                 apply_state_update(segment_update)
@@ -584,6 +609,7 @@ class ToolExecutorAdapter:
                 current_workflow_runs=runtime_task_state_ref[2],
                 current_workflow_route=runtime_task_state_ref[0].workflow_route,
                 turn_count=turn_count,
+                workflow_dag=workflow_dag,
             )
             cycle_workflow_changed = cycle_workflow_changed or "workflow_runs" in segment_update
             apply_state_update(segment_update)

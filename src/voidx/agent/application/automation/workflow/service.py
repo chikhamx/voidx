@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from pydantic import BaseModel
 
 from voidx.agent.application.automation.workflow.context import (
@@ -11,18 +13,19 @@ from voidx.agent.application.automation.workflow.context import (
     workflow_context_cache_key,
     workflow_body_hash,
 )
-from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 from voidx.agent.domain.automation.workflow_policy import (
     is_workflow_terminal_condition,
     workflow_edges,
     workflow_exit_summaries,
     workflow_gate,
+    workflow_personas,
     workflow_sort_key,
     workflow_terminal_condition,
     workflow_terminal_description,
     workflow_transitions,
 )
-from voidx.agent.domain.automation.workflow_schema import WorkflowNode
+from voidx.agent.domain.agent_profile import content_hash_of
+from voidx.agent.domain.automation.workflow_schema import WorkflowDAG, WorkflowNode
 from voidx.agent.domain.automation.workflow import WorkflowRunState, WorkflowRunStatus, source_from_reason
 
 
@@ -48,6 +51,7 @@ def reconcile_workflow_runs_for_turn(*args, **kwargs):
 
 def workflow_run_from_match(
     match: "WorkflowMatch",
+    dag: WorkflowDAG,
     *,
     goal_type: str = "",
     scope: str = "",
@@ -56,7 +60,7 @@ def workflow_run_from_match(
     workflow_body: str | None = None,
     body_hash: str = "",
 ) -> WorkflowRunState:
-    body = match.body if workflow_body is None else workflow_body
+    body = render_workflow_instruction(match.node, dag) if workflow_body is None else workflow_body
     return WorkflowRunState(
         name=match.name,
         status=status,
@@ -68,7 +72,8 @@ def workflow_run_from_match(
         activated_turn=turn_count,
         updated_turn=turn_count,
         body_hash=body_hash or (workflow_body_hash(body) if body else ""),
-        transition_to=list(workflow_transitions(match.name)),
+        dag_hash=content_hash_of(dag.model_dump(mode="json")),
+        transition_to=list(workflow_transitions(match.name, dag)),
     )
 
 
@@ -80,17 +85,17 @@ class WorkflowMatch(BaseModel):
     def name(self) -> str:
         return self.node.name
 
-    @property
-    def body(self) -> str:
-        return render_workflow_instruction(self.node)
-
 
 class WorkflowService:
-    def __init__(self) -> None:
-        self._dag = DEFAULT_WORKFLOW_DAG
+    def __init__(self, dag: WorkflowDAG) -> None:
+        self._dag = dag
+
+    @property
+    def dag(self) -> WorkflowDAG:
+        return self._dag
 
     def nodes(self) -> list[WorkflowNode]:
-        return sorted(self._dag.nodes.values(), key=lambda node: workflow_sort_key(node.name))
+        return sorted(self._dag.nodes.values(), key=lambda node: workflow_sort_key(node.name, self._dag))
 
     def get(self, name: str) -> WorkflowNode | None:
         return self._dag.nodes.get(_normalize(name))
@@ -101,6 +106,7 @@ class WorkflowService:
         *,
         goal_type: str | None = None,
     ) -> list[WorkflowMatch]:
+        del goal_type
         name = _normalize(workflow_start)
         node = self.get(name)
         if node is None:
@@ -117,6 +123,7 @@ class WorkflowService:
         return [
             workflow_run_from_match(
                 match,
+                self._dag,
                 goal_type=goal_type or _goal_type_from_reason(match.reason),
                 scope=scope,
             )
@@ -124,11 +131,10 @@ class WorkflowService:
         ]
 
     def context(self, *, active_names: Iterable[str] = ()) -> str:
-        return render_workflow_context(self.nodes(), active_names=active_names)
+        return render_workflow_context(self.nodes(), self._dag, active_names=active_names)
 
-    @staticmethod
-    def render_instruction(node: WorkflowNode) -> str:
-        return render_workflow_instruction(node)
+    def render_instruction(self, node: WorkflowNode) -> str:
+        return render_workflow_instruction(node, self._dag)
 
 
 def _normalize(name: str) -> str:
@@ -139,3 +145,26 @@ def _goal_type_from_reason(reason: str) -> str:
     if reason.startswith("goal:"):
         return reason.removeprefix("goal:")
     return ""
+
+
+__all__ = [
+    "WorkflowMatch",
+    "WorkflowService",
+    "advance_workflow_states",
+    "auto_advance_events",
+    "is_workflow_context_content",
+    "is_workflow_terminal_condition",
+    "reconcile_workflow_runs_for_turn",
+    "render_workflow_context",
+    "workflow_body_hash",
+    "workflow_context_cache_key",
+    "workflow_edges",
+    "workflow_exit_summaries",
+    "workflow_gate",
+    "workflow_personas",
+    "workflow_run_from_match",
+    "workflow_sort_key",
+    "workflow_terminal_condition",
+    "workflow_terminal_description",
+    "workflow_transitions",
+]

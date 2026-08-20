@@ -7,6 +7,8 @@ Sync callables are also accepted and auto-awaited via inspect.isawaitable.
 from __future__ import annotations
 
 import inspect
+
+from voidx.observability import log_internal_error
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -24,15 +26,17 @@ MethodHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]] | dict[str,
 
 
 class MethodParamsError(Exception):
-    """Raised by a handler when params are missing or invalid.
+    """Raised by a handler when params are invalid or a business rule rejects them."""
 
-    Maps to JSON-RPC error code -32602 (invalid params) by default.
-    Pass ``code`` to emit a different voidx-specific error code
-    (e.g. -32001 turn in progress).
-    """
-
-    def __init__(self, message: str, *, code: int = ERR_INVALID_PARAMS) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: int = ERR_INVALID_PARAMS,
+        data: dict[str, Any] | None = None,
+    ) -> None:
         self.code = code
+        self.data = data
         super().__init__(message)
 
 
@@ -68,14 +72,16 @@ class MethodDispatch:
                 error=ErrorPayload(
                     code=exc.code,
                     message=str(exc),
+                    data=exc.data,
                 ),
             )
-        except Exception as exc:  # noqa: BLE001 — surface as JSON-RPC internal error
+        except Exception as exc:  # noqa: BLE001 — log detail, return a stable safe error
+            log_internal_error(exc, context=f"gateway_method:{request.method}")
             return JsonRpcError(
                 id=request.id,
                 error=ErrorPayload(
                     code=ERR_INTERNAL_ERROR,
-                    message=f"internal error: {exc}",
+                    message="internal error",
                 ),
             )
         return JsonRpcResult(id=request.id, result=result)

@@ -1,3 +1,4 @@
+from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 from voidx.agent.adapters.langgraph.runtime.tool_executor.workflow import (
     _merge_workflow_runs_for_state,
     _satisfy_workflow_without_transition,
@@ -42,7 +43,7 @@ def test_workflow_patch_restores_advance_state_across_runtime_rounds():
     update = _state_update_from_executed_tools(
         [_executed_workflow_patch(ToolStatePatch(workflow_runs=patch_runs))],
         current_workflow_runs=current,
-    )
+    workflow_dag=DEFAULT_WORKFLOW_DAG)
 
     restored = {run.name: run for run in update["workflow_runs"]}
     assert restored["tdd"].status == WorkflowRunStatus.SATISFIED
@@ -67,11 +68,11 @@ def test_replaying_same_workflow_patch_is_idempotent():
     patch = ToolStatePatch(workflow_runs=[satisfied])
     executed = [_executed_workflow_patch(patch)]
 
-    first = _state_update_from_executed_tools(executed, current_workflow_runs=current)
+    first = _state_update_from_executed_tools(executed, current_workflow_runs=current, workflow_dag=DEFAULT_WORKFLOW_DAG)
     second = _state_update_from_executed_tools(
         executed,
         current_workflow_runs=first["workflow_runs"],
-    )
+    workflow_dag=DEFAULT_WORKFLOW_DAG)
 
     first_run = first["workflow_runs"][0]
     second_run = second["workflow_runs"][0]
@@ -93,7 +94,7 @@ def test_done_patch_restores_all_closed_workflows_without_successors():
     update = _state_update_from_executed_tools(
         [_executed_workflow_patch(ToolStatePatch(workflow_runs=patch_runs), action="done")],
         current_workflow_runs=current,
-    )
+    workflow_dag=DEFAULT_WORKFLOW_DAG)
 
     assert {run.name: run.status for run in update["workflow_runs"]} == {
         "debug": WorkflowRunStatus.SATISFIED,

@@ -8,7 +8,14 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from voidx.agent.domain.agent_profile import (
+    AgentProfileSnapshot,
+    ResolvedAgentProfile,
+    ResourcePolicy,
+    content_hash_of,
+)
 from voidx.agent.domain.profile import RuntimeProfile
+from voidx.agent.domain.run_config import resolve_run_config
 from voidx.agent.domain.thread import (
     AgentThread,
     AgentThreadState,
@@ -36,10 +43,14 @@ from voidx.agent.ports.persistence import ThreadStateConflict
 @dataclass(frozen=True)
 class LoadedThread:
     thread: AgentThread
-    profile: RuntimeProfile
+    resolved_profile: ResolvedAgentProfile
     state: AgentThreadState
     state_version: int
     resource_scope: dict[str, Any]
+
+    @property
+    def profile(self) -> RuntimeProfile:
+        return self.resolved_profile.runtime_profile
 
 
 @dataclass(frozen=True)
@@ -77,6 +88,7 @@ class ThreadStore:
         profile: str = "coding",
         title: str = "Loop session",
         root_session_id: str | None = None,
+        profile_snapshot: AgentProfileSnapshot | None = None,
     ) -> None:
         from voidx.agent.adapters.persistence.session_repository import ensure_session
 
@@ -86,12 +98,18 @@ class ThreadStore:
             profile=profile,
             title=title,
             root_session_id=root_session_id,
+            profile_snapshot=profile_snapshot,
         )
+
+    async def get_session(self, session_id: str):
+        from voidx.agent.adapters.persistence.session_repository import get_session
+
+        return await get_session(session_id)
     async def create_thread(
         self,
         thread: AgentThread,
         *,
-        profile: RuntimeProfile,
+        profile: ResolvedAgentProfile | RuntimeProfile,
         state: AgentThreadState | None = None,
         resource_scope: dict[str, Any] | None = None,
     ) -> LoadedThread:
@@ -101,6 +119,8 @@ class ThreadStore:
         if thread_state.thread_id != thread.thread_id:
             raise ValueError("thread state id must match thread id")
         scope = resource_scope or {}
+        resolved_profile = _as_resolved_profile(profile)
+        runtime_profile = resolved_profile.runtime_profile
 
         def _tx(conn):
             timestamp = now()
@@ -115,8 +135,8 @@ class ThreadStore:
                     thread.parent_thread_id,
                     thread.session_id,
                     thread.workspace,
-                    profile.profile_id,
-                    profile.revision,
+                    runtime_profile.profile_id,
+                    runtime_profile.revision,
                     _json_profile(profile),
                     _json(scope),
                     timestamp,
@@ -129,7 +149,7 @@ class ThreadStore:
                    ) VALUES (?, ?, 0, ?)""",
                 (thread.thread_id, _json_model(thread_state), timestamp),
             )
-            return LoadedThread(thread, profile, thread_state, 0, scope)
+            return LoadedThread(thread, resolved_profile, thread_state, 0, scope)
 
         return await self._write(_tx)
 
@@ -143,7 +163,7 @@ class ThreadStore:
         )
         if row is None:
             return None
-        profile = RuntimeProfile.model_validate_json(row["profile_json"])
+        resolved_profile = _resolved_profile_from_json(row["profile_json"])
         thread = AgentThread(
             thread_id=row["id"],
             session_id=row["session_id"],
@@ -154,7 +174,7 @@ class ThreadStore:
         state = AgentThreadState.model_validate_json(row["state_json"])
         return LoadedThread(
             thread=thread,
-            profile=profile,
+            resolved_profile=resolved_profile,
             state=state,
             state_version=int(row["state_version"]),
             resource_scope=json.loads(row["resource_scope_json"] or "{}"),
@@ -731,7 +751,7 @@ def _loaded_from_conn(conn, thread_id: str) -> LoadedThread:
             workspace=row["workspace"],
             lifecycle=AgentThread.model_fields["lifecycle"].default,
         ),
-        profile=RuntimeProfile.model_validate_json(row["profile_json"]),
+        resolved_profile=_resolved_profile_from_json(row["profile_json"]),
         state=state,
         state_version=int(row["state_version"]),
         resource_scope=json.loads(row["resource_scope_json"] or "{}"),
@@ -755,12 +775,91 @@ def _json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
-def _json_profile(value: RuntimeProfile) -> str:
-    return json.dumps(
-        value.model_dump(mode="json", exclude={"prompt_policy"}),
-        sort_keys=True,
-        separators=(",", ":"),
+def _json_profile(value: ResolvedAgentProfile | RuntimeProfile) -> str:
+    if isinstance(value, RuntimeProfile):
+        payload = value.model_dump(mode="json")
+    else:
+        payload = {
+            "snapshot": value.snapshot.model_dump(mode="json"),
+            "runtime_profile": value.runtime_profile.model_dump(mode="json"),
+        }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def _resolved_profile_from_json(payload: str) -> ResolvedAgentProfile:
+    from voidx.agent.application.agent_profile_snapshot import restore_from_snapshot
+
+    raw = json.loads(payload)
+    snapshot = raw.get("snapshot") if isinstance(raw, dict) else None
+    persisted_runtime = raw.get("runtime_profile") if isinstance(raw, dict) else None
+    if isinstance(snapshot, dict):
+        resolved = restore_from_snapshot(AgentProfileSnapshot.model_validate(snapshot))
+        if isinstance(persisted_runtime, dict):
+            runtime_profile = _runtime_profile_from_json(json.dumps(persisted_runtime))
+            return resolved.model_copy(update={"runtime_profile": runtime_profile})
+        return resolved
+    return _legacy_resolved_profile(_runtime_profile_from_json(payload))
+
+
+def _runtime_profile_from_json(payload: str) -> RuntimeProfile:
+    from voidx.agent.domain.prompt_policy import revive_prompt_policy
+
+    profile = RuntimeProfile.model_validate_json(payload)
+    revived = revive_prompt_policy(profile.profile_id, profile.prompt_policy)
+    if revived is None and profile.prompt_policy is None:
+        return profile
+    return profile.model_copy(update={"prompt_policy": revived})
+
+
+def _as_resolved_profile(
+    profile: ResolvedAgentProfile | RuntimeProfile,
+) -> ResolvedAgentProfile:
+    if isinstance(profile, ResolvedAgentProfile):
+        return profile
+    return _legacy_resolved_profile(profile)
+
+
+def _legacy_resolved_profile(profile: RuntimeProfile) -> ResolvedAgentProfile:
+    run_mode = {"goal": "goal_eval", "loop": "loop_dynamic"}.get(
+        profile.protocol, "single"
     )
+    payload = {
+        "name": profile.profile_id,
+        "revision": profile.revision,
+        "display_name": profile.name,
+        "prompt_policy": _prompt_policy_id(profile),
+        "run_mode": run_mode,
+        "hitl_mode": "interactive",
+        "identity": profile.system_prompt,
+        "extra_rules": list(profile.constraints),
+        "persona": profile.persona,
+    }
+    content_hash = content_hash_of(payload)
+    snapshot = AgentProfileSnapshot(
+        profile_id=profile.profile_id,
+        revision=profile.revision,
+        source="project",
+        content_hash=content_hash,
+        snapshot_hash=content_hash_of({
+            "source": "project",
+            "profile_id": profile.profile_id,
+            "revision": profile.revision,
+            "content_hash": content_hash,
+        }),
+        canonical_payload=payload,
+    )
+    return ResolvedAgentProfile(
+        snapshot=snapshot,
+        runtime_profile=profile,
+        workflow_context=None,
+        run_config=resolve_run_config(run_mode),
+        resource_policy=ResourcePolicy(),
+    )
+
+
+def _prompt_policy_id(profile: RuntimeProfile) -> str:
+    name = type(profile.prompt_policy).__name__.removesuffix("PromptPolicy").lower()
+    return name or "coding"
 
 
 def _json_model(value) -> str:

@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from voidx.agent.domain.agent_profile import content_hash_of
 from voidx.agent.domain.task.state import GoalSpec, IntentResolution, PlanResolution, TaskIntent, ToolStatePatch
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import ToolResult
@@ -20,6 +21,7 @@ from voidx.tooling.domain.ui_events import (
     ToolUiEventPublisher,
 )
 from voidx.agent.domain.automation.workflow_policy import workflow_transitions
+from voidx.agent.domain.automation.workflow_schema import WorkflowDAG
 from voidx.agent.application.automation.workflow.service import WorkflowService
 from voidx.agent.domain.automation.workflow import (
     WorkflowActivationSource,
@@ -155,6 +157,7 @@ class PlanCheckpointTool:
                 decision="approved",
                 workflow_runs=ctx.runtime.workflow_runs,
                 turn_count=ctx.turn_count,
+                workflow_dag=ctx.runtime.workflow_dag,
             )
         if decision == "needs_doc":
             _emit_checkpoint_decision(
@@ -169,6 +172,7 @@ class PlanCheckpointTool:
                 decision="needs_doc",
                 workflow_runs=ctx.runtime.workflow_runs,
                 turn_count=ctx.turn_count,
+                workflow_dag=ctx.runtime.workflow_dag,
             )
         _emit_checkpoint_decision(
             ctx.runtime.events,
@@ -188,6 +192,7 @@ def _decision_result(
     modified_scope: str = "",
     workflow_runs: list[WorkflowRunState] | None = None,
     turn_count: int = 0,
+    workflow_dag: WorkflowDAG | None = None,
 ) -> ToolResult:
     if decision == "approved":
         scope = inp.goal.strip()
@@ -201,6 +206,7 @@ def _decision_result(
                 scope=scope,
                 decision=decision,
                 turn_count=turn_count,
+                workflow_dag=workflow_dag,
             ),
         )
         next_step_hint = ""
@@ -216,6 +222,7 @@ def _decision_result(
                 scope=scope,
                 decision=decision,
                 turn_count=turn_count,
+                workflow_dag=workflow_dag,
             ),
         )
         next_step_hint = ""
@@ -322,9 +329,12 @@ def _checkpoint_workflow_runs(
     scope: str,
     decision: str,
     turn_count: int = 0,
+    workflow_dag: WorkflowDAG | None = None,
 ) -> list[WorkflowRunState]:
+    if workflow_dag is None:
+        return [run.model_copy(deep=True) for run in current]
     target_name = target.strip().lower()
-    service = WorkflowService()
+    service = WorkflowService(workflow_dag)
     node = service.get(target_name)
     if node is None:
         return [run.model_copy(deep=True) for run in current]
@@ -360,7 +370,8 @@ def _checkpoint_workflow_runs(
     existing.activated_turn = turn_count
     existing.updated_turn = turn_count
     existing.blocked_reason = ""
-    existing.transition_to = list(workflow_transitions(target_name))
+    existing.dag_hash = content_hash_of(workflow_dag.model_dump(mode="json"))
+    existing.transition_to = list(workflow_transitions(target_name, workflow_dag))
     existing.evidence.append(
         WorkflowEvidence(
             kind=WorkflowStateEventKind.ACTIVATED.value,

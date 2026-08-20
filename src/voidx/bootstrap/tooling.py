@@ -9,11 +9,42 @@ from typing import Any
 from voidx.agent.adapters.tools.plugins import build_agent_plugins
 from voidx.agent.application.runtime.task_tracker import TaskTracker
 from voidx.agent.application.agents import child_agent_descriptions_for_llm, get_agent, get_subagents
+from voidx.agent.domain.tool_policy import ProfileToolPolicy
 from voidx.config import Config, Settings
 from voidx.tooling.adapters.mcp import McpGatewayTool
+from voidx.tooling.adapters.skills import ReadOnlySkillsTool
 from voidx.tooling.adapters.plugins import build_integration_plugins
 from voidx.tooling.application.registry import ToolRegistry
 from voidx.tooling.builtin.plugins import build_builtin_plugins
+from voidx.tooling.domain.capability import ToolCapability
+
+
+TOOL_CAPABILITIES = {
+    "read": ToolCapability.READ_ONLY,
+    "manage": ToolCapability.EXECUTION_GATED,
+    "write": ToolCapability.EXECUTION_GATED,
+    "replace": ToolCapability.EXECUTION_GATED,
+    "git": ToolCapability.EXECUTION_GATED,
+    "find": ToolCapability.READ_ONLY,
+    "search": ToolCapability.READ_ONLY,
+    "lsp": ToolCapability.READ_ONLY,
+    "lsp_format": ToolCapability.EXECUTION_GATED,
+    "clarify": ToolCapability.HITL_INTERACTION,
+    "checkpoint": ToolCapability.HITL_INTERACTION,
+    "workflow": ToolCapability.ORCHESTRATION,
+    "compact": ToolCapability.ORCHESTRATION,
+    "document": ToolCapability.READ_ONLY,
+    "goal": ToolCapability.ORCHESTRATION,
+    "loop": ToolCapability.ORCHESTRATION,
+    "powershell" if os.name == "nt" else "bash": ToolCapability.EXECUTION_GATED,
+    "todo": ToolCapability.ORCHESTRATION,
+    "skill": ToolCapability.ORCHESTRATION,
+    "webfetch": ToolCapability.READ_ONLY,
+    "websearch": ToolCapability.READ_ONLY,
+    "mcp": ToolCapability.EXTERNAL,
+    "agent": ToolCapability.ORCHESTRATION,
+    "agent_control": ToolCapability.ORCHESTRATION,
+}
 
 _CATALOG_ORDER = (
     "read", "manage", "write", "replace", "git", "find", "search",
@@ -61,7 +92,53 @@ def build_tool_registry(
             available_agents=[agent.name for agent in get_subagents()],
         ),
     ]
-    return tracker, ToolRegistry(_order_catalog_plugins(plugins))
+    ordered_plugins = _order_catalog_plugins(plugins)
+    return tracker, ToolRegistry(ordered_plugins, capabilities=TOOL_CAPABILITIES)
+
+
+def scoped_tool_registry(
+    registry: ToolRegistry,
+    policy: object | None,
+    *,
+    skills_api_provider: Callable[[str], Any] | None = None,
+) -> ToolRegistry:
+    scoped = registry.filtered_copy(registry.ids())
+    if not isinstance(policy, ProfileToolPolicy):
+        return scoped
+    resources = policy.resource_policy
+    if resources.hitl_mode != "autonomous":
+        return scoped
+
+    allowed_mcp_servers = frozenset(resources.mcp_servers or ())
+    mcp = scoped.get("mcp")
+    if not allowed_mcp_servers:
+        scoped = scoped.filtered_copy(set(scoped.ids()) - {"mcp"})
+    elif isinstance(mcp, McpGatewayTool):
+        scoped_mcp = mcp.scoped(allowed_mcp_servers)
+        scoped.replace(
+            scoped_mcp.id,
+            scoped_mcp,
+            scoped_mcp.description,
+            scoped_mcp.parameters_schema(),
+        )
+
+    allowed_skills = frozenset(resources.skills or ())
+    if not allowed_skills:
+        return scoped.filtered_copy(set(scoped.ids()) - {"skill"})
+    if skills_api_provider is None or scoped.get("skill") is None:
+        return scoped.filtered_copy(set(scoped.ids()) - {"skill"})
+
+    skill = ReadOnlySkillsTool(
+        skills_api_provider,
+        allowed_names=allowed_skills,
+    )
+    scoped.replace(
+        skill.id,
+        skill,
+        skill.description,
+        skill.parameters_schema(),
+    )
+    return scoped
 
 
 def register_agent_tool(
@@ -79,7 +156,7 @@ def register_agent_tool(
         available_agents=[agent.name for agent in get_subagents()],
     ):
         if plugin.id in {"agent", "agent_control"}:
-            registry.register_plugin(plugin)
+            registry.register_plugin(plugin, capability=TOOL_CAPABILITIES[plugin.id])
 
 
 
@@ -174,6 +251,7 @@ async def resolve_mcp_references(user_text: str, *, settings: Any, manager: Any)
 __all__ = [
     "build_external_managers",
     "build_tool_registry",
+    "scoped_tool_registry",
     "register_agent_tool",
     "resolve_mcp_references",
 ]

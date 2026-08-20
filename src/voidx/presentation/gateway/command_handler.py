@@ -4,9 +4,6 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from voidx.agent.domain.automation.goal import GOAL_PROFILE
-from voidx.agent.domain.automation.loop import LOOP_PROFILE
-from voidx.agent.domain.profile import CHAT_PROFILE, CODING_PROFILE, RuntimeProfile
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.ports.presentation import GatewayThreadRegistry, GuidancePort, RuntimeStatusReader
 from voidx.presentation.protocol import UiCancelCommand, UiSubmitCommand, parse_ui_command
@@ -67,7 +64,8 @@ class GatewayCommandHandler:
                 parsed.thread_id,
                 session_id,
                 parsed.workspace or status.workspace,
-                parsed.runtime_profile,
+                self._thread_registry.resolved_profile(parsed.thread_id),
+                parsed.runtime_profile or "coding",
             )
             app.submit_external_input(text, context=context)
         elif isinstance(parsed, UiCancelCommand):
@@ -87,25 +85,26 @@ def _guidance_context(
     return _turn_context("", active_session_id, workspace)
 
 
-def _runtime_profile(profile_id: str) -> RuntimeProfile:
-    profiles = {
-        "chat": CHAT_PROFILE,
-        "coding": CODING_PROFILE,
-        "goal": GOAL_PROFILE,
-        "loop": LOOP_PROFILE,
-    }
-    return profiles.get(profile_id, CODING_PROFILE)
 
 
 def _turn_context(
     thread_id: str,
     session_id: str,
     workspace: str,
-    runtime_profile: str = "coding",
+    resolved_profile: object | None = None,
+    profile_id: str = "coding",
 ) -> TurnExecutionContext:
+    if resolved_profile is None:
+        from voidx.agent.facade import resolve_agent_profile
+
+        resolved_profile = resolve_agent_profile(workspace, profile_id or "coding")
+    from voidx.agent.facade import default_session_profile_tool_policy
+
     return TurnExecutionContext(
         thread_id=thread_id or session_id or "coding",
         session_id=session_id,
-        runtime_profile=_runtime_profile(runtime_profile),
+        runtime_profile=resolved_profile.runtime_profile,
         workspace=workspace,
+        workflow_context=resolved_profile.workflow_context,
+        tool_policy=default_session_profile_tool_policy(resolved_profile),
     )

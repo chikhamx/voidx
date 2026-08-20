@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
+
 from rich.markup import escape
 
 from voidx.presentation.output.dock.formatting import _clean, _tail_lines
@@ -41,6 +43,16 @@ class DockStatusNodeMixin:
         self._mark_unsettled(node)
         self.refresh()
         return node
+
+    def clear_active_statuses(self, *, keep: Collection[str] = ()) -> None:
+        keep_ids = set(keep)
+        status_ids = (set(self._status_records) | set(self._status_nodes)) - keep_ids
+        for status_id in sorted(
+            status_ids,
+            key=lambda value: self._status_nodes[value].depth if value in self._status_nodes else -1,
+            reverse=True,
+        ):
+            self.finish_status(status_id)
 
     def finish_status(
         self,

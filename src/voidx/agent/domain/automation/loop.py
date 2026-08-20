@@ -99,8 +99,21 @@ Hard rules:
 """
 
 
+def loop_profile_for_base(base: RuntimeProfile, spec: LoopSpec) -> RuntimeProfile:
+    """Overlay the loop iteration prompt onto any resolved profile.
+
+    The profile's own system prompt (identity layer) is preserved; the loop
+    instructions are appended. With the bundled loop profile this reduces to
+    the legacy ``loop_profile_for_spec`` output.
+    """
+    system_prompt = "\n\n".join(
+        part for part in (base.system_prompt, _loop_system_prompt(spec)) if part
+    )
+    return base.model_copy(update={"system_prompt": system_prompt})
+
+
 def loop_profile_for_spec(spec: LoopSpec) -> RuntimeProfile:
-    return LOOP_PROFILE.model_copy(update={"system_prompt": _loop_system_prompt(spec)})
+    return loop_profile_for_base(LOOP_PROFILE, spec)
 
 
 def _loop_system_prompt(spec: LoopSpec) -> str:

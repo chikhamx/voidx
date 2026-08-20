@@ -64,8 +64,37 @@ from voidx.presentation.output.events import (
 
 
 def _graph(tmp_path):
+    from voidx.agent.adapters.langgraph.runtime.thread_context import (
+        ThreadExecutionState,
+        _CURRENT_THREAD_EXECUTION_STATE,
+    )
+    from voidx.agent.domain.agent_profile import (
+        WorkflowRuntimeContext as PinnedWorkflowRuntimeContext,
+    )
+    from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
+    from voidx.agent.domain.turn_context import TurnExecutionContext
+
+    bound = _CURRENT_THREAD_EXECUTION_STATE.get()
+    if bound is None or bound.turn_context is None:
+        _CURRENT_THREAD_EXECUTION_STATE.set(
+            ThreadExecutionState(
+                thread_id="test-thread",
+                turn_context=TurnExecutionContext(
+                    thread_id="test-thread",
+                    session_id="test-session",
+                    workspace=str(tmp_path),
+                    workflow_context=PinnedWorkflowRuntimeContext(
+                        dag=DEFAULT_WORKFLOW_DAG,
+                        dag_revision=1,
+                        dag_hash="test-default-workflow",
+                        source="bundled",
+                    ),
+                ),
+                workspace=str(tmp_path),
+            )
+        )
     cfg = Config(workspace=str(tmp_path))
-    return make_langgraph_execution(cfg, api_key=None)
+    return make_langgraph_execution(cfg, api_key="test")
 
 
 def _task_state_json(**kwargs):
@@ -893,6 +922,112 @@ async def test_execute_tools_loop_policy_allows_bound_tool_and_denies_unbound_to
     assert result["messages"][1].content == "Tool denied: tool_not_bound"
 
 
+
+
+
+def test_profile_policy_denial_records_pinned_audit_metadata() -> None:
+    from voidx.agent.adapters.langgraph.runtime.tool_executor.executor import (
+        _profile_policy_denial,
+    )
+    from voidx.agent.domain.tool_policy import ToolPolicyDecision
+    from voidx.tooling.domain.capability import ToolCapability
+
+    executed = _profile_policy_denial(
+        {"name": "Edit", "args": {}, "id": "call_edit"},
+        ToolPolicyDecision(
+            allowed=False,
+            reason="profile_blocked",
+            canonical_tool="replace",
+            snapshot_hash="snapshot-1",
+            phase="turn",
+            capability="execution_gated",
+        ),
+    )
+
+    assert executed.result.metadata == {
+        "error": True,
+        "tool_denied": True,
+        "snapshot_hash": "snapshot-1",
+        "phase": "turn",
+        "decision": "deny",
+        "reason": "profile_blocked",
+        "canonical_tool": "replace",
+        "capability": "execution_gated",
+    }
+
+
+@pytest.mark.asyncio
+async def test_execute_tools_rechecks_profile_policy_after_authorization(tmp_path):
+    from voidx.agent.adapters.langgraph.runtime.thread_context import (
+        current_thread_execution_state,
+    )
+    from voidx.agent.domain.agent_profile import ResourcePolicy
+    from voidx.agent.domain.run_config import resolve_run_config
+    from voidx.agent.domain.tool_policy import CodingToolPolicy, ProfileToolPolicy
+
+    graph = _graph(tmp_path)
+    executed: list[str] = []
+
+    class FakeClarifyTool:
+        id = "clarify"
+        description = "fake clarify"
+
+        def parameters_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+            executed.append("clarify")
+            return ToolResult(output="clarified")
+
+    graph.tools.replace("clarify", FakeClarifyTool(), "fake clarify", {})
+    state_context = current_thread_execution_state()
+    assert state_context is not None
+    state_context.tool_policy = ProfileToolPolicy(
+        baseline=CodingToolPolicy(),
+        resource_policy=ResourcePolicy(hitl_mode="autonomous"),
+        run_config=resolve_run_config("single"),
+        snapshot_hash="snapshot-1",
+        phase="turn",
+    )
+
+    async def allow_all(
+        tool_calls,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+        workflow_runs=None,
+        runtime_persona=None,
+    ):
+        return tool_calls, []
+
+    graph._authorize_tool_calls = allow_all
+    parent = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "clarify",
+                "args": {"question": "continue?"},
+                "id": "call_clarify",
+                "type": "tool_call",
+            }
+        ],
+    )
+
+    result = await graph._execute_tools(
+        {
+            "messages": [parent],
+            "workspace": str(tmp_path),
+            "persona": "voidx",
+            "plan_mode": False,
+        }
+    )
+
+    assert executed == []
+    assert len(result["messages"]) == 1
+    assert result["messages"][0].status == "error"
+    assert result["messages"][0].content == (
+        "Tool denied: hitl_interaction_unavailable"
+    )
 @pytest.mark.asyncio
 async def test_execute_tools_continues_after_legacy_tool_timeout(tmp_path):
     from voidx.agent.adapters.langgraph.runtime.topology import route_after_execute_tools

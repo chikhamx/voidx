@@ -66,7 +66,7 @@ class SessionCommandsMixin:
             return
         self.session_port.ui.print("[dim]Usage: /session list|new|resume|del[/dim]")
 
-    async def _switch_profile(self, profile: str) -> None:
+    async def _switch_profile(self, profile: str, *, resolved_profile=None) -> None:
         """Switch the session's runtime profile.
 
         A fresh session (no messages yet) is reused in place: its profile is
@@ -80,8 +80,19 @@ class SessionCommandsMixin:
             if repository is None:
                 raise RuntimeError("session_repository is required")
 
-            await repository.update_session_profile(session.id, profile)
+            if resolved_profile is None:
+                from voidx.agent.facade import resolve_agent_profile
+
+                resolved_profile = resolve_agent_profile(
+                    self.session_port.workspace or ".", profile
+                )
+            await repository.update_session_profile(
+                session.id,
+                profile,
+                profile_snapshot=resolved_profile.snapshot,
+            )
             session.runtime_profile = profile
+            session.profile_snapshot = resolved_profile.snapshot
             self.session_port.ui.print(f"[dim]Mode set to [cyan]{profile}[/cyan] — next message starts the {profile} session.[/dim]")
             return
         await self._session(f"new {profile}".strip())

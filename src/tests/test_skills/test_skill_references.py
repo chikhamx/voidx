@@ -91,19 +91,19 @@ async def test_instruction_service_system_includes_available_skills_section(tmp_
 async def test_workflow_context_message_renders_fixed_full_workflow_nodes(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
 
-    context = await InstructionService(str(tmp_path)).workflow_context_for()
+    context = await InstructionService(str(tmp_path)).workflow_context_for(workflow_dag=DEFAULT_WORKFLOW_DAG)
 
     assert context.content.startswith(WORKFLOW_CONTEXT_MARKER)
     assert f"Scope: {WORKFLOW_CONTEXT_SCOPE}" in context.content
     assert "structured workflow definitions" in context.content
     assert "compaction" not in context.content
-    for node in WorkflowService().nodes():
+    for node in WorkflowService(DEFAULT_WORKFLOW_DAG).nodes():
         assert f"## Workflow Node: {node.name}" in context.content
         assert f"## Workflow Node Summary: {node.name}" not in context.content
 
 
 def test_compaction_is_not_a_global_workflow_node():
-    assert WorkflowService().get("compaction") is None
+    assert WorkflowService(DEFAULT_WORKFLOW_DAG).get("compaction") is None
     assert "compaction" not in DEFAULT_WORKFLOW_DAG.nodes
 
 
@@ -120,6 +120,7 @@ async def test_workflow_context_message_expands_all_workflow_nodes(tmp_path, mon
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
 
     context = await InstructionService(str(tmp_path)).workflow_context_for(
+        workflow_dag=DEFAULT_WORKFLOW_DAG,
         goal_type="feature",
     )
 
@@ -134,10 +135,12 @@ async def test_workflow_context_message_stays_fixed_with_active_workflow_nodes(t
 
     instruction = InstructionService(str(tmp_path))
     inspect_context = await instruction.workflow_context_for(
+        workflow_dag=DEFAULT_WORKFLOW_DAG,
         goal_type="inspect",
         workflow_start="brainstorm",
     )
     implement_context = await instruction.workflow_context_for(
+        workflow_dag=DEFAULT_WORKFLOW_DAG,
         goal_type="feature",
         workflow_start="tdd",
     )

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext
+from voidx.agent.domain.agent_profile import content_hash_of
 from voidx.agent.application.automation.workflow.service import (
-    WorkflowService, workflow_edges, workflow_sort_key, workflow_transitions,
+    WorkflowService, workflow_sort_key, workflow_transitions,
 )
+from voidx.agent.domain.automation.workflow_schema import WorkflowDAG
 from voidx.agent.domain.automation.workflow import (
     WorkflowActivationSource, WorkflowEvidence, WorkflowRunState,
     WorkflowRunStatus, WorkflowStateEventKind,
@@ -31,9 +33,12 @@ def _current_runs(ctx: ToolContext) -> list[WorkflowRunState]:
     ]
 
 
-def _active_runs(runs: list[WorkflowRunState]) -> list[WorkflowRunState]:
+def _active_runs(
+    runs: list[WorkflowRunState],
+    dag: WorkflowDAG,
+) -> list[WorkflowRunState]:
     active = [run for run in runs if run.status == WorkflowRunStatus.ACTIVE]
-    return sorted(active, key=lambda run: workflow_sort_key(run.name))
+    return sorted(active, key=lambda run: workflow_sort_key(run.name, dag))
 
 
 def _effective_goal(input_goal: str, selected: WorkflowRunState, ctx: ToolContext) -> tuple[str, str]:
@@ -61,11 +66,12 @@ def _apply_goal_to_runs(runs: list[WorkflowRunState], names: list[str], goal: st
 def _activate_node(
     runs: list[WorkflowRunState],
     node_name: str,
+    dag: WorkflowDAG,
     *,
     goal: str = "",
 ) -> list[WorkflowRunState]:
     updated = [run.model_copy(deep=True) for run in runs]
-    node = WorkflowService().get(node_name)
+    node = WorkflowService(dag).get(node_name)
     personas = [node.persona] if node is not None and node.persona else []
     normalized_name = node_name.strip().lower()
     existing = next((run for run in updated if run.name.strip().lower() == normalized_name), None)
@@ -80,7 +86,8 @@ def _activate_node(
     existing.scope = ""
     existing.personas = personas
     existing.blocked_reason = ""
-    existing.transition_to = list(workflow_transitions(node_name))
+    existing.dag_hash = content_hash_of(dag.model_dump(mode="json"))
+    existing.transition_to = list(workflow_transitions(node_name, dag))
     existing.evidence.append(
         WorkflowEvidence(
             kind=WorkflowStateEventKind.ACTIVATED.value,
@@ -147,9 +154,9 @@ def _node_transitioned_to_satisfied(runs: list[WorkflowRunState], name: str) -> 
     )
 
 
-def _next_hints(names: list[str]) -> list[str]:
+def _next_hints(names: list[str], dag: WorkflowDAG) -> list[str]:
     hints: list[str] = []
-    service = WorkflowService()
+    service = WorkflowService(dag)
     for name in names:
         node = service.get(name)
         if node is None:

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 
-from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
+from voidx.agent.domain.automation.workflow_schema import WorkflowDAG
 from voidx.agent.domain.automation.workflow import (
     WorkflowRunState,
     WorkflowRunStatus,
@@ -40,6 +40,7 @@ def auto_advance_events(
     executed_tools: list[dict],
     *,
     workflow_runs: list[WorkflowRunState],
+    dag: WorkflowDAG,
 ) -> list[WorkflowStateEvent]:
     """Inspect executed tool results and return auto-advance events.
 
@@ -75,12 +76,12 @@ def auto_advance_events(
         output = getattr(result, "output", "") or ""
 
         if tool_name == "agent":
-            event = _check_review_result(output, metadata, active_names)
+            event = _check_review_result(output, metadata, active_names, dag)
             if event:
                 events.append(event)
         elif tool_name in ("bash", "powershell"):
-            events.extend(_check_shell_result(metadata, active_names))
-            verify_event = _check_verify_passed(metadata, active_names)
+            events.extend(_check_shell_result(metadata, active_names, dag))
+            verify_event = _check_verify_passed(metadata, active_names, dag)
             if verify_event:
                 events.append(verify_event)
 
@@ -91,6 +92,7 @@ def _check_review_result(
     output: str,
     metadata: dict,
     active_names: set[str],
+    dag: WorkflowDAG,
 ) -> WorkflowStateEvent | None:
     """Detect review_has_issues when a review agent returns FAIL/NEEDS_CHANGE.
 
@@ -105,7 +107,7 @@ def _check_review_result(
     if not _REVIEW_VERDICT_RE.search(output):
         return None
 
-    edges = DEFAULT_WORKFLOW_DAG.edges_from("review")
+    edges = dag.edges_from("review")
     if not any(e.condition == "review_has_issues" for e in edges):
         return None
 
@@ -123,6 +125,7 @@ def _check_review_result(
 def _check_shell_result(
     metadata: dict,
     active_names: set[str],
+    dag: WorkflowDAG,
 ) -> list[WorkflowStateEvent]:
     """Detect failed_implementation from shell (bash/powershell) test failures.
 
@@ -151,7 +154,7 @@ def _check_shell_result(
     if "verify" not in active_names:
         return []
 
-    edges = DEFAULT_WORKFLOW_DAG.edges_from("verify")
+    edges = dag.edges_from("verify")
     if not any(e.condition == "failed_implementation" for e in edges):
         return []
 
@@ -169,6 +172,7 @@ def _check_shell_result(
 def _check_verify_passed(
     metadata: dict,
     active_names: set[str],
+    dag: WorkflowDAG,
 ) -> WorkflowStateEvent | None:
     """Detect passed_substantial when a test command exits 0 while verify is active."""
     exit_code = metadata.get("exit_code")
@@ -187,7 +191,7 @@ def _check_verify_passed(
     if "verify" not in active_names:
         return None
 
-    edges = DEFAULT_WORKFLOW_DAG.edges_from("verify")
+    edges = dag.edges_from("verify")
     if not any(e.condition == "passed_substantial" for e in edges):
         return None
 

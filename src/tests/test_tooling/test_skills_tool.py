@@ -253,6 +253,79 @@ class TestSkillsToolSchema:
         assert "scope" in props
 
 
+
+
+class TestReadOnlySkillsTool:
+    def _write_skill(self, workspace: Path, name: str, description: str) -> None:
+        skill_dir = workspace / ".voidx" / "skills" / name
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: {description}\n---\n{name} body",
+            encoding="utf-8",
+        )
+
+    def _tool(self, workspace: Path, allowed: frozenset[str]):
+        from voidx.tooling.adapters.skills import ReadOnlySkillsTool
+
+        return ReadOnlySkillsTool(
+            lambda _workspace: SkillsApi(
+                SkillService(SkillRegistry(str(workspace)))
+            ),
+            allowed_names=allowed,
+        )
+
+    def test_schema_and_description_do_not_expose_create(self, tmp_path):
+        tool = self._tool(tmp_path, frozenset({"docs"}))
+        schema = tool.parameters_schema()
+
+        assert "create" not in tool.description.lower()
+        assert schema["properties"]["op"]["enum"] == ["load", "list"]
+        assert set(schema["properties"]) == {"op", "name"}
+
+    @pytest.mark.asyncio
+    async def test_list_only_returns_allowed_skills(self, tmp_path):
+        self._write_skill(tmp_path, "docs", "Write docs")
+        self._write_skill(tmp_path, "secret", "Secret workflow")
+        tool = self._tool(tmp_path, frozenset({"docs"}))
+
+        result = await tool.execute(
+            {"op": "list", "name": None},
+            ToolContext(workspace=str(tmp_path)),
+        )
+
+        assert [item["name"] for item in result.metadata["skills"]] == ["docs"]
+        assert "secret" not in result.output
+
+    @pytest.mark.asyncio
+    async def test_load_rejects_skill_outside_allowlist(self, tmp_path):
+        self._write_skill(tmp_path, "docs", "Write docs")
+        self._write_skill(tmp_path, "secret", "Secret workflow")
+        tool = self._tool(tmp_path, frozenset({"docs"}))
+
+        result = await tool.execute(
+            {"op": "load", "name": "secret"},
+            ToolContext(workspace=str(tmp_path)),
+        )
+
+        assert result.metadata["error"] is True
+        assert result.metadata["reason"] == "skill_not_allowed"
+
+    @pytest.mark.asyncio
+    async def test_forged_create_fails_closed_without_writing(self, tmp_path):
+        tool = self._tool(tmp_path, frozenset({"new-skill"}))
+
+        result = await tool.execute(
+            {
+                "op": "create",
+                "name": "new-skill",
+                "description": "New",
+                "body": "Body",
+            },
+            ToolContext(workspace=str(tmp_path)),
+        )
+
+        assert result.metadata["error"] is True
+        assert not (tmp_path / ".voidx" / "skills" / "new-skill").exists()
 @pytest.mark.asyncio
 async def test_tool_uses_execution_context_workspace(tmp_path):
     primary = tmp_path / "primary"

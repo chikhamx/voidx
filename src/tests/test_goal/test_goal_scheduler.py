@@ -179,3 +179,136 @@ async def test_goal_scheduler_durable_wakeup_is_not_starved_by_earlier_non_goal_
     remaining = await store.claim_next_outbox(lease_owner="coding", lease_seconds=60, kind="wakeup")
     assert remaining is not None
     assert remaining.outbox_id == non_goal_outbox.outbox_id
+
+
+class RecordingGoalEvents:
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    def publish_message(self, message: str) -> None:
+        self.messages.append(message)
+
+    def start_turn(self, text: str) -> None:
+        return None
+
+    def end_turn(self) -> None:
+        return None
+
+    def cancel_turn(self) -> None:
+        return None
+
+    def fail_turn(self, message: str) -> None:
+        return None
+
+    def show_loop_waiting(self, wakeup_at: float) -> None:
+        return None
+
+    def clear_loop_waiting(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_goal_scheduler_notifies_when_attempt_needs_user(tmp_path) -> None:
+    store = ThreadStore()
+    runtime = FakeGoalRunnerRuntime()
+    runtime.run_turn = lambda **kwargs: None
+
+    async def needs_user(**kwargs):
+        runtime.seen_frames.append((kwargs["thread"], kwargs["profile"], kwargs["input_frame"]))
+        return RuntimeDecision(
+            outcome="needs_user",
+            summary="User review required.",
+            reason="Acceptance criteria are ambiguous",
+        )
+
+    runtime.run_turn = needs_user
+    events = RecordingGoalEvents()
+    scheduler = GoalRuntimeScheduler(
+        store=store,
+        runtime=runtime,
+        workspace=str(tmp_path),
+        events=events,
+    )
+    spec = GoalSpec(
+        objective="ship",
+        acceptance_condition="tests pass",
+        generation="needs-user-run",
+    )
+    state = GoalState.from_spec(spec, run_id="needs-user-run")
+    await store.create_thread(
+        AgentThread(
+            thread_id=spec.goal_thread_id("parent-needs-user"),
+            session_id=spec.goal_session_id("parent-needs-user"),
+            parent_thread_id="parent-needs-user",
+        ),
+        profile=GOAL_PROFILE,
+        state=AgentThreadState(
+            thread_id=spec.goal_thread_id("parent-needs-user"),
+            lifecycle=LifecycleState.READY,
+            context={
+                "goal_spec": spec.model_dump(mode="json"),
+                "goal_run": state.model_dump(mode="json"),
+            },
+        ),
+    )
+
+    result = await scheduler.run_goal("parent-needs-user", spec)
+
+    assert result is not None
+    assert result.decision.outcome == "needs_user"
+    assert events.messages == [
+        "Automation paused for user input: Acceptance criteria are ambiguous"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_goal_scheduler_new_instance_owns_custom_goal_profile_by_protocol(
+    tmp_path,
+) -> None:
+    store = ThreadStore()
+    spec = GoalSpec(
+        objective="recover custom goal",
+        acceptance_condition="done",
+        generation="run-custom",
+    )
+    state = GoalState.from_spec(spec, run_id="run-custom")
+    custom_goal = GOAL_PROFILE.model_copy(
+        update={"profile_id": "my-goal", "name": "My Goal"}
+    )
+    await store.create_thread(
+        AgentThread(
+            thread_id=spec.goal_thread_id("parent-custom"),
+            session_id=spec.goal_session_id("parent-custom"),
+        ),
+        profile=custom_goal,
+        state=AgentThreadState(
+            thread_id=spec.goal_thread_id("parent-custom"),
+            lifecycle=LifecycleState.WAITING,
+            context={
+                "goal_spec": spec.model_dump(mode="json"),
+                "goal_run": state.model_dump(mode="json"),
+            },
+        ),
+    )
+    loaded = await store.load(spec.goal_thread_id("parent-custom"))
+    assert loaded is not None
+    await store.enqueue_outbox(
+        thread_id=loaded.thread.thread_id,
+        kind="wakeup",
+        payload={
+            "spec": spec.model_dump(mode="json"),
+            "goal_state": state.model_dump(mode="json"),
+        },
+        expected_state_version=loaded.state_version,
+    )
+    runtime = FakeGoalRunnerRuntime()
+    recovered = GoalRuntimeScheduler(
+        store=store,
+        runtime=runtime,
+        workspace=str(tmp_path),
+    )
+
+    result = await recovered._dispatch_next_wakeup()
+
+    assert result is not None
+    assert runtime.seen_frames[0][1].runtime_profile.profile_id == "my-goal"

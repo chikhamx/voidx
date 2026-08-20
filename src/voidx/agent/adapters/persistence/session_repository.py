@@ -7,6 +7,7 @@ timestamp-based listing, message hydration.
 from __future__ import annotations
 
 import asyncio
+import json
 import shutil
 import uuid
 
@@ -14,6 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from voidx.agent.domain.agent_profile import PROFILE_NAME_RE, AgentProfileSnapshot
 from voidx.llm.domain.model import DEFAULT_MODEL
 from voidx.llm.message_status import message_status
 from voidx.persistence.jsonl import append_session_record, drop_session_lock, read_session_records, session_dir
@@ -37,15 +39,70 @@ class SessionInfo(BaseModel):
     updated_at: str = Field(default_factory=now)
     message_count: int = 0
     runtime_profile: str = "coding"
+    # Resolved profile snapshot pinned at session create/explicit switch.
+    profile_snapshot: AgentProfileSnapshot | None = None
 
 
 RUNTIME_PROFILES = ("coding", "chat", "loop", "goal")
 
 
 def validate_runtime_profile(profile: str) -> str:
-    if profile not in RUNTIME_PROFILES:
+    """Persistence-layer check: any well-formed profile name is storable.
+
+    Semantic validation (does this profile exist?) happens at resolution time
+    via ``AgentRegistry``, not in the persistence adapter.
+    """
+    normalized = profile.strip()
+    if not PROFILE_NAME_RE.match(normalized):
         raise ValueError(f"unknown runtime profile: {profile}")
-    return profile
+    return normalized
+
+
+def _snapshot_columns(snapshot: AgentProfileSnapshot | None) -> tuple:
+    if snapshot is None:
+        return (None, None, None, None, None)
+    return (
+        snapshot.revision,
+        snapshot.content_hash,
+        snapshot.snapshot_hash,
+        snapshot.source,
+        json.dumps(snapshot.canonical_payload, sort_keys=True, ensure_ascii=False),
+    )
+
+
+def _pin_profile_snapshot(
+    workspace: str,
+    profile: str,
+    snapshot: AgentProfileSnapshot | None,
+) -> AgentProfileSnapshot | None:
+    """Resolve a snapshot when the caller did not pin one.
+
+    Persistence owns this so presentation/bootstrap callers can keep passing
+    only a profile id. An unresolvable profile is left unpinned rather than
+    silently rewritten to coding.
+    """
+    if snapshot is not None:
+        return snapshot
+    from voidx.agent.application.agent_registry import agent_registry_for
+
+    try:
+        return agent_registry_for(workspace or ".").resolve(profile).snapshot
+    except Exception:
+        return None
+
+
+def _snapshot_from_row(row) -> AgentProfileSnapshot | None:
+    payload_json = row["runtime_profile_snapshot"]
+    if not payload_json:
+        return None
+    return AgentProfileSnapshot(
+        profile_id=row["runtime_profile"],
+        revision=row["runtime_profile_revision"] or 1,
+        source=row["runtime_profile_source"] or "bundled",
+        content_hash=row["runtime_profile_content_hash"] or "",
+        snapshot_hash=row["runtime_profile_hash"] or "",
+        canonical_payload=json.loads(payload_json),
+    )
 
 
 class MessageRow(BaseModel):
@@ -72,19 +129,25 @@ async def create_session(
     directory: str = "",
     profile: str = "coding",
     session_id: str | None = None,
+    profile_snapshot: AgentProfileSnapshot | None = None,
 ) -> SessionInfo:
     profile = validate_runtime_profile(profile)
     sid = session_id or _uid()
     timestamp = now()
+    profile_snapshot = _pin_profile_snapshot(workspace, profile, profile_snapshot)
+    revision, content_hash, snapshot_hash, source, payload_json = _snapshot_columns(profile_snapshot)
     await execute_commit(
-        """INSERT INTO sessions (id, title, workspace, directory, model_provider, model_name, runtime_profile, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (sid, title, workspace, directory, provider, model, profile, timestamp, timestamp),
+        """INSERT INTO sessions (id, title, workspace, directory, model_provider, model_name, runtime_profile,
+               runtime_profile_revision, runtime_profile_content_hash, runtime_profile_hash,
+               runtime_profile_source, runtime_profile_snapshot, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (sid, title, workspace, directory, provider, model, profile,
+         revision, content_hash, snapshot_hash, source, payload_json, timestamp, timestamp),
     )
     return SessionInfo(
         id=sid, title=title, workspace=workspace, directory=directory,
         model_provider=provider, model_name=model, runtime_profile=profile,
-        created_at=timestamp, updated_at=timestamp,
+        created_at=timestamp, updated_at=timestamp, profile_snapshot=profile_snapshot,
     )
 
 
@@ -95,16 +158,22 @@ async def ensure_session(
     profile: str = "coding",
     title: str = "Loop session",
     root_session_id: str | None = None,
+    profile_snapshot: AgentProfileSnapshot | None = None,
 ) -> None:
     """Insert a session and inherit its provisional root when applicable."""
     profile = validate_runtime_profile(profile)
     timestamp = now()
+    profile_snapshot = _pin_profile_snapshot(workspace, profile, profile_snapshot)
+    revision, content_hash, snapshot_hash, source, payload_json = _snapshot_columns(profile_snapshot)
 
     def _ensure(conn) -> None:
         conn.execute(
-            """INSERT OR IGNORE INTO sessions (id, title, workspace, directory, model_provider, model_name, runtime_profile, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (session_id, title, workspace, workspace, "anthropic", DEFAULT_MODEL, profile, timestamp, timestamp),
+            """INSERT OR IGNORE INTO sessions (id, title, workspace, directory, model_provider, model_name, runtime_profile,
+                       runtime_profile_revision, runtime_profile_content_hash, runtime_profile_hash,
+                       runtime_profile_source, runtime_profile_snapshot, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (session_id, title, workspace, workspace, "anthropic", DEFAULT_MODEL, profile,
+             revision, content_hash, snapshot_hash, source, payload_json, timestamp, timestamp),
         )
         if not root_session_id:
             return
@@ -135,6 +204,7 @@ async def get_session(session_id: str) -> SessionInfo | None:
         model_provider=row["model_provider"], model_name=row["model_name"],
         created_at=row["created_at"], updated_at=row["updated_at"],
         message_count=row["message_count"], runtime_profile=row["runtime_profile"],
+        profile_snapshot=_snapshot_from_row(row),
     )
 
 
@@ -156,6 +226,7 @@ async def list_sessions(limit: int = 50) -> list[SessionInfo]:
             model_provider=row["model_provider"], model_name=row["model_name"],
             created_at=row["created_at"], updated_at=row["updated_at"],
             message_count=row["message_count"], runtime_profile=row["runtime_profile"],
+            profile_snapshot=_snapshot_from_row(row),
         )
         for row in rows
     ]
@@ -181,6 +252,7 @@ async def latest_session_for_workspace(workspace: str) -> SessionInfo | None:
         model_provider=row["model_provider"], model_name=row["model_name"],
         created_at=row["created_at"], updated_at=row["updated_at"],
         message_count=row["message_count"], runtime_profile=row["runtime_profile"],
+        profile_snapshot=_snapshot_from_row(row),
     )
 
 
@@ -217,10 +289,24 @@ async def update_title_if_current(
     return cur.rowcount > 0
 
 
-async def update_session_profile(session_id: str, profile: str) -> None:
+async def update_session_profile(
+    session_id: str,
+    profile: str,
+    *,
+    profile_snapshot: AgentProfileSnapshot | None = None,
+) -> None:
+    profile = validate_runtime_profile(profile)
+    if profile_snapshot is None:
+        existing = await fetch_one("SELECT workspace FROM sessions WHERE id = ?", (session_id,))
+        workspace = existing["workspace"] if existing is not None else "."
+        profile_snapshot = _pin_profile_snapshot(workspace, profile, None)
+    revision, content_hash, snapshot_hash, source, payload_json = _snapshot_columns(profile_snapshot)
     await execute_commit(
-        "UPDATE sessions SET runtime_profile = ?, updated_at = ? WHERE id = ?",
-        (profile, now(), session_id),
+        """UPDATE sessions SET runtime_profile = ?, runtime_profile_revision = ?,
+               runtime_profile_content_hash = ?, runtime_profile_hash = ?,
+               runtime_profile_source = ?, runtime_profile_snapshot = ?, updated_at = ?
+           WHERE id = ?""",
+        (profile, revision, content_hash, snapshot_hash, source, payload_json, now(), session_id),
     )
 
 
@@ -254,17 +340,25 @@ async def fork_session(
     sid = _uid()
     timestamp = now()
     fork_title = title if title is not None else f"Fork of {source.title}"
+    revision, content_hash, snapshot_hash, source_scope, payload_json = _snapshot_columns(
+        source.profile_snapshot
+    )
     await execute_commit(
-        """INSERT INTO sessions (id, title, workspace, directory, model_provider, model_name, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        """INSERT INTO sessions (id, title, workspace, directory, model_provider, model_name, runtime_profile,
+               runtime_profile_revision, runtime_profile_content_hash, runtime_profile_hash,
+               runtime_profile_source, runtime_profile_snapshot, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (sid, fork_title, source.workspace, source.directory,
-         source.model_provider, source.model_name, timestamp, timestamp),
+         source.model_provider, source.model_name, source.runtime_profile,
+         revision, content_hash, snapshot_hash, source_scope, payload_json, timestamp, timestamp),
     )
     return SessionInfo(
         id=sid, title=fork_title, workspace=source.workspace,
         directory=source.directory,
         model_provider=source.model_provider, model_name=source.model_name,
+        runtime_profile=source.runtime_profile,
         created_at=timestamp, updated_at=timestamp,
+        profile_snapshot=source.profile_snapshot,
     )
 
 

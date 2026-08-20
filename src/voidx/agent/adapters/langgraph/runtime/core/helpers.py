@@ -10,6 +10,7 @@ from voidx.agent.domain.task.intent import PersonaName
 from voidx.llm.compaction import SUMMARY_TEMPLATE
 from voidx.agent.domain.task.state import GoalResolution, TaskState
 from voidx.agent.domain.automation.workflow_policy import workflow_personas
+from voidx.agent.domain.automation.workflow_schema import WorkflowDAG
 from voidx.agent.domain.automation.workflow import WorkflowRunState, WorkflowRunStatus
 
 
@@ -175,11 +176,15 @@ def _persona_for_workflow_runs(
     return ",".join(dict.fromkeys(personas))
 
 
-def _persona_for_child_workflow(group: list[WorkflowRunState | dict], join: str) -> str:
+def _persona_for_child_workflow(
+    group: list[WorkflowRunState | dict],
+    join: str,
+    dag: WorkflowDAG | None,
+) -> str:
     persona = _persona_for_workflow_runs(group, fallback="")
     if persona:
         return persona
-    personas = [item for item in workflow_personas(join) if item.strip()]
+    personas = [item for item in workflow_personas(join, dag) if item.strip()] if dag is not None else []
     return ",".join(dict.fromkeys(personas)) or PersonaName.EXPLORE
 
 

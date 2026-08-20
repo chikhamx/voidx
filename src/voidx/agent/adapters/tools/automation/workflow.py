@@ -15,6 +15,7 @@ from voidx.tooling.domain.arguments import (
 from voidx.tooling.domain.schema import model_to_json_schema
 from .workflow_actions import _advance, _done, _enter
 from .workflow_result import _guidance
+from .workflow_queries import _workflow_dag
 from voidx.agent.adapters.tools.automation.workflow_state import _active_runs, _current_runs
 
 
@@ -106,14 +107,21 @@ class WorkflowTool:
             inp = WorkflowInput.model_validate(raw_args)
         except Exception as exc:
             return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
+        dag = _workflow_dag(ctx)
+        if dag is None:
+            return _guidance(
+                action=inp.action,
+                reason="workflow_unavailable",
+                guidance="The active agent profile does not define a workflow.",
+            )
         runs = _current_runs(ctx)
-        active = _active_runs(runs)
+        active = _active_runs(runs, dag)
 
         if inp.action == "enter":
-            return _enter(inp, runs, active, ctx)
+            return _enter(inp, runs, active, ctx, dag)
         if inp.action == "advance":
-            return _advance(inp, runs, active, ctx)
-        return _done(inp, runs, active)
+            return _advance(inp, runs, active, ctx, dag)
+        return _done(inp, runs, active, dag)
 
 
 

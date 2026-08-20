@@ -1513,9 +1513,20 @@ def test_explicit_gateway_context_replaces_existing_implicit_lock(tmp_path):
     assert followup.context.session_id == "gateway-chat-session"
     assert followup.context.runtime_profile == CHAT_PROFILE
 def test_message_after_loop_waiting_keeps_loop_context(tmp_path):
+    from voidx.agent.domain.automation.loop import LOOP_PROFILE
+    from voidx.agent.domain.turn_context import TurnExecutionContext
+    from voidx.agent.domain.turn_metadata import turn_metadata_from_context
     from voidx.presentation.output.dock import dock
 
     tui = _tui(tmp_path)
+    pinned = TurnExecutionContext(
+        thread_id="loop:session:run",
+        session_id="loop-session",
+        runtime_profile=LOOP_PROFILE,
+        workspace=str(tmp_path),
+    )
+    dock.start_turn("loop iteration", metadata=turn_metadata_from_context(pinned))
+    dock.end_turn()
     dock.record_status("loop:waiting", "Looping", "9999999999.0")
 
     tui._input_lines = ["你好"]
@@ -1524,23 +1535,31 @@ def test_message_after_loop_waiting_keeps_loop_context(tmp_path):
 
     item = tui._queue.get_nowait()
     assert item == "你好"
-    assert item.context.runtime_profile.profile_id == "loop"
-    assert item.context.runtime_profile.protocol == "loop"
+    assert item.context == pinned
 
 
 def test_message_after_interrupting_loop_keeps_loop_context(tmp_path):
-    from voidx.agent.domain.turn_metadata import TurnMetadata
+    from voidx.agent.domain.automation.loop import LOOP_PROFILE
+    from voidx.agent.domain.turn_context import TurnExecutionContext
+    from voidx.agent.domain.turn_metadata import turn_metadata_from_context
     from voidx.presentation.output.dock import dock
 
     tui = _tui(tmp_path)
+    pinned = TurnExecutionContext(
+        thread_id="loop:session:run",
+        session_id="loop-session",
+        runtime_profile=LOOP_PROFILE,
+        workspace=str(tmp_path),
+    )
     dock.start_turn(
         "Run the next scheduled loop iteration.",
-        metadata=TurnMetadata(profile_id="loop", protocol="loop", category="loop"),
+        metadata=turn_metadata_from_context(pinned),
     )
 
     tui._handle_interrupt()
     stop_item = tui._queue.get_nowait()
     assert stop_item == "/loop stop"
+    assert stop_item.context == pinned
     dock.end_turn()
 
     tui._input_lines = ["你好"]
@@ -1549,8 +1568,7 @@ def test_message_after_interrupting_loop_keeps_loop_context(tmp_path):
 
     item = tui._queue.get_nowait()
     assert item == "你好"
-    assert item.context.runtime_profile.profile_id == "loop"
-    assert item.context.runtime_profile.protocol == "loop"
+    assert item.context == pinned
 
 
 def test_loop_turn_in_progress_uses_metadata_not_text(tmp_path):

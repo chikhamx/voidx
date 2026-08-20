@@ -69,6 +69,9 @@ class WorkflowRunState(BaseModel):
     evidence: list[WorkflowEvidence] = Field(default_factory=list)
     blocked_reason: str = ""
     body_hash: str = ""
+    # Hash of the expanded WorkflowDAG used when this run was activated.
+    # Empty means legacy state and is backfilled on first safe reconciliation.
+    dag_hash: str = ""
     transition_to: list[str] = Field(default_factory=list)
 
     def state_summary(self) -> str:

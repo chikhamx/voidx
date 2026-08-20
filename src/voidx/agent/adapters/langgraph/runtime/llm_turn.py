@@ -30,7 +30,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from voidx.agent.application.agents import get_agent
 from voidx.agent.application.prompts import (
     CODING_PROFILE_SPEC,
-    WORKFLOW_RUNTIME,
+    workflow_runtime,
     assemble_base_system,
     build_base_system,
     persona_prompt,
@@ -107,6 +107,12 @@ class LlmTurn:
         state_context = current_thread_execution_state()
         chat_tool_view = getattr(state_context, "tool_policy", None) if state_context else None
         loop_turn_context = getattr(state_context, "turn_context", None) if state_context else None
+        workflow_profile_context = (
+            getattr(loop_turn_context, "workflow_context", None)
+            if loop_turn_context is not None
+            else None
+        )
+        workflow_dag = getattr(workflow_profile_context, "dag", None)
         runtime_profile = getattr(state_context, "runtime_profile", None) if state_context else None
         control_protocol = resolve_control_protocol(runtime_profile)
         protocol_controller = control_protocol.controller(
@@ -117,8 +123,12 @@ class LlmTurn:
                 turn_state=turn_state,
             )
         )
+        from voidx.agent.adapters.langgraph.runtime.thread_context import (
+            tool_registry_for,
+        )
+
         tool_defs = resolve_tool_surface(
-            host.tools,
+            tool_registry_for(host),
             ToolSurfaceContext(
                 runtime_profile=runtime_profile,
                 goal_phase=getattr(loop_turn_context, "goal_phase", None),
@@ -510,6 +520,7 @@ class LlmTurn:
                     rerender_task_context=_rerender_task_context,
                     loop_controller=protocol_controller,
                     protocol=control_protocol,
+                    workflow_dag=workflow_dag,
                 )
                 llm_messages = turn_result.llm_messages
                 turn_state = turn_result.turn_state
@@ -621,7 +632,8 @@ class LlmTurn:
         prompt_policy = getattr(active_profile, "prompt_policy", None)
         turn_context = getattr(state_context, "turn_context", None) if state_context else None
         persona_prompt_value = rendered_persona_prompt
-        workflow_runtime_value = WORKFLOW_RUNTIME
+        workflow_dag = turn_context.workflow_context.dag if turn_context and turn_context.workflow_context else None
+        workflow_runtime_value = workflow_runtime(workflow_dag) if workflow_dag is not None else None
         profile_sections_value = (
             prompt_policy.profile_sections(turn_context)
             if prompt_policy is not None
@@ -667,6 +679,7 @@ class LlmTurn:
             scope=goal_label(current_goal) or current_user_text,
             active_names=active_workflow_names(existing_workflow_runs),
             workflow_start=workflow_start,
+            workflow_dag=workflow_dag,
         )
         workflow_runs = _merge_workflow_runs(
             existing_workflow_runs,
@@ -697,6 +710,7 @@ class LlmTurn:
             interaction_mode=interaction_mode,
             instructions=instructions,
             workflow_runs=workflow_runs,
+            workflow_dag=workflow_dag,
             active_workflow_summaries=workflow_context.active,
             summary=summary,
             task_state=task_state,

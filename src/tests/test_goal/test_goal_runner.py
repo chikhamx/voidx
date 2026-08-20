@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 from langchain_core.messages import AIMessage
 
-from voidx.agent.domain.automation.goal import GOAL_PROFILE, GoalSpec, GoalState
+from voidx.agent.application.agent_registry import AgentRegistry
+from voidx.agent.domain.automation.goal import GoalSpec, GoalState
 from voidx.agent.domain.thread import AgentThread, LifecycleState
 from voidx.agent.application.automation.goal.runner import GoalRuntimeRunner
 from voidx.agent.application.runtime.contracts import TurnResult
@@ -34,6 +35,10 @@ class Evaluator:
         })
 
 
+def _goal_profile():
+    return AgentRegistry("/tmp/ws").resolve("goal")
+
+
 def _thread(spec: GoalSpec):
     state = GoalState.from_spec(spec, run_id=spec.generation)
     thread = AgentThread(
@@ -53,7 +58,7 @@ async def test_goal_runner_uses_evaluator_controller_decision() -> None:
 
     decision = await GoalRuntimeRunner(runtime=runtime, evaluator=Evaluator()).run_turn(
         thread=thread,
-        profile=None,
+        profile=_goal_profile(),
         input_frame={"spec": spec.model_dump(mode="json"), "goal_state": state.model_dump(mode="json")},
     )
 
@@ -73,7 +78,7 @@ async def test_goal_runner_fails_closed_when_evaluator_submits_nothing() -> None
     thread, state = _thread(spec)
     decision = await GoalRuntimeRunner(runtime=Runtime(), evaluator=MissingEvaluator()).run_turn(
         thread=thread,
-        profile=None,
+        profile=_goal_profile(),
         input_frame={"spec": spec.model_dump(mode="json"), "goal_state": state.model_dump(mode="json")},
     )
 
@@ -98,7 +103,7 @@ async def test_goal_runner_blocks_before_work_when_attempt_limit_reached() -> No
     state = state.model_copy(update={"attempt_count": 1})
     result = await GoalRuntimeRunner(runtime=runtime, evaluator=object()).run_turn(
         thread=AgentThread(thread_id="goal:p:r", session_id="goal:p:r"),
-        profile=GOAL_PROFILE,
+        profile=_goal_profile(),
         input_frame={"spec": spec.model_dump(), "goal_state": state.model_dump()},
     )
 

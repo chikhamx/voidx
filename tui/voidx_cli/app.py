@@ -19,7 +19,6 @@ from rich.console import Console, Group
 from rich.markup import escape
 from rich.text import Text
 
-from voidx.agent.domain.profile import RuntimeProfile
 from voidx.observability import log_internal_error
 from voidx.observability.external import install_external_log_bridge
 from voidx.platform.paths import voidx_workspace_dir
@@ -212,26 +211,20 @@ class PureTui(
         if not bool(dock):
             return
         if self._loop_waiting_active():
-            self._lock_submit_context_for_profile("loop", "loop")
+            metadata = getattr(dock, "last_turn_metadata", None)
+        elif getattr(dock, "turn_in_progress", False):
+            metadata = getattr(dock, "current_turn_metadata", None)
+        else:
             return
-        if not getattr(dock, "turn_in_progress", False):
+        context = getattr(metadata, "context", None)
+        if context is None:
             return
-        metadata = getattr(dock, "current_turn_metadata", None)
-        profile_id = str(getattr(metadata, "profile_id", "") or "").strip()
-        if not profile_id or profile_id == "coding":
-            return
-        protocol = str(getattr(metadata, "protocol", "") or "turn").strip() or "turn"
-        self._lock_submit_context_for_profile(profile_id, protocol)
+        self._locked_submit_context = context
+        self._locked_submit_context_explicit = True
 
-    def _lock_submit_context_for_profile(self, profile_id: str, protocol: str) -> None:
-        profile = RuntimeProfile(
-            profile_id=profile_id,
-            revision=1,
-            name=profile_id[:1].upper() + profile_id[1:],
-            protocol=protocol,
-        )
-        base_context = coding_turn_context_for_queue(self.status)
-        self._locked_submit_context = base_context.model_copy(update={"runtime_profile": profile})
+    def _lock_submit_context_for_profile(self, profile_id: str) -> None:
+        del profile_id
+        self._locked_submit_context = coding_turn_context_for_queue(self.status)
         self._locked_submit_context_explicit = True
 
     def _submit_context(

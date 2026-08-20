@@ -1,0 +1,6 @@
+name: goal
+revision: 1
+display_name: Goal
+prompt_policy: goal
+run_mode: goal_eval
+hitl_mode: interactive

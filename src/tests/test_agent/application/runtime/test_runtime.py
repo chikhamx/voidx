@@ -170,3 +170,6 @@ def test_turn_metadata_from_context_uses_runtime_profile():
     assert loop.profile_id == "loop"
     assert loop.protocol == "loop"
     assert loop.category == "loop"
+    assert loop.context is not None
+    assert loop.context.thread_id == "loop:t1:1"
+    assert loop.context.runtime_profile == LOOP_PROFILE

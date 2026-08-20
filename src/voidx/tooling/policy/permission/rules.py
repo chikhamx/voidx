@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from voidx.tooling.domain.permission import Rule, Ruleset
+from voidx.tooling.domain.tool_names import canonical_tool_name
 from voidx.tooling.policy.git.policy import git_policy_for_args
 from voidx.tooling.policy.filesystem.constants import FILE_PATTERN_TOOLS
 from voidx.tooling.policy.git.constants import GIT_GLOBAL_OPTIONS_WITH_VALUE, GITREF_WRITE_FLAGS
@@ -100,22 +101,7 @@ def tool_call_from_pattern(tool: str, pattern: str = "*") -> dict:
 
 
 def repair_tool_name(tool: str) -> str:
-    tool_map = {
-        "Read": "read", "Write": "manage", "Edit": "replace", "Delete": "replace",
-        "MultiEdit": "replace", "multiEdit": "replace", "multi_edit": "replace",
-        "Find": "find", "Search": "search", "Bash": "bash", "PowerShell": "powershell",
-        "Git": "git", "git": "git",
-        "Agent": "agent", "TodoWrite": "todo", "Todo": "todo",
-        "WebFetch": "webfetch", "WebSearch": "websearch",
-        "read_file": "read", "write_file": "manage",
-        "edit_file": "replace", "shell": "bash",
-        "readfile": "read", "writefile": "manage",
-        "LspDiagnostics": "lsp", "LspSymbols": "lsp",
-        "LspDefinition": "lsp", "LspReferences": "lsp",
-        "CompactContext": "compact", "find": "find", "search": "search",
-        "edit": "replace", "insert": "write", "append": "write", "delete": "replace", "line": "write",
-    }
-    return tool_map.get(tool, tool_map.get(tool.lower(), tool))
+    return canonical_tool_name(tool)
 
 
 def build_pattern(tool: str, args: dict) -> str:

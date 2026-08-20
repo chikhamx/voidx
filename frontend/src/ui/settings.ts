@@ -58,6 +58,8 @@ const PERMISSION_MODES: Record<PermissionMode, PermissionModeConfig> = {
   },
 };
 
+type AgentProfileRpc = (method: string, params: Record<string, unknown>) => Promise<unknown>;
+
 interface SettingsState {
   dialog: HTMLDialogElement | null;
   content: HTMLElement | null;
@@ -68,6 +70,9 @@ interface SettingsState {
   activeTab: string;
   snapshot: SettingsSnapshot;
   onSave: ((patch: Record<string, unknown>) => Promise<unknown> | void) | null;
+  agentProfileRpc: AgentProfileRpc;
+  loadedAgentProfile: Record<string, unknown> | null;
+  agentProfileTargetGuard: { scope: string; revision: number; contentHash: string; exists: boolean } | null;
 }
 
 let state: SettingsState = {
@@ -80,9 +85,18 @@ let state: SettingsState = {
   activeTab: "model",
   snapshot: {},
   onSave: null,
+  agentProfileRpc: rpcCall,
+  loadedAgentProfile: null,
+  agentProfileTargetGuard: null,
 };
 
-export function initSettingsModal({ onSave }: { onSave?: (patch: Record<string, unknown>) => Promise<unknown> | void } = {}): void {
+export function initSettingsModal({
+  onSave,
+  agentProfileRpc,
+}: {
+  onSave?: (patch: Record<string, unknown>) => Promise<unknown> | void;
+  agentProfileRpc?: AgentProfileRpc;
+} = {}): void {
   state.dialog = document.querySelector("#settings-dialog");
   state.content = document.querySelector("#settings-content");
   state.error = document.querySelector("#settings-error");
@@ -90,6 +104,7 @@ export function initSettingsModal({ onSave }: { onSave?: (patch: Record<string, 
   state.close = document.querySelector("#settings-close");
   state.tabs = document.querySelector("#settings-tabs");
   state.onSave = onSave ?? null;
+  state.agentProfileRpc = agentProfileRpc ?? rpcCall;
   state.close?.addEventListener("click", () => closeSettingsModal());
   state.save?.addEventListener("click", () => saveSettingsModal());
   if (state.tabs) {
@@ -127,6 +142,10 @@ function renderActiveTab() {
       break;
     case "advanced":
       state.content.replaceChildren(renderAdvancedTab(state.snapshot));
+      break;
+    case "agent-profiles":
+      state.content.replaceChildren(renderAgentProfilesTab());
+      void refreshAgentProfiles();
       break;
   }
 }
@@ -225,7 +244,20 @@ function collectModelPatch(value: (name: string) => string): Record<string, unkn
   return patch;
 }
 export function _resetSettingsForTest() {
-  state = { dialog: null, content: null, error: null, save: null, close: null, tabs: null, activeTab: "model", snapshot: {}, onSave: null };
+  state = {
+    dialog: null,
+    content: null,
+    error: null,
+    save: null,
+    close: null,
+    tabs: null,
+    activeTab: "model",
+    snapshot: {},
+    onSave: null,
+    agentProfileRpc: rpcCall,
+    loadedAgentProfile: null,
+    agentProfileTargetGuard: null,
+  };
 }
 
 async function saveSettingsModal() {
@@ -343,6 +375,236 @@ function renderAdvancedTab(snapshot: SettingsSnapshot = {}): DocumentFragment {
     ]),
   );
   return frag;
+}
+
+interface AgentProfileView {
+  name: string;
+  display_name: string;
+  revision: number;
+  content_hash: string;
+  source: "bundled" | "global" | "project";
+  diagnostics?: Array<{ message: string }>;
+}
+
+function renderAgentProfilesTab(): DocumentFragment {
+  state.loadedAgentProfile = null;
+  const fragment = document.createDocumentFragment();
+  const root = document.createElement("div");
+  root.id = "agent-profiles-settings";
+  const list = document.createElement("div");
+  list.id = "agent-profile-list";
+  list.textContent = "Loading agent profiles…";
+  const editor = document.createElement("div");
+  editor.id = "agent-profile-editor";
+  editor.hidden = true;
+  const metadata = document.createElement("p");
+  metadata.id = "agent-profile-metadata";
+  const scope = document.createElement("select");
+  scope.id = "agent-profile-scope";
+  for (const value of ["project", "global"]) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    scope.append(option);
+  }
+  const yaml = document.createElement("textarea");
+  yaml.id = "agent-profile-yaml";
+  yaml.rows = 18;
+  yaml.spellcheck = false;
+  const actions = document.createElement("div");
+  actions.className = "settings-actions";
+  for (const [id, label] of [
+    ["agent-profile-validate", "Validate"],
+    ["agent-profile-save", "Save"],
+    ["agent-profile-delete", "Delete"],
+  ]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.id = id;
+    button.textContent = label;
+    actions.append(button);
+  }
+  const diagnostics = document.createElement("div");
+  diagnostics.id = "agent-profile-diagnostics";
+  diagnostics.setAttribute("role", "status");
+  editor.append(metadata, scope, yaml, actions, diagnostics);
+  root.append(list, editor);
+  fragment.append(root);
+  root.querySelector("#agent-profile-validate")?.addEventListener("click", () => void validateLoadedAgentProfile());
+  root.querySelector("#agent-profile-save")?.addEventListener("click", () => void saveLoadedAgentProfile());
+  root.querySelector("#agent-profile-delete")?.addEventListener("click", () => void deleteLoadedAgentProfile());
+  scope.addEventListener("change", () => void loadAgentProfileTargetGuard());
+  return fragment;
+}
+
+function agentProfileEditorElement<T extends HTMLElement>(selector: string): T | null {
+  return state.content?.querySelector<T>(selector) ?? null;
+}
+
+function renderAgentProfileDiagnostics(items: Array<{ message: string }> = []): void {
+  const target = agentProfileEditorElement<HTMLElement>("#agent-profile-diagnostics");
+  if (target) target.textContent = items.map((item) => item.message).join("\n");
+}
+
+async function refreshAgentProfiles(): Promise<void> {
+  const result = await state.agentProfileRpc("list-agent-profiles", {}) as { profiles?: AgentProfileView[] };
+  const list = agentProfileEditorElement<HTMLElement>("#agent-profile-list");
+  if (!list) return;
+  list.replaceChildren(...(result.profiles || []).map((profile) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.agentProfile = profile.name;
+    button.textContent = `${profile.display_name} · ${profile.source}`;
+    button.addEventListener("click", () => void loadAgentProfile(profile));
+    return button;
+  }));
+}
+
+async function loadAgentProfile(profile: AgentProfileView): Promise<void> {
+  const result = await state.agentProfileRpc("get-agent-profile", {
+    scope: profile.source,
+    name: profile.name,
+  }) as { profile: AgentProfileView; yaml: string; read_only: boolean };
+  state.loadedAgentProfile = {
+    ...result.profile,
+    read_only: result.read_only,
+  };
+  state.agentProfileTargetGuard = {
+    scope: result.profile.source,
+    revision: result.profile.revision,
+    contentHash: result.profile.content_hash,
+    exists: true,
+  };
+  const editor = agentProfileEditorElement<HTMLElement>("#agent-profile-editor");
+  const yaml = agentProfileEditorElement<HTMLTextAreaElement>("#agent-profile-yaml");
+  const scope = agentProfileEditorElement<HTMLSelectElement>("#agent-profile-scope");
+  const metadata = agentProfileEditorElement<HTMLElement>("#agent-profile-metadata");
+  if (!editor || !yaml || !scope || !metadata) return;
+  editor.hidden = false;
+  yaml.value = result.yaml;
+  yaml.readOnly = result.read_only;
+  scope.value = result.profile.source === "global" ? "global" : "project";
+  scope.disabled = result.read_only;
+  metadata.textContent = `${result.profile.display_name} · revision ${result.profile.revision} · ${result.profile.content_hash}${result.read_only ? " · 只读" : ""}`;
+  for (const id of ["agent-profile-save", "agent-profile-delete"]) {
+    const button = agentProfileEditorElement<HTMLButtonElement>(`#${id}`);
+    if (button) button.disabled = result.read_only;
+  }
+  const validate = agentProfileEditorElement<HTMLButtonElement>("#agent-profile-validate");
+  if (validate) validate.disabled = result.read_only;
+  renderAgentProfileDiagnostics(result.profile.diagnostics || []);
+}
+
+function loadedAgentProfileInput(): {
+  profile: Record<string, unknown>;
+  scope: string;
+  name: string;
+  yaml: string;
+} | null {
+  const profile = state.loadedAgentProfile;
+  const scope = agentProfileEditorElement<HTMLSelectElement>("#agent-profile-scope")?.value;
+  const yaml = agentProfileEditorElement<HTMLTextAreaElement>("#agent-profile-yaml")?.value;
+  const name = typeof profile?.name === "string" ? profile.name : "";
+  if (!profile || !scope || !name || yaml === undefined) return null;
+  return { profile, scope, name, yaml };
+}
+
+async function validateLoadedAgentProfile(): Promise<void> {
+  const input = loadedAgentProfileInput();
+  if (!input) return;
+  const result = await state.agentProfileRpc("validate-agent-profile", {
+    scope: input.scope,
+    name: input.name,
+    yaml: input.yaml,
+  }) as { diagnostics?: Array<{ message: string }> };
+  renderAgentProfileDiagnostics(result.diagnostics || []);
+}
+
+function renderAgentProfileError(error: unknown): void {
+  const value = error as { message?: string; data?: { current?: { revision?: number; content_hash?: string }; diagnostics?: Array<{ message: string }> } };
+  const current = value.data?.current;
+  const messages = value.data?.diagnostics?.map((item) => item.message) || [];
+  if (current) messages.unshift(`Current revision ${current.revision ?? "?"} · ${current.content_hash ?? ""}`);
+  if (!messages.length) messages.push(value.message || String(error));
+  renderAgentProfileDiagnostics(messages.map((message) => ({ message })));
+}
+
+async function loadAgentProfileTargetGuard(): Promise<void> {
+  const input = loadedAgentProfileInput();
+  if (!input) return;
+  state.agentProfileTargetGuard = null;
+  try {
+    const result = await state.agentProfileRpc("get-agent-profile", {
+      scope: input.scope,
+      name: input.name,
+    }) as { profile: AgentProfileView };
+    state.agentProfileTargetGuard = {
+      scope: input.scope,
+      revision: result.profile.revision,
+      contentHash: result.profile.content_hash,
+      exists: true,
+    };
+    renderAgentProfileDiagnostics(result.profile.diagnostics || []);
+  } catch (error) {
+    const value = error as { message?: string };
+    if ((value.message || "").toLowerCase().includes("not found")) {
+      state.agentProfileTargetGuard = {
+        scope: input.scope,
+        revision: 0,
+        contentHash: "",
+        exists: false,
+      };
+      renderAgentProfileDiagnostics([]);
+      return;
+    }
+    renderAgentProfileError(error);
+  }
+}
+
+async function saveLoadedAgentProfile(): Promise<void> {
+  const input = loadedAgentProfileInput();
+  const guard = state.agentProfileTargetGuard;
+  if (!input || input.profile.read_only === true || !guard || guard.scope !== input.scope) return;
+  try {
+    const result = await state.agentProfileRpc("save-agent-profile", {
+      scope: input.scope,
+      name: input.name,
+      yaml: input.yaml,
+      expected_revision: guard.revision,
+    }) as { snapshot?: { revision?: number; content_hash?: string }; diagnostics?: Array<{ message: string }> };
+    if (result.snapshot) {
+      state.loadedAgentProfile = { ...input.profile, ...result.snapshot };
+      state.agentProfileTargetGuard = {
+        scope: input.scope,
+        revision: result.snapshot.revision ?? guard.revision,
+        contentHash: result.snapshot.content_hash ?? guard.contentHash,
+        exists: true,
+      };
+    }
+    renderAgentProfileDiagnostics(result.diagnostics || []);
+    await refreshAgentProfiles();
+  } catch (error) {
+    renderAgentProfileError(error);
+  }
+}
+
+async function deleteLoadedAgentProfile(): Promise<void> {
+  const input = loadedAgentProfileInput();
+  const guard = state.agentProfileTargetGuard;
+  if (!input || input.profile.read_only === true || !guard || guard.scope !== input.scope || !guard.exists) return;
+  try {
+    await state.agentProfileRpc("delete-agent-profile", {
+      scope: input.scope,
+      name: input.name,
+      expected_hash: guard.contentHash,
+    });
+    state.loadedAgentProfile = null;
+    const editor = agentProfileEditorElement<HTMLElement>("#agent-profile-editor");
+    if (editor) editor.hidden = true;
+    await refreshAgentProfiles();
+  } catch (error) {
+    renderAgentProfileError(error);
+  }
 }
 
 // ── form helpers ────────────────────────────────────────────────────────

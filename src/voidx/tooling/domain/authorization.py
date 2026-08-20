@@ -31,6 +31,7 @@ class PermissionContext:
     session_allow: frozenset[str] = field(default_factory=frozenset)
     session_deny: frozenset[str] = field(default_factory=frozenset)
     process_sandbox: object | None = None
+    execution_gated: bool = False
 
     def __post_init__(self) -> None:
         authorization = self.authorization

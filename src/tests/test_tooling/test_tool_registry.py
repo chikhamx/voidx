@@ -46,6 +46,62 @@ from voidx.agent.domain.automation.workflow import WorkflowStateEventKind
 import voidx.persistence.sqlite as store
 
 
+class TestToolCapabilityMetadata:
+    def test_registry_requires_capability_for_each_initial_plugin(self):
+        from voidx.tooling.domain.capability import ToolCapability
+
+        class Plugin:
+            id = "fake"
+            description = "fake tool"
+
+            def parameters_schema(self):
+                return {"type": "object", "properties": {}}
+
+        with pytest.raises(ValueError, match="Missing tool capabilities: fake"):
+            ToolRegistry([Plugin()])
+
+        registry = ToolRegistry(
+            [Plugin()], capabilities={"fake": ToolCapability.READ_ONLY}
+        )
+        assert registry.get_def("fake").capability is ToolCapability.READ_ONLY
+
+    def test_dynamic_registration_requires_capability(self):
+        from voidx.tooling.domain.capability import ToolCapability
+
+        class Plugin:
+            id = "dynamic"
+            description = "dynamic tool"
+
+            def parameters_schema(self):
+                return {}
+
+        registry = ToolRegistry()
+        with pytest.raises(ValueError, match="Missing tool capability: dynamic"):
+            registry.register_plugin(Plugin())
+
+        registry.register_plugin(Plugin(), capability=ToolCapability.ORCHESTRATION)
+        assert registry.get_def("dynamic").capability is ToolCapability.ORCHESTRATION
+
+    def test_replace_and_filtered_copy_preserve_capability(self):
+        from voidx.tooling.domain.capability import ToolCapability
+
+        registry = ToolRegistry()
+        registry.register(
+            "bash", object(), "shell", {}, capability=ToolCapability.EXECUTION_GATED
+        )
+        registry.replace("bash", object(), "replacement", {})
+        clone = registry.filtered_copy({"bash"})
+
+        assert registry.get_def("bash").capability is ToolCapability.EXECUTION_GATED
+        assert clone.get_def("bash").capability is ToolCapability.EXECUTION_GATED
+
+    def test_capability_catalog_rejects_unknown_ids(self):
+        from voidx.tooling.domain.capability import ToolCapability
+
+        with pytest.raises(ValueError, match="Unknown tool capabilities: ghost"):
+            ToolRegistry([], capabilities={"ghost": ToolCapability.EXTERNAL})
+
+
 class TestToolRegistry:
     """Registry knows all tools."""
 
@@ -63,7 +119,9 @@ class TestToolRegistry:
             async def execute(self, args, ctx):
                 return ToolResult(output="ok")
 
-        registry.register_plugin(Plugin())
+        from voidx.tooling.domain.capability import ToolCapability
+
+        registry.register_plugin(Plugin(), capability=ToolCapability.READ_ONLY)
         assert registry.ids() == ["fake"]
 
     def test_all_tools_registered(self):

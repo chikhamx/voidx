@@ -31,6 +31,7 @@ class LangGraphRuntimeStatusReader:
                 title=session.title if session else "New session",
                 directory=getattr(session, "directory", "") if session else "",
                 runtime_profile=getattr(session, "runtime_profile", "coding") if session else "coding",
+                profile_snapshot=getattr(session, "profile_snapshot", None) if session else None,
                 is_new=session is None,
             ),
             permission_mode=getattr(host.permission, "permission_mode", ""),

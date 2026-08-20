@@ -23,18 +23,25 @@ class SessionMethods:
     """Session/command-related JSON-RPC handlers, mixed into GatewaySession."""
 
     async def _method_session_create(self, params: dict) -> dict:
-        from voidx.presentation.gateway.session.temporary import (
-            new_temporary_thread_id,
-            validate_temporary_profile,
-        )
+        from voidx.agent.facade import AgentProfileValidationError, resolve_agent_profile
+        from voidx.presentation.gateway.session.temporary import new_temporary_thread_id
 
         title = params.get("title", "New session")
         directory = str(params.get("directory", "") or "")
         workspace = directory or self._workspace or "."
         profile = str(params.get("profile", "") or "coding")
         try:
-            profile = validate_temporary_profile(profile)
-        except ValueError as exc:
+            resolved_profile = resolve_agent_profile(workspace, profile)
+        except AgentProfileValidationError as exc:
+            raise MethodParamsError(
+                "agent profile unavailable",
+                data={
+                    "diagnostics": [
+                        item.model_dump(mode="json") for item in exc.diagnostics
+                    ]
+                },
+            ) from exc
+        except KeyError as exc:
             raise MethodParamsError(f"unknown profile: {profile}") from exc
         thread_id = new_temporary_thread_id()
         await self.register_thread(
@@ -44,6 +51,7 @@ class SessionMethods:
             workspace=workspace,
             runtime_profile=profile,
             temporary=True,
+            resolved_profile=resolved_profile,
         )
         await self._activate_dock(thread_id)
         self._active_thread_id = thread_id
@@ -74,6 +82,7 @@ class SessionMethods:
             directory=info.directory,
             workspace=info.workspace,
             runtime_profile=info.runtime_profile,
+            profile_snapshot=getattr(info, "profile_snapshot", None),
         )
         return {
             "thread_id": info.id,

@@ -56,6 +56,7 @@ from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.agent.application.tool_messages import sanitize_tool_message_content
 from voidx.agent.adapters.tools.result_storage import maybe_persist_tool_result
 from voidx.agent.domain.profile import RuntimeProfile
+from voidx.tooling.domain.capability import ToolCapability
 from voidx.agent.adapters.langgraph.runtime.tool_surface import (
     ToolSurfaceContext,
     resolve_tool_surface,
@@ -172,7 +173,9 @@ async def run_subagent(
             )
         )
         if agent_tools.get(message_tool.id) is None:
-            agent_tools.register_plugin(message_tool)
+            agent_tools.register_plugin(
+                message_tool, capability=ToolCapability.ORCHESTRATION
+            )
         else:
             agent_tools.replace(message_tool.id, message_tool, message_tool.description, message_tool.parameters_schema())
     # Child constraints are fixed: delegation/interaction tools never reach a child,
@@ -215,6 +218,7 @@ async def run_subagent(
     context_config.model = model_cfg
     interaction_mode = InteractionMode.PLAN if persona == PersonaName.PLAN else InteractionMode.AUTO
     workflow_context = workflow_runtime_context or WorkflowRuntimeContext(instructions=[], active=[], content="", runs=[])
+    workflow_dag = workflow_context.dag
     context_cache = ContextCompilerCache()
     plan = goal_resolution.plan
     sub_task_state = TaskState(
@@ -369,11 +373,16 @@ async def run_subagent(
             config=context_config,
             workspace=config.workspace,
             base_system_prompt=build_base_system(context_config.user_profile.language),
-            workflow_runtime=child_workflow_runtime(_child_workflow_mode(sub_task_state.workflow_route)),
+            workflow_runtime=(
+                child_workflow_runtime(_child_workflow_mode(sub_task_state.workflow_route), workflow_dag)
+                if workflow_dag is not None
+                else None
+            ),
             persona_prompt=persona_prompt(),
             persona=persona,
             interaction_mode=interaction_mode,
             workflow_runs=list(sub_task_state.workflow_runs.values()),
+            workflow_dag=workflow_dag,
             active_workflow_summaries=active_summaries,
             task_state=sub_task_state,
             child_runs=child_runs,
@@ -468,6 +477,7 @@ async def run_subagent(
         goal_target=sub_task_state.current_goal.label if sub_task_state.current_goal else "",
         active_workflow_names=active_workflow_names(sub_task_state.workflow_runs),
         workflow_runs=list(sub_task_state.workflow_runs.values()),
+        workflow_dag=workflow_dag,
         workflow_route=(
             sub_task_state.workflow_route.model_dump(mode="json")
             if sub_task_state.workflow_route is not None
@@ -990,6 +1000,7 @@ async def run_subagent(
                 current_workflow_runs=sub_task_state.workflow_runs,
                 current_workflow_route=sub_task_state.workflow_route,
                 turn_count=step,
+                workflow_dag=workflow_dag,
             )
             workflow_changed = apply_state_update(state_update)
 

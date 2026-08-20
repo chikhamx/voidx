@@ -2,7 +2,8 @@ import sys
 from pathlib import Path
 
 
-from voidx.agent.application.prompts import BASE_SYSTEM, WORKFLOW_RUNTIME, persona_prompt
+from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
+from voidx.agent.application.prompts import BASE_SYSTEM, persona_prompt, workflow_runtime
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.agent.domain.task.state import TaskState
 from voidx.config import Config
@@ -13,7 +14,7 @@ def test_runtime_context_builder_uses_structured_prompt_sections(tmp_path):
         config=Config(workspace=str(tmp_path)),
         workspace=str(tmp_path),
         base_system_prompt=BASE_SYSTEM,
-        workflow_runtime=WORKFLOW_RUNTIME,
+        workflow_runtime=workflow_runtime(DEFAULT_WORKFLOW_DAG),
         persona_prompt=persona_prompt(),
         persona="coordinate",
         interaction_mode=InteractionMode.AUTO,

@@ -213,11 +213,17 @@ def test_registry_rejects_duplicate_ids_on_every_registration_path() -> None:
         async def execute(self, args, ctx):  # pragma: no cover - registration only
             raise NotImplementedError
 
-    registry = ToolRegistry([Plugin()])
+    from voidx.tooling.domain.capability import ToolCapability
+
+    registry = ToolRegistry(
+        [Plugin()], capabilities={"same": ToolCapability.ORCHESTRATION}
+    )
     with pytest.raises(ValueError, match="Duplicate tool id: same"):
-        registry.register_plugin(Plugin())
+        registry.register_plugin(Plugin(), capability=ToolCapability.ORCHESTRATION)
     with pytest.raises(ValueError, match="Duplicate tool id: same"):
-        registry.register("same", Plugin(), "same", {})
+        registry.register(
+            "same", Plugin(), "same", {}, capability=ToolCapability.ORCHESTRATION
+        )
 
 
 def test_policy_git_does_not_import_builtin_or_private_implementation() -> None:

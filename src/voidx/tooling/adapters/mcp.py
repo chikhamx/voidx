@@ -93,6 +93,10 @@ class McpGatewayTool:
         "- Never invent server names, tool names, or parameters; list or load when uncertain."
     )
 
+    def scoped(self, allowed_servers: set[str] | frozenset[str]) -> "ScopedMcpGatewayTool":
+        """Return an autonomous view restricted to the provided MCP servers."""
+        return ScopedMcpGatewayTool(self._gateway, allowed_servers)
+
     def __init__(self, gateway: McpGateway | None) -> None:
         super().__init__()
         self._gateway = gateway
@@ -296,6 +300,96 @@ class McpGatewayTool:
             meta["error"] = True
             meta["error_kind"] = "mcp_error"
         return ToolResult(output=format_mcp_call_result(result), metadata=meta)
+
+
+class _ScopedMcpGateway:
+    """Read/call view that exposes only an autonomous profile's allowlist."""
+
+    def __init__(self, gateway: McpGateway, allowed_servers: frozenset[str]) -> None:
+        self._gateway = gateway
+        self._allowed_servers = allowed_servers
+
+    def statuses(self) -> list[object]:
+        return [status for status in self._gateway.statuses() if status.name in self._allowed_servers]
+
+    def catalog_snapshot(self) -> list[object]:
+        return [entry for entry in self._gateway.catalog_snapshot() if entry.name in self._allowed_servers]
+
+    def server_config(self, name: str) -> object | None:
+        if name not in self._allowed_servers:
+            return None
+        return self._gateway.server_config(name)
+
+    def tool_def(self, server: str, tool: str) -> object | None:
+        if server not in self._allowed_servers:
+            return None
+        return self._gateway.tool_def(server, tool)
+
+    async def call_tool(self, server: str, tool: str, arguments: dict) -> object:
+        if server not in self._allowed_servers:
+            raise ValueError(f"MCP server '{server}' is outside the autonomous profile scope")
+        return await self._gateway.call_tool(server, tool, arguments)
+
+
+class ScopedMcpGatewayTool(McpGatewayTool):
+    """MCP gateway view restricted to an autonomous profile's server allowlist."""
+
+    description = (
+        "Discover and use only the allowlisted Model Context Protocol (MCP) servers "
+        "for the current autonomous profile.\n\n"
+        "- `mcp(op=\"list\")` lists only allowlisted servers.\n"
+        "- `mcp(op=\"load\", server=\"...\")` loads only an allowlisted server or tool.\n"
+        "- `mcp(op=\"call\", server=\"...\", tool=\"...\", ...)` requires non-empty server and tool "
+        "and rejects servers outside the allowlist."
+    )
+
+    def __init__(
+        self,
+        gateway: McpGateway | None,
+        allowed_servers: set[str] | frozenset[str],
+    ) -> None:
+        self._allowed_servers = frozenset(allowed_servers)
+        scoped_gateway = (
+            _ScopedMcpGateway(gateway, self._allowed_servers)
+            if gateway is not None
+            else None
+        )
+        super().__init__(scoped_gateway)
+
+    def scoped(self, allowed_servers: set[str] | frozenset[str]) -> "ScopedMcpGatewayTool":
+        return ScopedMcpGatewayTool(
+            self._gateway,
+            self._allowed_servers.intersection(allowed_servers),
+        )
+
+    def parameters_schema(self) -> dict[str, Any]:
+        schema = super().parameters_schema()
+        schema["properties"]["server"]["description"] = (
+            "Allowlisted MCP server name for the current autonomous profile. "
+            "Required for op=load and op=call."
+        )
+        schema["properties"]["tool"]["description"] = (
+            "MCP tool name. A non-empty value is required for op=call; optional for op=load."
+        )
+        return schema
+
+    async def execute(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        normalized = _normalize_mcp_args(args)
+        if isinstance(normalized, dict) and normalized.get("op") in {"load", "call"}:
+            server = normalized.get("server")
+            if server and server not in self._allowed_servers:
+                return ToolResult(
+                    output=(
+                        f"MCP server '{server}' is not allowlisted for the current autonomous profile. "
+                        'Run mcp(op="list") to discover allowed servers.'
+                    ),
+                    metadata={
+                        "error": True,
+                        "error_kind": "server_not_allowed",
+                        "server": server,
+                    },
+                )
+        return await super().execute(normalized, ctx)
 
 
 def _matches_query(query: str, name: str, status, tools: list[McpToolDef], config=None, entry=None) -> bool:

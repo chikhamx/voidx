@@ -21,7 +21,6 @@ from voidx.agent.domain.task.state import (
     TaskState,
     goal_type_from_join,
 )
-from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 from voidx.platform.retry_config import RetryConfig
 from voidx.agent.ports.goal_resolution import (
     StructuredInvoker,
@@ -493,7 +492,7 @@ def _normalize_resolution(
     if plan is not None:
         if plan.join and plan.join not in _ALLOWED_JOIN_NODES:
             plan = None
-        elif plan.leave and plan.leave not in DEFAULT_WORKFLOW_DAG.nodes:
+        elif plan.leave and plan.leave not in {item.value for item in WorkflowName}:
             plan = PlanResolution(join=plan.join, leave=None)
 
     if resolution.intent.type == TaskIntent.GENERAL:

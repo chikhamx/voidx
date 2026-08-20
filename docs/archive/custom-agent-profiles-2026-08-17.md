@@ -1,8 +1,9 @@
 # 自定义智能体架构设计：可组合的 Agent Profile
 
+> **Status: Done** — Archived on 2026-08-20.
+
 Date: 2026-08-17
 
-> **Status: Revised — pending re-approval** — brainstorm 已通过；本轮评审补充了实现与安全契约，待重新批准后实现。
 
 ## 目标
 

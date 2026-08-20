@@ -1,0 +1,6 @@
+name: loop
+revision: 1
+display_name: Loop
+prompt_policy: loop
+run_mode: loop_dynamic
+hitl_mode: interactive

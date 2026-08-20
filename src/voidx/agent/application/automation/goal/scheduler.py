@@ -9,6 +9,7 @@ from voidx.agent.application.automation.goal.runner import GoalRuntimeRunner
 from voidx.agent.application.runtime.dispatcher import DispatchResult, RuntimeDispatcher
 from voidx.agent.application.runtime.pump import WakeupPumpMixin
 from voidx.agent.ports.persistence import ThreadStore
+from voidx.agent.ports.presentation import AgentEventPublisher, NullAgentEventPublisher
 
 
 class GoalEvaluatorFactory(Protocol):
@@ -26,11 +27,13 @@ class GoalRuntimeScheduler(WakeupPumpMixin):
         lease_owner: str = "goal-manager",
         lease_seconds: float = 60,
         pump_poll_seconds: float = 1.0,
+        events: AgentEventPublisher | None = None,
     ) -> None:
         self._store = store
         self._runtime = runtime
         self._workspace = workspace
         self._evaluator = evaluator
+        self._events = events or NullAgentEventPublisher()
         self._init_pump(
             lease_owner=lease_owner,
             lease_seconds=lease_seconds,
@@ -62,6 +65,7 @@ class GoalRuntimeScheduler(WakeupPumpMixin):
             runner=self._runner(),
             lease_owner=self._lease_owner,
             lease_seconds=self._lease_seconds,
+            events=self._events,
         )
         return await dispatcher.dispatch_outbox(outbox.outbox_id)
 
@@ -74,7 +78,7 @@ class GoalRuntimeScheduler(WakeupPumpMixin):
         if not thread_id.startswith("goal:"):
             return False
         loaded = await self._store.load(thread_id)
-        return loaded is not None and loaded.profile.profile_id == "goal"
+        return loaded is not None and loaded.profile.protocol == "goal"
 
     def _on_wakeup_owned(self, outbox) -> None:
         self._managed_thread_ids.add(outbox.thread_id)

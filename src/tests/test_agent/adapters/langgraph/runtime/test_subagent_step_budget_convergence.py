@@ -1,4 +1,5 @@
 """Regression tests for core graph behavior."""
+from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 
 from tests.tool_registry import build_registry
 import asyncio
@@ -53,6 +54,7 @@ from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import ToolResult
 from voidx.agent.adapters.tools.subagent import AgentResultContract, AgentTool
 from voidx.tooling.application.registry import ToolRegistry
+from voidx.tooling.domain.capability import ToolCapability
 from voidx.presentation.output.dock import BottomInputDock, set_dock
 from voidx.presentation.output.events import DockEventConsumer, TurnStarted, ui_events
 
@@ -151,6 +153,7 @@ async def test_subagent_skill_context_matches_orchestrator(tmp_path, monkeypatch
     monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
     monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
     workflow_context = await InstructionService(str(tmp_path)).workflow_context_for(
+        workflow_dag=DEFAULT_WORKFLOW_DAG,
         goal_type="feature",
         scope="Implement the feature",
         workflow_start="tdd",
@@ -341,6 +344,7 @@ async def test_subagent_tool_filter_always_blocks_nested_agent_tool(tmp_path, mo
         object(),
         "Agent demo",
         {"type": "object", "properties": {}},
+        capability=ToolCapability.ORCHESTRATION,
     )
 
     monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())

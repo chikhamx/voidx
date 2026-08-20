@@ -16,6 +16,7 @@ from voidx.agent.application.tool_filters import (
 )
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.turn_context import TurnExecutionContext
+from voidx.agent.adapters.langgraph.runtime.tool_policy_bridge import policy_allows
 from voidx.agent.adapters.langgraph.runtime.control_protocol import (
     resolve_control_protocol,
 )
@@ -75,6 +76,8 @@ def _definition_name(tool: dict[str, Any]) -> str:
     return ""
 
 
+
+
 def resolve_tool_surface(registry, context: ToolSurfaceContext) -> ToolSurface:
     dropped: dict[str, str] = {}
     definitions = list(registry.serialize_definitions())
@@ -102,7 +105,9 @@ def resolve_tool_surface(registry, context: ToolSurfaceContext) -> ToolSurface:
     policy = context.tool_policy
     if policy is not None:
         reject("policy", frozenset(
-            name for name in (_definition_name(t) for t in definitions) if not policy.allows(name)
+            name
+            for name in (_definition_name(tool) for tool in definitions)
+            if not policy_allows(policy, registry, name)
         ))
 
     protocol = resolve_control_protocol(context.runtime_profile)

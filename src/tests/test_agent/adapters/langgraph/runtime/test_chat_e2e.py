@@ -23,6 +23,8 @@ from voidx.config import Config
 from voidx.agent.adapters.persistence.session_repository import create_session, delete_session, get_session, load_messages
 from voidx.presentation.output.dock import BottomInputDock, set_dock
 from voidx.agent.domain.turn_context import TurnExecutionContext
+from voidx.agent.domain.agent_profile import WorkflowRuntimeContext as ProfileWorkflowRuntimeContext
+from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 
 
 @pytest.fixture(autouse=True)
@@ -365,7 +367,17 @@ async def test_coding_system_prompt_still_includes_persona_and_workflow(tmp_path
         set_dock(dock)
         dock.begin_capture()
         try:
-            await execution.run_turn("hello", context=TurnExecutionContext(thread_id=getattr(execution, "session_id", "") or "coding", session_id=getattr(execution, "session_id", "") or ""))
+            await execution.run_turn("hello", context=TurnExecutionContext(
+                thread_id=getattr(execution, "session_id", "") or "coding",
+                session_id=getattr(execution, "session_id", "") or "",
+                workspace=str(tmp_path),
+                workflow_context=ProfileWorkflowRuntimeContext(
+                    dag=DEFAULT_WORKFLOW_DAG,
+                    dag_revision=1,
+                    dag_hash="test-default-workflow",
+                    source="bundled",
+                ),
+            ))
         finally:
             dock.deactivate()
             dock.reset()

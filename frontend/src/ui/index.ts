@@ -54,7 +54,7 @@ export {
   onThreadDelete,
   onThreadRename,
 } from "./sidebar";
-export { type RuntimeProfile, RUNTIME_PROFILES, initModeControls, isRuntimeProfile, renderRuntimeProfile } from "./mode";
+export { type AgentProfileInfo, type RuntimeProfile, initModeControls, isRuntimeProfile, renderRuntimeProfile, runtimeProfileLabel, runtimeProfileRunMode } from "./mode";
 export { COMMAND_CATALOG, completeSlashInput, isKnownSlashCommand, matchSlashCommands, renderSlashMenu, setCommandCatalog } from "./slash";
 export {
   initTerminal,

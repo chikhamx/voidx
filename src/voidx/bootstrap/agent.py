@@ -177,7 +177,11 @@ def build_agent_components(
         create_chat_model,
         create_resolver_model,
     )
-    from voidx.bootstrap.tooling import bind_scoped_tools, build_tool_registry
+    from voidx.bootstrap.tooling import (
+        bind_scoped_tools,
+        build_tool_registry,
+        scoped_tool_registry,
+    )
     from voidx.bootstrap.permission import build_permission_service
     from voidx.presentation.slash import SlashHandler
     from voidx.llm.domain.model import ReasoningEffort
@@ -218,6 +222,7 @@ def build_agent_components(
         "available_servers_renderer": render_available_servers,
         "tool_registry_factory": build_tool_registry,
         "scoped_tools_binder": bind_scoped_tools,
+        "profile_tool_registry_factory": scoped_tool_registry,
         "slash_handler_factory": lambda host: build_slash_handler(
             host,
             session_repository=SessionRepositoryAdapter(),
@@ -267,6 +272,7 @@ def build_agent_components(
                 runtime=runtime,
                 workspace=workspace,
                 evaluator=GoalEvaluator(),
+                events=event_publisher,
             ),
             workspace=workspace,
             result_publisher=integrations.parent_result_publisher_factory(),

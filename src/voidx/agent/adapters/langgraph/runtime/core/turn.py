@@ -26,6 +26,7 @@ from voidx.agent.domain.task.state import (
 from voidx.agent.application.runtime_context import TaskIntent
 from voidx.llm.message_markers import GUIDANCE_MARKER
 from voidx.agent.application.automation.workflow.service import reconcile_workflow_runs_for_turn
+from voidx.agent.domain.automation.workflow_schema import WorkflowDAG
 
 
 @dataclass
@@ -52,6 +53,7 @@ async def handle_turn_control_response(
     rerender_task_context: Any,
     loop_controller: Any | None = None,
     protocol: Any | None = None,
+    workflow_dag: WorkflowDAG | None = None,
 ) -> TurnControlResult:
     from voidx.agent.adapters.langgraph.runtime.control_protocol import (
         TurnToolProtocol,
@@ -90,6 +92,7 @@ async def handle_turn_control_response(
             estimate_tokens=estimate_tokens,
             rerender_task_context=rerender_task_context,
             with_tools=classification == TurnClassification.VALID_START_WITH_TOOLS,
+            workflow_dag=workflow_dag,
         )
 
     if classification == TurnClassification.VALID_TURN:
@@ -235,6 +238,7 @@ async def _handle_turn_start(
     estimate_tokens: Any,
     rerender_task_context: Any,
     with_tools: bool = False,
+    workflow_dag: WorkflowDAG | None = None,
 ) -> TurnControlResult:
     start_call = _turn_call_from_message(assistant_msg)
     tool_call_id = str((start_call or {}).get("id") or "")
@@ -281,13 +285,15 @@ async def _handle_turn_start(
         resolution,
         latest_user_text(state_messages),
     )
-    reconciled_workflow_runs = reconcile_workflow_runs_for_turn(
-        goal_resolution=resolution,
-        after_state=runtime_task_state,
-    )
-    runtime_task_state.workflow_runs = {
-        run.name: run for run in reconciled_workflow_runs
-    }
+    if workflow_dag is not None:
+        reconciled_workflow_runs = reconcile_workflow_runs_for_turn(
+            goal_resolution=resolution,
+            after_state=runtime_task_state,
+            dag=workflow_dag,
+        )
+        runtime_task_state.workflow_runs = {
+            run.name: run for run in reconciled_workflow_runs
+        }
     graph._task_state = runtime_task_state.model_copy(deep=True)
     graph._invalidate_tui_for_turn()
     turn_state = "running"

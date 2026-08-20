@@ -55,7 +55,12 @@ async def test_headless_frontend_fills_coding_turn_context_before_queue(tmp_path
     assert context.thread_id == "session-1"
     assert context.session_id == "session-1"
     assert context.workspace == str(tmp_path)
-    assert context.runtime_profile == CODING_PROFILE
+    assert context.runtime_profile.profile_id == "coding"
+    from voidx.agent.domain.tool_policy import ProfileToolPolicy
+
+    assert isinstance(context.tool_policy, ProfileToolPolicy)
+    assert context.tool_policy.snapshot_hash
+    assert context.tool_policy.phase == "turn"
 
 
 @pytest.mark.asyncio

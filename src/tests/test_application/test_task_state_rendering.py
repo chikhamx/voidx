@@ -20,6 +20,7 @@ from voidx.agent.adapters.langgraph.state import AgentState
 from voidx.agent.domain.task.state import GoalSpec, TaskState
 from voidx.agent.domain.task.todo import TodoRunState
 from voidx.agent.domain.automation.workflow import WorkflowRoute
+from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 from voidx.config import Config
 from voidx.agent.domain.user_profile import UserProfile
 from voidx.skills.context import (
@@ -95,6 +96,7 @@ def test_current_task_state_records_structured_workflow_runs(tmp_path):
                 scope="实现这个功能",
             )
         ],
+        workflow_dag=DEFAULT_WORKFLOW_DAG,
     ).build()
 
     context.apply_to_messages(messages)
@@ -144,6 +146,7 @@ def test_current_task_state_lists_feedback_design_and_plan_exits(tmp_path):
                 scope="review feedback",
             )
         ],
+        workflow_dag=DEFAULT_WORKFLOW_DAG,
     ).build()
 
     context.apply_to_messages(messages)

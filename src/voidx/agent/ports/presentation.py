@@ -34,6 +34,8 @@ class SessionPresentationStatus:
     title: str = "New session"
     directory: str = ""
     runtime_profile: str = "coding"
+    # Pinned resolved-profile snapshot from the sessions table, when present.
+    profile_snapshot: Any | None = None
     is_new: bool = True
 
 
@@ -94,6 +96,7 @@ class AgentEventPublisher(Protocol):
 
 class GatewayThreadRegistry(Protocol):
     def ensure_thread(self, session: SessionPresentationStatus) -> None: ...
+    def resolved_profile(self, thread_id: str) -> object | None: ...
 
 
 class PresentationIntegrationLifecycle(Protocol):

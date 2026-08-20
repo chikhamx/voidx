@@ -20,6 +20,7 @@ dependencies = [
     "websockets>=14",
     "pathspec>=0.12",
     "jsonschema>=4.21",
+    "PyYAML>=6.0",
 	    "Pillow>=10.0.0; platform_system == 'Windows'",
 ]
 
@@ -54,6 +55,9 @@ where = ["src"]
 [tool.setuptools.package-data]
 "voidx.skills" = [
     "bundled/*/SKILL.md",
+]
+"voidx.agent" = [
+    "bundled/agents/*.yaml",
 ]
 "voidx.data" = [
     "documents/**/*.md",

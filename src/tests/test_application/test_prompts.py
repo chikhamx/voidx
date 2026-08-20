@@ -3,10 +3,12 @@ from pathlib import Path
 
 import pytest
 
+from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
+
 from voidx.agent.application.prompts import (
     BASE_SYSTEM,
     PERSONA_MODEL,
-    WORKFLOW_RUNTIME,
+    workflow_runtime,
     BaseSystemPrompt,
     PromptRule,
     build_base_system,
@@ -134,14 +136,15 @@ def test_persona_model_renders_all_personas_without_coordination_rules():
 
 
 def test_workflow_runtime_uses_full_workflow_context():
-    rendered = WORKFLOW_RUNTIME.render()
+    runtime = workflow_runtime(DEFAULT_WORKFLOW_DAG)
+    rendered = runtime.render()
 
     assert rendered.startswith("## Workflow Runtime")
     assert "Current Task State is the sole source of active workflow nodes." in rendered
     assert "Only active workflow nodes are normative." in rendered
     assert "unless the user explicitly references another node by name" not in rendered
     assert "voidx has a structured workflow runtime." not in rendered
-    assert len(WORKFLOW_RUNTIME.rules) == 2
+    assert len(runtime.rules) == 2
     assert "VOIDX_WORKFLOW_CONTEXT" in rendered
     assert "## Workflow Node: debug" in rendered
     assert "## Workflow Node: design" in rendered

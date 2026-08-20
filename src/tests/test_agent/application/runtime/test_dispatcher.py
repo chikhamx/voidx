@@ -28,7 +28,12 @@ class FakeRuntimeRunner:
 
     async def run_turn(self, *, thread, profile, input_frame):
         self.calls.append(
-            {"thread_id": thread.thread_id, "profile_id": profile.profile_id, "input_frame": input_frame}
+            {
+                "thread_id": thread.thread_id,
+                "profile_id": profile.runtime_profile.profile_id,
+                "workflow_context": profile.workflow_context,
+                "input_frame": input_frame,
+            }
         )
         return self.decisions.pop(0)
 
@@ -401,3 +406,76 @@ async def test_dispatcher_renews_short_lease_during_long_turn() -> None:
     loaded = await store.load("loop-1")
     assert loaded is not None
     assert loaded.state.lifecycle is LifecycleState.COMPLETED
+
+
+@dataclass
+class RecordingEventPublisher:
+    messages: list[str] = field(default_factory=list)
+
+    def publish_message(self, message: str) -> None:
+        self.messages.append(message)
+
+    def start_turn(self, text: str) -> None:
+        return None
+
+    def end_turn(self) -> None:
+        return None
+
+    def cancel_turn(self) -> None:
+        return None
+
+    def fail_turn(self, message: str) -> None:
+        return None
+
+    def show_loop_waiting(self, wakeup_at: float) -> None:
+        return None
+
+    def clear_loop_waiting(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_commits_needs_user_without_wakeup_and_notifies() -> None:
+    store = ThreadStore()
+    await store.create_thread(
+        AgentThread(thread_id="loop-needs-user"),
+        profile=RuntimeProfile(profile_id="loop", revision=1, name="Loop"),
+    )
+    loaded = await store.load("loop-needs-user")
+    assert loaded is not None
+    outbox = await store.enqueue_outbox(
+        thread_id="loop-needs-user",
+        kind="loop_prompt",
+        payload={"prompt": "check"},
+        expected_state_version=loaded.state_version,
+    )
+    events = RecordingEventPublisher()
+    runner = FakeRuntimeRunner([
+        RuntimeDecision(
+            outcome="needs_user",
+            summary="User action required.",
+            reason="MCP credentials unavailable",
+        )
+    ])
+    dispatcher = RuntimeDispatcher(
+        store=store,
+        runner=runner,
+        lease_owner="worker-a",
+        events=events,
+    )
+
+    result = await dispatcher.dispatch_outbox(outbox.outbox_id)
+
+    assert result is not None
+    assert result.decision.outcome == "needs_user"
+    reloaded = await store.load("loop-needs-user")
+    assert reloaded is not None
+    assert reloaded.state.lifecycle is LifecycleState.NEEDS_USER
+    assert await store.claim_next_outbox(
+        lease_owner="probe",
+        lease_seconds=60,
+        kind="wakeup",
+    ) is None
+    assert events.messages == [
+        "Automation paused for user input: MCP credentials unavailable"
+    ]

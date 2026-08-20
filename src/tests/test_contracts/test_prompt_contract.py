@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
+
 from types import SimpleNamespace
 
 from voidx.agent.application.prompts import (
     BASE_SYSTEM,
     CHAT_PROFILE_SPEC,
-    WORKFLOW_RUNTIME,
+    workflow_runtime,
     assemble_base_system,
     persona_prompt,
 )
@@ -30,7 +32,7 @@ def _profile(name: str, policy, context, *, base_system=BASE_SYSTEM) -> dict[str
         config=Config(workspace="${WORKSPACE}"),
         workspace="${WORKSPACE}",
         base_system_prompt=base_system,
-        workflow_runtime=WORKFLOW_RUNTIME,
+        workflow_runtime=workflow_runtime(DEFAULT_WORKFLOW_DAG),
         persona_prompt=persona_prompt(),
         persona="coordinate",
         interaction_mode="auto",

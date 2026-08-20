@@ -154,3 +154,41 @@ async def test_submit_external_input_defaults_to_coding_thread_before_session_ex
     assert context.session_id == ""
     assert context.workspace == str(tmp_path)
     assert context.runtime_profile == CODING_PROFILE
+
+
+def test_runtime_state_profile_lock_uses_pinned_session_snapshot(tmp_path, monkeypatch):
+    from voidx.agent.application.agent_profile_loader import ProfileLoaderContext, load_profile
+
+    resolved, _ = load_profile(
+        """\
+name: custom-review
+revision: 3
+display_name: Custom Review
+workflow:
+  nodes:
+    - ref: review
+""",
+        source="project",
+        context=ProfileLoaderContext(),
+        expected_name="custom-review",
+    )
+    tui = _tui(tmp_path)
+    tui.status.session_id = lambda: "session-1"
+    tui.status.runtime_profile = lambda: "custom-review"
+    tui.status.profile_snapshot = lambda: resolved.snapshot
+    monkeypatch.setattr(
+        "voidx.agent.facade.resolve_agent_profile",
+        lambda *_args, **_kwargs: pytest.fail("must not re-read profile files"),
+    )
+
+    tui._lock_submit_context_for_profile("custom-review")
+
+    context = tui._locked_submit_context
+    assert context.runtime_profile.model_dump(exclude={"prompt_policy"}) == (
+        resolved.runtime_profile.model_dump(exclude={"prompt_policy"})
+    )
+    assert type(context.runtime_profile.prompt_policy) is type(
+        resolved.runtime_profile.prompt_policy
+    )
+    assert context.workflow_context == resolved.workflow_context
+    assert context.tool_policy is not None

@@ -9,12 +9,15 @@ from voidx.agent.domain.automation.loop import (
     LOOP_ITERATION_USER_TEXT,
     LoopSpec,
     LoopToolView,
-    loop_profile_for_spec,
+    loop_profile_for_base,
 )
+from voidx.agent.domain.agent_profile import ResolvedAgentProfile
 from voidx.agent.domain.thread import AgentThread, AgentThreadState, LifecycleState, RuntimeDecision
 from voidx.agent.domain.turn_context import TurnExecutionContext
+from voidx.agent.application.agent_registry import AgentRegistry
 from voidx.agent.application.automation.loop.controller import LoopAttemptController
 from voidx.agent.application.runtime.contracts import TurnRequest
+from voidx.agent.application.profile_tool_policy import profile_tool_policy_for
 from voidx.agent.application.runtime.dispatcher import DispatchResult, RuntimeDispatcher
 from voidx.agent.application.runtime.pump import WakeupPumpMixin
 from voidx.agent.ports.persistence import ThreadStore
@@ -39,7 +42,9 @@ class LoopRuntimeRunner:
     runtime: object
     events: AgentEventPublisher
 
-    async def run_turn(self, *, thread, profile, input_frame: dict) -> RuntimeDecision:
+    async def run_turn(
+        self, *, thread, profile: ResolvedAgentProfile, input_frame: dict
+    ) -> RuntimeDecision:
         prompt = str(input_frame.get("prompt", ""))
         if not prompt.strip():
             return RuntimeDecision(
@@ -50,13 +55,19 @@ class LoopRuntimeRunner:
         spec = LoopSpec.model_validate(input_frame.get("spec") or {"prompt": prompt})
         controller = LoopAttemptController(spec=spec)
         self.events.clear_loop_waiting()
-        runtime_profile = loop_profile_for_spec(spec)
         context = TurnExecutionContext(
             thread_id=thread.thread_id,
             session_id=thread.session_id or "",
-            runtime_profile=runtime_profile,
+            runtime_profile=profile.runtime_profile,
+            workflow_context=profile.workflow_context,
             workspace=thread.workspace,
-            tool_policy=LoopToolView.default(workflow_enabled=spec.workflow_enabled).bind(_available_loop_tool_ids()),
+            tool_policy=profile_tool_policy_for(
+                profile,
+                baseline=LoopToolView.default(
+                    workflow_enabled=spec.workflow_enabled
+                ).bind(_available_loop_tool_ids()),
+                phase="work",
+            ),
             loop_controller=controller,
         )
         await self.runtime.run_turn(
@@ -129,7 +140,7 @@ class LoopRuntimeScheduler(WakeupPumpMixin):
         if not self._session_id or not thread_id.startswith(f"loop:{self._session_id}:"):
             return False
         loaded = await self._store.load(thread_id)
-        return loaded is not None and loaded.profile.profile_id == "loop"
+        return loaded is not None and loaded.profile.protocol == "loop"
 
     def _on_wakeup_owned(self, outbox) -> None:
         self._managed_thread_ids.add(outbox.thread_id)
@@ -162,6 +173,7 @@ class LoopRuntimeScheduler(WakeupPumpMixin):
             runner=self._runner(),
             lease_owner=self._lease_owner,
             lease_seconds=self._lease_seconds,
+            events=self._events,
         )
         return await dispatcher.dispatch_outbox(outbox.outbox_id)
 
@@ -177,10 +189,17 @@ class LoopRuntimeScheduler(WakeupPumpMixin):
                 parent_thread_id=session_id,
                 workspace=self._workspace,
             ),
-            profile=loop_profile_for_spec(spec),
+            profile=_loop_resolved_profile(self._workspace, spec),
             state=AgentThreadState(thread_id=thread_id, lifecycle=LifecycleState.READY),
             resource_scope={"workspace": self._workspace},
         )
+
+
+def _loop_resolved_profile(workspace: str, spec: LoopSpec) -> ResolvedAgentProfile:
+    resolved = AgentRegistry(workspace).resolve("loop")
+    return resolved.model_copy(update={
+        "runtime_profile": loop_profile_for_base(resolved.runtime_profile, spec)
+    })
 
 
 def _available_loop_tool_ids() -> set[str]:

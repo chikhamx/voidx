@@ -159,12 +159,51 @@ describe("desktop runtime profile switching", () => {
     uiState.sessionId = "";
     uiState.runtimeProfile = "coding";
 
-    document.querySelector('[data-profile="goal"]').click();
+    document.querySelector<HTMLButtonElement>("#mode-trigger")!.click();
+    const listRequest = socket.send.mock.calls
+      .map(([data]) => JSON.parse(data))
+      .find((entry) => entry.method === "list-agent-profiles");
+    const client = await import("../../src/rpc/client");
+    client._resolvePendingForTest(listRequest.id, {
+      profiles: [{
+        name: "custom-goal",
+        display_name: "Custom Goal",
+        revision: 1,
+        content_hash: "hash",
+        source: "project",
+        run_mode: "goal",
+        hitl_mode: "autonomous",
+        availability: "available",
+        diagnostics: [],
+      }],
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    document.querySelector<HTMLButtonElement>('[data-profile="custom-goal"]')!.click();
+    const refreshRequest = socket.send.mock.calls
+      .map(([data]) => JSON.parse(data))
+      .filter((entry) => entry.method === "list-agent-profiles")
+      .at(-1);
+    client._resolvePendingForTest(refreshRequest.id, {
+      profiles: [{
+        name: "custom-goal",
+        display_name: "Custom Goal",
+        revision: 1,
+        content_hash: "hash",
+        source: "project",
+        run_mode: "goal",
+        hitl_mode: "autonomous",
+        availability: "available",
+        diagnostics: [],
+      }],
+    });
+    await Promise.resolve();
+    await Promise.resolve();
 
     const messages = socket.send.mock.calls.map(([data]) => JSON.parse(data));
     expect(messages).toContainEqual(expect.objectContaining({
       method: "session.create",
-      params: { directory: "", profile: "goal" },
+      params: { directory: "", profile: "custom-goal" },
     }));
     expect(messages).not.toContainEqual(expect.objectContaining({
       method: "session.submit",
@@ -233,7 +272,7 @@ describe("desktop runtime profile switching", () => {
     expect(transcript.textContent).toContain("你好");
   });
 
-  it("keeps a locally echoed guidance until the server preview replaces it", async () => {
+  it("renders guidance only after the server preview arrives", async () => {
     const { _resetWorkbenchForTest, handleItem } = await import("../../src/main");
     _resetWorkbenchForTest();
     const socket = fakeSocket();
@@ -247,12 +286,13 @@ describe("desktop runtime profile switching", () => {
       new SubmitEvent("submit", { bubbles: true, cancelable: true }),
     );
 
-    expect(document.querySelector("#transcript").textContent).toContain("继续这个方向");
+    expect(document.querySelector("#transcript").textContent).not.toContain("继续这个方向");
     handleItem("item.started", {
       thread_id: "chat-thread",
-      kind: "guidance_preview",
+      turn_id: "turn-guidance",
+      kind: "message",
       item_id: "server-guidance",
-      data: { text: "继续这个方向" },
+      data: { style: "guidance", text: "继续这个方向" },
     });
 
     expect(document.querySelectorAll("#transcript .message-guidance")).toHaveLength(1);
@@ -760,11 +800,11 @@ describe("runtime profile snapshot and connection recovery", () => {
     expect(uiState.runtimeProfile).toBe("loop");
   });
 
-  it("does not replace the current profile when snapshot profile is invalid or absent", () => {
+  it("does not replace the current profile when snapshot profile is blank or absent", () => {
     uiState.runtimeProfile = "goal";
     handleNotification("workspace.snapshot", {
       active_thread_id: "thread-goal",
-      threads: [{ thread_id: "thread-goal", runtime_profile: "invalid" }],
+      threads: [{ thread_id: "thread-goal", runtime_profile: "   " }],
       active_snapshot: { thread_id: "thread-goal", revision: 0, nodes: [] },
     });
     expect(uiState.runtimeProfile).toBe("goal");
@@ -1373,4 +1413,16 @@ it("drops a page response after a newer snapshot for the same thread", async () 
 
   expect(transcript.textContent).toContain("fresh window");
   expect(transcript.textContent).not.toContain("stale page");
+});
+
+
+describe("opaque runtime profile snapshots", () => {
+  it("accepts a custom profile id from runtime state metadata", async () => {
+    const { applyRuntimeState } = await import("../../src/ui/model");
+    uiState.runtimeProfile = "coding";
+
+    applyRuntimeState({ runtime_profile: "reviewer-v2" });
+
+    expect(uiState.runtimeProfile).toBe("reviewer-v2");
+  });
 });

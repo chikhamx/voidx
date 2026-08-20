@@ -364,6 +364,7 @@ class LangGraphExecution:
         resolver_model_factory: Callable[..., Any],
         tool_registry_factory: Callable[..., Any],
         scoped_tools_binder: Callable[..., None],
+        profile_tool_registry_factory: Callable[..., Any],
         slash_handler_factory: Callable[[Any], Any],
         reasoning_effort_type: Any,
         context_limit_resolver: Callable[..., int],
@@ -407,6 +408,7 @@ class LangGraphExecution:
         self._historical_tool_context_stripper = strip_external_tool_context
         self._tool_registry_factory = tool_registry_factory
         self._scoped_tools_binder = scoped_tools_binder
+        self._profile_tool_registry_factory = profile_tool_registry_factory
         self.reasoning_effort_type = reasoning_effort_type
         self.context_limit_resolver = context_limit_resolver
         self.provider_specs = provider_specs
@@ -962,12 +964,21 @@ class LangGraphExecution:
         workflow_start = plan.join if plan is not None else ""
         goal_type = goal_type_from_join(workflow_start)
         try:
+            thread_state = current_thread_execution_state()
+            turn_context = thread_state.turn_context if thread_state is not None else None
+            workflow_profile_context = turn_context.workflow_context if turn_context is not None else None
+            workflow_dag = workflow_profile_context.dag if workflow_profile_context is not None else None
             workflow_runtime_context = await self._workflow_context_for(
                 goal_type=goal_type,
                 scope=goal.label if goal is not None else description,
                 workflow_start=workflow_start,
+                workflow_dag=workflow_dag,
             )
-            runtime_persona = _persona_for_child_workflow(workflow_runtime_context.runs, workflow_start)
+            runtime_persona = _persona_for_child_workflow(
+                workflow_runtime_context.runs,
+                workflow_start,
+                workflow_dag,
+            )
             interaction_mode = _interaction_mode_for_persona(runtime_persona)
         except Exception as exc:
             error = str(exc).strip()[:500] or exc.__class__.__name__

@@ -84,7 +84,7 @@ def _run_with_locked_retry(operation: Callable[[], T]) -> T:
     raise RuntimeError("unreachable sqlite retry state")
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
@@ -118,6 +118,15 @@ def _migrate_to_v1(conn: sqlite3.Connection) -> None:
 def _migrate_to_v2(conn: sqlite3.Connection) -> None:
     """v1 → v2: add the runtime profile discriminator to sessions."""
     _add_column_if_missing(conn, "sessions", "runtime_profile", "TEXT NOT NULL DEFAULT 'coding'")
+
+
+def _migrate_to_v5(conn: sqlite3.Connection) -> None:
+    """v4 → v5: persist resolved agent profile snapshots on sessions."""
+    _add_column_if_missing(conn, "sessions", "runtime_profile_revision", "INTEGER")
+    _add_column_if_missing(conn, "sessions", "runtime_profile_content_hash", "TEXT")
+    _add_column_if_missing(conn, "sessions", "runtime_profile_hash", "TEXT")
+    _add_column_if_missing(conn, "sessions", "runtime_profile_source", "TEXT")
+    _add_column_if_missing(conn, "sessions", "runtime_profile_snapshot", "TEXT")
 
 
 def _create_agent_thread_tables(conn: sqlite3.Connection) -> None:
@@ -239,6 +248,7 @@ MIGRATIONS = (
     MigrationStep(2, "runtime-profile", _migrate_to_v2),
     MigrationStep(3, "agent-thread-tables", _migrate_to_v3),
     MigrationStep(4, "provisional-sessions", _migrate_to_v4),
+    MigrationStep(5, "profile-snapshot", _migrate_to_v5),
 )
 
 
@@ -254,7 +264,12 @@ def bootstrap_schema(conn: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             message_count INTEGER NOT NULL DEFAULT 0,
-            runtime_profile TEXT NOT NULL DEFAULT 'coding'
+            runtime_profile TEXT NOT NULL DEFAULT 'coding',
+            runtime_profile_revision INTEGER,
+            runtime_profile_content_hash TEXT,
+            runtime_profile_hash TEXT,
+            runtime_profile_source TEXT,
+            runtime_profile_snapshot TEXT
         );
 
         CREATE TABLE IF NOT EXISTS session_runtime_state (
@@ -370,6 +385,11 @@ def canonicalize_core_schema(conn: sqlite3.Connection) -> None:
         "updated_at",
         "message_count",
         "runtime_profile",
+        "runtime_profile_revision",
+        "runtime_profile_content_hash",
+        "runtime_profile_hash",
+        "runtime_profile_source",
+        "runtime_profile_snapshot",
     ]
     expected_runtime_columns = [
         "session_id",

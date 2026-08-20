@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, model_validator
 from voidx.agent.domain.prompt_contracts import BaseSystemProfile, CHAT_PROFILE_SPEC
 from voidx.agent.domain.task.intent import PersonaName
 from voidx.agent.application.automation.workflow.service import WorkflowService
+from voidx.agent.domain.automation.workflow_schema import WorkflowDAG
 
 logger = logging.getLogger(__name__)
 
@@ -69,14 +70,14 @@ class WorkflowRuntimePrompt(BaseModel):
         return "\n\n".join(parts)
 
 
-def child_workflow_runtime(mode: str) -> WorkflowRuntimePrompt:
+def child_workflow_runtime(mode: str, dag: WorkflowDAG) -> WorkflowRuntimePrompt:
     routes = {
         "review": ("review", "review"),
         "debug": ("debug", "debug"),
         "implement": ("tdd", "verify"),
     }
     join, leave = routes[mode]
-    service = WorkflowService()
+    service = WorkflowService(dag)
     nodes = [service.get(name) for name in (join, leave)]
     definitions = "\n\n".join(
         service.render_instruction(node) for node in nodes if node is not None
@@ -364,15 +365,16 @@ def build_base_system(language: str = "", *, base_system: BaseSystemPrompt | Non
         global_rule_sections=list(default_base_system.global_rule_sections),
     )
 
-WORKFLOW_RUNTIME = WorkflowRuntimePrompt(
-    rules=[
-        PromptRule(detail="Current Task State is the sole source of active workflow nodes."),
-        PromptRule(
-            detail="Only active workflow nodes are normative. Treat all other node definitions as reference material; do not follow their gates, steps, or transitions.",
-        ),
-    ],
-    node_definitions=WorkflowService().context(),
-)
+def workflow_runtime(dag: WorkflowDAG) -> WorkflowRuntimePrompt:
+    return WorkflowRuntimePrompt(
+        rules=[
+            PromptRule(detail="Current Task State is the sole source of active workflow nodes."),
+            PromptRule(
+                detail="Only active workflow nodes are normative. Treat all other node definitions as reference material; do not follow their gates, steps, or transitions.",
+            ),
+        ],
+        node_definitions=WorkflowService(dag).context(),
+    )
 
 
 PERSONA_MODEL = PersonaModel(

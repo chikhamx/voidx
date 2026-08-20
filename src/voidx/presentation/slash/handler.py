@@ -19,6 +19,7 @@ from voidx.agent.ports.ui import NullAgentUiPort
 
 ui = NullAgentUiPort().ui
 from voidx.presentation.slash.commands import (
+    AgentsCommandsMixin,
     ModeCommandsMixin,
     SessionCommandsMixin,
     ModelCommandsMixin,
@@ -37,6 +38,7 @@ from voidx.presentation.slash.commands import (
 
 
 class SlashHandler(
+    AgentsCommandsMixin,
     ModeCommandsMixin,
     SessionCommandsMixin,
     ModelCommandsMixin,

@@ -20,6 +20,30 @@ def _isolated_db(tmp_path, monkeypatch):
     )
 
 
+def _resolved_profile(tmp_path):
+    from voidx.agent.application.agent_registry import AgentRegistry
+
+    return AgentRegistry(str(tmp_path)).resolve("coding")
+
+
+@pytest.mark.asyncio
+async def test_thread_store_roundtrips_resolved_profile(tmp_path) -> None:
+    store = ThreadStore()
+    resolved = _resolved_profile(tmp_path)
+    thread = AgentThread(thread_id="resolved-1", workspace=str(tmp_path))
+
+    await store.create_thread(thread, profile=resolved)
+    loaded = await store.load(thread.thread_id)
+
+    assert loaded is not None
+    assert loaded.resolved_profile.snapshot == resolved.snapshot
+    assert loaded.profile.model_dump(mode="json") == resolved.runtime_profile.model_dump(mode="json")
+    assert type(loaded.profile.prompt_policy) is type(resolved.runtime_profile.prompt_policy)
+    assert loaded.resolved_profile.workflow_context == resolved.workflow_context
+    assert loaded.resolved_profile.run_config == resolved.run_config
+    assert loaded.resolved_profile.resource_policy == resolved.resource_policy
+
+
 @pytest.mark.asyncio
 async def test_thread_store_creates_and_loads_child_thread() -> None:
     store = ThreadStore()
@@ -44,6 +68,7 @@ async def test_thread_store_creates_and_loads_child_thread() -> None:
     assert loaded.profile.profile_id == "loop"
     assert loaded.profile.system_prompt == "watch"
     assert loaded.profile.prompt_policy is None
+    assert loaded.resolved_profile.workflow_context is None
     assert loaded.state.lifecycle is LifecycleState.READY
     assert loaded.resource_scope == {"tools": ["read"]}
 

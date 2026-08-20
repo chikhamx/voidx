@@ -10,7 +10,8 @@ from voidx.agent.application.autonomous import (
     new_generation,
     parent_id,
 )
-from voidx.agent.domain.automation.loop import LoopMode, LoopSpec, loop_profile_for_spec
+from voidx.agent.domain.agent_profile import ResolvedAgentProfile
+from voidx.agent.domain.automation.loop import LoopMode, LoopSpec, loop_profile_for_base
 from voidx.agent.application.automation.loop.prompt_materialize import materialize_loop_prompt
 from voidx.agent.domain.thread import (
     TERMINAL_LIFECYCLES,
@@ -124,15 +125,20 @@ class LoopService(AutonomousServiceBase[LoopSpec, LoopScheduler]):
         )
 
     async def _activate(self, parent: str, spec: LoopSpec, display_text: str) -> LoopStatus:
+        resolved = await self._resolve_attempt_profile(parent, "loop")
         loop_session_id = spec.loop_session_id(parent)
         await self._store.ensure_session(
             loop_session_id,
             self._workspace,
-            profile="loop",
+            profile=resolved.snapshot.profile_id,
             root_session_id=parent,
+            profile_snapshot=resolved.snapshot,
         )
         loop_thread_id = spec.loop_thread_id(parent)
-        await self._ensure_thread(parent, loop_thread_id, spec, session_id=loop_session_id)
+        await self._ensure_thread(
+            parent, loop_thread_id, spec,
+            session_id=loop_session_id, base_profile=resolved,
+        )
         self._active_specs[parent] = spec
         self._register_thread(loop_thread_id)
         await self._scheduler.run_prompt(
@@ -199,7 +205,13 @@ class LoopService(AutonomousServiceBase[LoopSpec, LoopScheduler]):
         return f"loop ended during first iteration: {summary}"
 
     async def _ensure_thread(
-        self, parent_thread_id: str, loop_thread_id: str, spec: LoopSpec, *, session_id: str
+        self,
+        parent_thread_id: str,
+        loop_thread_id: str,
+        spec: LoopSpec,
+        *,
+        session_id: str,
+        base_profile: ResolvedAgentProfile,
     ):
         loaded = await self._store.load(loop_thread_id)
         state = AgentThreadState(
@@ -221,7 +233,9 @@ class LoopService(AutonomousServiceBase[LoopSpec, LoopScheduler]):
                     parent_thread_id=parent_thread_id,
                     workspace=self._workspace,
                 ),
-                profile=loop_profile_for_spec(spec),
+                profile=base_profile.model_copy(update={
+                    "runtime_profile": loop_profile_for_base(base_profile.runtime_profile, spec)
+                }),
                 state=state,
                 resource_scope={"workspace": self._workspace},
             )

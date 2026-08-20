@@ -45,6 +45,9 @@ from voidx.presentation.output.events import (
     TodoItemPayload,
     TodoUpdated,
     TurnStarted,
+    TurnCompleted,
+    TurnCancelled,
+    TurnFailed,
     UiEventBus,
     ui_events,
 )
@@ -364,6 +367,220 @@ async def test_error_event_clears_active_llm_retry_status(isolated_dock):
         assert "provider failed" in rendered
         assert "Retrying" not in rendered
         assert "retrying in 4s" not in rendered
+    finally:
+        await bus.stop()
+
+
+
+
+@pytest.mark.asyncio
+async def test_direct_error_event_clears_all_active_turn_statuses(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(TurnStarted(text="hello"))
+        await bus.emit(ErrorAppended(message="previous error"))
+        await bus.emit(StatusUpdated(
+            status_id="loop:waiting",
+            label="Looping",
+            detail="9999999999",
+            display="record_only",
+        ))
+        await bus.emit(StatusUpdated(
+            status_id="turn:analyzing",
+            label="Analyzing",
+            display="record_only",
+        ))
+        await bus.emit(StatusUpdated(
+            status_id="compaction",
+            label="Compacting",
+            display="record_only",
+        ))
+        await bus.emit(StatusUpdated(
+            status_id="llm:retry",
+            label="Retrying",
+            detail="retrying in 2s: peer closed connection",
+            display="record_only",
+        ))
+        await bus.emit(StatusUpdated(
+            status_id="agent:-1:progress",
+            label="Agent step 1/2",
+            display="record_only",
+        ))
+        await bus.emit(StatusUpdated(
+            status_id="generic:status",
+            label="Generic status",
+        ))
+        await bus.emit(PermissionPromptShown(
+            prompt="Allow tool use?",
+            choices=[("y", "Yes", ""), ("n", "No", "")],
+            tools=[PermissionToolDetail(name="bash")],
+        ))
+        await bus.drain()
+
+        assert bus.emit_direct(ErrorAppended(message="top-level failure"))
+
+        for status_id in (
+            "turn:analyzing",
+            "compaction",
+            "llm:retry",
+            "agent:-1:progress",
+            "generic:status",
+            "permission:request",
+        ):
+            assert isolated_dock.status_record(status_id) is None, status_id
+        assert isolated_dock.status_record("loop:waiting") is not None
+        assert isolated_dock.status_record("error:current").detail == "top-level failure"
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert "previous error" in rendered
+        assert "top-level failure" in rendered
+        assert "Generic status" not in rendered
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_direct_error_event_preserves_subagent_error_parent(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(SubagentStarted(
+            agent_id=7,
+            subagent_id="sub-7",
+            name="reviewer",
+        ))
+        await bus.drain()
+
+        subagent = next(
+            node
+            for node in isolated_dock.tree._all.values()
+            if node.node_type == "subagent" and node.agent_run_id == "sub-7"
+        )
+        assert bus.emit_direct(ErrorAppended(
+            agent_id=7,
+            message="child failed",
+        ))
+
+        error = next(
+            node
+            for node in isolated_dock.tree._all.values()
+            if node.node_type == "error" and node.payload.get("raw_text") == "child failed"
+        )
+        assert error.parent is subagent
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "terminal_event, expected_error",
+    [
+        (TurnCompleted(), None),
+        (TurnCancelled(), None),
+        (TurnFailed(message="provider failed"), "provider failed"),
+    ],
+    ids=["completed", "cancelled", "failed"],
+)
+async def test_turn_terminal_event_clears_all_active_turn_statuses(
+    isolated_dock,
+    terminal_event,
+    expected_error,
+):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(TurnStarted(text="hello"))
+        await bus.emit(ErrorAppended(message="previous error"))
+        await bus.emit(StatusUpdated(
+            status_id="loop:waiting",
+            label="Looping",
+            detail="9999999999",
+            display="record_only",
+        ))
+        await bus.emit(StatusUpdated(
+            status_id="turn:analyzing",
+            label="Analyzing",
+            display="record_only",
+        ))
+        await bus.emit(StatusUpdated(
+            status_id="compaction",
+            label="Compacting",
+            display="record_only",
+        ))
+        await bus.emit(StatusUpdated(
+            status_id="llm:retry",
+            label="Retrying",
+            detail="retrying in 2s: peer closed connection",
+            display="record_only",
+        ))
+        await bus.emit(StatusUpdated(
+            status_id="agent:-1:progress",
+            label="Agent step 1/2",
+            display="record_only",
+        ))
+        await bus.emit(StatusUpdated(
+            status_id="tool-heartbeat:call-1",
+            label="Running tool",
+            display="record_only",
+        ))
+        await bus.emit(StatusUpdated(
+            status_id="generic:status",
+            label="Generic status",
+        ))
+        await bus.emit(ContextPressureUpdated(
+            pressure_id="pressure:hard",
+            level="hard",
+            outcome="hint_injected",
+            reason="context is full",
+            turn_count=1,
+            pre_tokens=100,
+            soft_threshold=80,
+            hard_threshold=90,
+        ))
+        await bus.emit(PermissionPromptShown(
+            prompt="Allow tool use?",
+            choices=[("y", "Yes", ""), ("n", "No", "")],
+            tools=[PermissionToolDetail(name="bash")],
+        ))
+        await bus.emit(ToolStarted(
+            agent_id=7,
+            tool_call_id="child-call-1",
+            tool_name="bash",
+            label="Running child tool",
+        ))
+        await bus.drain()
+
+        await bus.emit(terminal_event)
+        await bus.drain()
+
+        for status_id in (
+            "permission:request",
+            "turn:analyzing",
+            "compaction",
+            "llm:retry",
+            "agent:-1:progress",
+            "agent:7:progress",
+            "tool-heartbeat:call-1",
+            "generic:status",
+            "pressure:hard",
+        ):
+            assert isolated_dock.status_record(status_id) is None, status_id
+        assert isolated_dock.status_record("loop:waiting") is not None
+        error_record = isolated_dock.status_record("error:current")
+        if expected_error is None:
+            assert error_record is None
+        else:
+            assert error_record is not None
+            assert error_record.detail == expected_error
+
+        rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+        assert "previous error" in rendered
+        assert "Running child tool" not in rendered
+        assert "Generic status" not in rendered
     finally:
         await bus.stop()
 

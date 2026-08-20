@@ -1,7 +1,7 @@
 import type { ProfileSummary, SlashCommand } from "../utils/types";
 import type { RefCandidate, RefToken } from "../ui/reference";
 import { iconSvg } from "../utils/icons";
-import { renderRuntimeProfile } from "../ui/mode";
+import { renderRuntimeProfile, runtimeProfileLabel, runtimeProfileRunMode } from "../ui/mode";
 
 /** 发送按钮图标。 */
 export const sendArrowIcon = iconSvg("arrow-up", 18, 2);
@@ -24,7 +24,7 @@ export interface UiState {
   refSelectedIndex: number;
   refToken: RefToken | null;
   permissionMode: string;
-  runtimeProfile: "coding" | "chat" | "loop" | "goal";
+  runtimeProfile: string;
   aiApprovalCount: number;
   reasoningEffort: string;
   usage: UsageSnapshot | null;
@@ -175,8 +175,7 @@ export function providerModelLabel(): string {
 export function updateStatusBar(): void {
   const workspaceName = workspaceBasename(uiState.workspace);
   const modelLabel = providerModelLabel();
-  const profileLabels = { coding: "Coding", chat: "Chat", loop: "Loop", goal: "Goal" } as const;
-  const profileLabel = profileLabels[uiState.runtimeProfile];
+  const profileLabel = runtimeProfileLabel(uiState.runtimeProfile);
   if (statusModelEl && uiState.model) {
     statusModelEl.textContent = modelLabel;
   }
@@ -191,7 +190,7 @@ export function updateStatusBar(): void {
     renderRuntimeProfile(uiState.runtimeProfile);
     for (const id of ["mode-status", "mode-stop"]) {
       const button = document.querySelector<HTMLElement>(`#${id}`);
-      if (button) button.hidden = !["loop", "goal"].includes(uiState.runtimeProfile);
+      if (button) button.hidden = !["loop", "goal"].includes(runtimeProfileRunMode(uiState.runtimeProfile));
     }
     const sessionLabel = `${profileLabel} · session ${uiState.sessionId.slice(0, 8)}`;
     statusSessionEl.textContent = sessionLabel;

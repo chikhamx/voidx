@@ -1,3 +1,4 @@
+from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 import pytest
 
 from voidx.agent.application.instruction import InstructionService
@@ -49,7 +50,7 @@ def test_state_update_applies_intent_resolution_patch():
         )
     ]
 
-    update = _state_update_from_executed_tools(executed)
+    update = _state_update_from_executed_tools(executed, workflow_dag=DEFAULT_WORKFLOW_DAG)
 
     assert update["task_intent"] == "general"
 
@@ -78,7 +79,7 @@ def test_reconcile_uses_plan_join_as_route_target():
         goal_resolution=resolution,
         after_state=state,
         turn_count=3,
-    )
+    dag=DEFAULT_WORKFLOW_DAG)
 
     assert len(runs) == 1
     assert runs[0].name == "review"
@@ -101,7 +102,7 @@ def test_terminal_done_cascade_skips_active_downstream_nodes():
         condition="done",
     )
 
-    updated = advance_workflow_states(runs, [event], turn_count=5)
+    updated = advance_workflow_states(runs, [event], turn_count=5, dag=DEFAULT_WORKFLOW_DAG)
     by_name = {run.name: run for run in updated}
 
     assert by_name["brainstorm"].status == WorkflowRunStatus.SATISFIED
@@ -113,7 +114,7 @@ def test_terminal_done_cascade_skips_active_downstream_nodes():
 async def test_workflow_done_no_active_node_returns_guidance_success_not_error(tmp_path):
     result = await WorkflowTool().execute(
         {"action": "done"},
-        ToolContext(workspace=str(tmp_path), workflow_runs=[]),
+        ToolContext(workspace=str(tmp_path), workflow_runs=[], workflow_dag=DEFAULT_WORKFLOW_DAG),
     )
 
     assert result.metadata.get("error") is not True

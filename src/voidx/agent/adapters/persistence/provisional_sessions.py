@@ -12,8 +12,11 @@ from pydantic import BaseModel
 
 from voidx.agent.adapters.persistence.session_repository import (
     SessionInfo,
+    _snapshot_columns,
+    _snapshot_from_row,
     validate_runtime_profile,
 )
+from voidx.agent.domain.agent_profile import AgentProfileSnapshot
 from voidx.llm.domain.model import DEFAULT_MODEL
 from voidx.persistence.jsonl import drop_session_lock, session_dir
 from voidx.persistence.sqlite import fetch_all, fetch_one, now, write_transaction
@@ -151,6 +154,7 @@ async def stage_provisional_session(
     title: str = "New session",
     directory: str = "",
     profile: str = "coding",
+    profile_snapshot: AgentProfileSnapshot | None = None,
 ) -> SessionInfo:
     """Create a session and its provisional marker in one transaction."""
     from voidx.agent.adapters.persistence.session_repository import _uid
@@ -160,6 +164,9 @@ async def stage_provisional_session(
     profile = validate_runtime_profile(profile)
     sid = session_id or _uid()
     timestamp = now()
+    revision, content_hash, snapshot_hash, source_scope, payload_json = _snapshot_columns(
+        profile_snapshot
+    )
 
     def _stage(conn):
         existing = conn.execute(
@@ -186,9 +193,13 @@ async def stage_provisional_session(
         conn.execute(
             """INSERT INTO sessions
                (id, title, workspace, directory, model_provider, model_name,
-                runtime_profile, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (sid, title, workspace, directory, provider, model, profile, timestamp, timestamp),
+                runtime_profile, runtime_profile_revision, runtime_profile_content_hash,
+                runtime_profile_hash, runtime_profile_source, runtime_profile_snapshot,
+                created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (sid, title, workspace, directory, provider, model, profile,
+             revision, content_hash, snapshot_hash, source_scope, payload_json,
+             timestamp, timestamp),
         )
         conn.execute(
             """INSERT INTO provisional_sessions
@@ -209,6 +220,7 @@ async def stage_provisional_session(
             runtime_profile=existing["runtime_profile"],
             created_at=existing["created_at"],
             updated_at=existing["updated_at"],
+            profile_snapshot=_snapshot_from_row(existing),
         )
     return SessionInfo(
         id=sid,
@@ -220,6 +232,7 @@ async def stage_provisional_session(
         runtime_profile=profile,
         created_at=timestamp,
         updated_at=timestamp,
+        profile_snapshot=profile_snapshot,
     )
 
 

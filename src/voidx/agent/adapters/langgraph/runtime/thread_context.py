@@ -52,6 +52,7 @@ class ThreadExecutionState:
     turn_context: TurnExecutionContext | None = None
     runtime_profile: RuntimeProfile | None = None
     tool_policy: ToolPolicy | None = None
+    tool_registry: Any | None = None
     workspace: str = ""
     host_id: int | None = None
 
@@ -65,6 +66,12 @@ _CURRENT_THREAD_EXECUTION_STATE: ContextVar[ThreadExecutionState | None] = Conte
 def current_thread_execution_state() -> ThreadExecutionState | None:
     return _CURRENT_THREAD_EXECUTION_STATE.get()
 
+
+
+def tool_registry_for(host: Any) -> Any:
+    state = current_thread_execution_state()
+    registry = getattr(state, "tool_registry", None) if state is not None else None
+    return registry if registry is not None else host.tools
 
 @dataclass
 class _HostExecutionSnapshot:
@@ -252,6 +259,20 @@ async def bind_thread_execution_context(
     state.turn_context = turn_context
     state.runtime_profile = turn_context.runtime_profile if turn_context else None
     state.tool_policy = turn_context.tool_policy if turn_context else None
+    profile_tool_registry_factory = getattr(
+        host, "_profile_tool_registry_factory", None
+    )
+
+    tools = getattr(host, "tools", None)
+    state.tool_registry = (
+        profile_tool_registry_factory(
+            tools,
+            state.tool_policy,
+            skills_api_provider=getattr(host, "skills_api_provider", None),
+        )
+        if tools is not None and callable(profile_tool_registry_factory)
+        else None
+    )
     state.workspace = workspace
     state.runtime_guards = RuntimeGuardState()
     token = _CURRENT_THREAD_EXECUTION_STATE.set(state)

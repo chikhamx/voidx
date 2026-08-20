@@ -103,8 +103,8 @@ async def test_session_persistence_rejects_unknown_runtime_profile(tmp_path):
     store._conn = None
     store.DATA_DIR = tmp_path / ".voidx"
 
-    with pytest.raises(ValueError, match="unknown runtime profile: invalid"):
-        await create_session(workspace=str(tmp_path), profile="invalid")
+    with pytest.raises(ValueError, match="unknown runtime profile"):
+        await create_session(workspace=str(tmp_path), profile="Invalid_Name!")
     store._conn = None
 
 
@@ -143,6 +143,63 @@ async def test_v2_session_create_rejects_unknown_runtime_profile(tmp_path):
     assert isinstance(result, JsonRpcError)
     assert "unknown profile" in result.error.message
     store._conn = None
+@pytest.mark.asyncio
+async def test_v2_session_create_pins_custom_profile_snapshot(tmp_path):
+    agents = tmp_path / ".voidx" / "agents"
+    agents.mkdir(parents=True)
+    profile_path = agents / "custom-review.yaml"
+    profile_path.write_text(
+        "name: custom-review\nrevision: 1\ndisplay_name: First Version\n",
+        encoding="utf-8",
+    )
+    session = GatewaySession(
+        lambda: BottomInputDock().tree,
+        workspace=str(tmp_path),
+    )
+
+    created = await session.dispatch_request(JsonRpcRequest(
+        id=24,
+        method="session.create",
+        params={"profile": "custom-review", "directory": str(tmp_path)},
+    ))
+    assert isinstance(created, JsonRpcResult)
+    thread_id = created.result["thread_id"]
+    pinned = session.resolved_profile(thread_id)
+    assert pinned.snapshot.profile_id == "custom-review"
+    assert pinned.snapshot.revision == 1
+    assert pinned.runtime_profile.name == "First Version"
+
+    profile_path.write_text(
+        "name: custom-review\nrevision: 2\ndisplay_name: Second Version\n",
+        encoding="utf-8",
+    )
+    still_pinned = session.resolved_profile(thread_id)
+    assert still_pinned.snapshot.revision == 1
+    assert still_pinned.runtime_profile.name == "First Version"
+
+
+@pytest.mark.asyncio
+async def test_v2_session_create_rejects_unavailable_custom_profile(tmp_path):
+    agents = tmp_path / ".voidx" / "agents"
+    agents.mkdir(parents=True)
+    (agents / "broken.yaml").write_text("name: [\n", encoding="utf-8")
+    session = GatewaySession(
+        lambda: BottomInputDock().tree,
+        workspace=str(tmp_path),
+    )
+
+    result = await session.dispatch_request(JsonRpcRequest(
+        id=25,
+        method="session.create",
+        params={"profile": "broken", "directory": str(tmp_path)},
+    ))
+
+    assert isinstance(result, JsonRpcError)
+    assert result.error.code == -32602
+    assert result.error.data is not None
+    assert result.error.data["diagnostics"]
+
+
 
 @pytest.mark.asyncio
 async def test_v2_session_create_with_directory(tmp_path):

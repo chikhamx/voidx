@@ -1,0 +1,6 @@
+name: chat
+revision: 1
+display_name: Chat
+prompt_policy: chat
+run_mode: single
+hitl_mode: interactive

@@ -14,7 +14,8 @@ import pytest
 from langchain_core.messages import ToolMessage
 
 from voidx.agent.application.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
-from tests.agent_tool_context import agent_tool_context as ToolContext
+from tests.agent_tool_context import agent_tool_context
+from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 from voidx.agent.adapters.tools.context import AgentToolRuntime
 from voidx.tooling.domain.result import ToolResult
 from voidx.tooling.domain.interaction import (
@@ -40,6 +41,11 @@ from voidx.agent.application.runtime_context import TaskIntent
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 from voidx.agent.adapters.tools.automation.workflow_guidance import track_repeat, reset_repeat, repeat_key
+
+def ToolContext(**values):
+    values.setdefault("workflow_dag", DEFAULT_WORKFLOW_DAG)
+    return agent_tool_context(**values)
+
 
 from voidx.agent.domain.automation.workflow import WorkflowStateEventKind
 import voidx.persistence.sqlite as store

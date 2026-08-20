@@ -1,4 +1,8 @@
 """Regression tests for core graph behavior."""
+from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
+from voidx.agent.domain.agent_profile import WorkflowRuntimeContext as ProfileWorkflowRuntimeContext
+from voidx.agent.domain.turn_context import TurnExecutionContext
+from voidx.agent.adapters.langgraph.runtime.thread_context import bind_thread_execution_context
 
 import asyncio
 import json
@@ -59,6 +63,20 @@ from voidx.presentation.output.events import DockEventConsumer, TurnStarted, ui_
 def _graph(tmp_path):
     cfg = Config(workspace=str(tmp_path))
     return make_langgraph_execution(cfg, api_key=None)
+
+
+def _coding_turn_context(tmp_path) -> TurnExecutionContext:
+    return TurnExecutionContext(
+        thread_id="test-coding",
+        session_id="",
+        workspace=str(tmp_path),
+        workflow_context=ProfileWorkflowRuntimeContext(
+            dag=DEFAULT_WORKFLOW_DAG,
+            dag_revision=1,
+            dag_hash="test-default-workflow",
+            source="bundled",
+        ),
+    )
 
 
 def _task_state_json(**kwargs):
@@ -156,7 +174,11 @@ async def test_prepare_does_not_auto_inject_project_skill_body(tmp_path):
         "should_continue": True,
     }
 
-    await graph._prepare_with_stream(state)
+    async with bind_thread_execution_context(
+        graph,
+        turn_context=_coding_turn_context(tmp_path),
+    ):
+        await graph._prepare_with_stream(state)
 
     assert isinstance(messages[0], SystemMessage)
     assert isinstance(messages[1], HumanMessage)
@@ -197,7 +219,11 @@ async def test_prepare_injects_workflow_nodes_from_task_state(tmp_path):
         "should_continue": True,
     }
 
-    result = await graph._prepare_with_stream(state)
+    async with bind_thread_execution_context(
+        graph,
+        turn_context=_coding_turn_context(tmp_path),
+    ):
+        result = await graph._prepare_with_stream(state)
 
     assert isinstance(messages[0], SystemMessage)
     assert "Workflow Node: debug" in messages[0].content
@@ -235,21 +261,25 @@ async def test_prepare_syncs_triggered_workflow_to_status_state(tmp_path):
             invalidations += 1
 
     graph._ui.bind_frontend( FakeApp())
-    result = await graph._prepare_with_stream({
-        "messages": [HumanMessage(content="debug this flaky test")],
-        "workspace": str(tmp_path),
-        "persona": "coordinate",
-        "plan_mode": False,
-        "interaction_mode": "auto",
-        "task_state": TaskState(
-            current_intent=TaskIntent.CODING,
-            current_goal=GoalSpec(desc="debug this flaky test"),
-            workflow_route=WorkflowRoute(join="debug", leave="verify"),
-        ).model_dump(mode="json"),
-        "tool_results": {},
-        "step_count": 0,
-        "should_continue": True,
-    })
+    async with bind_thread_execution_context(
+        graph,
+        turn_context=_coding_turn_context(tmp_path),
+    ):
+        result = await graph._prepare_with_stream({
+            "messages": [HumanMessage(content="debug this flaky test")],
+            "workspace": str(tmp_path),
+            "persona": "coordinate",
+            "plan_mode": False,
+            "interaction_mode": "auto",
+            "task_state": TaskState(
+                current_intent=TaskIntent.CODING,
+                current_goal=GoalSpec(desc="debug this flaky test"),
+                workflow_route=WorkflowRoute(join="debug", leave="verify"),
+            ).model_dump(mode="json"),
+            "tool_results": {},
+            "step_count": 0,
+            "should_continue": True,
+        })
 
     result_task_state = TaskState.model_validate(result["task_state"])
     assert result_task_state.workflow_runs["debug"].status == WorkflowRunStatus.ACTIVE
@@ -327,6 +357,7 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
     monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: FakeModel())
     monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
     workflow_context = await InstructionService(str(tmp_path)).workflow_context_for(
+        workflow_dag=DEFAULT_WORKFLOW_DAG,
         goal_type="feature",
         scope="Implement the feature",
         workflow_start="tdd",

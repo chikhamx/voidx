@@ -13,9 +13,12 @@ import uuid
 from datetime import datetime
 from typing import Generic, Protocol, TypeVar
 
+from voidx.agent.domain.agent_profile import ResolvedAgentProfile
 from voidx.agent.domain.automation.goal import GoalSpec
 from voidx.agent.domain.automation.loop import LoopSpec
 from voidx.agent.domain.thread import TERMINAL_LIFECYCLES, LifecycleState, RuntimeDecision
+from voidx.agent.application.agent_profile_snapshot import restore_session_profile
+from voidx.agent.application.agent_registry import AgentRegistry
 from voidx.agent.application.runtime.dispatcher import DispatchResult
 from voidx.agent.ports.persistence import ThreadStateConflict, ThreadStore
 
@@ -58,6 +61,26 @@ class AutonomousServiceBase(ABC, Generic[SpecT, SchedulerT]):
 
     def _lock_for(self, parent: str) -> asyncio.Lock:
         return self._parent_locks.setdefault(parent, asyncio.Lock())
+
+    async def _resolve_attempt_profile(self, parent: str, legacy_id: str) -> ResolvedAgentProfile:
+        """Resolve the profile to pin for a new goal/loop attempt.
+
+        Precedence: the parent session's pinned snapshot, then the parent
+        session's profile id via the registry, then the bundled preset for the
+        legacy id. An unresolvable parent profile surfaces as-is — never
+        silently downgrade to a different profile.
+        """
+        registry = AgentRegistry(self._workspace)
+        parent_thread = await self._store.load(parent)
+        session_id = parent_thread.thread.session_id if parent_thread is not None else ""
+        info = await self._store.get_session(session_id) if session_id else None
+        if info is not None:
+            return restore_session_profile(
+                registry,
+                profile_id=info.runtime_profile,
+                snapshot=info.profile_snapshot,
+            )
+        return registry.resolve(legacy_id)
 
     @abstractmethod
     def _spec_thread_id(self, spec: SpecT, parent: str) -> str:

@@ -315,3 +315,56 @@ class TestDescription:
         assert 'op="call"' in desc
         assert "tavily" not in desc
         assert "github" not in desc
+
+
+class TestScopedGateway:
+    @pytest.mark.asyncio
+    async def test_list_only_exposes_allowlisted_servers(self, manager, tmp_path):
+        tool = McpGatewayTool(manager).scoped({"tavily"})
+
+        result = await tool.execute({"op": "list"}, _ctx(tmp_path))
+
+        assert "tavily" in result.output
+        assert "github" not in result.output
+        assert "broken" not in result.output
+        assert result.metadata["server_count"] == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("op", ["load", "call"])
+    async def test_load_and_call_reject_servers_outside_scope(self, manager, tmp_path, op):
+        tool = McpGatewayTool(manager).scoped({"tavily"})
+        args = {"op": op, "server": "github"}
+        if op == "call":
+            args.update(tool="create_issue", arguments={})
+
+        result = await tool.execute(args, _ctx(tmp_path))
+
+        assert result.metadata.get("error")
+        assert result.metadata["error_kind"] == "server_not_allowed"
+        assert "github" in result.output
+        assert "tavily" not in result.output
+        assert manager.calls == []
+
+    @pytest.mark.asyncio
+    async def test_call_requires_non_empty_server_and_tool_before_dispatch(self, manager, tmp_path):
+        tool = McpGatewayTool(manager).scoped({"tavily"})
+
+        missing_server = await tool.execute(
+            {"op": "call", "server": " ", "tool": "tavily_search", "arguments": {"query": "x"}},
+            _ctx(tmp_path),
+        )
+        missing_tool = await tool.execute(
+            {"op": "call", "server": "tavily", "tool": " ", "arguments": {"query": "x"}},
+            _ctx(tmp_path),
+        )
+
+        assert missing_server.metadata.get("error")
+        assert missing_tool.metadata.get("error")
+        assert manager.calls == []
+
+    def test_description_and_schema_explain_server_scope(self, manager):
+        tool = McpGatewayTool(manager).scoped({"tavily"})
+        schema = tool.parameters_schema()
+
+        assert "allowlisted" in tool.description.lower()
+        assert "allowlisted" in schema["properties"]["server"]["description"].lower()

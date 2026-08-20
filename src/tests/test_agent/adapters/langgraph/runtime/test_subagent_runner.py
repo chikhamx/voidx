@@ -32,6 +32,7 @@ from voidx.config import Config, Settings
 from voidx.agent.domain.user_profile import UserProfile
 from voidx.llm.compaction import CompactionSelection
 from voidx.agent.application.instruction import InstructionService, WorkflowRuntimeContext
+from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 from voidx.agent.adapters.persistence.session_repository import (
     MessageRow,
     SessionInfo,
@@ -53,6 +54,7 @@ from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import ToolResult
 from voidx.agent.adapters.tools.subagent import AgentResultContract, AgentTool
 from voidx.tooling.application.registry import ToolRegistry
+from voidx.tooling.domain.capability import ToolCapability
 from voidx.presentation.output.dock import BottomInputDock, set_dock
 from voidx.presentation.output.events import DockEventConsumer, TurnStarted, ui_events
 
@@ -576,7 +578,13 @@ async def test_subagent_tool_result_injects_next_step_hint_into_followup_message
 
     parent_tools = build_registry()
     tool = HintTool()
-    parent_tools.register(tool.id, tool, tool.description, tool.parameters_schema())
+    parent_tools.register(
+        tool.id,
+        tool,
+        tool.description,
+        tool.parameters_schema(),
+        capability=ToolCapability.ORCHESTRATION,
+    )
 
     from voidx.agent.adapters.langgraph.runtime.subagent import run_subagent
 
@@ -738,7 +746,13 @@ async def test_subagent_refreshes_workflow_runtime_after_route_patch(tmp_path, m
 
     parent_tools = build_registry()
     tool = RouteTool()
-    parent_tools.register(tool.id, tool, tool.description, tool.parameters_schema())
+    parent_tools.register(
+        tool.id,
+        tool,
+        tool.description,
+        tool.parameters_schema(),
+        capability=ToolCapability.ORCHESTRATION,
+    )
 
     from voidx.agent.adapters.langgraph.runtime.subagent import run_subagent
 
@@ -752,6 +766,13 @@ async def test_subagent_refreshes_workflow_runtime_after_route_patch(tmp_path, m
         result_contract=_child_result_contract(),
         debug=False,
         parent_tools=parent_tools,
+        workflow_runtime_context=WorkflowRuntimeContext(
+            instructions=[],
+            active=[],
+            content="",
+            runs=[],
+            dag=DEFAULT_WORKFLOW_DAG,
+        ),
         ui_port=SimpleNamespace(
             ui=SimpleNamespace(step_header=lambda *_args: None, print=lambda *_args: None),
             console=object(),
@@ -821,7 +842,13 @@ async def test_subagent_removes_completed_workflow_from_active_summaries(tmp_pat
 
     parent_tools = build_registry()
     tool = CompleteWorkflowTool()
-    parent_tools.register(tool.id, tool, tool.description, tool.parameters_schema())
+    parent_tools.register(
+        tool.id,
+        tool,
+        tool.description,
+        tool.parameters_schema(),
+        capability=ToolCapability.ORCHESTRATION,
+    )
     initial_run = WorkflowRunState(
         name="tdd",
         status=WorkflowRunStatus.ACTIVE,
@@ -920,7 +947,13 @@ async def test_subagent_route_patch_counts_as_progress_for_runtime_guard(tmp_pat
 
     parent_tools = build_registry()
     tool = RouteTool()
-    parent_tools.register(tool.id, tool, tool.description, tool.parameters_schema())
+    parent_tools.register(
+        tool.id,
+        tool,
+        tool.description,
+        tool.parameters_schema(),
+        capability=ToolCapability.ORCHESTRATION,
+    )
 
     from voidx.agent.adapters.langgraph.runtime.subagent import run_subagent
 
@@ -1010,7 +1043,13 @@ async def test_subagent_applies_state_patch_before_terminal_message_result(tmp_p
 
     parent_tools = build_registry()
     tool = ResultMessageTool()
-    parent_tools.register(tool.id, tool, tool.description, tool.parameters_schema())
+    parent_tools.register(
+        tool.id,
+        tool,
+        tool.description,
+        tool.parameters_schema(),
+        capability=ToolCapability.ORCHESTRATION,
+    )
 
     from voidx.agent.adapters.langgraph.runtime.subagent import run_subagent
 

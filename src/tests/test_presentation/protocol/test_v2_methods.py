@@ -79,7 +79,9 @@ async def test_dispatch_handler_exception_returns_internal_error():
     assert isinstance(msg, JsonRpcError)
     assert msg.id == 4
     assert msg.error.code == ERR_INTERNAL_ERROR
-    assert "boom" in msg.error.message
+    assert msg.error.message == "internal error"
+    assert msg.error.data is None
+    assert "boom" not in msg.model_dump_json()
 
 
 @pytest.mark.asyncio

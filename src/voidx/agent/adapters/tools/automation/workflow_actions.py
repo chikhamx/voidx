@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import ToolResult
 from voidx.agent.application.automation.workflow.service import advance_workflow_states, workflow_terminal_condition
+from voidx.agent.domain.automation.workflow_schema import WorkflowDAG
 from voidx.agent.domain.automation.workflow import WorkflowRunState, WorkflowRunStatus, WorkflowStateEvent, WorkflowStateEventKind
 from .workflow_queries import (
     _available_exits, _available_nodes, _invalid_exit_guidance, _match_condition,
@@ -28,24 +29,24 @@ if TYPE_CHECKING:
     from . import WorkflowInput
 
 
-def _enter(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[WorkflowRunState], ctx: ToolContext) -> ToolResult:
+def _enter(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[WorkflowRunState], ctx: ToolContext, dag: WorkflowDAG) -> ToolResult:
     requested = inp.workflow.strip()
     if not requested:
         return _guidance(
             action="enter",
             reason="node_required",
             guidance="Call workflow(action=\"enter\", workflow=\"<node>\", goal=\"<one-sentence goal>\") with a valid workflow node.",
-            available_nodes=_available_nodes(),
+            available_nodes=_available_nodes(dag),
             suggested_call='workflow(action="enter", workflow="debug", goal="...")',
         )
 
-    node_name = _match_node(requested)
+    node_name = _match_node(requested, dag)
     if not node_name:
         return _guidance(
             action="enter",
             reason="invalid_node",
             guidance=f"Workflow node {requested!r} is not available. Choose one of the available nodes.",
-            available_nodes=_available_nodes(),
+            available_nodes=_available_nodes(dag),
             suggested_call='workflow(action="enter", workflow="debug", goal="...")',
         )
 
@@ -74,7 +75,7 @@ def _enter(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[Workfl
             "workflow": node_name,
             "already_active": True,
             "activated": [node_name],
-            "next_hints": _next_hints([node_name]),
+            "next_hints": _next_hints([node_name], dag),
             "goal": goal,
         }
         if count >= 2:
@@ -102,15 +103,15 @@ def _enter(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[Workfl
         runs,
         [run.name for run in active if run.name != node_name],
         summary=f"replaced by enter:{node_name}",
-        condition=workflow_terminal_condition(),
+        condition=workflow_terminal_condition(dag),
         ref="tool:workflow",
     )
-    updated = _activate_node(updated, node_name, goal=goal)
+    updated = _activate_node(updated, node_name, dag, goal=goal)
     payload = {
         "action": "enter",
         "workflow": node_name,
         "activated": [node_name],
-        "next_hints": _next_hints([node_name]),
+        "next_hints": _next_hints([node_name], dag),
         "goal": goal,
     }
     return _success(
@@ -124,7 +125,7 @@ def _enter(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[Workfl
     )
 
 
-def _advance(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[WorkflowRunState], ctx: ToolContext) -> ToolResult:
+def _advance(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[WorkflowRunState], ctx: ToolContext, dag: WorkflowDAG) -> ToolResult:
     condition = inp.condition.strip()
     if not active:
         return _wrap_advance_guidance(ctx, _guidance(
@@ -139,11 +140,11 @@ def _advance(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[Work
             action="advance",
             reason="condition_required",
             guidance="Call workflow with an exit condition from the active node.",
-            available_exits=_available_exits(active),
-            suggested_call=_suggested_advance_call(active),
+            available_exits=_available_exits(active, dag),
+            suggested_call=_suggested_advance_call(active, dag),
         )
 
-    selected, matched_condition, guidance = _select_advance_run(active, condition, workflow=inp.workflow)
+    selected, matched_condition, guidance = _select_advance_run(active, condition, dag, workflow=inp.workflow)
     if guidance is not None:
         return _wrap_advance_guidance(ctx, guidance, inp.workflow.strip() or condition)
     assert selected is not None
@@ -155,8 +156,8 @@ def _advance(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[Work
             action="advance",
             reason="goal_required",
             guidance="Advance requires a workflow goal from input, the active run, or current task goal.",
-            available_exits=_available_exits(active),
-            suggested_call=_suggested_advance_call(active),
+            available_exits=_available_exits(active, dag),
+            suggested_call=_suggested_advance_call(active, dag),
         ), matched_condition)
 
     count = _track_repeat(ctx, _repeat_key("advance", selected.name, matched_condition))
@@ -168,7 +169,7 @@ def _advance(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[Work
         summary=f"Workflow node {selected.name} completed.",
         condition=matched_condition,
     )
-    updated = advance_workflow_states(runs, [event])
+    updated = advance_workflow_states(runs, [event], dag=dag)
     updated = _satisfy_active_runs(
         updated,
         [run.name for run in active if run.name != selected.name],
@@ -186,7 +187,7 @@ def _advance(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[Work
         "from": selected.name,
         "condition": matched_condition,
         "activated": activated,
-        "next_hints": _next_hints(activated),
+        "next_hints": _next_hints(activated, dag),
         "goal": effective_goal,
         "goal_source": goal_source,
     }
@@ -212,7 +213,7 @@ def _advance(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[Work
     )
 
 
-def _done(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[WorkflowRunState]) -> ToolResult:
+def _done(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[WorkflowRunState], dag: WorkflowDAG) -> ToolResult:
     del inp
     if not active:
         payload = {
@@ -233,7 +234,7 @@ def _done(inp: WorkflowInput, runs: list[WorkflowRunState], active: list[Workflo
         runs,
         names,
         summary="Workflow node completed.",
-        condition=workflow_terminal_condition(),
+        condition=workflow_terminal_condition(dag),
         ref="tool:workflow",
     )
     payload = {

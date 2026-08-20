@@ -40,7 +40,13 @@ async def test_coding_service_delegates_default_coding_turn():
     assert request.user_text == "fix it"
     assert request.thread.thread_id == "coding"
     assert request.thread.session_id is None
-    assert request.context.runtime_profile == CODING_PROFILE
+    assert request.context.runtime_profile.profile_id == "coding"
+    assert request.context.workflow_context is not None
+    from voidx.agent.domain.tool_policy import ProfileToolPolicy
+
+    assert isinstance(request.context.tool_policy, ProfileToolPolicy)
+    assert request.context.tool_policy.snapshot_hash
+    assert request.context.tool_policy.phase == "turn"
     assert request.runtime is None
     assert request.context is not None
 
@@ -89,7 +95,7 @@ async def test_coding_service_populates_default_context_workspace():
     assert request.context.thread_id == "session-1"
     assert request.context.session_id == "session-1"
     assert request.context.workspace == "/tmp/workspace"
-    assert request.context.runtime_profile == CODING_PROFILE
+    assert request.context.runtime_profile.profile_id == "coding"
 
 
 @pytest.mark.asyncio

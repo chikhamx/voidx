@@ -4,17 +4,10 @@ from __future__ import annotations
 
 import uuid
 
-_TEMPORARY_PROFILES = frozenset({"chat", "coding", "goal", "loop"})
-
 
 def new_temporary_thread_id() -> str:
     return uuid.uuid4().hex[:12]
 
-
-def validate_temporary_profile(profile: str) -> str:
-    if profile not in _TEMPORARY_PROFILES:
-        raise ValueError(f"unknown runtime profile: {profile}")
-    return profile
 
 
 def is_work_submission(text: str) -> bool:

@@ -11,6 +11,7 @@ from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolu
 from voidx.agent.domain.task.intent import TaskIntent
 from voidx.agent.adapters.tools.subagent import AgentResultContract
 from voidx.tooling.domain.result import ToolResult
+from voidx.tooling.domain.capability import ToolCapability
 
 
 class FakeModel:
@@ -275,7 +276,13 @@ async def test_run_subagent_registers_message_and_blocks_parent_only_tools(tmp_p
 
     parent_tools = build_registry()
     agent_tool = AgentTool(runner=None)
-    parent_tools.register(agent_tool.id, agent_tool, agent_tool.description, agent_tool.parameters_schema())
+    parent_tools.register(
+        agent_tool.id,
+        agent_tool,
+        agent_tool.description,
+        agent_tool.parameters_schema(),
+        capability=ToolCapability.ORCHESTRATION,
+    )
     for tool in (ClarifyTool(), PlanCheckpointTool()):
         parent_tools.replace(tool.id, tool, tool.description, tool.parameters_schema())
 
@@ -479,7 +486,11 @@ async def test_run_subagent_reports_tool_activity_and_refreshes_child_context_ea
             return ToolResult(output="tool done")
 
     parent_tools = build_registry()
-    parent_tools.register_plugin(BlockingTool())
+    from voidx.tooling.domain.capability import ToolCapability
+
+    parent_tools.register_plugin(
+        BlockingTool(), capability=ToolCapability.ORCHESTRATION
+    )
     calls = 0
 
     async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):

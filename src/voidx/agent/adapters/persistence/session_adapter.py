@@ -32,8 +32,10 @@ class SessionRepositoryAdapter:
     async def update_session_model(self, session_id: str, provider: str, model: str) -> None:
         await session_repository.update_session_model(session_id, provider, model)
 
-    async def update_session_profile(self, session_id: str, profile: str) -> None:
-        await session_repository.update_session_profile(session_id, profile)
+    async def update_session_profile(self, session_id: str, profile: str, *, profile_snapshot=None) -> None:
+        await session_repository.update_session_profile(
+            session_id, profile, profile_snapshot=profile_snapshot
+        )
 
     async def stage_provisional_session(self, **kwargs: object):
         return await provisional_sessions.stage_provisional_session(**kwargs)

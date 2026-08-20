@@ -1,4 +1,5 @@
 """Regression tests for core graph behavior."""
+from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 
 import asyncio
 import json
@@ -158,6 +159,7 @@ async def test_subagent_starts_from_isolated_task_context(tmp_path, monkeypatch)
         interaction_mode=InteractionMode.AUTO,
     ).build().apply_to_messages(inherited_messages)
     workflow_context = await InstructionService(str(tmp_path)).workflow_context_for(
+        workflow_dag=DEFAULT_WORKFLOW_DAG,
         goal_type="inspect",
         scope="Inspect the workspace",
     )

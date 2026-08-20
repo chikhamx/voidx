@@ -22,8 +22,13 @@ from voidx.tooling.policy.permission.session_rules import scoped_session_rule_fo
 from voidx.tooling.domain.permission import Action
 from voidx.tooling.domain.risk import ApprovalScope, RiskLevel
 from voidx.agent.domain.task.intent import PersonaName
+from voidx.agent.domain.tool_policy import ProfileToolPolicy
 from voidx.agent.adapters.tools.permission_projection import project_agent_tool_call
-from voidx.agent.adapters.langgraph.runtime.thread_context import current_thread_execution_state
+from voidx.agent.adapters.langgraph.runtime.tool_policy_bridge import check_tool_policy
+from voidx.agent.adapters.langgraph.runtime.thread_context import (
+    current_thread_execution_state,
+    tool_registry_for,
+)
 
 
 def _attach_ai_approval_failures(
@@ -261,13 +266,20 @@ class PermissionFlow:
             defer_to_engine: list[dict] = []
             for tool_call in tool_calls:
                 args = tool_call.get("args", {}) or {}
-                decision = chat_tool_view.check_tool_call(str(tool_call.get("name", "")), args)
-                if decision.allowed and decision.requests_approval:
-                    defer_to_engine.append(tool_call)
-                elif decision.allowed:
-                    approved.append(tool_call)
-                else:
+                decision = check_tool_policy(
+                    chat_tool_view,
+                    tool_registry_for(host),
+                    str(tool_call.get("name", "")),
+                    args,
+                )
+                if not decision.allowed:
                     denied.append((tool_call, f"Tool denied: {decision.reason}"))
+                elif isinstance(chat_tool_view, ProfileToolPolicy):
+                    defer_to_engine.append(tool_call)
+                elif decision.requests_approval:
+                    defer_to_engine.append(tool_call)
+                else:
+                    approved.append(tool_call)
             if not defer_to_engine:
                 return approved, denied
             tool_calls = defer_to_engine
@@ -282,8 +294,37 @@ class PermissionFlow:
         )
 
         for tc in tool_calls:
-            decision = authorize_tool_call(project_agent_tool_call(tc), context)
-            if (
+            args = tc.get("args", {}) if isinstance(tc.get("args", {}), dict) else {}
+            autonomous_mcp_call = (
+                isinstance(chat_tool_view, ProfileToolPolicy)
+                and chat_tool_view.resource_policy.hitl_mode == "autonomous"
+                and str(tc.get("name", "")) == "mcp"
+                and str(args.get("op") or "").strip().lower() == "call"
+            )
+            call_context = (
+                replace(context, execution_gated=True)
+                if autonomous_mcp_call
+                else context
+            )
+            decision = authorize_tool_call(
+                project_agent_tool_call(tc),
+                call_context,
+            )
+            autonomous = (
+                isinstance(chat_tool_view, ProfileToolPolicy)
+                and chat_tool_view.resource_policy.hitl_mode == "autonomous"
+            )
+            if autonomous and decision.action in {Action.ASK, Action.BLOCKED_ACK}:
+                action = (
+                    decision.action.value
+                    if isinstance(decision.action, Action)
+                    else str(decision.action)
+                )
+                denied.append((
+                    decision.tool_call,
+                    f"Autonomous authorization denied: {action}",
+                ))
+            elif (
                 decision.action == Action.ASK
                 and decision.risk is not None
                 and decision.risk.level == RiskLevel.DANGEROUS

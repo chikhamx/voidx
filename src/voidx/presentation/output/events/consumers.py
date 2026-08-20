@@ -139,11 +139,12 @@ class DockEventConsumer:
         self._agent_nodes: dict[int, OutputNode] = {}
         self._agents_with_specific_status: set[int] = set()
 
+    def _clear_turn_statuses(self) -> None:
+        self._dock.clear_active_statuses(keep={"loop:waiting"})
+
     def _reset_turn_state(self) -> None:
         self._tool_nodes.clear()
-        self._dock.clear_status_record(PERMISSION_REQUEST_STATUS_ID)
-        self._dock.clear_status_record("error:current")
-        self._dock.clear_status_record("llm:retry")
+        self._clear_turn_statuses()
         self._hidden_tool_ids.clear()
         self._agent_nodes.clear()
         self._agents_with_specific_status.clear()
@@ -163,12 +164,15 @@ class DockEventConsumer:
                 self._reset_turn_state()
                 return self._dock.start_turn(text, metadata=metadata, raw_text=raw_text or None)
             case TurnCompleted():
+                self._reset_turn_state()
                 self._dock.end_turn()
                 return None
             case TurnCancelled():
+                self._reset_turn_state()
                 self._dock.end_turn()
                 return None
             case TurnFailed() as e:
+                self._reset_turn_state()
                 self._dock.end_turn()
                 if not e.message:
                     return None
@@ -206,7 +210,7 @@ class DockEventConsumer:
                     return self._dock.append_guidance_turn(text)
                 return None
             case ErrorAppended() as e:
-                self._dock.clear_status_record("llm:retry")
+                self._clear_turn_statuses()
                 self._dock.record_status(
                     "error:current",
                     "Error",

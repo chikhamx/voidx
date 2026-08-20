@@ -48,21 +48,22 @@ def _status_value(status: Any, name: str) -> str:
     return str(value or "")
 
 
-def _runtime_profile_for_status(status: Any):
-    from voidx.agent.domain.profile import CHAT_PROFILE, CODING_PROFILE
+def _resolved_profile_for_status(status: Any):
+    """Resolve the session's pinned profile for a new turn.
+
+    The snapshot pinned at session create/switch wins; sessions without one
+    resolve their profile id through the registry (bundled presets keep the
+    legacy behavior). An unresolvable profile raises instead of silently
+    falling back to coding.
+    """
+    from voidx.agent.facade import restore_session_runtime_profile
 
     profile_id = _status_value(status, "runtime_profile") or "coding"
-    if profile_id == "chat":
-        return CHAT_PROFILE
-    if profile_id == "goal":
-        from voidx.agent.domain.automation.goal import GOAL_PROFILE
-
-        return GOAL_PROFILE
-    if profile_id == "loop":
-        from voidx.agent.domain.automation.loop import LOOP_PROFILE
-
-        return LOOP_PROFILE
-    return CODING_PROFILE
+    workspace = _status_value(status, "workspace") or "."
+    snapshot = getattr(status, "profile_snapshot", None)
+    if callable(snapshot):
+        snapshot = snapshot()
+    return restore_session_runtime_profile(workspace, profile_id, snapshot)
 
 
 def coding_turn_context_for_queue(
@@ -71,26 +72,37 @@ def coding_turn_context_for_queue(
     thread_id: str = "",
     context: TurnExecutionContext | None = None,
 ) -> TurnExecutionContext:
-    from voidx.agent.domain.profile import CODING_PROFILE
-
+    resolved = None
     if context is not None:
         resolved_session_id = context.session_id
         resolved_thread_id = str(thread_id or context.thread_id or resolved_session_id or "coding")
         resolved_workspace = context.workspace
-        profile = getattr(context, "runtime_profile", CODING_PROFILE)
+        profile = getattr(context, "runtime_profile", None)
+        workflow_context = getattr(context, "workflow_context", None)
+        tool_policy = getattr(context, "tool_policy", None)
+        if profile is None:
+            resolved = _resolved_profile_for_status(status)
+            profile = resolved.runtime_profile
+            workflow_context = resolved.workflow_context
     else:
         resolved_session_id = _status_value(status, "session_id")
         resolved_thread_id = str(thread_id or resolved_session_id or "coding")
         resolved_workspace = _status_value(status, "workspace")
-        profile = _runtime_profile_for_status(status)
-    if getattr(profile, "profile_id", "coding") == "coding":
-        profile = CODING_PROFILE
+        resolved = _resolved_profile_for_status(status)
+        profile = resolved.runtime_profile
+        workflow_context = resolved.workflow_context
+        tool_policy = None
+    if tool_policy is None and resolved is not None:
+        from voidx.agent.facade import default_session_profile_tool_policy
+
+        tool_policy = default_session_profile_tool_policy(resolved)
     return TurnExecutionContext(
         thread_id=resolved_thread_id,
         session_id=resolved_session_id,
         runtime_profile=profile,
         workspace=resolved_workspace,
-        tool_policy=getattr(context, "tool_policy", None),
+        workflow_context=workflow_context,
+        tool_policy=tool_policy,
     )
 
 
@@ -122,6 +134,7 @@ class UiStatus:
     code_ide: Callable[[], str] = field(default_factory=lambda: lambda: "trae")
     latest_action: Callable[[], str] = field(default_factory=lambda: lambda: "")
     runtime_profile: Callable[[], str] = field(default_factory=lambda: lambda: "coding")
+    profile_snapshot: Callable[[], Any | None] = field(default_factory=lambda: lambda: None)
     session_id: Callable[[], str] = field(default_factory=lambda: lambda: "")
 
 

@@ -6,7 +6,14 @@ from collections.abc import Iterable
 
 from collections import deque
 
-from voidx.agent.domain.automation.workflow_policy import is_workflow_terminal_condition
+from voidx.agent.domain.automation.workflow_policy import (
+    is_workflow_terminal_condition,
+    workflow_edges,
+    workflow_personas,
+    workflow_transitions,
+)
+from voidx.agent.domain.agent_profile import content_hash_of
+from voidx.agent.domain.automation.workflow_schema import WorkflowDAG
 from voidx.agent.domain.automation.workflow import (
     WorkflowActivationSource,
     WorkflowEvidence,
@@ -18,20 +25,55 @@ from voidx.agent.domain.automation.workflow import (
 )
 
 
+def validate_workflow_dag_hashes(
+    runs: Iterable[WorkflowRunState | dict[str, object]],
+    *,
+    dag: WorkflowDAG,
+) -> list[WorkflowRunState]:
+    """Backfill legacy hashes and block states pinned to another DAG."""
+    current_dag_hash = content_hash_of(dag.model_dump(mode="json"))
+    validated: list[WorkflowRunState] = []
+    for item in runs:
+        run = item if isinstance(item, WorkflowRunState) else WorkflowRunState.model_validate(item)
+        run = run.model_copy(deep=True)
+        if not run.dag_hash:
+            run.dag_hash = current_dag_hash
+        elif run.dag_hash != current_dag_hash:
+            run.status = WorkflowRunStatus.BLOCKED
+            run.blocked_reason = "workflow_dag_hash_mismatch"
+            if not any(evidence.kind == "dag_mismatch" for evidence in run.evidence):
+                run.evidence.append(
+                    WorkflowEvidence(
+                        kind="dag_mismatch",
+                        ref="workflow:dag_hash",
+                        ok=False,
+                        summary="Persisted workflow DAG hash does not match the active profile snapshot.",
+                    )
+                )
+        validated.append(run)
+    return validated
+
+
 def advance_workflow_states(
     runs: Iterable[WorkflowRunState | dict[str, object]],
     events: Iterable[WorkflowStateEvent | dict[str, object]],
     *,
+    dag: WorkflowDAG,
     turn_count: int = 0,
 ) -> list[WorkflowRunState]:
-    states: dict[str, WorkflowRunState] = {}
-    for item in runs:
-        run = item if isinstance(item, WorkflowRunState) else WorkflowRunState.model_validate(item)
-        run = run.model_copy(deep=True)
-        _ensure_transition_metadata(run)
-        key = _workflow_key(run.name)
-        if key:
-            states[key] = run
+    states = {
+        _workflow_key(run.name): run
+        for run in validate_workflow_dag_hashes(runs, dag=dag)
+        if _workflow_key(run.name)
+    }
+    current_dag_hash = content_hash_of(dag.model_dump(mode="json"))
+    mismatched = {
+        key
+        for key, run in states.items()
+        if run.blocked_reason == "workflow_dag_hash_mismatch"
+    }
+    for run in states.values():
+        _ensure_transition_metadata(run, dag)
 
     for raw_event in events:
         event = (
@@ -43,6 +85,8 @@ def advance_workflow_states(
         if not key:
             continue
         run = states.get(key)
+        if run is not None and key in mismatched:
+            continue
         if run is None:
             if event.kind == WorkflowStateEventKind.UNBLOCKED:
                 continue
@@ -54,8 +98,9 @@ def advance_workflow_states(
                 reason=event.reason or f"event:{event.kind.value}",
                 activated_turn=turn_count,
                 updated_turn=turn_count,
+                dag_hash=current_dag_hash,
             )
-            _ensure_transition_metadata(run)
+            _ensure_transition_metadata(run, dag)
             states[key] = run
 
         if event.kind == WorkflowStateEventKind.SATISFIED:
@@ -66,7 +111,7 @@ def advance_workflow_states(
                 WorkflowRunStatus.SKIPPED,
             }:
                 continue
-            if not _can_satisfy_run(run, event):
+            if not _can_satisfy_run(run, event, dag):
                 continue
         run.evidence.append(
             WorkflowEvidence(
@@ -82,12 +127,13 @@ def advance_workflow_states(
         if event.kind == WorkflowStateEventKind.SATISFIED:
             run.status = WorkflowRunStatus.SATISFIED
             run.blocked_reason = ""
-            if is_workflow_terminal_condition(event.condition):
-                _cascade_skip_downstream(states, run, turn_count=turn_count)
+            if is_workflow_terminal_condition(event.condition, dag):
+                _cascade_skip_downstream(states, run, dag, turn_count=turn_count)
             else:
                 _activate_transition_targets(
                     states,
                     run,
+                    dag,
                     turn_count=turn_count,
                     condition=event.condition,
                 )
@@ -108,11 +154,12 @@ def advance_workflow_states(
 def _activate_transition_targets(
     states: dict[str, WorkflowRunState],
     run: WorkflowRunState,
+    dag: WorkflowDAG,
     *,
     turn_count: int,
     condition: str = "",
 ) -> None:
-    targets = _transition_targets_for(run, condition=condition)
+    targets = _transition_targets_for(run, dag, condition=condition)
     for target in targets:
         key = _workflow_key(target)
         if not key:
@@ -132,25 +179,27 @@ def _activate_transition_targets(
             goal_type=run.goal_type,
             goal=run.goal,
             scope=run.scope,
-            personas=list(_workflow_personas(key)),
+            personas=list(workflow_personas(key, dag)),
             activated_turn=turn_count,
             updated_turn=turn_count,
-            transition_to=list(_workflow_transitions(key)),
+            dag_hash=run.dag_hash,
+            transition_to=list(workflow_transitions(key, dag)),
         )
 
 
 def _cascade_skip_downstream(
     states: dict[str, WorkflowRunState],
     run: WorkflowRunState,
+    dag: WorkflowDAG,
     *,
     turn_count: int,
 ) -> None:
-    downstream = _reachable_downstream(run.name)
+    downstream = _reachable_downstream(run.name, dag)
     for name in downstream:
         target = states.get(_workflow_key(name))
         if target is None or target.status != WorkflowRunStatus.ACTIVE:
             continue
-        if _has_other_active_precursor(states, name, exclude=run.name):
+        if _has_other_active_precursor(states, name, dag, exclude=run.name):
             continue
         target.status = WorkflowRunStatus.SKIPPED
         target.updated_turn = turn_count
@@ -166,7 +215,7 @@ def _cascade_skip_downstream(
         )
 
 
-def _reachable_downstream(name: str) -> list[str]:
+def _reachable_downstream(name: str, dag: WorkflowDAG) -> list[str]:
     start = _workflow_key(name)
     if not start:
         return []
@@ -175,7 +224,7 @@ def _reachable_downstream(name: str) -> list[str]:
     pending: deque[str] = deque([start])
     while pending:
         current = pending.popleft()
-        for edge in _workflow_edges(current):
+        for edge in workflow_edges(current, dag):
             target = _workflow_key(edge.target)
             if not target or target in seen:
                 continue
@@ -188,6 +237,7 @@ def _reachable_downstream(name: str) -> list[str]:
 def _has_other_active_precursor(
     states: dict[str, WorkflowRunState],
     name: str,
+    dag: WorkflowDAG,
     *,
     exclude: str,
 ) -> bool:
@@ -201,42 +251,38 @@ def _has_other_active_precursor(
         run = states.get(source)
         if run is None or run.status != WorkflowRunStatus.ACTIVE:
             continue
-        if any(_workflow_key(edge.target) == target for edge in _workflow_edges(source)):
+        if any(_workflow_key(edge.target) == target for edge in workflow_edges(source, dag)):
             return True
     return False
 
 
-def _ensure_transition_metadata(run: WorkflowRunState) -> None:
+def _ensure_transition_metadata(run: WorkflowRunState, dag: WorkflowDAG) -> None:
     if not run.transition_to:
-        run.transition_to = list(_workflow_transitions(run.name))
+        run.transition_to = list(workflow_transitions(run.name, dag))
 
 
-def _transition_targets_for(run: WorkflowRunState, *, condition: str = "") -> list[str]:
+def _transition_targets_for(run: WorkflowRunState, dag: WorkflowDAG, *, condition: str = "") -> list[str]:
     normalized_condition = condition.strip().lower()
-    from voidx.agent.domain.automation.workflow_policy import is_workflow_terminal_condition
-
     if not normalized_condition:
         return []
-    if is_workflow_terminal_condition(normalized_condition):
+    if is_workflow_terminal_condition(normalized_condition, dag):
         return []
     return [
         edge.target
-        for edge in _workflow_edges(run.name)
+        for edge in workflow_edges(run.name, dag)
         if edge.condition == normalized_condition
     ]
 
 
-def _can_satisfy_run(run: WorkflowRunState, event: WorkflowStateEvent) -> bool:
+def _can_satisfy_run(run: WorkflowRunState, event: WorkflowStateEvent, dag: WorkflowDAG) -> bool:
     if not _gate_satisfied(run.name, event):
         return False
     condition = event.condition.strip().lower()
     if not condition:
         return False
-    from voidx.agent.domain.automation.workflow_policy import is_workflow_terminal_condition
-
-    if is_workflow_terminal_condition(condition):
+    if is_workflow_terminal_condition(condition, dag):
         return True
-    return any(edge.condition == condition for edge in _workflow_edges(run.name))
+    return any(edge.condition == condition for edge in workflow_edges(run.name, dag))
 
 
 def _gate_satisfied(workflow: str, event: WorkflowStateEvent) -> bool:
@@ -246,30 +292,6 @@ def _gate_satisfied(workflow: str, event: WorkflowStateEvent) -> bool:
 
 def _workflow_key(name: str) -> str:
     return name.strip().lower()
-
-
-def _workflow_transitions(name: str) -> tuple[str, ...]:
-    from voidx.agent.domain.automation.workflow_policy import workflow_transitions
-
-    return workflow_transitions(name)
-
-
-def _workflow_edges(name: str):
-    from voidx.agent.domain.automation.workflow_policy import workflow_edges
-
-    return workflow_edges(name)
-
-
-def _workflow_gate(name: str):
-    from voidx.agent.domain.automation.workflow_policy import workflow_gate
-
-    return workflow_gate(name)
-
-
-def _workflow_personas(name: str) -> tuple[str, ...]:
-    from voidx.agent.domain.automation.workflow_policy import workflow_personas
-
-    return workflow_personas(name)
 
 
 def _initial_status_for_event(kind: WorkflowStateEventKind) -> WorkflowRunStatus:

@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from voidx.agent.domain.agent_profile import content_hash_of
 from voidx.agent.domain.task.state import GoalResolution, TaskState, goal_type_from_join
-from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
-from voidx.agent.domain.automation.workflow_policy import workflow_sort_key
-from voidx.agent.application.automation.workflow.runtime import advance_workflow_states
+from voidx.agent.domain.automation.workflow_policy import workflow_personas, workflow_sort_key, workflow_transitions
+from voidx.agent.application.automation.workflow.runtime import (
+    advance_workflow_states,
+    validate_workflow_dag_hashes,
+)
+from voidx.agent.domain.automation.workflow_schema import WorkflowDAG
 from voidx.agent.domain.automation.workflow import (
     WorkflowActivationSource,
     WorkflowEvidence,
@@ -25,20 +29,25 @@ def reconcile_workflow_runs_for_turn(
     *,
     goal_resolution: GoalResolution,
     after_state: TaskState,
+    dag: WorkflowDAG,
     turn_count: int = 0,
 ) -> list[WorkflowRunState]:
     runs = [run.model_copy(deep=True) for run in (after_state.workflow_runs or {}).values()]
+    runs = validate_workflow_dag_hashes(runs, dag=dag)
+    if any(run.blocked_reason == "workflow_dag_hash_mismatch" for run in runs):
+        return runs
     target = _route_target(goal_resolution)
     override = _resolve_intent_override(
         goal_resolution=goal_resolution,
         after_state=after_state,
         runs=runs,
         target=target,
+        dag=dag,
         turn_count=turn_count,
     )
     if override is not None:
         return override
-    if target and target in DEFAULT_WORKFLOW_DAG.nodes and _has_active(runs, target):
+    if target and target in dag.nodes and _has_active(runs, target):
         compacted = _satisfy_other_active_runs(
             runs,
             target=target,
@@ -52,6 +61,7 @@ def reconcile_workflow_runs_for_turn(
         goal_resolution=goal_resolution,
         runs=runs,
         target=target,
+        dag=dag,
     )
     if not events:
         activated = _activate_initial_start(
@@ -59,12 +69,13 @@ def reconcile_workflow_runs_for_turn(
             after_state=after_state,
             runs=runs,
             target=target,
+            dag=dag,
             turn_count=turn_count,
         )
         if activated is not None:
             return activated
         return runs
-    return advance_workflow_states(runs, events, turn_count=turn_count)
+    return advance_workflow_states(runs, events, dag=dag, turn_count=turn_count)
 
 
 def _resolve_intent_override(
@@ -73,9 +84,10 @@ def _resolve_intent_override(
     after_state: TaskState,
     runs: list[WorkflowRunState],
     target: str,
+    dag: WorkflowDAG,
     turn_count: int,
 ) -> list[WorkflowRunState] | None:
-    if target not in OVERRIDE_TARGETS or target not in DEFAULT_WORKFLOW_DAG.nodes:
+    if target not in OVERRIDE_TARGETS or target not in dag.nodes:
         return None
     if _has_active(runs, target):
         return None
@@ -84,7 +96,7 @@ def _resolve_intent_override(
 
     active_precursors = [
         run
-        for run in sorted(runs, key=lambda item: workflow_sort_key(item.name))
+        for run in sorted(runs, key=lambda item: workflow_sort_key(item.name, dag))
         if run.status == WorkflowRunStatus.ACTIVE
         and run.name in OVERRIDEABLE_PRECURSORS
         and run.name != target
@@ -131,20 +143,22 @@ def _resolve_intent_override(
                 reason=f"intent override from {source}",
                 goal_type=template.goal_type,
                 scope=template.scope,
-                personas=list(_workflow_personas(target)),
+                personas=list(workflow_personas(target, dag)),
                 activated_turn=turn_count,
                 updated_turn=turn_count,
-                transition_to=list(_workflow_transitions(target)),
+                dag_hash=content_hash_of(dag.model_dump(mode="json")),
+                transition_to=list(workflow_transitions(target, dag)),
             )
         )
     elif existing.status != WorkflowRunStatus.ACTIVE:
         existing.status = WorkflowRunStatus.ACTIVE
         existing.source = WorkflowActivationSource.TRANSITION
         existing.reason = f"intent override from {superseded_names[0]}"
-        existing.personas = list(_workflow_personas(target))
+        existing.personas = list(workflow_personas(target, dag))
         existing.activated_turn = turn_count
         existing.updated_turn = turn_count
-        existing.transition_to = list(_workflow_transitions(target))
+        existing.dag_hash = content_hash_of(dag.model_dump(mode="json"))
+        existing.transition_to = list(workflow_transitions(target, dag))
         existing.blocked_reason = ""
 
     return updated
@@ -200,26 +214,28 @@ def _reconcile_events(
     goal_resolution: GoalResolution,
     runs: list[WorkflowRunState],
     target: str,
+    dag: WorkflowDAG,
 ) -> list[WorkflowStateEvent]:
     del goal_resolution
     if not target:
         return []
-    event = _resolve_auto_transition(runs, target)
+    event = _resolve_auto_transition(runs, target, dag)
     return [event] if event is not None else []
 
 
 def _resolve_auto_transition(
     active_runs: list[WorkflowRunState],
     target: str,
+    dag: WorkflowDAG,
 ) -> WorkflowStateEvent | None:
-    if target not in DEFAULT_WORKFLOW_DAG.nodes:
+    if target not in dag.nodes:
         return None
     if _has_active(active_runs, target):
         return None
-    for run in sorted(active_runs, key=lambda item: workflow_sort_key(item.name)):
+    for run in sorted(active_runs, key=lambda item: workflow_sort_key(item.name, dag)):
         if run.status != WorkflowRunStatus.ACTIVE:
             continue
-        for edge in DEFAULT_WORKFLOW_DAG.edges_from(run.name):
+        for edge in dag.edges_from(run.name):
             if edge.target == target:
                 return WorkflowStateEvent(
                     workflow=run.name,
@@ -239,10 +255,11 @@ def _activate_initial_start(
     after_state: TaskState,
     runs: list[WorkflowRunState],
     target: str,
+    dag: WorkflowDAG,
     turn_count: int,
 ) -> list[WorkflowRunState] | None:
     del goal_resolution
-    if not target or target not in DEFAULT_WORKFLOW_DAG.nodes:
+    if not target or target not in dag.nodes:
         return None
     if _has_active(runs, target):
         return None
@@ -258,10 +275,11 @@ def _activate_initial_start(
             reason="resolver plan.join",
             goal_type=goal_type_from_join(target),
             scope=after_state.current_goal.label if after_state.current_goal is not None else "",
-            personas=list(_workflow_personas(target)),
+            personas=list(workflow_personas(target, dag)),
             activated_turn=turn_count,
             updated_turn=turn_count,
-            transition_to=list(_workflow_transitions(target)),
+            dag_hash=content_hash_of(dag.model_dump(mode="json")),
+            transition_to=list(workflow_transitions(target, dag)),
         )
     )
     return updated
@@ -278,16 +296,6 @@ def _has_active(runs: list[WorkflowRunState], name: str) -> bool:
     return any(run.name == name and run.status == WorkflowRunStatus.ACTIVE for run in runs)
 
 
-def _workflow_transitions(name: str) -> tuple[str, ...]:
-    from voidx.agent.domain.automation.workflow_policy import workflow_transitions
-
-    return workflow_transitions(name)
-
-
-def _workflow_personas(name: str) -> tuple[str, ...]:
-    from voidx.agent.domain.automation.workflow_policy import workflow_personas
-
-    return workflow_personas(name)
 
 
 __all__ = ["reconcile_workflow_runs_for_turn"]

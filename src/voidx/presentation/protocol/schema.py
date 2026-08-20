@@ -9,6 +9,15 @@ from pydantic import TypeAdapter
 from voidx.presentation.protocol.commands import UiCommand
 from voidx.presentation.protocol.requests import UiRequest
 from voidx.presentation.protocol.transcript import TranscriptSnapshot
+from voidx.presentation.protocol.v2.agent_profiles import (
+    AgentProfileDetailDto,
+    AgentProfileDiagnosticDto,
+    AgentProfileInfoDto,
+    AgentProfileListDto,
+    AgentProfileSaveDto,
+    AgentProfileSnapshotDto,
+    AgentProfileValidationDto,
+)
 from voidx.presentation.protocol.v2.envelope import (
     ErrorPayload,
     JsonRpcError,
@@ -22,7 +31,14 @@ from voidx.presentation.protocol.v2.threads import Item, ThreadInfo, TurnInfo
 
 def export_protocol_schema() -> dict[str, Any]:
     schema = TypeAdapter(
-        JsonRpcRequest
+        AgentProfileDetailDto
+        | AgentProfileDiagnosticDto
+        | AgentProfileInfoDto
+        | AgentProfileListDto
+        | AgentProfileSaveDto
+        | AgentProfileSnapshotDto
+        | AgentProfileValidationDto
+        | JsonRpcRequest
         | JsonRpcNotification
         | JsonRpcResult
         | JsonRpcError

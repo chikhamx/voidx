@@ -42,24 +42,7 @@
               <span class="vx-mode-trigger-label" id="mode-trigger-label">编码</span>
               <span class="vx-sidebar-row-icon"><svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9.5 6 6 6-6"/></svg></span>
             </button>
-            <div class="vx-mode-menu" id="mode-menu" role="listbox" hidden>
-              <button type="button" class="vx-mode-option" data-profile="chat" role="option" aria-selected="false">
-                <span class="vx-mode-option-text"><span class="vx-mode-option-name">聊天</span><span class="vx-mode-option-desc">自由对话与问答</span></span>
-                <span class="vx-mode-option-check"><svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 12.5 5 5 10-11"/></svg></span>
-              </button>
-              <button type="button" class="vx-mode-option" data-profile="coding" role="option" aria-selected="true">
-                <span class="vx-mode-option-text"><span class="vx-mode-option-name">编码</span><span class="vx-mode-option-desc">构建、调试与发布</span></span>
-                <span class="vx-mode-option-check"><svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 12.5 5 5 10-11"/></svg></span>
-              </button>
-              <button type="button" class="vx-mode-option" data-profile="goal" role="option" aria-selected="false">
-                <span class="vx-mode-option-text"><span class="vx-mode-option-name">目标</span><span class="vx-mode-option-desc">按目标持续推进</span></span>
-                <span class="vx-mode-option-check"><svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 12.5 5 5 10-11"/></svg></span>
-              </button>
-              <button type="button" class="vx-mode-option" data-profile="loop" role="option" aria-selected="false">
-                <span class="vx-mode-option-text"><span class="vx-mode-option-name">循环</span><span class="vx-mode-option-desc">周期性自动执行</span></span>
-                <span class="vx-mode-option-check"><svg class="vx-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 12.5 5 5 10-11"/></svg></span>
-              </button>
-            </div>
+            <div class="vx-mode-menu" id="mode-menu" role="listbox" hidden></div>
           </div>
           <nav class="vx-sidebar-nav" aria-label="Workspace navigation">
             <button type="button" class="vx-nav-item vx-new-chat" id="btn-new-chat">
@@ -285,6 +268,7 @@
             <button type="button" data-tab="preferences" class="settings-tab">偏好</button>
             <button type="button" data-tab="code" class="settings-tab">代码</button>
             <button type="button" data-tab="advanced" class="settings-tab">高级</button>
+            <button type="button" data-tab="agent-profiles" class="settings-tab">Agent Profiles</button>
           </nav>
           <div id="settings-content" class="settings-content"></div>
           <footer class="settings-footer">

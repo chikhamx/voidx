@@ -18,6 +18,7 @@ class SlashCommand:
 
 
 SLASH_COMMANDS: tuple[SlashCommand, ...] = (
+    SlashCommand("/agents", "List or select agent profiles", "_agents", "args"),
     SlashCommand("/allow", "Allow a tool for this session", "_cmd_allow", "args"),
     SlashCommand("/bocha", "Configure Bocha API key for web search", "_bocha", "args"),
     SlashCommand("/chat", "Start a new chat session", "_chat_shortcut", "args"),

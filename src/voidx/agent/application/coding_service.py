@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from voidx.agent.application.runtime.contracts import TurnRequest, TurnResult
+from voidx.agent.application.profile_tool_policy import default_profile_tool_policy_for
 from voidx.agent.domain.profile import CODING_PROFILE
 from voidx.agent.domain.thread import AgentThread
 from voidx.agent.domain.turn_context import TurnExecutionContext
@@ -33,21 +34,31 @@ class CodingService:
         workspace: str = "",
     ) -> TurnResult:
         resolved_thread_id = thread_id or str(getattr(context, "thread_id", "") or "") or session_id or "coding"
-        expected_context = TurnExecutionContext(
-            thread_id=resolved_thread_id,
-            session_id=session_id or "",
-            runtime_profile=CODING_PROFILE,
-            workspace=workspace,
-        )
         if context is not None:
             identity_matches = (
-                context.thread_id == expected_context.thread_id
-                and context.session_id == expected_context.session_id
-                and context.runtime_profile.profile_id == CODING_PROFILE.profile_id
+                context.thread_id == resolved_thread_id
+                and context.session_id == (session_id or "")
             )
             if not identity_matches:
-                raise ValueError("Coding turn context does not match thread, session, or profile")
-        execution_context = context or expected_context
+                raise ValueError("Coding turn context does not match thread or session")
+            execution_context = context
+        else:
+            from voidx.agent.application.agent_registry import agent_registry_for
+            from voidx.agent.application.agent_profile_snapshot import restore_session_profile
+
+            resolved = restore_session_profile(
+                agent_registry_for(workspace or "."),
+                profile_id="coding",
+                snapshot=None,
+            )
+            execution_context = TurnExecutionContext(
+                thread_id=resolved_thread_id,
+                session_id=session_id or "",
+                runtime_profile=resolved.runtime_profile,
+                workspace=workspace,
+                workflow_context=resolved.workflow_context,
+                tool_policy=default_profile_tool_policy_for(resolved),
+            )
         thread = AgentThread(
             thread_id=resolved_thread_id,
             session_id=session_id or None,

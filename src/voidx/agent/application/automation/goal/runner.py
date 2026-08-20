@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from voidx.agent.domain.automation.goal import GOAL_ITERATION_USER_TEXT, GOAL_PROFILE, GoalSpec, GoalState, GoalToolView
+from voidx.agent.domain.agent_profile import ResolvedAgentProfile
+from voidx.agent.domain.automation.goal import GOAL_ITERATION_USER_TEXT, GoalSpec, GoalState, GoalToolView
 from voidx.agent.domain.thread import DecisionMetadata, RuntimeDecision
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.application.automation.goal.controller import GoalController
 from voidx.agent.application.automation.goal.evaluator import GoalEvaluator
 from voidx.agent.application.runtime.contracts import TurnRequest
+from voidx.agent.application.profile_tool_policy import profile_tool_policy_for
 
 
 _DEFAULT_CONTINUE_DELAY_SECONDS = 0.0
@@ -20,8 +22,9 @@ class GoalRuntimeRunner:
     runtime: object
     evaluator: object
 
-    async def run_turn(self, *, thread, profile, input_frame: dict) -> RuntimeDecision:
-        del profile
+    async def run_turn(
+        self, *, thread, profile: ResolvedAgentProfile, input_frame: dict
+    ) -> RuntimeDecision:
         try:
             spec = GoalSpec.model_validate(input_frame.get("spec") or {})
             state = GoalState.model_validate(input_frame.get("goal_state") or {})
@@ -49,10 +52,15 @@ class GoalRuntimeRunner:
         work_context = TurnExecutionContext(
             thread_id=thread.thread_id,
             session_id=thread.session_id or "",
-            runtime_profile=GOAL_PROFILE,
+            runtime_profile=profile.runtime_profile,
+            workflow_context=profile.workflow_context,
             workspace=thread.workspace,
-            tool_policy=GoalToolView.default(workflow_enabled=spec.workflow_enabled, phase="work").bind(
-                _available_goal_tool_ids()
+            tool_policy=profile_tool_policy_for(
+                profile,
+                baseline=GoalToolView.default(
+                    workflow_enabled=spec.workflow_enabled, phase="work"
+                ).bind(_available_goal_tool_ids()),
+                phase="work",
             ),
             goal_controller=controller,
             goal_phase="work",
@@ -82,9 +90,13 @@ class GoalRuntimeRunner:
         evaluator_context = work_context.model_copy(
             update={
                 "goal_phase": "evaluator",
-                "tool_policy": GoalToolView.default(
-                    workflow_enabled=spec.workflow_enabled, phase="evaluator"
-                ).bind(_available_goal_tool_ids()),
+                "tool_policy": profile_tool_policy_for(
+                    profile,
+                    baseline=GoalToolView.default(
+                        workflow_enabled=spec.workflow_enabled, phase="evaluator"
+                    ).bind(_available_goal_tool_ids()),
+                    phase="evaluator",
+                ),
             }
         )
         await self.evaluator.run_phase(

@@ -197,3 +197,34 @@ async def test_regular_turn_stop_unaffected_without_loop_controller() -> None:
 
     assert result.action == "break"
     assert result.turn_state == "committed"
+
+
+@pytest.mark.asyncio
+async def test_loop_controller_accepts_needs_user_without_scheduling_delay() -> None:
+    from voidx.agent.domain.thread import RuntimeDecision
+
+    controller = _controller()
+    decision = await controller.submit_decision(
+        RuntimeDecision(
+            outcome="needs_user",
+            summary="User must restore MCP credentials.",
+            reason="MCP credentials unavailable",
+        )
+    )
+
+    assert decision.outcome == "needs_user"
+    assert decision.next_delay_seconds is None
+    assert controller.final_decision() == decision
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["completed", "blocked", "failed", "stop"])
+async def test_loop_controller_still_rejects_other_terminal_outcomes(outcome) -> None:
+    from voidx.agent.domain.thread import RuntimeDecision
+
+    controller = _controller()
+
+    with pytest.raises(ValueError, match="use 'continue' or 'needs_user'"):
+        await controller.submit_decision(
+            RuntimeDecision(outcome=outcome, summary="not allowed")
+        )

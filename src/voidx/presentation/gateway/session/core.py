@@ -35,6 +35,7 @@ from voidx.presentation.protocol.v2.methods import MethodDispatch, MethodParamsE
 from voidx.presentation.protocol.v2.snapshot import ThreadSnapshot, WorkspaceSnapshot
 from voidx.presentation.protocol.v2.threads import ThreadInfo
 
+from voidx.presentation.gateway.session.method.agent_profiles import AgentProfileMethods
 from voidx.presentation.gateway.session.method.diff import DiffMethods
 from voidx.presentation.gateway.session.method.integrations import IntegrationMethods
 from voidx.presentation.gateway.session.method.references import ReferenceMethods
@@ -60,6 +61,7 @@ _request_client: contextvars.ContextVar[ProtocolClient | None] = contextvars.Con
 
 
 class GatewaySession(
+    AgentProfileMethods,
     TerminalMethods,
     DiffMethods,
     SessionMethods,
@@ -76,6 +78,7 @@ class GatewaySession(
         thread_id: str = "",
         session_id: str = "",
         runtime_profile: str = "coding",
+        profile_snapshot: object | None = None,
         command_handler: Callable[[UiCommand], Awaitable[None] | None] | None = None,
         workspace: str = "",
         runtime_state_provider: RuntimeStateProvider | None = None,
@@ -116,6 +119,7 @@ class GatewaySession(
 
         # Multi-thread state
         self._threads: dict[str, ThreadInfo] = {}
+        self._resolved_profiles: dict[str, object] = {}
         self._adapters: dict[str, UiEventItemAdapter] = {}
         self._active_thread_id = thread_id or ""
 
@@ -128,6 +132,14 @@ class GatewaySession(
             self._adapters[thread_id] = UiEventItemAdapter(
                 thread_id=thread_id, turn_id="",
             )
+            if profile_snapshot is not None:
+                from voidx.agent.facade import restore_session_runtime_profile
+
+                self._resolved_profiles[thread_id] = restore_session_runtime_profile(
+                    workspace or ".",
+                    runtime_profile,
+                    profile_snapshot,
+                )
 
         # v2 method dispatch
         self.methods = MethodDispatch()
@@ -272,6 +284,11 @@ class GatewaySession(
             directory=info.directory,
             title=info.title or "New session",
             profile=info.runtime_profile,
+            profile_snapshot=(
+                self._resolved_profiles[thread_id].snapshot
+                if thread_id in self._resolved_profiles
+                else None
+            ),
         )
         return True
 
@@ -459,6 +476,8 @@ class GatewaySession(
         workspace: str = "",
         runtime_profile: str = "coding",
         temporary: bool = False,
+        profile_snapshot: object | None = None,
+        resolved_profile: object | None = None,
     ) -> None:
         self._threads[thread_id] = ThreadInfo(
             thread_id=thread_id,
@@ -468,6 +487,16 @@ class GatewaySession(
             runtime_profile=runtime_profile,
             temporary=temporary,
         )
+        if resolved_profile is None and profile_snapshot is not None:
+            from voidx.agent.facade import restore_session_runtime_profile
+
+            resolved_profile = restore_session_runtime_profile(
+                workspace or self._workspace or ".",
+                runtime_profile,
+                profile_snapshot,
+            )
+        if resolved_profile is not None:
+            self._resolved_profiles[thread_id] = resolved_profile
         self._adapters[thread_id] = UiEventItemAdapter(
             thread_id=thread_id, turn_id="",
         )
@@ -476,12 +505,16 @@ class GatewaySession(
 
     async def unregister_thread(self, thread_id: str) -> None:
         self._threads.pop(thread_id, None)
+        self._resolved_profiles.pop(thread_id, None)
         self._adapters.pop(thread_id, None)
         if self._active_thread_id == thread_id:
             self._active_thread_id = ""
 
     def has_thread(self, thread_id: str) -> bool:
         return thread_id in self._threads
+
+    def resolved_profile(self, thread_id: str) -> object | None:
+        return self._resolved_profiles.get(thread_id)
 
     def list_threads(self) -> list[ThreadInfo]:
         return list(self._threads.values())
@@ -506,6 +539,7 @@ class GatewaySession(
             directory=info.directory,
             workspace=info.workspace,
             runtime_profile=runtime_profile,
+            profile_snapshot=getattr(info, "profile_snapshot", None),
         )
         return info.id
 
@@ -532,6 +566,7 @@ class GatewaySession(
 
         changed = False
         for info in await self._session_repository.list_sessions(limit=200):
+            profile_snapshot = getattr(info, "profile_snapshot", None)
             if info.id in self._threads:
                 existing = self._threads[info.id]
                 updated = from_session(info).model_copy(
@@ -540,9 +575,24 @@ class GatewaySession(
                 if updated != existing:
                     changed = True
                     self._threads[info.id] = updated
+                if profile_snapshot is not None and info.id not in self._resolved_profiles:
+                    from voidx.agent.facade import restore_session_runtime_profile
+
+                    self._resolved_profiles[info.id] = restore_session_runtime_profile(
+                        info.workspace or self._workspace or ".",
+                        getattr(info, "runtime_profile", "coding") or "coding",
+                        profile_snapshot,
+                    )
                 continue
+            await self.register_thread(
+                info.id,
+                title=info.title,
+                directory=info.directory,
+                workspace=info.workspace,
+                runtime_profile=getattr(info, "runtime_profile", "coding") or "coding",
+                profile_snapshot=profile_snapshot,
+            )
             self._threads[info.id] = from_session(info)
-            self._adapters[info.id] = UiEventItemAdapter(thread_id=info.id, turn_id="")
             changed = True
         return changed
 
@@ -738,6 +788,13 @@ class GatewaySession(
 
     def _register_default_methods(self) -> None:
         m = self.methods
+
+        # Agent profiles
+        m.register("list-agent-profiles", self._method_agent_profiles_list)
+        m.register("get-agent-profile", self._method_agent_profiles_get)
+        m.register("validate-agent-profile", self._method_agent_profiles_validate)
+        m.register("save-agent-profile", self._method_agent_profiles_save)
+        m.register("delete-agent-profile", self._method_agent_profiles_delete)
 
         # Terminal
         m.register("terminal.start", self._method_terminal_create)

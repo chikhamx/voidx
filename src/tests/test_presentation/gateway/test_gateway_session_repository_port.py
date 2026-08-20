@@ -22,6 +22,7 @@ class SessionInfo:
     updated_at: str = ""
     message_count: int = 0
     runtime_profile: str = "coding"
+    profile_snapshot: object | None = None
 
 
 class FakeSessionRepository:
@@ -120,6 +121,41 @@ async def dispatch(session: GatewaySession, request_id: int, method: str, params
     )
     assert isinstance(response, JsonRpcResult)
     return response.result
+
+
+@pytest.mark.asyncio
+async def test_sync_persisted_thread_restores_pinned_profile_snapshot(monkeypatch) -> None:
+    snapshot = object()
+    resolved = object()
+    repository = FakeSessionRepository()
+    repository.sessions["persisted-chat"] = SessionInfo(
+        id="persisted-chat",
+        workspace="/workspace",
+        runtime_profile="chat",
+        profile_snapshot=snapshot,
+    )
+    restored: list[tuple[str, str, object]] = []
+
+    def restore(workspace: str, profile_id: str, value: object) -> object:
+        restored.append((workspace, profile_id, value))
+        return resolved
+
+    monkeypatch.setattr(
+        "voidx.agent.facade.restore_session_runtime_profile",
+        restore,
+    )
+    session = GatewaySession(
+        lambda: BottomInputDock().tree,
+        thread_id="persisted-chat",
+        runtime_profile="chat",
+        workspace="/workspace",
+        session_repository=repository,
+    )
+
+    await session.sync_persisted_threads()
+
+    assert restored == [("/workspace", "chat", snapshot)]
+    assert session.resolved_profile("persisted-chat") is resolved
 
 
 @pytest.mark.asyncio
@@ -226,7 +262,9 @@ async def test_first_successful_turn_promotes_temporary_session() -> None:
         session, 11, "session.submit", {"thread_id": thread_id, "text": "hello"}
     ) == {"ok": True}
     assert repository.calls[0][0] == "stage"
-    assert repository.calls[0][1] == {
+    staged = repository.calls[0][1]
+    snapshot = staged.pop("profile_snapshot")
+    assert staged == {
         "owner_id": session.owner_id,
         "session_id": thread_id,
         "workspace": "/workspace",
@@ -234,6 +272,8 @@ async def test_first_successful_turn_promotes_temporary_session() -> None:
         "title": "New session",
         "profile": "chat",
     }
+    assert snapshot.profile_id == "chat"
+    assert snapshot.revision == 1
     assert session.list_threads()[0].temporary is True
 
     await session.broadcast_event(TurnCompleted(), thread_id=thread_id)

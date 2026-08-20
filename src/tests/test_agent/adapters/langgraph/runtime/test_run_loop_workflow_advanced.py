@@ -1,6 +1,8 @@
 """Tests for run loop run_once workflow resolution."""
 
 from voidx.agent.domain.turn_context import TurnExecutionContext
+from voidx.agent.domain.agent_profile import WorkflowRuntimeContext as ProfileWorkflowRuntimeContext
+from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 import asyncio
 import contextlib
 import sys
@@ -34,6 +36,21 @@ from voidx.presentation.protocol import UiSubmitCommand
 from tests.presentation_ui import make_presentation_ui
 
 runtime_ui_port = make_presentation_ui()
+
+
+def _coding_turn_context(graph, tmp_path) -> TurnExecutionContext:
+    identity = getattr(graph, "session_id", "") or "coding"
+    return TurnExecutionContext(
+        thread_id=identity,
+        session_id=getattr(graph, "session_id", "") or "",
+        workspace=str(tmp_path),
+        workflow_context=ProfileWorkflowRuntimeContext(
+            dag=DEFAULT_WORKFLOW_DAG,
+            dag_revision=1,
+            dag_hash="test-default-workflow",
+            source="bundled",
+        ),
+    )
 from tests.test_agent.adapters.langgraph.runtime.run_loop_helpers import (
     FakeTui,
     ExitTui,
@@ -85,7 +102,7 @@ async def test_run_turn_clears_stale_completed_workflow_when_resolver_has_no_joi
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
-        await graph.run_turn("检查检查，准备push吧", context=TurnExecutionContext(thread_id=getattr(graph, "session_id", "") or "coding", session_id=getattr(graph, "session_id", "") or ""))
+        await graph.run_turn("检查检查，准备push吧", context=_coding_turn_context(graph, tmp_path))
     finally:
         test_dock.deactivate()
         test_dock.reset()
@@ -134,7 +151,7 @@ async def test_run_turn_preadvances_workflow_from_resolver_workflow_start(tmp_pa
     set_dock(test_dock)
     test_dock.begin_capture()
     try:
-        await graph.run_turn("可以，先写一个 spec", context=TurnExecutionContext(thread_id=getattr(graph, "session_id", "") or "coding", session_id=getattr(graph, "session_id", "") or ""))
+        await graph.run_turn("可以，先写一个 spec", context=_coding_turn_context(graph, tmp_path))
     finally:
         test_dock.deactivate()
         test_dock.reset()

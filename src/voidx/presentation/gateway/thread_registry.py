@@ -18,6 +18,7 @@ class GatewayThreadSession(Protocol):
         title: str = "",
         directory: str = "",
         runtime_profile: str = "coding",
+        profile_snapshot: object | None = None,
     ) -> None: ...
 
 
@@ -36,5 +37,11 @@ class GatewayThreadRegistryAdapter:
                     title=session.title,
                     directory=session.directory,
                     runtime_profile=session.runtime_profile,
+                    profile_snapshot=session.profile_snapshot,
                 )
             )
+    def resolved_profile(self, thread_id: str) -> object | None:
+        gateway_session = self._session_provider()
+        if gateway_session is None:
+            return None
+        return gateway_session.resolved_profile(thread_id)

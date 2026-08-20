@@ -12,6 +12,7 @@ _AGENT_RUNTIME_FIELDS = (
     "goal_target",
     "active_workflow_names",
     "workflow_runs",
+    "workflow_dag",
     "workflow_route",
     "goal_phase",
     "loop_phase",

@@ -91,11 +91,13 @@ async def _run_chat(
 
     if not session and (chat or new_session):
         from voidx.agent.adapters.persistence.session_repository import create_session
+
+        profile_name = "chat" if chat else "coding"
         session = await create_session(
             workspace=ws_path,
             provider=cfg.model.provider,
             model=cfg.model.model,
-            profile="chat" if chat else "coding",
+            profile=profile_name,
             title="Chat session" if chat else "New session",
         )
 

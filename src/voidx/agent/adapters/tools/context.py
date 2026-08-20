@@ -36,6 +36,7 @@ class AgentToolRuntime:
     goal_target: str = ""
     active_workflow_names: list[str] = field(default_factory=list)
     workflow_runs: list[object] = field(default_factory=list)
+    workflow_dag: object | None = None
     workflow_route: dict[str, str | None] | None = None
     goal_phase: str = "work"
     loop_phase: str = "work"

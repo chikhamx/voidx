@@ -91,3 +91,29 @@ async def test_clear_thread_execution_states_only_removes_target_session():
         "other": state_other,
         "host-10\x1fthread-a": state_similar,
     }
+
+
+@pytest.mark.asyncio
+async def test_bind_context_without_tools_skips_profile_registry_factory() -> None:
+    from voidx.agent.adapters.langgraph.runtime.thread_context import (
+        bind_thread_execution_context,
+    )
+
+    factory_calls = 0
+
+    def fail_if_called(*args, **kwargs):
+        nonlocal factory_calls
+        factory_calls += 1
+        raise AssertionError("registry factory requires a real tool catalog")
+
+    host = SimpleNamespace(
+        _workspace="/workspace",
+        _session=None,
+        _thread_execution_states={},
+        _profile_tool_registry_factory=fail_if_called,
+    )
+
+    async with bind_thread_execution_context(host, session_id="") as state:
+        assert state.tool_registry is None
+
+    assert factory_calls == 0

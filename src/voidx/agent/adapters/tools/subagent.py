@@ -28,7 +28,6 @@ from voidx.tooling.domain.arguments import (
     keep_tool_args,
 )
 from voidx.tooling.domain.schema import model_to_json_schema
-from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 from voidx.agent.domain.subagent_display import subagent_display_name
 from voidx.agent.adapters.tools.subagent_control import AgentControlTool
 
@@ -326,7 +325,4 @@ def _delegation_rejection(inp: AgentInput) -> str:
         return "Child agent delegation rejected. goal must not be empty."
     if len("".join(inp.detail.split())) < 12:
         return "Child agent delegation rejected. detail must be a complete execution brief."
-    _goal_type, join, leave = _MODE_ROUTES[inp.mode]
-    if join not in DEFAULT_WORKFLOW_DAG.nodes or leave not in DEFAULT_WORKFLOW_DAG.nodes:
-        return "Child agent delegation rejected. Internal mode routing failed."
     return ""

@@ -285,7 +285,7 @@ export function applyRuntimeState(params: Record<string, unknown>): void {
         .catch(() => {});
     }
   }
-  if (typeof params.runtime_profile === "string" && ["coding", "chat", "loop", "goal"].includes(params.runtime_profile)) {
+  if (typeof params.runtime_profile === "string" && params.runtime_profile.trim()) {
     uiState.runtimeProfile = params.runtime_profile as typeof uiState.runtimeProfile;
   }
   if (typeof params.permission_mode === "string") {

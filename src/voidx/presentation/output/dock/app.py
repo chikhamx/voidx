@@ -58,6 +58,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._current_turn: OutputNode | None = None
         self._current_turn_text = ""
         self._current_turn_metadata = TurnMetadata()
+        self._last_turn_metadata = TurnMetadata()
         self._turn_in_progress = False
         self._current_agent: OutputNode | None = None
         self._current_tool: OutputNode | None = None
@@ -112,6 +113,10 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
     @property
     def current_turn_metadata(self) -> TurnMetadata:
         return self._current_turn_metadata
+
+    @property
+    def last_turn_metadata(self) -> TurnMetadata:
+        return self._last_turn_metadata
 
     @property
     def current_agent(self) -> OutputNode | None:
@@ -246,6 +251,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._current_turn = None
         self._current_turn_text = ""
         self._current_turn_metadata = TurnMetadata()
+        self._last_turn_metadata = TurnMetadata()
         self._turn_in_progress = False
         self._current_agent = None
         self._current_tool = None
@@ -266,6 +272,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._turn_in_progress = True
         self._current_turn_text = text
         self._current_turn_metadata = metadata or TurnMetadata()
+        self._last_turn_metadata = self._current_turn_metadata
         self._current_agent = None
         if self._tree.root.children:
             self._append_root_spacer()

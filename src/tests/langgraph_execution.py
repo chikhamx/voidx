@@ -33,11 +33,20 @@ def make_langgraph_execution(*args, ui=None, **kwargs) -> LangGraphExecution:
 
         kwargs.setdefault("model_factory", create_chat_model)
         kwargs.setdefault("resolver_model_factory", create_resolver_model)
-    if "tool_registry_factory" not in kwargs or "scoped_tools_binder" not in kwargs:
-        from voidx.bootstrap.tooling import bind_scoped_tools, build_tool_registry
+    if (
+        "tool_registry_factory" not in kwargs
+        or "scoped_tools_binder" not in kwargs
+        or "profile_tool_registry_factory" not in kwargs
+    ):
+        from voidx.bootstrap.tooling import (
+            bind_scoped_tools,
+            build_tool_registry,
+            scoped_tool_registry,
+        )
 
         kwargs.setdefault("tool_registry_factory", build_tool_registry)
         kwargs.setdefault("scoped_tools_binder", bind_scoped_tools)
+        kwargs.setdefault("profile_tool_registry_factory", scoped_tool_registry)
     if "slash_handler_factory" not in kwargs:
         from voidx.agent.adapters.persistence import session_cleanup
         from voidx.agent.adapters.persistence.session_adapter import SessionRepositoryAdapter

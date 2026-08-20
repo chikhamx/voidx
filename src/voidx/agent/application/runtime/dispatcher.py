@@ -7,13 +7,15 @@ import asyncio
 from dataclasses import dataclass
 from typing import Protocol
 
+from voidx.agent.domain.agent_profile import ResolvedAgentProfile
 from voidx.agent.domain.thread import RuntimeDecision
 from voidx.agent.application.runtime.lifecycle import LifecycleController
 from voidx.agent.ports.persistence import ThreadStateConflict, ThreadStore
+from voidx.agent.ports.presentation import AgentEventPublisher
 
 
 class RuntimeTurnRunner(Protocol):
-    async def run_turn(self, *, thread, profile, input_frame: dict) -> RuntimeDecision: ...
+    async def run_turn(self, *, thread, profile: ResolvedAgentProfile, input_frame: dict) -> RuntimeDecision: ...
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,7 @@ class RuntimeDispatcher:
         lease_seconds: float = 60,
         lifecycle: LifecycleController | None = None,
         claim_kind: str | None = None,
+        events: AgentEventPublisher | None = None,
     ) -> None:
         self._store = store
         self._runner = runner
@@ -40,6 +43,7 @@ class RuntimeDispatcher:
         self._lease_seconds = lease_seconds
         self._lifecycle = lifecycle or LifecycleController()
         self._claim_kind = claim_kind
+        self._events = events
 
     async def dispatch_once(self) -> DispatchResult | None:
         outbox = await self._store.claim_next_outbox(
@@ -120,7 +124,7 @@ class RuntimeDispatcher:
             try:
                 decision = await self._runner.run_turn(
                     thread=loaded.thread,
-                    profile=loaded.profile,
+                    profile=loaded.resolved_profile,
                     input_frame=input_frame,
                 )
             except Exception as exc:
@@ -168,6 +172,11 @@ class RuntimeDispatcher:
                 await self._store.ack_outbox(outbox.outbox_id)
                 return None
             await self._store.ack_outbox(outbox.outbox_id)
+            if decision.outcome == "needs_user" and self._events is not None:
+                reason = decision.reason or decision.summary
+                self._events.publish_message(
+                    f"Automation paused for user input: {reason}"
+                )
             return DispatchResult(
                 attempt_id=attempt.attempt_id,
                 thread_id=outbox.thread_id,

@@ -4,9 +4,15 @@ import json
 import pytest
 
 from voidx.agent.domain.task.state import ToolStatePatch
-from tests.agent_tool_context import agent_tool_context as ToolContext
+from tests.agent_tool_context import agent_tool_context
+from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 from voidx.tooling.application.registry import ToolRegistry
 from voidx.agent.domain.automation.workflow import WorkflowRunState, WorkflowRunStatus
+
+def ToolContext(**values):
+    values.setdefault("workflow_dag", DEFAULT_WORKFLOW_DAG)
+    return agent_tool_context(**values)
+
 
 
 @pytest.mark.asyncio

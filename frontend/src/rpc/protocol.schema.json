@@ -1,5 +1,232 @@
 {
   "$defs": {
+    "AgentProfileDetailDto": {
+      "properties": {
+        "profile": {
+          "$ref": "#/$defs/AgentProfileInfoDto"
+        },
+        "read_only": {
+          "title": "Read Only",
+          "type": "boolean"
+        },
+        "yaml": {
+          "title": "Yaml",
+          "type": "string"
+        }
+      },
+      "required": [
+        "profile",
+        "yaml",
+        "read_only"
+      ],
+      "title": "AgentProfileDetailDto",
+      "type": "object"
+    },
+    "AgentProfileDiagnosticDto": {
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "severity": {
+          "default": "error",
+          "enum": [
+            "error",
+            "warning"
+          ],
+          "title": "Severity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "code",
+        "message"
+      ],
+      "title": "AgentProfileDiagnosticDto",
+      "type": "object"
+    },
+    "AgentProfileInfoDto": {
+      "properties": {
+        "availability": {
+          "enum": [
+            "available",
+            "unavailable"
+          ],
+          "title": "Availability",
+          "type": "string"
+        },
+        "content_hash": {
+          "title": "Content Hash",
+          "type": "string"
+        },
+        "diagnostics": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AgentProfileDiagnosticDto"
+          },
+          "title": "Diagnostics",
+          "type": "array"
+        },
+        "display_name": {
+          "title": "Display Name",
+          "type": "string"
+        },
+        "hitl_mode": {
+          "enum": [
+            "interactive",
+            "autonomous"
+          ],
+          "title": "Hitl Mode",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "integer"
+        },
+        "run_mode": {
+          "title": "Run Mode",
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "bundled",
+            "global",
+            "project"
+          ],
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "display_name",
+        "revision",
+        "content_hash",
+        "source",
+        "run_mode",
+        "hitl_mode",
+        "availability"
+      ],
+      "title": "AgentProfileInfoDto",
+      "type": "object"
+    },
+    "AgentProfileListDto": {
+      "properties": {
+        "profiles": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AgentProfileInfoDto"
+          },
+          "title": "Profiles",
+          "type": "array"
+        }
+      },
+      "title": "AgentProfileListDto",
+      "type": "object"
+    },
+    "AgentProfileSaveDto": {
+      "properties": {
+        "diagnostics": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AgentProfileDiagnosticDto"
+          },
+          "title": "Diagnostics",
+          "type": "array"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/AgentProfileSnapshotDto"
+        }
+      },
+      "required": [
+        "snapshot"
+      ],
+      "title": "AgentProfileSaveDto",
+      "type": "object"
+    },
+    "AgentProfileSnapshotDto": {
+      "properties": {
+        "content_hash": {
+          "title": "Content Hash",
+          "type": "string"
+        },
+        "profile_id": {
+          "title": "Profile Id",
+          "type": "string"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "integer"
+        },
+        "snapshot_hash": {
+          "title": "Snapshot Hash",
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "bundled",
+            "global",
+            "project"
+          ],
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "profile_id",
+        "revision",
+        "source",
+        "content_hash",
+        "snapshot_hash"
+      ],
+      "title": "AgentProfileSnapshotDto",
+      "type": "object"
+    },
+    "AgentProfileValidationDto": {
+      "properties": {
+        "diagnostics": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AgentProfileDiagnosticDto"
+          },
+          "title": "Diagnostics",
+          "type": "array"
+        },
+        "snapshot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentProfileSnapshotDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "valid": {
+          "title": "Valid",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "valid"
+      ],
+      "title": "AgentProfileValidationDto",
+      "type": "object"
+    },
     "ErrorPayload": {
       "properties": {
         "code": {
@@ -938,6 +1165,27 @@
     }
   },
   "anyOf": [
+    {
+      "$ref": "#/$defs/AgentProfileDetailDto"
+    },
+    {
+      "$ref": "#/$defs/AgentProfileDiagnosticDto"
+    },
+    {
+      "$ref": "#/$defs/AgentProfileInfoDto"
+    },
+    {
+      "$ref": "#/$defs/AgentProfileListDto"
+    },
+    {
+      "$ref": "#/$defs/AgentProfileSaveDto"
+    },
+    {
+      "$ref": "#/$defs/AgentProfileSnapshotDto"
+    },
+    {
+      "$ref": "#/$defs/AgentProfileValidationDto"
+    },
     {
       "$ref": "#/$defs/JsonRpcRequest"
     },
