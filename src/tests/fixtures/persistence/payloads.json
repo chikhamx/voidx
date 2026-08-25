@@ -1,117 +1,127 @@
 {
-  "attempt": {
-    "attempt_id": "attempt-fixed",
-    "fencing_token": 2,
-    "lease_owner": "worker-fixed",
-    "side_effect_started": false,
-    "source_outbox_id": "outbox-source-fixed",
-    "state_version": 1,
-    "status": "prepared",
-    "thread_id": "thread-fixed"
+  "runtime": {
+    "interaction_mode": "auto",
+    "task_state": {
+      "current_intent": "coding",
+      "previous_intent": null,
+      "current_goal": null,
+      "workflow_route": null,
+      "workflow_runs": {},
+      "recent_exchanges": [],
+      "todo_state": null
+    },
+    "compaction_summary": "",
+    "session_time": "2026-08-05 UTC",
+    "turn_phase": "initial"
+  },
+  "workflow_runs": [
+    {
+      "name": "debug",
+      "status": "pending",
+      "source": "workflow",
+      "reason": "",
+      "goal_type": "",
+      "goal": "",
+      "scope": "",
+      "personas": [],
+      "activated_turn": 0,
+      "updated_turn": 0,
+      "evidence": [],
+      "blocked_reason": "",
+      "body_hash": "",
+      "dag_hash": "",
+      "transition_to": []
+    }
+  ],
+  "todo": {
+    "summary": "",
+    "total": 0,
+    "done": 0,
+    "active": 0,
+    "pending": 0,
+    "active_items": [],
+    "items": [],
+    "updated_at": ""
+  },
+  "goal": {
+    "run_id": "goal-fixed",
+    "objective": "Fixed objective",
+    "acceptance_condition": "Fixed acceptance",
+    "achievement_method": "",
+    "max_attempts": 20,
+    "attempt_count": 0,
+    "evaluator_failure_count": 0,
+    "last_progress_key": "",
+    "repeated_progress_count": 0,
+    "last_evaluator_summary": "",
+    "last_evaluator_next_hint": "",
+    "last_evaluator_missing": [],
+    "blocked_reason": "",
+    "generation": "fixed",
+    "main_session_id": "",
+    "work_session_id": "",
+    "evaluator_session_id": "",
+    "projected_sequence_number": -1,
+    "current_phase": "work",
+    "phase_status": "running",
+    "last_work_checkpoint": null,
+    "last_protocol_id": "",
+    "interrupt_reason": "",
+    "protocol_repair_count": 0
+  },
+  "loop": {
+    "prompt": "Fixed prompt",
+    "interval_seconds": null,
+    "workflow_enabled": false,
+    "generation": "fixed"
   },
   "compaction": {
     "summary": "Fixed summary"
   },
-  "goal": {
-    "acceptance_condition": "Fixed acceptance",
-    "achievement_method": "",
-    "active": true,
-    "attempt_count": 0,
-    "blocked_reason": "",
-    "evaluator_failure_count": 0,
-    "last_evaluator_missing": [],
-    "last_evaluator_next_hint": "",
-    "last_evaluator_summary": "",
-    "last_progress_key": "",
-    "max_attempts": 20,
-    "objective": "Fixed objective",
-    "repeated_progress_count": 0,
-    "run_id": "goal-fixed"
-  },
-  "loop": {
-    "generation": "fixed",
-    "interval_seconds": null,
-    "prompt": "Fixed prompt",
-    "workflow_enabled": false
-  },
-  "outbox": {
-    "expected_state_version": 1,
-    "kind": "wakeup",
-    "outbox_id": "outbox-fixed",
-    "payload": {
-      "prompt": "Fixed prompt"
-    },
-    "thread_id": "thread-fixed"
-  },
-  "profile": {
-    "constraints": [],
-    "continuation_policy": {},
-    "name": "Coding",
-    "persona": null,
-    "profile_id": "coding",
-    "prompt_policy": null,
-    "protocol": "turn",
-    "revision": 1,
-    "system_prompt": ""
-  },
-  "runtime": {
-    "compaction_summary": "",
-    "interaction_mode": "auto",
-    "session_time": "2026-08-05 UTC",
-    "task_state": {
-      "current_goal": null,
-      "current_intent": "coding",
-      "previous_intent": null,
-      "recent_exchanges": [],
-      "todo_state": null,
-      "workflow_route": null,
-      "workflow_runs": {}
-    },
-    "turn_phase": "initial"
-  },
   "session_time": {
     "session_time": "2026-08-05 UTC"
   },
+  "profile": {
+    "profile_id": "coding",
+    "revision": 1,
+    "name": "Coding",
+    "protocol": "turn",
+    "system_prompt": "",
+    "constraints": [],
+    "persona": null,
+    "continuation_policy": {},
+    "prompt_policy": null
+  },
   "thread": {
-    "compaction": {},
-    "context": {},
-    "goal": null,
+    "thread_id": "thread-fixed",
     "lifecycle": "created",
     "lifecycle_decision": null,
-    "permissions": {},
-    "runtime_guards": {},
-    "thread_id": "thread-fixed",
-    "todo": null,
     "transcript": {},
-    "workflow": {}
+    "goal": null,
+    "workflow": {},
+    "todo": null,
+    "context": {},
+    "compaction": {},
+    "permissions": {},
+    "runtime_guards": {}
   },
-  "todo": {
-    "active": 0,
-    "active_items": [],
-    "done": 0,
-    "items": [],
-    "pending": 0,
-    "summary": "",
-    "total": 0,
-    "updated_at": ""
+  "attempt": {
+    "attempt_id": "attempt-fixed",
+    "thread_id": "thread-fixed",
+    "source_outbox_id": "outbox-source-fixed",
+    "state_version": 1,
+    "fencing_token": 2,
+    "lease_owner": "worker-fixed",
+    "status": "prepared",
+    "side_effect_started": false
   },
-  "workflow_runs": [
-    {
-      "activated_turn": 0,
-      "blocked_reason": "",
-      "body_hash": "",
-      "dag_hash": "",
-      "evidence": [],
-      "goal": "",
-      "goal_type": "",
-      "name": "debug",
-      "personas": [],
-      "reason": "",
-      "scope": "",
-      "source": "workflow",
-      "status": "pending",
-      "transition_to": [],
-      "updated_turn": 0
-    }
-  ]
+  "outbox": {
+    "outbox_id": "outbox-fixed",
+    "thread_id": "thread-fixed",
+    "kind": "wakeup",
+    "payload": {
+      "prompt": "Fixed prompt"
+    },
+    "expected_state_version": 1
+  }
 }

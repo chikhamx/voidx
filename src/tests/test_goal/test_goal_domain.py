@@ -53,22 +53,11 @@ def test_goal_state_keeps_contract_immutable() -> None:
         state.objective = "different"
 
 
-def test_goal_tool_view_excludes_interactive_protocol_tools() -> None:
+def test_goal_tool_view_exposes_current_phase_control_tool() -> None:
     available = {
-        "read",
-        "search",
-        "bash",
-        "write",
-        "replace",
-        "manage",
-        "websearch",
-        "workflow",
-        "todo",
-        "clarify",
-        "checkpoint",
-        "turn",
-        "loop",
-        "goal",
+        "read", "search", "bash", "write", "replace", "manage", "websearch",
+        "workflow", "todo", "clarify", "checkpoint", "turn", "loop",
+        "goal_init", "goal_checkpoint", "goal_decision",
     }
 
     default = GoalToolView.default(workflow_enabled=False).bind(available)
@@ -77,11 +66,14 @@ def test_goal_tool_view_excludes_interactive_protocol_tools() -> None:
     assert {"read", "search", "bash", "write", "replace", "manage", "websearch"}.issubset(
         default.bound_tool_ids
     )
-    assert {"clarify", "checkpoint", "turn", "loop", "goal", "workflow", "todo"}.isdisjoint(
+    assert "goal_checkpoint" in default.bound_tool_ids
+    assert {"clarify", "checkpoint", "turn", "loop", "goal_init", "goal_decision", "workflow", "todo"}.isdisjoint(
         default.bound_tool_ids
     )
     assert {"workflow", "todo"}.issubset(workflow.bound_tool_ids)
-    assert {"clarify", "checkpoint", "turn", "loop", "goal"}.isdisjoint(workflow.bound_tool_ids)
+    assert {"clarify", "checkpoint", "turn", "loop", "goal_init", "goal_decision"}.isdisjoint(
+        workflow.bound_tool_ids
+    )
 
 
 def test_goal_tool_view_bash_requests_approval() -> None:
@@ -101,34 +93,34 @@ def test_goal_tool_view_bash_requests_approval() -> None:
 
 
 def test_goal_tool_view_evaluator_phase_bash_not_bound() -> None:
-    view = GoalToolView.default(phase="evaluator").bind({"bash", "read", "goal"})
+    view = GoalToolView.default(phase="evaluator").bind({"bash", "read", "goal_decision"})
 
     bash_decision = view.check_tool_call("bash", {"command": "pytest -q"})
     assert bash_decision.allowed is False
 
 
-def test_goal_tool_view_intake_phase_binds_clarify_and_goal() -> None:
-    view = GoalToolView.default(phase="intake").bind({"read", "clarify", "goal", "bash", "write"})
+def test_goal_tool_view_intake_phase_binds_clarify_and_init() -> None:
+    view = GoalToolView.default(phase="intake").bind({"read", "clarify", "goal_init", "bash", "write"})
 
     assert view.allows("read") is True
     assert view.allows("clarify") is True
-    assert view.allows("goal") is True
+    assert view.allows("goal_init") is True
     assert view.allows("bash") is False
     assert view.allows("write") is False
 
 
 def test_goal_tool_view_evaluator_phase_excludes_execution_and_web_tools() -> None:
-    """Evaluator judges from evidence; it gets read-only tools plus goal, no mcp/web."""
+    """Evaluator gets read-only evidence tools plus goal_decision, never execution/web tools."""
     available = {
         "read", "find", "search", "lsp", "document",
         "bash", "write", "replace", "manage",
         "websearch", "webfetch", "mcp", "skill",
-        "goal", "clarify",
+        "goal_decision", "clarify",
     }
 
     view = GoalToolView.default(phase="evaluator").bind(available)
 
-    assert {"read", "find", "search", "lsp", "document", "goal"}.issubset(view.bound_tool_ids)
+    assert {"read", "find", "search", "lsp", "document", "goal_decision"}.issubset(view.bound_tool_ids)
     assert {"bash", "write", "replace", "manage", "websearch", "webfetch", "mcp", "skill", "clarify"}.isdisjoint(
         view.bound_tool_ids
     )
@@ -159,29 +151,26 @@ def test_goal_phase_directive_covers_intake_and_evaluator() -> None:
     assert policy.profile_sections(None) == []
 
 
-def test_goal_tool_view_idle_phase_binds_readonly_clarify_and_goal() -> None:
+def test_goal_tool_view_idle_phase_binds_readonly_clarify_and_init() -> None:
     available = {
         "read", "find", "search", "lsp", "document",
         "bash", "write", "replace", "manage", "lsp_format",
         "websearch", "webfetch", "mcp", "skill",
-        "clarify", "goal", "checkpoint", "turn", "loop", "workflow", "todo",
+        "clarify", "goal_init", "checkpoint", "turn", "loop", "workflow", "todo",
     }
 
     view = GoalToolView.default(phase="idle").bind(available)
 
-    assert {"read", "find", "search", "lsp", "document", "clarify", "goal"}.issubset(
+    assert {"read", "find", "search", "lsp", "document", "clarify", "goal_init"}.issubset(
         view.bound_tool_ids
     )
-    # no execution or write tools in idle
     assert {"bash", "write", "replace", "manage", "lsp_format"}.isdisjoint(view.bound_tool_ids)
-    # no web/mcp/skill in idle
     assert {"websearch", "webfetch", "mcp", "skill"}.isdisjoint(view.bound_tool_ids)
-    # no interactive protocol tools besides clarify/goal
     assert {"checkpoint", "turn", "loop", "workflow", "todo"}.isdisjoint(view.bound_tool_ids)
 
 
 def test_goal_tool_view_idle_phase_denies_bash() -> None:
-    view = GoalToolView.default(phase="idle").bind({"bash", "read", "goal"})
+    view = GoalToolView.default(phase="idle").bind({"bash", "read", "goal_init"})
 
     assert view.check_tool_call("bash", {"command": "pytest -q"}).allowed is False
     assert view.check_tool_call("read", {"file_path": "/tmp/x"}).allowed is True
@@ -190,8 +179,8 @@ def test_goal_tool_view_idle_phase_denies_bash() -> None:
 def test_goal_idle_directive_exists_for_idle_phase() -> None:
     from voidx.agent.domain.automation.goal import GOAL_IDLE_DIRECTIVE
 
-    assert "goal" in GOAL_IDLE_DIRECTIVE.lower()
-    assert "init" in GOAL_IDLE_DIRECTIVE.lower()
+    assert "goal_init" in GOAL_IDLE_DIRECTIVE.lower()
+    assert "goal_decision" in GOAL_IDLE_DIRECTIVE.lower()
 
 
 def test_goal_phase_directive_covers_idle() -> None:

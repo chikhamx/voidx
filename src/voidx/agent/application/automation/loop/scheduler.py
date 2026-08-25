@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from voidx.agent.domain.automation.loop import (
     LOOP_ITERATION_USER_TEXT,
@@ -78,6 +79,7 @@ class LoopRuntimeRunner:
                 context=context,
                 runtime=None,
                 persist_user_input=False,
+                guidance=tuple(input_frame.get("guidance") or ()),
             )
         )
         submitted = controller.final_decision()
@@ -108,12 +110,14 @@ class LoopRuntimeScheduler(WakeupPumpMixin):
         pump_poll_seconds: float = 1.0,
         session_id: str = "",
         events: AgentEventPublisher | None = None,
+        guidance: Any | None = None,
     ) -> None:
         self._store = store
         self._runtime = runtime
         self._workspace = workspace
         self._session_id = session_id
         self._events = events or NullAgentEventPublisher()
+        self._guidance = guidance
         self._init_pump(
             lease_owner=lease_owner,
             lease_seconds=lease_seconds,
@@ -174,6 +178,7 @@ class LoopRuntimeScheduler(WakeupPumpMixin):
             lease_owner=self._lease_owner,
             lease_seconds=self._lease_seconds,
             events=self._events,
+            guidance=self._guidance,
         )
         return await dispatcher.dispatch_outbox(outbox.outbox_id)
 

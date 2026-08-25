@@ -29,9 +29,8 @@ async def test_schema_v4_creates_provisional_session_markers():
 
     await store.fetch_one("SELECT 1")
 
-    assert store.SCHEMA_VERSION == 5
-    assert store._conn is not None
-    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 5
+    assert store.SCHEMA_VERSION == 14
+    assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 14
     columns = {
         row[1]: row[2]
         for row in store._conn.execute("PRAGMA table_info(provisional_sessions)").fetchall()
@@ -130,13 +129,13 @@ async def test_ensure_derived_session_inherits_provisional_root():
     )
 
     await ensure_session(
-        "goal:derived-root:generation",
+        "goal-derived-root-generation",
         "/work",
         profile="goal",
         root_session_id=root.id,
     )
 
-    marker = await get_provisional_session("goal:derived-root:generation")
+    marker = await get_provisional_session("goal-derived-root-generation")
     assert marker is not None
     assert marker.root_session_id == root.id
     assert marker.owner_id == "worker-1"
@@ -293,7 +292,7 @@ def test_migration_from_v3_adds_marker_table():
 
     store._init_schema(conn)
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 14
     assert conn.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'provisional_sessions'"
     ).fetchone() is not None

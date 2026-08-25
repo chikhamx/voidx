@@ -8,16 +8,13 @@ from pathlib import Path
 import pytest
 
 from voidx.agent.application.agent_registry import AgentRegistry
+from voidx.agent.application.automation.goal.evaluator import GoalEvaluator
 from voidx.agent.application.automation.goal.goal_service import GoalService
 from voidx.agent.application.automation.goal.runner import GoalRuntimeRunner
 from voidx.agent.application.automation.loop.loop_service import LoopService
 from voidx.agent.application.automation.loop.scheduler import LoopRuntimeRunner
-from voidx.agent.adapters.persistence.session_repository import (
-    create_session,
-    get_session,
-)
 from voidx.agent.adapters.persistence.thread_repository import ThreadStore
-from voidx.agent.domain.automation.goal import GOAL_PROFILE, GoalSpec
+from voidx.agent.domain.automation.goal import GOAL_PROFILE, GoalSpec, WorkCheckpoint
 from voidx.agent.domain.automation.loop import LOOP_PROFILE, LoopSpec, loop_profile_for_spec
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.prompt_policy import GoalPromptPolicy, LoopPromptPolicy
@@ -89,13 +86,17 @@ def _write_profile(workspace: Path, name: str, body: str) -> None:
 
 async def _pin_parent_session(store: ThreadStore, workspace: Path, profile_id: str) -> None:
     resolved = AgentRegistry(str(workspace)).resolve(profile_id)
-    session = await create_session(
-        workspace=str(workspace), profile=profile_id, profile_snapshot=resolved.snapshot
+    session_id = "parent-session"
+    await store.ensure_session(
+        session_id,
+        str(workspace),
+        profile=profile_id,
+        profile_snapshot=resolved.snapshot,
     )
     await store.create_thread(
         AgentThread(
             thread_id="parent",
-            session_id=session.id,
+            session_id=session_id,
             workspace=str(workspace),
             lifecycle=LifecycleState.READY,
         ),
@@ -121,7 +122,9 @@ async def test_goal_attempt_pins_bundled_default_without_parent(tmp_path) -> Non
     assert profile.protocol == GOAL_PROFILE.protocol
     assert type(profile.prompt_policy) is GoalPromptPolicy
 
-    session = await get_session(spec.goal_session_id("parent"))
+    binding = await store.get_goal_generation(spec.generation)
+    assert binding is not None
+    session = await store.get_session(binding.work_session_id)
     assert session is not None
     assert session.runtime_profile == "goal"
     assert session.profile_snapshot is not None
@@ -151,7 +154,9 @@ async def test_goal_attempt_inherits_parent_custom_profile(tmp_path) -> None:
     assert set(loaded.resolved_profile.workflow_context.dag.nodes) == {"review"}
 
     parent_snapshot = AgentRegistry(str(tmp_path)).resolve("my-goal").snapshot
-    session = await get_session(spec.goal_session_id("parent"))
+    binding = await store.get_goal_generation(spec.generation)
+    assert binding is not None
+    session = await store.get_session(binding.work_session_id)
     assert session is not None
     assert session.runtime_profile == "my-goal"
     assert session.profile_snapshot is not None
@@ -173,7 +178,9 @@ async def test_goal_attempt_keeps_parent_snapshot_after_file_deleted(tmp_path) -
     await service.start("parent", GoalSpec(objective="ship", acceptance_condition="tests pass"))
 
     _, spec = scheduler.calls[0]
-    session = await get_session(spec.goal_session_id("parent"))
+    binding = await store.get_goal_generation(spec.generation)
+    assert binding is not None
+    session = await store.get_session(binding.work_session_id)
     assert session is not None
     assert session.profile_snapshot is not None
     assert session.profile_snapshot.snapshot_hash == parent_snapshot.snapshot_hash
@@ -204,7 +211,7 @@ async def test_loop_attempt_inherits_parent_custom_profile(tmp_path) -> None:
     assert "自定义循环助手" in profile.system_prompt
     assert "检查构建状态" in profile.system_prompt
 
-    session = await get_session(spec.loop_session_id("parent"))
+    session = await store.get_session(spec.loop_session_id("parent"))
     assert session is not None
     assert session.runtime_profile == "my-loop"
     assert session.profile_snapshot is not None
@@ -214,11 +221,12 @@ async def test_loop_attempt_inherits_parent_custom_profile(tmp_path) -> None:
 async def test_loop_attempt_legacy_parent_matches_loop_profile_for_spec(tmp_path) -> None:
     store = ThreadStore()
     # Legacy parent: profile id "loop", no pinned snapshot.
-    session = await create_session(workspace=str(tmp_path), profile="loop")
+    session_id = "legacy-parent-session"
+    await store.ensure_session(str(session_id), str(tmp_path), profile="loop")
     await store.create_thread(
         AgentThread(
             thread_id="parent",
-            session_id=session.id,
+            session_id=session_id,
             workspace=str(tmp_path),
             lifecycle=LifecycleState.READY,
         ),
@@ -236,7 +244,7 @@ async def test_loop_attempt_legacy_parent_matches_loop_profile_for_spec(tmp_path
     assert loaded.profile.system_prompt == legacy.system_prompt
     assert type(loaded.profile.prompt_policy) is LoopPromptPolicy
 
-    session = await get_session(spec.loop_session_id("parent"))
+    session = await store.get_session(spec.loop_session_id("parent"))
     assert session is not None
     assert session.profile_snapshot is not None
     assert session.profile_snapshot.source == "bundled"
@@ -258,15 +266,15 @@ class _GoalEvaluator:
     def __init__(self) -> None:
         self.context = None
 
-    async def run_phase(self, *, runtime, thread, context, prompt, controller, work_result):
-        del runtime, thread, prompt, work_result
+    def build_request(self, *, thread, context, prompt, checkpoint, guidance=()):
         self.context = context
-        await controller.submit_decision({
-            "outcome": "completed",
-            "summary": "ok",
-            "reason": "verified",
-            "progress": "meaningful",
-        })
+        return GoalEvaluator().build_request(
+            thread=thread,
+            context=context,
+            prompt=prompt,
+            checkpoint=checkpoint,
+            guidance=guidance,
+        )
 
 
 class _LoopEvents:
@@ -290,7 +298,13 @@ async def test_goal_runner_uses_passed_profile(tmp_path) -> None:
     )
     resolved = AgentRegistry(str(tmp_path)).resolve("my-goal")
     spec = GoalSpec(objective="ship", acceptance_condition="tests pass", generation="run-1")
-    state = GoalState.from_spec(spec, run_id=spec.generation)
+    state = GoalState.from_spec(
+        spec,
+        run_id=spec.generation,
+        main_session_id="main-profile",
+        work_session_id="work-profile",
+        evaluator_session_id="eval-profile",
+    )
     thread = AgentThread(
         thread_id=spec.goal_thread_id("parent"),
         session_id=spec.goal_session_id("parent"),
@@ -300,23 +314,43 @@ async def test_goal_runner_uses_passed_profile(tmp_path) -> None:
     runtime = _RecordingRuntime()
     evaluator = _GoalEvaluator()
 
-    await GoalRuntimeRunner(runtime=runtime, evaluator=evaluator).run_turn(
+    runner = GoalRuntimeRunner(runtime=runtime, evaluator=evaluator)
+    base_frame = {
+        "attempt_number": 1,
+        "spec": spec.model_dump(mode="json"),
+        "goal_state": state.model_dump(mode="json"),
+    }
+    await runner.run_turn(
         thread=thread,
         profile=resolved,
-        input_frame={"spec": spec.model_dump(mode="json"), "goal_state": state.model_dump(mode="json")},
+        input_frame={**base_frame, "phase": "work"},
+    )
+    await runner.run_turn(
+        thread=thread,
+        profile=resolved,
+        input_frame={
+            **base_frame,
+            "phase": "evaluator",
+            "checkpoint": WorkCheckpoint(
+                generation=spec.generation,
+                attempt_number=1,
+                summary="work captured",
+                work_turn_id="work-profile-turn",
+            ).model_dump(mode="json"),
+        },
     )
 
-    context = runtime.requests[0].context
-    assert context.runtime_profile is resolved.runtime_profile
-    assert context.workflow_context is resolved.workflow_context
+    work_context = runtime.requests[0].context
+    assert work_context.runtime_profile is resolved.runtime_profile
+    assert work_context.workflow_context is resolved.workflow_context
     assert evaluator.context.runtime_profile is resolved.runtime_profile
     assert evaluator.context.workflow_context is resolved.workflow_context
     from voidx.agent.domain.tool_policy import ProfileToolPolicy
 
-    assert isinstance(context.tool_policy, ProfileToolPolicy)
-    assert context.tool_policy.snapshot_hash == resolved.snapshot.snapshot_hash
-    assert context.tool_policy.phase == "work"
-    assert context.tool_policy.resource_policy is resolved.resource_policy
+    assert isinstance(work_context.tool_policy, ProfileToolPolicy)
+    assert work_context.tool_policy.snapshot_hash == resolved.snapshot.snapshot_hash
+    assert work_context.tool_policy.phase == "work"
+    assert work_context.tool_policy.resource_policy is resolved.resource_policy
     assert evaluator.context.tool_policy.snapshot_hash == resolved.snapshot.snapshot_hash
     assert evaluator.context.tool_policy.phase == "evaluator"
 

@@ -340,6 +340,8 @@ async def test_goal_profile_followup_does_not_fall_through_to_coding(monkeypatch
         return SimpleNamespace(
             active=True,
             goal_thread_id="goal:host-session:active",
+            generation="generation-active",
+            current_phase="work",
             objective_summary="ship the feature",
             attempt_count=1,
             max_attempts=20,
@@ -361,7 +363,84 @@ async def test_goal_profile_followup_does_not_fall_through_to_coding(monkeypatch
         {
             "source": "user",
             "thread_id": "goal:host-session:active",
-            "session_id": "goal:host-session:active",
+            "run_id": "generation-active",
+            "phase": "work",
         },
     )]
-    assert any("goal" in line.lower() for line in printed)
+    rendered = "\n".join(printed)
+    assert "goal" in rendered.lower()
+    assert "/goal status" not in rendered
+    assert "/goal stop" not in rendered
+    assert "/goal continue" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_goal_needs_resume_followup_queues_guidance_then_resumes_generation() -> None:
+    service = _service("goal")
+    guidance_calls: list[tuple[str, dict]] = []
+    resume_calls: list[str] = []
+
+    class ResumableGoalService:
+        async def status(self, _parent):
+            return SimpleNamespace(
+                active=True,
+                goal_thread_id="goal:host-session:run-1",
+                generation="run-1",
+                current_phase="evaluator",
+                phase_status="needs_resume",
+                objective_summary="ship the feature",
+                state="needs_user",
+            )
+
+        async def resume_generation(self, generation):
+            resume_calls.append(generation)
+            return SimpleNamespace(active=True)
+
+    service._goal_service = ResumableGoalService()
+    service._guidance = SimpleNamespace(
+        submit_guidance=lambda text, **kwargs: guidance_calls.append((text, kwargs)) or True,
+    )
+
+    handled = await service.route_followup("please verify the missing evidence", thread_id="host-session")
+
+    assert handled is True
+    assert guidance_calls == [(
+        "please verify the missing evidence",
+        {
+            "source": "user",
+            "thread_id": "goal:host-session:run-1",
+            "run_id": "run-1",
+            "phase": "evaluator",
+        },
+    )]
+    assert resume_calls == ["run-1"]
+    assert any("resum" in message.lower() for message in service._events.messages)
+
+
+@pytest.mark.asyncio
+async def test_goal_needs_resume_followup_without_text_still_resumes_generation() -> None:
+    service = _service("goal")
+    resume_calls: list[str] = []
+
+    class ResumableGoalService:
+        async def status(self, _parent):
+            return SimpleNamespace(
+                active=True,
+                goal_thread_id="goal:host-session:run-2",
+                generation="run-2",
+                current_phase="work",
+                phase_status="needs_resume",
+                state="needs_user",
+            )
+
+        async def resume_generation(self, generation):
+            resume_calls.append(generation)
+            return SimpleNamespace(active=True)
+
+    service._goal_service = ResumableGoalService()
+    service._guidance = SimpleNamespace(
+        submit_guidance=lambda *_args, **_kwargs: pytest.fail("blank input must not submit guidance"),
+    )
+
+    assert await service.route_followup("   ", thread_id="host-session") is True
+    assert resume_calls == ["run-2"]

@@ -12,6 +12,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 from voidx.agent.ports.ui import AgentUiPort, NullAgentUiPort
 from voidx.agent.application.tool_call_ids import ai_tool_call_ids
+from voidx.agent.application.tool_messages import tool_observation_kwargs
 
 _DSML_MARKER_RE = r"\|\|DSML\|\|"
 
@@ -180,6 +181,12 @@ def _repair_tool_result_adjacency(messages: list) -> list:
                     content="Tool result unavailable: previous tool call was not executed.",
                     tool_call_id=tool_call_id,
                     status="error",
+                    additional_kwargs=tool_observation_kwargs(
+                        source="replay_repair",
+                        executed=False,
+                        synthetic=True,
+                        status="error",
+                    ),
                 ))
 
         i = j

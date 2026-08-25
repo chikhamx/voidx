@@ -287,6 +287,7 @@ class PermissionToolDetail(BaseModel):
 
 class PermissionPromptShown(UiEventBase):
     kind: Literal["permission_prompt.shown"] = "permission_prompt.shown"
+    request_id: str = ""
     prompt: str
     choices: list[tuple[str, str, str]]
     tools: list[PermissionToolDetail] = Field(default_factory=list)
@@ -294,6 +295,7 @@ class PermissionPromptShown(UiEventBase):
 
 class PermissionPromptCleared(UiEventBase):
     kind: Literal["permission_prompt.cleared"] = "permission_prompt.cleared"
+    request_id: str = ""
 
 
 class CheckpointChoicePayload(BaseModel):

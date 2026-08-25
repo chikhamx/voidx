@@ -19,6 +19,7 @@ class FakeGoalService:
         self.started: tuple[str | None, object] | None = None
         self.stopped: str | None = None
         self._status = None
+        self.status_requests: list[str | None] = []
 
     async def start(self, parent_thread_id: str | None, spec):
         self.started = (parent_thread_id, spec)
@@ -34,6 +35,7 @@ class FakeGoalService:
         return self._status
 
     async def status(self, parent_thread_id: str | None):
+        self.status_requests.append(parent_thread_id)
         return self._status
 
     async def stop(self, parent_thread_id: str | None):
@@ -66,18 +68,17 @@ async def test_goal_command_starts_goal_runtime_with_acceptance(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
-async def test_goal_status_and_stop(monkeypatch) -> None:
+@pytest.mark.parametrize("lifecycle_word", ["status", "stop", "continue", "start"])
+async def test_goal_lifecycle_words_are_not_user_commands(monkeypatch, lifecycle_word: str) -> None:
     output = _capture_output(monkeypatch)
     service = FakeGoalService()
-    handler = SlashHandler(_host(service))
 
-    await handler.dispatch("/goal ship --accept done")
-    await handler.dispatch("/goal status")
-    await handler.dispatch("/goal stop")
+    assert await SlashHandler(_host(service)).dispatch(f"/goal {lifecycle_word}") is True
 
-    assert service.stopped == "session-1"
-    assert any("active" in line for line in output)
-    assert any("stopped" in line for line in output)
+    assert service.started is None
+    assert service.stopped is None
+    assert service.status_requests == []
+    assert any("Usage: /goal <objective> --accept <acceptance condition>" in line for line in output)
 
 
 @pytest.mark.asyncio

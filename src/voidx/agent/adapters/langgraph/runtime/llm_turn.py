@@ -58,7 +58,10 @@ from voidx.agent.adapters.langgraph.runtime.control_protocol import (
     resolve_control_protocol,
     strip_tool_calls_after_loop_commit,
 )
-from voidx.agent.adapters.langgraph.runtime.thread_context import current_thread_execution_state
+from voidx.agent.adapters.langgraph.runtime.thread_context import (
+    current_thread_execution_state,
+    save_turn_message,
+)
 from voidx.agent.adapters.langgraph.runtime.context_pressure import (
     current_context_pressure,
     evaluate_context_pressure,
@@ -66,7 +69,7 @@ from voidx.agent.adapters.langgraph.runtime.context_pressure import (
     upsert_context_pressure_hint,
 )
 from voidx.agent.application.runtime_context import raw_semantic_messages
-from voidx.agent.adapters.persistence.session_repository import MessageRow, save_message
+from voidx.agent.adapters.persistence.session_repository import MessageRow
 from voidx.llm.message_markers import (
     GUIDANCE_MARKER,
     is_context_pressure_message,
@@ -157,7 +160,7 @@ class LlmTurn:
                     content=str(message.content),
                     additional_kwargs={GUIDANCE_MARKER: True},
                 )
-                message_id = await save_message(row)
+                message_id = await save_turn_message(row)
                 if host._session_msg_cache is not None:
                     host._session_msg_cache.append(row.model_copy(update={"id": message_id}))
         if host._ui.via_events() and guidance_pairs:

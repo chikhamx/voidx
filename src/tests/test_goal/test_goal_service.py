@@ -4,9 +4,16 @@ from dataclasses import dataclass, field
 
 import pytest
 
+from voidx.agent.application.agent_registry import AgentRegistry
 from voidx.agent.application.automation.goal.goal_service import GoalService
-from voidx.agent.domain.automation.goal import GoalSpec, GoalState
 from voidx.agent.adapters.persistence.thread_repository import ThreadStore
+from voidx.agent.domain.automation.goal import (
+    GoalProtocolRecord,
+    GoalSpec,
+    GoalSpecSnapshot,
+    GoalState,
+)
+from voidx.agent.domain.thread import AgentThread, LifecycleState
 
 
 @pytest.fixture(autouse=True)
@@ -60,10 +67,47 @@ async def test_goal_service_start_persists_isolated_goal_state(tmp_path) -> None
     loaded = await store.load(status.goal_thread_id)
     assert loaded is not None
     assert loaded.profile.profile_id == "goal"
-    assert loaded.thread.session_id == status.goal_thread_id
-    assert GoalState.model_validate(loaded.state.context["goal_run"]).objective == "ship"
+    state = GoalState.model_validate(loaded.state.context["goal_run"])
+    binding = await store.get_goal_generation(state.generation)
+    assert binding is not None
+    assert loaded.thread.session_id == binding.work_session_id
+    assert state.objective == "ship"
     assert scheduler.registered == [status.goal_thread_id]
     assert scheduler.calls[0][0] == "parent-1"
+
+
+
+@pytest.mark.asyncio
+async def test_goal_service_start_binds_generation_sessions_atomically(tmp_path) -> None:
+    store = ThreadStore()
+    await store.ensure_session("parent-1", str(tmp_path), profile="goal")
+    scheduler = FakeGoalScheduler()
+    service = GoalService(store=store, scheduler=scheduler, workspace=str(tmp_path))
+
+    await service.start(
+        "parent-1",
+        GoalSpec(objective="ship", acceptance_condition="tests pass"),
+    )
+
+    _, spec = scheduler.calls[0]
+    binding = await store.get_goal_generation(spec.generation)
+    assert binding is not None
+    assert binding.main_session_id == "parent-1"
+    assert binding.goal_thread_id == spec.goal_thread_id("parent-1")
+    assert binding.work_session_id != binding.evaluator_session_id
+    assert binding.work_session_id != binding.main_session_id
+    assert binding.evaluator_session_id != binding.main_session_id
+    assert await store.get_session(binding.work_session_id) is not None
+    assert await store.get_session(binding.evaluator_session_id) is not None
+
+    loaded = await store.load(binding.goal_thread_id)
+    assert loaded is not None
+    assert loaded.thread.session_id == binding.work_session_id
+    state = GoalState.model_validate(loaded.state.context["goal_run"])
+    assert state.main_session_id == binding.main_session_id
+    assert state.work_session_id == binding.work_session_id
+    assert state.evaluator_session_id == binding.evaluator_session_id
+
 
 
 
@@ -187,73 +231,6 @@ async def test_goal_service_new_instance_recovers_status_and_stop_from_store(tmp
     assert await recovered.status("parent-1") is None
 
 
-class FakeParentResultPublisher:
-    def __init__(self, sink):
-        self._sink = sink
-
-    def publish(self, parent: str, text: str) -> None:
-        self._sink(parent, text)
-
-
-@pytest.mark.asyncio
-async def test_goal_service_notifies_parent_on_terminal_completion(tmp_path) -> None:
-    store = ThreadStore()
-    notified: list[str] = []
-
-    class CompletingScheduler(FakeGoalScheduler):
-        async def run_goal(self, parent_thread_id: str, spec: GoalSpec):
-            self.calls.append((parent_thread_id, spec))
-            loaded = await store.load(spec.goal_thread_id(parent_thread_id))
-            assert loaded is not None
-            await store.save_state(
-                loaded.thread.thread_id,
-                loaded.state.model_copy(update={"lifecycle": "completed"}),
-                expected_state_version=loaded.state_version,
-            )
-
-    service = GoalService(
-        store=store,
-        scheduler=CompletingScheduler(),
-        workspace=str(tmp_path),
-        result_publisher=FakeParentResultPublisher(lambda parent, text: notified.append((parent, text))),
-    )
-
-    await service.start("parent-1", GoalSpec(objective="ship", acceptance_condition="tests pass"))
-
-    assert len(notified) == 1
-    parent, text = notified[0]
-    assert parent == "parent-1"
-    assert "ship" in text
-    assert "completed" in text.lower() or "finished" in text.lower()
-
-
-@pytest.mark.asyncio
-async def test_goal_service_terminal_notification_only_once(tmp_path) -> None:
-    store = ThreadStore()
-    notified: list[str] = []
-
-    class CompletingScheduler(FakeGoalScheduler):
-        async def run_goal(self, parent_thread_id: str, spec: GoalSpec):
-            loaded = await store.load(spec.goal_thread_id(parent_thread_id))
-            await store.save_state(
-                loaded.thread.thread_id,
-                loaded.state.model_copy(update={"lifecycle": "completed"}),
-                expected_state_version=loaded.state_version,
-            )
-
-    service = GoalService(
-        store=store,
-        scheduler=CompletingScheduler(),
-        workspace=str(tmp_path),
-        result_publisher=FakeParentResultPublisher(lambda parent, text: notified.append(text)),
-    )
-
-    await service.start("parent-1", GoalSpec(objective="ship", acceptance_condition="done"))
-    # subsequent status polls must not re-notify
-    await service._status("parent-1", include_terminal=True)
-    await service._status("parent-1", include_terminal=True)
-
-    assert len(notified) == 1
 
 
 @pytest.mark.asyncio
@@ -274,3 +251,45 @@ async def test_goal_service_no_notification_without_notifier(tmp_path) -> None:
     status = await service.start("parent-1", GoalSpec(objective="ship", acceptance_condition="done"))
 
     assert status.active is False
+
+
+@pytest.mark.asyncio
+async def test_goal_service_start_reuses_submitted_init_record(tmp_path) -> None:
+    store = ThreadStore()
+    await store.ensure_session("parent-1", str(tmp_path), profile="goal")
+    spec = GoalSpec(
+        objective="ship",
+        acceptance_condition="tests pass",
+        generation="gen-submitted-init",
+    )
+    snapshot = GoalSpecSnapshot.from_spec(
+        spec,
+        parent_session_id="parent-1",
+        parent_thread_id="parent-1",
+        workspace=str(tmp_path),
+    )
+    submitted = GoalProtocolRecord.submitted(
+        protocol_id="submitted-init",
+        parent_session_id="parent-1",
+        generation=spec.generation,
+        phase="init",
+        attempt_number=0,
+        turn_id="idle-init-turn",
+        session_id="parent-1",
+        payload=snapshot,
+    )
+    await store.submit_goal_protocol(submitted)
+    scheduler = FakeGoalScheduler()
+
+    status = await GoalService(
+        store=store,
+        scheduler=scheduler,
+        workspace=str(tmp_path),
+    ).start("parent-1", spec)
+
+    protocols = await store.list_goal_protocols(spec.generation)
+    assert status.active is True
+    assert [(record.protocol_id, record.status) for record in protocols] == [
+        ("submitted-init", "projected")
+    ]
+    assert scheduler.calls[0][1].generation == spec.generation

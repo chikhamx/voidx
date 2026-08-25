@@ -1,10 +1,10 @@
-"""Contracts at the reusable runtime boundary."""
-
 from __future__ import annotations
+
+from typing import Any, Literal
 
 from voidx.agent.domain.turn_context import TurnExecutionContext
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.domain.thread import AgentThread, LifecycleState
@@ -18,11 +18,8 @@ class TurnRequest(BaseModel):
     context: TurnExecutionContext
     display_text: str | None = None
     persist_user_input: bool = True
-    # ``None`` means the caller did not supply an input snapshot; the runtime
-    # then loads the persisted state for ``thread.session_id``. Supplying a
-    # state (even a default-constructed one) makes the caller's snapshot
-    # authoritative and the runtime will not reload it from the store.
     runtime: SessionRuntimeState | None = None
+    guidance: tuple[dict[str, Any], ...] | None = None
 
 
 class TurnResult(BaseModel):
@@ -35,8 +32,22 @@ class TurnResult(BaseModel):
     final_llm_messages: tuple[object, ...] = ()
     final_assistant_summary: str = ""
     tool_result_summaries: tuple[str, ...] = ()
+    current_turn_tool_result_summaries: tuple[str, ...] = ()
     stop_signal: str = ""
 
     @property
     def session_id(self) -> str | None:
         return self.thread.session_id
+
+
+class GoalPhaseResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    phase: Literal["work", "evaluator"]
+    attempt_number: int = Field(ge=0)
+    protocol_id: str = ""
+    needs_resume: bool = False
+    reason: str = ""
+
+
+__all__ = ["GoalPhaseResult", "TurnRequest", "TurnResult"]

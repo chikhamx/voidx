@@ -2,11 +2,62 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+from datetime import datetime, timezone
+from typing import Any, Literal
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.prompt_policy import GoalPromptPolicy
+from voidx.agent.domain.thread import LifecycleState
 from voidx.agent.domain.tool_view import BoundToolView
+
+
+GoalPhase = Literal["init", "checkpoint", "decision"]
+GoalProtocolStatus = Literal["submitted", "projected"]
+GoalDecisionStatus = Literal["finished", "continue", "blocked"]
+GoalProgress = Literal["none", "partial", "meaningful"]
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def goal_sequence_number(phase: GoalPhase | str, attempt_number: int) -> int:
+    """Return the only valid journal position for one Goal phase."""
+    if phase == "init":
+        if attempt_number != 0:
+            raise ValueError("init must use attempt_number=0")
+        return 0
+    if phase == "checkpoint":
+        if attempt_number < 1:
+            raise ValueError("checkpoint attempt_number must be positive")
+        return attempt_number * 2 - 1
+    if phase == "decision":
+        if attempt_number < 1:
+            raise ValueError("decision attempt_number must be positive")
+        return attempt_number * 2
+    raise ValueError(f"unknown Goal protocol phase: {phase}")
+
+
+def goal_phase_session_id(generation: str, phase: Literal["work", "evaluator"]) -> str:
+    """Return the stable opaque session id for one Goal generation phase."""
+    if not generation.strip():
+        raise ValueError("generation must not be empty")
+    digest = hashlib.sha256(generation.encode("utf-8")).hexdigest()[:32]
+    return f"goal-{phase}-{digest}"
+
+
+def is_goal_terminal(lifecycle: LifecycleState | str) -> bool:
+    """Goal terminal semantics are separate from generic thread semantics."""
+    value = lifecycle.value if isinstance(lifecycle, LifecycleState) else str(lifecycle)
+    return value in {"completed", "blocked", "failed", "cancelled"}
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 class GoalSpec(BaseModel):
@@ -43,6 +94,264 @@ class GoalSpec(BaseModel):
         return self.objective.replace("\n", " ")[:80]
 
 
+class GoalSpecSnapshot(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    objective: str
+    acceptance_condition: str
+    achievement_method: str = ""
+    max_attempts: int = Field(default=20, ge=1, le=200)
+    workflow_enabled: bool = False
+    generation: str
+    parent_session_id: str
+    parent_thread_id: str = ""
+    workspace: str = ""
+    profile_snapshot: dict[str, Any] = Field(default_factory=dict)
+    model_snapshot: dict[str, Any] = Field(default_factory=dict)
+
+    @classmethod
+    def from_spec(
+        cls,
+        spec: GoalSpec,
+        *,
+        parent_session_id: str,
+        parent_thread_id: str = "",
+        workspace: str = "",
+        profile_snapshot: dict[str, Any] | None = None,
+        model_snapshot: dict[str, Any] | None = None,
+    ) -> "GoalSpecSnapshot":
+        return cls(
+            objective=spec.objective,
+            acceptance_condition=spec.acceptance_condition,
+            achievement_method=spec.achievement_method,
+            max_attempts=spec.max_attempts,
+            workflow_enabled=spec.workflow_enabled,
+            generation=spec.generation,
+            parent_session_id=parent_session_id,
+            parent_thread_id=parent_thread_id,
+            workspace=workspace,
+            profile_snapshot=profile_snapshot or {},
+            model_snapshot=model_snapshot or {},
+        )
+
+    def to_spec(self) -> GoalSpec:
+        return GoalSpec(
+            objective=self.objective,
+            acceptance_condition=self.acceptance_condition,
+            achievement_method=self.achievement_method,
+            max_attempts=self.max_attempts,
+            workflow_enabled=self.workflow_enabled,
+            generation=self.generation,
+        )
+
+
+class WorkCheckpoint(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    generation: str
+    attempt_number: int = Field(ge=1)
+    source: Literal["model", "runtime_fallback"] = "model"
+    completeness: Literal["complete", "incomplete"] = "complete"
+    summary: str
+    evidence: tuple[str, ...] = ()
+    changed_files: tuple[str, ...] = ()
+    verification: tuple[str, ...] = ()
+    next_hint: str = ""
+    progress: GoalProgress = "none"
+    work_turn_id: str
+    observed_assistant_summary: str = ""
+    observed_tool_result_summaries: tuple[str, ...] = ()
+    created_at: datetime = Field(default_factory=_now)
+
+    @field_validator("generation", "summary", "work_turn_id")
+    @classmethod
+    def normalize_required_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be empty")
+        return value
+
+    @field_validator(
+        "evidence",
+        "changed_files",
+        "verification",
+        "observed_tool_result_summaries",
+        mode="before",
+    )
+    @classmethod
+    def normalize_text_list(cls, value: Any) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        return tuple(str(item).strip() for item in value if str(item).strip())
+
+
+class GoalDecision(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    generation: str
+    attempt_number: int = Field(ge=1)
+    status: GoalDecisionStatus
+    summary: str
+    evidence: tuple[str, ...] = ()
+    reason: str = ""
+    next_hint: str = ""
+    missing_evidence: tuple[str, ...] = ()
+    progress: GoalProgress = "none"
+    created_at: datetime = Field(default_factory=_now)
+
+    @field_validator("generation", "summary")
+    @classmethod
+    def normalize_required_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be empty")
+        return value
+
+    @field_validator("reason", "next_hint")
+    @classmethod
+    def normalize_optional_text(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("evidence", "missing_evidence", mode="before")
+    @classmethod
+    def normalize_text_list(cls, value: Any) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        return tuple(str(item).strip() for item in value if str(item).strip())
+
+
+class GoalProtocolRecord(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    protocol_id: str
+    parent_session_id: str
+    generation: str
+    phase: GoalPhase
+    attempt_number: int = Field(ge=0)
+    sequence_number: int = Field(ge=0)
+    turn_id: str
+    session_id: str
+    payload_type: Literal["GoalSpecSnapshot", "WorkCheckpoint", "GoalDecision"]
+    payload: dict[str, Any]
+    status: GoalProtocolStatus = "submitted"
+    payload_hash: str
+    submitted_at: datetime = Field(default_factory=_now)
+    projected_at: datetime | None = None
+
+    @classmethod
+    def submitted(
+        cls,
+        *,
+        protocol_id: str,
+        parent_session_id: str,
+        generation: str,
+        phase: GoalPhase,
+        attempt_number: int,
+        turn_id: str,
+        session_id: str,
+        payload: BaseModel,
+    ) -> "GoalProtocolRecord":
+        sequence_number = goal_sequence_number(phase, attempt_number)
+        payload_json = _canonical_json(payload.model_dump(mode="json"))
+        payload_type = type(payload).__name__
+        expected_type = {
+            "init": "GoalSpecSnapshot",
+            "checkpoint": "WorkCheckpoint",
+            "decision": "GoalDecision",
+        }[phase]
+        if payload_type != expected_type:
+            raise ValueError(f"{phase} requires {expected_type}, got {payload_type}")
+        return cls(
+            protocol_id=protocol_id,
+            parent_session_id=parent_session_id,
+            generation=generation,
+            phase=phase,
+            attempt_number=attempt_number,
+            sequence_number=sequence_number,
+            turn_id=turn_id,
+            session_id=session_id,
+            payload_type=payload_type,
+            payload=payload.model_dump(mode="json"),
+            payload_hash=hashlib.sha256(payload_json.encode("utf-8")).hexdigest(),
+        )
+
+    def payload_model(self) -> GoalSpecSnapshot | WorkCheckpoint | GoalDecision:
+        model = {
+            "GoalSpecSnapshot": GoalSpecSnapshot,
+            "WorkCheckpoint": WorkCheckpoint,
+            "GoalDecision": GoalDecision,
+        }[self.payload_type]
+        return model.model_validate(self.payload)
+
+    def projected(self, *, projected_at: datetime | None = None) -> "GoalProtocolRecord":
+        if self.status == "projected":
+            return self
+        return self.model_copy(
+            update={
+                "status": "projected",
+                "projected_at": projected_at or _now(),
+            }
+        )
+
+
+class PublicSummary(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    generation: str
+    phase: Literal["work", "evaluator", "runtime"]
+    outcome: Literal["completed", "blocked", "failed"]
+    objective_summary: str
+    attempt_count: int = Field(ge=0)
+    summary: str
+    created_at: datetime = Field(default_factory=_now)
+
+
+class GoalRuntimeFailure(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    generation: str
+    observed_sequence: int = Field(ge=-1)
+    reason: str
+    evidence: tuple[str, ...] = ()
+    created_at: datetime = Field(default_factory=_now)
+
+
+class UserGuidance(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    guidance_id: str
+    generation: str
+    target_phase: Literal["work", "evaluator", "any"] = "any"
+    text: str
+    source: Literal["user", "system"] = "user"
+    created_at: datetime = Field(default_factory=_now)
+    delivered_attempt_id: str | None = None
+    delivered_phase: Literal["work", "evaluator"] | None = None
+    consumed_at: datetime | None = None
+
+    @field_validator("guidance_id", "generation", "text")
+    @classmethod
+    def normalize_required_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be empty")
+        return value
+
+
+class GoalGenerationBinding(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    generation: str
+    main_session_id: str
+    evaluator_session_id: str
+    work_session_id: str
+    goal_thread_id: str | None = None
+    visibility: Literal["internal"] = "internal"
+    created_at: datetime = Field(default_factory=_now)
+    terminal_at: datetime | None = None
+    archived_at: datetime | None = None
+
+
 GOAL_ITERATION_USER_TEXT = "Start the autonomous goal attempt."
 GOAL_PROFILE = RuntimeProfile(
     profile_id="goal", revision=1, name="Goal", protocol="goal",
@@ -55,12 +364,12 @@ GOAL_INTAKE_DIRECTIVE = """\
 This turn is the intake stage of an autonomous Goal. Its sole responsibility is to
 produce a GoalSpec from the user's request — never to execute the request itself.
 
-- Permitted outcomes: call clarify with one targeted question, or call goal with
-  op="init" and a complete spec.
+- Permitted outcomes: call clarify with one targeted question, or call goal_init with
+  a complete spec.
 - Forbidden: performing the task, producing the requested analysis/answer, writing
   code, or running commands for the task. The work phase starts only after intake.
-- goal(op="init") presents the spec for user approval; on revision feedback, update
-  the spec and submit again.
+- goal_init presents the spec for user approval; on revision feedback, update the
+  spec and submit again.
 """
 
 GOAL_EVALUATOR_DIRECTIVE = """\
@@ -77,7 +386,7 @@ Follow this procedure:
 2. Verify — spot-check any evidence that looks missing or unreliable with read-only
    tools (read, find, search, lsp, document). You have no execution tools; do not
    attempt to run commands.
-3. Decide — call goal with op="decision":
+3. Decide — call goal_decision:
    - status="finished" when every condition is backed by concrete evidence;
    - status="continue" when evidence is insufficient — name the missing evidence
      in the reason so the next work attempt collects it;
@@ -96,11 +405,11 @@ GoalSpec — but you never execute the task itself.
 Hard rules:
 - NEVER perform the work: do not write code, do not run commands, do not produce
   the requested artifact. Work happens only inside the autonomous goal loop.
-- You have read-only tools plus clarify and goal; no write or shell tools.
+- You have read-only tools plus clarify and goal_init; no write or shell tools.
 - When the user wants a goal to run, convert the request into a GoalSpec and call
-  goal with op="init". goal(op="init") presents the spec for user approval; on
-  revision feedback, update the spec and submit again. On cancel, drop it.
-- Do not call goal with op="decision"; that op is evaluator-only.
+  goal_init. It presents the spec for user approval; on revision feedback, update
+  the spec and submit again. On cancel, drop it.
+- Do not call goal_checkpoint or goal_decision; those are autonomous phases only.
 - Otherwise answer directly and conversationally.
 """
 
@@ -121,16 +430,38 @@ class GoalState(BaseModel):
     last_evaluator_next_hint: str = ""
     last_evaluator_missing: tuple[str, ...] = ()
     blocked_reason: str = ""
-    active: bool = True
+    generation: str = ""
+    main_session_id: str = ""
+    work_session_id: str = ""
+    evaluator_session_id: str = ""
+    projected_sequence_number: int = -1
+    current_phase: Literal["work", "evaluator"] = "work"
+    phase_status: Literal["running", "needs_resume"] = "running"
+    last_work_checkpoint: WorkCheckpoint | None = None
+    last_protocol_id: str = ""
+    interrupt_reason: str = ""
+    protocol_repair_count: int = Field(default=0, ge=0)
 
     @classmethod
-    def from_spec(cls, spec: GoalSpec, *, run_id: str) -> "GoalState":
+    def from_spec(
+        cls,
+        spec: GoalSpec,
+        *,
+        run_id: str,
+        main_session_id: str = "",
+        work_session_id: str = "",
+        evaluator_session_id: str = "",
+    ) -> "GoalState":
         return cls(
             run_id=run_id,
             objective=spec.objective,
             acceptance_condition=spec.acceptance_condition,
             achievement_method=spec.achievement_method,
             max_attempts=spec.max_attempts,
+            generation=spec.generation,
+            main_session_id=main_session_id,
+            work_session_id=work_session_id,
+            evaluator_session_id=evaluator_session_id,
         )
 
 
@@ -148,23 +479,38 @@ class GoalToolView(BoundToolView):
             "mcp", "skill",
         }
         if self.phase == "work":
-            allowed.update({"bash", "write", "replace", "manage", "lsp_format"})
+            allowed.update({"bash", "write", "replace", "manage", "lsp_format", "goal_checkpoint"})
         elif self.phase == "intake":
-            allowed.update({"clarify", "goal"})
+            allowed.update({"clarify", "goal_init"})
             allowed -= {"websearch", "webfetch", "mcp", "skill"}
         elif self.phase == "evaluator":
-            allowed.add("goal")
+            allowed.add("goal_decision")
             allowed -= {"websearch", "webfetch", "mcp", "skill"}
         elif self.phase == "idle":
-            allowed.update({"clarify", "goal"})
+            allowed.update({"clarify", "goal_init"})
             allowed -= {"websearch", "webfetch", "mcp", "skill"}
-        if self.workflow_enabled:
+        if self.workflow_enabled and self.phase != "evaluator":
             allowed.update({"workflow", "todo"})
         return self.model_copy(update={"bound_tool_ids": frozenset(set(available_tool_ids) & allowed)})
 
 
 __all__ = [
-    "GoalSpec", "GoalState", "GoalToolView", "GOAL_EVALUATOR_DIRECTIVE",
-    "GOAL_IDLE_DIRECTIVE", "GOAL_INTAKE_DIRECTIVE", "GOAL_ITERATION_USER_TEXT",
+    "GoalDecision",
+    "GoalGenerationBinding",
+    "GoalProtocolRecord",
+    "GoalRuntimeFailure",
+    "GoalSpec",
+    "GoalSpecSnapshot",
+    "GoalState",
+    "GoalToolView",
+    "UserGuidance",
+    "WorkCheckpoint",
+    "GOAL_EVALUATOR_DIRECTIVE",
+    "GOAL_IDLE_DIRECTIVE",
+    "GOAL_INTAKE_DIRECTIVE",
+    "GOAL_ITERATION_USER_TEXT",
     "GOAL_PROFILE",
+    "goal_phase_session_id",
+    "goal_sequence_number",
+    "is_goal_terminal",
 ]

@@ -25,6 +25,7 @@ def test_build_agent_components_wires_presentation_neutral_runtime(monkeypatch):
         slash=SimpleNamespace(dispatch=lambda _command: False),
         bind_coding_turn_runner=lambda _runner: None,
         bind_automation_services=lambda _loop, _goal: None,
+        bind_guidance_service=lambda service: setattr(execution, "guidance_service", service),
         can_submit_guidance=lambda: False,
         submit_guidance=lambda *_args, **_kwargs: False,
     )
@@ -36,8 +37,14 @@ def test_build_agent_components_wires_presentation_neutral_runtime(monkeypatch):
 
     monkeypatch.setattr("voidx.bootstrap.agent.LangGraphExecution", fake_execution)
 
+
     components = build_agent_components(SimpleNamespace(workspace=""), "key", ui=runtime_ui_port)
 
+
+    assert hasattr(execution, "guidance_service")
+    assert components.service._guidance is execution.guidance_service
+    assert components.service._autonomous_router._guidance is execution.guidance_service
+    assert execution.guidance_service is not None
     assert isinstance(components, AgentResources)
     assert components.execution is execution
     assert injected["model_catalog"] is not None
@@ -169,6 +176,7 @@ def test_build_agent_components_keeps_product_integrations_optional(monkeypatch)
         slash=SimpleNamespace(dispatch=lambda _command: False),
         bind_coding_turn_runner=lambda _runner: None,
         bind_automation_services=lambda _loop, _goal: None,
+        bind_guidance_service=lambda _service: None,
         can_submit_guidance=lambda: False,
         submit_guidance=lambda *_args, **_kwargs: False,
     )

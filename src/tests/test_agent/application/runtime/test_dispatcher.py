@@ -9,6 +9,8 @@ from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.thread import AgentThread, LifecycleState, RuntimeDecision
 from voidx.agent.application.runtime.dispatcher import RuntimeDispatcher
 from voidx.agent.adapters.persistence.thread_repository import ThreadStore
+from voidx.agent.application.guidance_service import GuidanceService
+from voidx.agent.domain.guidance import Guidance
 
 
 @pytest.fixture(autouse=True)
@@ -79,6 +81,73 @@ async def test_dispatcher_claims_outbox_runs_runtime_and_commits_decision() -> N
     reloaded = await store.load("loop-1")
     assert reloaded is not None
     assert reloaded.state.lifecycle is LifecycleState.COMPLETED
+
+
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_binds_guidance_into_frozen_attempt_frame_and_consumes_on_commit() -> None:
+    store = await _make_loop_store()
+    await _seed_committed_wakeup(store)
+    await store.submit_guidance(
+        Guidance(
+            guidance_id="guidance-loop-1",
+            text="keep the loop focused",
+            target_thread_id="loop-1",
+            target_phase="work",
+        )
+    )
+    runner = FakeRuntimeRunner([RuntimeDecision(outcome="completed", summary="done")])
+    dispatcher = RuntimeDispatcher(
+        store=store,
+        runner=runner,
+        lease_owner="worker-a",
+        guidance=GuidanceService(store),
+    )
+
+    result = await dispatcher.dispatch_once()
+
+    assert result is not None
+    guidance_snapshot = runner.calls[0]["input_frame"]["guidance"]
+    assert len(guidance_snapshot) == 1
+    assert guidance_snapshot[0]["guidance_id"] == "guidance-loop-1"
+    assert guidance_snapshot[0]["text"] == "keep the loop focused"
+    assert guidance_snapshot[0]["source"] == "user"
+    assert guidance_snapshot[0]["truncated"] is False
+    assert guidance_snapshot[0]["target_phase"] == "work"
+    persisted = await store.get_guidance("guidance-loop-1")
+    assert persisted is not None
+    assert persisted.consumed_at is not None
+    assert persisted.delivery_id is not None
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_releases_bound_guidance_when_runtime_fails() -> None:
+    store = await _make_loop_store()
+    await _seed_committed_wakeup(store)
+    await store.submit_guidance(
+        Guidance(
+            guidance_id="guidance-loop-failure",
+            text="keep the loop focused",
+            target_thread_id="loop-1",
+            target_phase="work",
+        )
+    )
+    dispatcher = RuntimeDispatcher(
+        store=store,
+        runner=_FailingRunner(),
+        lease_owner="worker-a",
+        guidance=GuidanceService(store),
+    )
+
+    result = await dispatcher.dispatch_once()
+
+    assert result is None
+    persisted = await store.get_guidance("guidance-loop-failure")
+    assert persisted is not None
+    assert persisted.delivery_id is None
+    assert persisted.consumed_at is None
+
 
 
 @pytest.mark.asyncio

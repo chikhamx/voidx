@@ -158,6 +158,41 @@ class LangGraphAutonomousInputRouter:
             except Exception:
                 status = None
 
+        goal_resumable = (
+            profile == "goal"
+            and status is not None
+            and bool(getattr(status, "generation", ""))
+            and bool(getattr(status, "goal_thread_id", ""))
+            and (
+                getattr(status, "phase_status", "") == "needs_resume"
+                or getattr(status, "state", "") == "needs_user"
+            )
+        )
+        if goal_resumable:
+            generation = str(getattr(status, "generation", "")).strip()
+            phase = str(getattr(status, "current_phase", "work") or "work")
+            target_thread_id = str(getattr(status, "goal_thread_id", "") or thread_id or parent or "")
+            if user_input.strip():
+                recorded = self._guidance.submit_guidance(
+                    user_input,
+                    source="user",
+                    thread_id=target_thread_id,
+                    run_id=generation,
+                    phase=phase,
+                )
+                if not recorded:
+                    self._events.publish_message(
+                        "Goal guidance could not be recorded; the paused Goal was not resumed."
+                    )
+                    return True
+            resume_generation = getattr(service, "resume_generation", None)
+            if callable(resume_generation):
+                await resume_generation(generation)
+                self._events.publish_message(
+                    f"[dim]Goal resumed from the {phase} phase.[/dim]"
+                )
+            return True
+
         if status is not None and getattr(status, "active", False):
             target_thread_id = (
                 getattr(status, f"{profile}_thread_id", "")
@@ -165,24 +200,40 @@ class LangGraphAutonomousInputRouter:
                 or parent
                 or ""
             )
-            if self._guidance.submit_guidance(
-                user_input,
-                source="user",
-                thread_id=target_thread_id,
-                session_id=target_thread_id,
-            ):
-                label = getattr(status, "objective_summary", None) or getattr(status, "prompt_summary", None) or profile
-                self._events.publish_message(
-                    f"[dim]/{profile} guidance queued for [cyan]{label}[/cyan]. "
-                    f"Use /{profile} status or /{profile} stop.[/dim]"
+            guidance_kwargs = {
+                "source": "user",
+                "thread_id": target_thread_id,
+            }
+            if profile == "goal":
+                guidance_kwargs.update(
+                    run_id=str(getattr(status, "generation", "") or "").strip(),
+                    phase=str(getattr(status, "current_phase", "work") or "work"),
                 )
+            else:
+                guidance_kwargs["session_id"] = target_thread_id
+            if self._guidance.submit_guidance(user_input, **guidance_kwargs):
+                label = getattr(status, "objective_summary", None) or getattr(status, "prompt_summary", None) or profile
+                if profile == "goal":
+                    self._events.publish_message(
+                        f"[dim]Goal guidance queued for [cyan]{label}[/cyan].[/dim]"
+                    )
+                else:
+                    self._events.publish_message(
+                        f"[dim]/{profile} guidance queued for [cyan]{label}[/cyan]. "
+                        f"Use /{profile} status or /{profile} stop.[/dim]"
+                    )
                 return True
             label = getattr(status, "objective_summary", None) or getattr(status, "prompt_summary", None) or profile
-            self._events.publish_message(
-                f"[dim]/{profile} is active: [cyan]{label}[/cyan]. "
-                f"Use /guide <text> for mid-run guidance, /{profile} status, or /{profile} stop. "
-                f"Switch with /coding if you want a normal coding turn.[/dim]"
-            )
+            if profile == "goal":
+                self._events.publish_message(
+                    f"[dim]Goal is active: [cyan]{label}[/cyan]. Guidance was not recorded.[/dim]"
+                )
+            else:
+                self._events.publish_message(
+                    f"[dim]/{profile} is active: [cyan]{label}[/cyan]. "
+                    f"Use /guide <text> for mid-run guidance, /{profile} status, or /{profile} stop. "
+                    f"Switch with /coding if you want a normal coding turn.[/dim]"
+                )
             return True
 
         if profile == "goal":

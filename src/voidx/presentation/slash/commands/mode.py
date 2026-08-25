@@ -37,20 +37,6 @@ class ModeCommandsMixin:
             self.mode_port.ui.print("[dim]/goal runtime is not available in this session.[/dim]")
             return
         parent_thread_id = self.mode_port.session.id if self.mode_port.session is not None else None
-        if text == "status":
-            status = await service.status(parent_thread_id)
-            if status is None:
-                self.mode_port.ui.print("[dim]/goal is not active.[/dim]")
-                return
-            self.mode_port.ui.print(
-                f"[dim]/goal active: [cyan]{status.objective_summary}[/cyan] "
-                f"attempt {status.attempt_count}/{status.max_attempts} state={status.state}[/dim]"
-            )
-            return
-        if text == "stop":
-            stopped = await service.stop(parent_thread_id)
-            self.mode_port.ui.print("[dim]/goal stopped.[/dim]" if stopped else "[dim]/goal is not active.[/dim]")
-            return
         objective, acceptance = _parse_goal_args(text)
         if not objective or not acceptance:
             self.mode_port.ui.print("Usage: /goal <objective> --accept <acceptance condition>")

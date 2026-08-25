@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Protocol
 
 from langchain_core.language_models import BaseChatModel
 
-from voidx.agent.adapters.persistence.parent_result_publisher import AsyncParentResultPublisher
 from voidx.agent.adapters.persistence.session_repository import create_session
 from voidx.agent.adapters.persistence.thread_repository import ThreadStore
 from voidx.agent.application.agent_service import AgentService
@@ -16,6 +15,7 @@ from voidx.agent.application.automation.goal.goal_service import GoalService
 from voidx.agent.application.automation.goal.scheduler import GoalRuntimeScheduler
 from voidx.agent.application.automation.loop.loop_service import LoopService
 from voidx.agent.application.automation.loop.scheduler import LoopRuntimeScheduler
+from voidx.agent.application.guidance_service import GuidanceService
 from voidx.agent.application.chat_service import ChatService
 from voidx.agent.application.coding_service import CodingService
 from voidx.agent.application.runtime import AgentRuntime
@@ -112,8 +112,6 @@ class PermissionServiceFactory(Protocol):
     ) -> PermissionService: ...
 
 
-class ParentResultPublisherFactory(Protocol):
-    def __call__(self) -> AsyncParentResultPublisher: ...
 
 
 @dataclass(frozen=True)
@@ -130,7 +128,6 @@ class IntegrationResources:
     web_route: WebRoute | None = None
     permission_service_factory: PermissionServiceFactory | None = None
     event_publisher_factory: AgentEventPublisherFactory | None = None
-    parent_result_publisher_factory: ParentResultPublisherFactory = AsyncParentResultPublisher
 
 
 @dataclass(frozen=True)
@@ -245,6 +242,8 @@ def build_agent_components(
     )
     runtime = AgentRuntime(application)
     store = ThreadStore()
+    guidance_service = GuidanceService(store)
+    execution.bind_guidance_service(guidance_service)
     event_publisher = (
         integrations.event_publisher_factory(execution)
         if integrations.event_publisher_factory is not None
@@ -259,6 +258,7 @@ def build_agent_components(
             workspace=workspace,
             session_id=(session.id if session is not None else ""),
             events=event_publisher,
+            guidance=guidance_service,
         ),
         workspace=workspace,
         events=event_publisher,
@@ -273,9 +273,9 @@ def build_agent_components(
                 workspace=workspace,
                 evaluator=GoalEvaluator(),
                 events=event_publisher,
+                guidance=guidance_service,
             ),
             workspace=workspace,
-            result_publisher=integrations.parent_result_publisher_factory(),
         )
     execution.bind_automation_services(loop_service, goal_service)
     chat_service = ChatService(runtime, session_creator=create_session)
@@ -285,13 +285,13 @@ def build_agent_components(
         execution,
         runtime,
         event_publisher or NullAgentEventPublisher(),
-        execution,
+        guidance_service,
         chat_service=chat_service,
         coding_service=coding_service,
         loop_service=loop_service,
         goal_service=goal_service,
     )
-    service = AgentService(input_adapter, input_adapter, router, execution)
+    service = AgentService(input_adapter, input_adapter, router, guidance_service)
     execution.bind_coding_turn_runner(service.run_coding_turn)
     return AgentResources(
         execution=execution,
@@ -367,7 +367,6 @@ __all__ = [
     "ExternalManagerFactory",
     "IntegrationResources",
     "McpReferenceResolver",
-    "ParentResultPublisherFactory",
     "PermissionServiceFactory",
     "WebRoute",
     "build_agent_app",

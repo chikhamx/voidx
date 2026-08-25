@@ -1,29 +1,30 @@
 [
   {
+    "type": "function",
     "function": {
-      "description": "Read a text file as numbered lines. Use offset/limit for large files or to continue capped output.",
       "name": "read",
+      "description": "Read a text file as numbered lines. Use offset/limit for large files or to continue capped output.",
       "parameters": {
-        "additionalProperties": false,
+        "type": "object",
         "properties": {
           "file_path": {
             "description": "Path to the text file to read.",
             "title": "File Path",
             "type": "string"
           },
-          "limit": {
+          "offset": {
             "default": null,
-            "description": "Maximum number of lines to read; omit to read until the output budget is reached.",
-            "title": "Limit",
+            "description": "1-based line number to start reading from; omit to start at line 1.",
+            "title": "Offset",
             "type": [
               "integer",
               "null"
             ]
           },
-          "offset": {
+          "limit": {
             "default": null,
-            "description": "1-based line number to start reading from; omit to start at line 1.",
-            "title": "Offset",
+            "description": "Maximum number of lines to read; omit to read until the output budget is reached.",
+            "title": "Limit",
             "type": [
               "integer",
               "null"
@@ -35,66 +36,19 @@
           "offset",
           "limit"
         ],
-        "type": "object"
+        "additionalProperties": false
       },
       "strict": true
-    },
-    "type": "function"
+    }
   },
   {
+    "type": "function",
     "function": {
-      "description": "Create empty files or directories; create an empty file or directory, delete files or directories, or move/rename paths. No file content is written; use write to add file content.",
       "name": "manage",
+      "description": "Create empty files or directories; create an empty file or directory, delete files or directories, or move/rename paths. No file content is written; use write to add file content.",
       "parameters": {
-        "additionalProperties": false,
+        "type": "object",
         "properties": {
-          "kind": {
-            "default": "file",
-            "description": "Whether the operation targets a file or directory.",
-            "enum": [
-              "file",
-              "dir"
-            ],
-            "title": "Kind",
-            "type": "string"
-          },
-          "moves": {
-            "default": null,
-            "description": "Move mappings required for op=move; each item has src, dest, and per-move overwrite. Ignored for op=create/op=delete.",
-            "items": {
-              "additionalProperties": false,
-              "properties": {
-                "dest": {
-                  "description": "Destination file or directory path for a move operation.",
-                  "title": "Dest",
-                  "type": "string"
-                },
-                "overwrite": {
-                  "default": false,
-                  "description": "Whether this move may replace an existing destination file or directory.",
-                  "title": "Overwrite",
-                  "type": "boolean"
-                },
-                "src": {
-                  "description": "Source file or directory path for a move operation.",
-                  "title": "Src",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "src",
-                "dest",
-                "overwrite"
-              ],
-              "title": "MoveSpec",
-              "type": "object"
-            },
-            "title": "Moves",
-            "type": [
-              "array",
-              "null"
-            ]
-          },
           "op": {
             "description": "File or directory lifecycle operation: create, delete, or move/rename.",
             "enum": [
@@ -105,24 +59,71 @@
             "title": "Op",
             "type": "string"
           },
-          "overwrite": {
-            "default": false,
-            "description": "For op=create only: replace an existing file after safety checks. Ignored for directory create, delete, and move.",
-            "title": "Overwrite",
-            "type": "boolean"
+          "kind": {
+            "default": "file",
+            "description": "Whether the operation targets a file or directory.",
+            "enum": [
+              "file",
+              "dir"
+            ],
+            "title": "Kind",
+            "type": "string"
           },
           "paths": {
             "default": null,
             "description": "File or directory path(s); paths is required for op=create and op=delete. Ignored for op=move.",
-            "items": {
-              "type": "string"
-            },
             "title": "Paths",
             "type": [
               "string",
               "array",
               "null"
-            ]
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "moves": {
+            "default": null,
+            "description": "Move mappings required for op=move; each item has src, dest, and per-move overwrite. Ignored for op=create/op=delete.",
+            "title": "Moves",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "properties": {
+                "src": {
+                  "description": "Source file or directory path for a move operation.",
+                  "title": "Src",
+                  "type": "string"
+                },
+                "dest": {
+                  "description": "Destination file or directory path for a move operation.",
+                  "title": "Dest",
+                  "type": "string"
+                },
+                "overwrite": {
+                  "default": false,
+                  "description": "Whether this move may replace an existing destination file or directory.",
+                  "title": "Overwrite",
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "src",
+                "dest",
+                "overwrite"
+              ],
+              "title": "MoveSpec",
+              "type": "object",
+              "additionalProperties": false
+            }
+          },
+          "overwrite": {
+            "default": false,
+            "description": "For op=create only: replace an existing file after safety checks. Ignored for directory create, delete, and move.",
+            "title": "Overwrite",
+            "type": "boolean"
           }
         },
         "required": [
@@ -132,22 +133,32 @@
           "moves",
           "overwrite"
         ],
-        "type": "object"
+        "additionalProperties": false
       },
       "strict": true
-    },
-    "type": "function"
+    }
   },
   {
+    "type": "function",
     "function": {
-      "description": "Edit text files: write op=\"insert\" before a 1-based line, op=\"append\" at EOF, or op=\"write\" creates or fully overwrites full content.",
       "name": "write",
+      "description": "Edit text files: write op=\"insert\" before a 1-based line, op=\"append\" at EOF, or op=\"write\" creates or fully overwrites full content.",
       "parameters": {
-        "additionalProperties": false,
+        "type": "object",
         "properties": {
           "file_path": {
             "description": "Path to the target text file.",
             "title": "File Path",
+            "type": "string"
+          },
+          "op": {
+            "description": "Write mode: insert before a 1-based line number, append to an existing file, or write complete file content.",
+            "enum": [
+              "insert",
+              "append",
+              "write"
+            ],
+            "title": "Op",
             "type": "string"
           },
           "lineno": {
@@ -164,16 +175,6 @@
             "description": "Text to insert or append; for op=write, complete file content. For op=insert, up to three non-empty leading and trailing lines that exactly match adjacent file lines are treated as overlap rather than duplicated.",
             "title": "New String",
             "type": "string"
-          },
-          "op": {
-            "description": "Write mode: insert before a 1-based line number, append to an existing file, or write complete file content.",
-            "enum": [
-              "insert",
-              "append",
-              "write"
-            ],
-            "title": "Op",
-            "type": "string"
           }
         },
         "required": [
@@ -182,34 +183,38 @@
           "lineno",
           "new_string"
         ],
-        "type": "object"
+        "additionalProperties": false
       },
       "strict": true
-    },
-    "type": "function"
+    }
   },
   {
+    "type": "function",
     "function": {
-      "description": "Replace complete lines in an existing text file. Read the target lines first. Use one bound for one line or two bounds for an inclusive line range; order is ignored. Each bound has a 1-based line_no hint and a case-sensitive anchor from that line. missing or ambiguous anchors fail without modifying the file. new_string is the full replacement for only the resolved line(s).",
       "name": "replace",
+      "description": "Replace complete lines in an existing text file. Read the target lines first. Use one bound for one line or two bounds for an inclusive line range; order is ignored. Each bound has a 1-based line_no hint and a case-sensitive anchor from that line. missing or ambiguous anchors fail without modifying the file. new_string is the full replacement for only the resolved line(s).",
       "parameters": {
-        "additionalProperties": false,
+        "type": "object",
         "properties": {
+          "file_path": {
+            "description": "Path to the existing target text file.",
+            "title": "File Path",
+            "type": "string"
+          },
           "bounds": {
             "description": "One or two boundary locators. One locator replaces that resolved line; two locators replace the inclusive range between resolved boundaries. Length must be 1 or 2.",
             "items": {
-              "additionalProperties": false,
               "properties": {
-                "anchor": {
-                  "description": "Literal, case-sensitive substring expected on the boundary line. Required for range replacements; empty only for intentional exact-line single-line replacement.",
-                  "title": "Anchor",
-                  "type": "string"
-                },
                 "line_no": {
                   "description": "1-based line number hint from the latest read.",
                   "minimum": 1,
                   "title": "Line No",
                   "type": "integer"
+                },
+                "anchor": {
+                  "description": "Literal, case-sensitive substring expected on the boundary line. Required for range replacements; empty only for intentional exact-line single-line replacement.",
+                  "title": "Anchor",
+                  "type": "string"
                 }
               },
               "required": [
@@ -217,17 +222,13 @@
                 "anchor"
               ],
               "title": "ReplaceBound",
-              "type": "object"
+              "type": "object",
+              "additionalProperties": false
             },
             "maxItems": 2,
             "minItems": 1,
             "title": "Bounds",
             "type": "array"
-          },
-          "file_path": {
-            "description": "Path to the existing target text file.",
-            "title": "File Path",
-            "type": "string"
           },
           "new_string": {
             "description": "Complete replacement text for the resolved line(s). May contain multiple lines; do not include unchanged surrounding lines. Empty string deletes the resolved line(s).",
@@ -240,29 +241,29 @@
           "bounds",
           "new_string"
         ],
-        "type": "object"
+        "additionalProperties": false
       },
       "strict": true
-    },
-    "type": "function"
+    }
   },
   {
+    "type": "function",
     "function": {
-      "description": "Run path-scoped git commands. Pass only the git subcommand in args. Core read-only commands return structured JSON; other allowed commands return raw stdout/stderr inside JSON. Write commands require approval; destructive commands are denied.",
       "name": "git",
+      "description": "Run path-scoped git commands. Pass only the git subcommand in args. Core read-only commands return structured JSON; other allowed commands return raw stdout/stderr inside JSON. Write commands require approval; destructive commands are denied.",
       "parameters": {
-        "additionalProperties": false,
+        "type": "object",
         "properties": {
-          "args": {
-            "description": "raw git subcommand and arguments only. Do not include git itself; do not include the git executable, e.g. \"status --porcelain\" or \"log --oneline -5\".",
-            "minLength": 1,
-            "title": "Args",
-            "type": "string"
-          },
           "path": {
             "default": "",
             "description": "Repository working directory. Relative paths resolve from the workspace; empty uses the workspace root.",
             "title": "Path",
+            "type": "string"
+          },
+          "args": {
+            "description": "raw git subcommand and arguments only. Do not include git itself; do not include the git executable, e.g. \"status --porcelain\" or \"log --oneline -5\".",
+            "minLength": 1,
+            "title": "Args",
             "type": "string"
           }
         },
@@ -270,47 +271,27 @@
           "path",
           "args"
         ],
-        "type": "object"
+        "additionalProperties": false
       },
       "strict": true
-    },
-    "type": "function"
+    }
   },
   {
+    "type": "function",
     "function": {
-      "description": "Find files by filename substring and extension filters with stable structured results.",
       "name": "find",
+      "description": "Find files by filename substring and extension filters with stable structured results.",
       "parameters": {
-        "additionalProperties": false,
+        "type": "object",
         "properties": {
-          "case": {
-            "default": "auto",
-            "enum": [
-              "auto",
-              "sensitive",
-              "insensitive"
-            ],
-            "title": "Case",
-            "type": "string"
-          },
-          "extensions": {
+          "query": {
             "default": null,
-            "description": "Extensions such as ['py', 'pyi'].",
-            "items": {
-              "type": "string"
-            },
-            "title": "Extensions",
+            "description": "Filename substring, without path separators.",
+            "title": "Query",
             "type": [
-              "array",
+              "string",
               "null"
             ]
-          },
-          "max_results": {
-            "default": 50,
-            "maximum": 500,
-            "minimum": 1,
-            "title": "Max Results",
-            "type": "integer"
           },
           "path": {
             "default": null,
@@ -321,14 +302,34 @@
               "null"
             ]
           },
-          "query": {
+          "extensions": {
             "default": null,
-            "description": "Filename substring, without path separators.",
-            "title": "Query",
+            "description": "Extensions such as ['py', 'pyi'].",
+            "title": "Extensions",
             "type": [
-              "string",
+              "array",
               "null"
-            ]
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "case": {
+            "default": "auto",
+            "enum": [
+              "auto",
+              "sensitive",
+              "insensitive"
+            ],
+            "title": "Case",
+            "type": "string"
+          },
+          "max_results": {
+            "default": 50,
+            "maximum": 500,
+            "minimum": 1,
+            "title": "Max Results",
+            "type": "integer"
           }
         },
         "required": [
@@ -338,19 +339,55 @@
           "case",
           "max_results"
         ],
-        "type": "object"
+        "additionalProperties": false
       },
       "strict": true
-    },
-    "type": "function"
+    }
   },
   {
+    "type": "function",
     "function": {
-      "description": "Search text with literal, word, or regex matching and structured results.",
       "name": "search",
+      "description": "Search text with literal, word, or regex matching and structured results.",
       "parameters": {
-        "additionalProperties": false,
+        "type": "object",
         "properties": {
+          "query": {
+            "description": "Text or regular expression to search for.",
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "path": {
+            "default": null,
+            "description": "File or directory scope; defaults to workspace root.",
+            "title": "Path",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "extensions": {
+            "default": null,
+            "title": "Extensions",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "match": {
+            "default": "text",
+            "enum": [
+              "text",
+              "word",
+              "regex"
+            ],
+            "title": "Match",
+            "type": "string"
+          },
           "case": {
             "default": "auto",
             "enum": [
@@ -368,48 +405,12 @@
             "title": "Context",
             "type": "integer"
           },
-          "extensions": {
-            "default": null,
-            "items": {
-              "type": "string"
-            },
-            "title": "Extensions",
-            "type": [
-              "array",
-              "null"
-            ]
-          },
-          "match": {
-            "default": "text",
-            "enum": [
-              "text",
-              "word",
-              "regex"
-            ],
-            "title": "Match",
-            "type": "string"
-          },
           "max_results": {
             "default": 30,
             "maximum": 500,
             "minimum": 1,
             "title": "Max Results",
             "type": "integer"
-          },
-          "path": {
-            "default": null,
-            "description": "File or directory scope; defaults to workspace root.",
-            "title": "Path",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "query": {
-            "description": "Text or regular expression to search for.",
-            "minLength": 1,
-            "title": "Query",
-            "type": "string"
           }
         },
         "required": [
@@ -421,48 +422,19 @@
           "context",
           "max_results"
         ],
-        "type": "object"
+        "additionalProperties": false
       },
       "strict": true
-    },
-    "type": "function"
+    }
   },
   {
+    "type": "function",
     "function": {
-      "description": "Run language-server operations: diagnostics, definition lookup, references, and document symbols.",
       "name": "lsp",
+      "description": "Run language-server operations: diagnostics, definition lookup, references, and document symbols.",
       "parameters": {
-        "additionalProperties": false,
+        "type": "object",
         "properties": {
-          "character": {
-            "default": 0,
-            "description": "0-based character offset. Required for definition and references operations.",
-            "minimum": 0,
-            "title": "Character",
-            "type": "integer"
-          },
-          "file_path": {
-            "default": null,
-            "description": "Absolute or relative path to the file. Required for all operations except diagnostics (when omitted, returns cached diagnostics for opened files).",
-            "title": "File Path",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "include_declaration": {
-            "default": true,
-            "description": "For references only: include the symbol declaration in results.",
-            "title": "Include Declaration",
-            "type": "boolean"
-          },
-          "line": {
-            "default": 1,
-            "description": "1-based line number. Required for definition and references operations.",
-            "minimum": 1,
-            "title": "Line",
-            "type": "integer"
-          },
           "operation": {
             "description": "The LSP operation to perform.",
             "enum": [
@@ -473,6 +445,35 @@
             ],
             "title": "Operation",
             "type": "string"
+          },
+          "file_path": {
+            "default": null,
+            "description": "Absolute or relative path to the file. Required for all operations except diagnostics (when omitted, returns cached diagnostics for opened files).",
+            "title": "File Path",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "line": {
+            "default": 1,
+            "description": "1-based line number. Required for definition and references operations.",
+            "minimum": 1,
+            "title": "Line",
+            "type": "integer"
+          },
+          "character": {
+            "default": 0,
+            "description": "0-based character offset. Required for definition and references operations.",
+            "minimum": 0,
+            "title": "Character",
+            "type": "integer"
+          },
+          "include_declaration": {
+            "default": true,
+            "description": "For references only: include the symbol declaration in results.",
+            "title": "Include Declaration",
+            "type": "boolean"
           }
         },
         "required": [
@@ -482,23 +483,34 @@
           "character",
           "include_declaration"
         ],
-        "type": "object"
+        "additionalProperties": false
       },
       "strict": true
-    },
-    "type": "function"
+    }
   },
   {
+    "type": "function",
     "function": {
-      "description": "Format an explicit range in a file with its configured language server and write the result safely.",
       "name": "lsp_format",
+      "description": "Format an explicit range in a file with its configured language server and write the result safely.",
       "parameters": {
-        "additionalProperties": false,
+        "type": "object",
         "properties": {
-          "end_character": {
-            "description": "0-based UTF-16 end-exclusive character offset.",
+          "file_path": {
+            "description": "File to format with the configured language server.",
+            "title": "File Path",
+            "type": "string"
+          },
+          "start_line": {
+            "description": "1-based inclusive start line.",
+            "minimum": 1,
+            "title": "Start Line",
+            "type": "integer"
+          },
+          "start_character": {
+            "description": "0-based UTF-16 character offset.",
             "minimum": 0,
-            "title": "End Character",
+            "title": "Start Character",
             "type": "integer"
           },
           "end_line": {
@@ -507,21 +519,10 @@
             "title": "End Line",
             "type": "integer"
           },
-          "file_path": {
-            "description": "File to format with the configured language server.",
-            "title": "File Path",
-            "type": "string"
-          },
-          "start_character": {
-            "description": "0-based UTF-16 character offset.",
+          "end_character": {
+            "description": "0-based UTF-16 end-exclusive character offset.",
             "minimum": 0,
-            "title": "Start Character",
-            "type": "integer"
-          },
-          "start_line": {
-            "description": "1-based inclusive start line.",
-            "minimum": 1,
-            "title": "Start Line",
+            "title": "End Character",
             "type": "integer"
           }
         },
@@ -532,19 +533,24 @@
           "end_line",
           "end_character"
         ],
-        "type": "object"
+        "additionalProperties": false
       },
       "strict": true
-    },
-    "type": "function"
+    }
   },
   {
+    "type": "function",
     "function": {
-      "description": "Ask the user one question when intent, scope, or requirements are ambiguous and explicit input is needed before proceeding. Do not use for progress updates. Later tool calls in the same response are deferred until the answer updates runtime state.",
       "name": "clarify",
+      "description": "Ask the user one question when intent, scope, or requirements are ambiguous and explicit input is needed before proceeding. Do not use for progress updates. Later tool calls in the same response are deferred until the answer updates runtime state.",
       "parameters": {
-        "additionalProperties": false,
+        "type": "object",
         "properties": {
+          "question": {
+            "description": "One specific clarifying question to ask the user.",
+            "title": "Question",
+            "type": "string"
+          },
           "options": {
             "description": "Suggested mutually exclusive answers; leave empty for an open-ended question.",
             "items": {
@@ -552,30 +558,38 @@
             },
             "title": "Options",
             "type": "array"
-          },
-          "question": {
-            "description": "One specific clarifying question to ask the user.",
-            "title": "Question",
-            "type": "string"
           }
         },
         "required": [
           "question",
           "options"
         ],
-        "type": "object"
+        "additionalProperties": false
       },
       "strict": true
-    },
-    "type": "function"
+    }
   },
   {
+    "type": "function",
     "function": {
-      "description": "Present a concrete implementation plan as an approval gate before file edits, write-capable commands, or delegated implementation. no code changes occur in this tool. The user can approve, request a design document first, modify scope, or reject. Later tool calls in the same response are deferred until the decision updates runtime state.",
       "name": "checkpoint",
+      "description": "Present a concrete implementation plan as an approval gate before file edits, write-capable commands, or delegated implementation. no code changes occur in this tool. The user can approve, request a design document first, modify scope, or reject. Later tool calls in the same response are deferred until the decision updates runtime state.",
       "parameters": {
-        "additionalProperties": false,
+        "type": "object",
         "properties": {
+          "goal": {
+            "description": "Stable overall objective for the current task. Keep it short, sharp, and clear.",
+            "title": "Goal",
+            "type": "string"
+          },
+          "steps": {
+            "description": "Ordered implementation steps; each step should be one small action.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
           "affected_files": {
             "description": "Files that may be created, modified, moved, or deleted by the plan.",
             "items": {
@@ -584,25 +598,12 @@
             "title": "Affected Files",
             "type": "array"
           },
-          "goal": {
-            "description": "Stable overall objective for the current task. Keep it short, sharp, and clear.",
-            "title": "Goal",
-            "type": "string"
-          },
           "risks": {
             "description": "Risks, edge cases, or trade-offs the user should approve.",
             "items": {
               "type": "string"
             },
             "title": "Risks",
-            "type": "array"
-          },
-          "steps": {
-            "description": "Ordered implementation steps; each step should be one small action.",
-            "items": {
-              "type": "string"
-            },
-            "title": "Steps",
             "type": "array"
           }
         },
@@ -612,18 +613,18 @@
           "affected_files",
           "risks"
         ],
-        "type": "object"
+        "additionalProperties": false
       },
       "strict": true
-    },
-    "type": "function"
+    }
   },
   {
+    "type": "function",
     "function": {
-      "description": "Manage workflow node lifecycle. Enter a workflow before gated work, advance after its gate is satisfied, and use done only to close active nodes without activating successors.",
       "name": "workflow",
+      "description": "Manage workflow node lifecycle. Enter a workflow before gated work, advance after its gate is satisfied, and use done only to close active nodes without activating successors.",
       "parameters": {
-        "additionalProperties": false,
+        "type": "object",
         "properties": {
           "action": {
             "description": "Workflow operation.",
@@ -633,6 +634,12 @@
               "done"
             ],
             "title": "Action",
+            "type": "string"
+          },
+          "workflow": {
+            "default": "",
+            "description": "Workflow node name. Required for 'enter'. For 'advance'/'done', auto-resolved when only one active node exists.",
+            "title": "Workflow",
             "type": "string"
           },
           "condition": {
@@ -647,12 +654,6 @@
             "maxLength": 120,
             "title": "Goal",
             "type": "string"
-          },
-          "workflow": {
-            "default": "",
-            "description": "Workflow node name. Required for 'enter'. For 'advance'/'done', auto-resolved when only one active node exists.",
-            "title": "Workflow",
-            "type": "string"
           }
         },
         "required": [
@@ -661,18 +662,18 @@
           "condition",
           "goal"
         ],
-        "type": "object"
+        "additionalProperties": false
       },
       "strict": true
-    },
-    "type": "function"
+    }
   },
   {
+    "type": "function",
     "function": {
-      "description": "Submit a structured summary for older conversation context when VOIDX_COMPACTION_GUIDE is present. This updates runtime memory and removes older live messages; it does not answer the user.",
       "name": "compact",
+      "description": "Submit a structured summary for older conversation context when VOIDX_COMPACTION_GUIDE is present. This updates runtime memory and removes older live messages; it does not answer the user.",
       "parameters": {
-        "additionalProperties": false,
+        "type": "object",
         "properties": {
           "summary": {
             "description": "Structured Markdown summary of the older context to preserve. Keep durable facts, decisions, constraints, progress, blockers, verification results, and relevant files.",
@@ -691,18 +692,18 @@
           "summary",
           "tail_anchor_id"
         ],
-        "type": "object"
+        "additionalProperties": false
       },
       "strict": true
-    },
-    "type": "function"
+    }
   },
   {
+    "type": "function",
     "function": {
-      "description": "Read built-in documents only. action=\"list\" reads a directory README index; action=\"read\" loads a specific Markdown document. This tool does not read workspace files, generate documents, or search external sources. Start with action=\"list\" when unsure what exists.",
       "name": "document",
+      "description": "Read built-in documents only. action=\"list\" reads a directory README index; action=\"read\" loads a specific Markdown document. This tool does not read workspace files, generate documents, or search external sources. Start with action=\"list\" when unsure what exists.",
       "parameters": {
-        "additionalProperties": false,
+        "type": "object",
         "properties": {
           "action": {
             "description": "Document action: list reads a directory README index; read loads a Markdown document.",
@@ -727,69 +728,98 @@
           "action",
           "path"
         ],
-        "type": "object"
+        "additionalProperties": false
       },
       "strict": true
-    },
-    "type": "function"
+    }
   },
   {
+    "type": "function",
     "function": {
-      "description": "Initialize or decide a runtime-backed Goal. During intake, call op='init' with objective and acceptance_condition; set decision-only fields to empty strings. During evaluator, call op='decision' with status and summary; set init-only text fields to empty strings. Calls without op are invalid.",
-      "name": "goal",
+      "name": "goal_init",
+      "description": "Submit the approved Goal specification during intake or idle shaping.",
       "parameters": {
-        "additionalProperties": false,
+        "type": "object",
         "properties": {
+          "objective": {
+            "description": "Objective sentence for the autonomous Goal.",
+            "title": "Objective",
+            "type": "string"
+          },
           "acceptance_condition": {
-            "default": "",
-            "description": "For op=init: required verifiable done condition. For op=decision: pass an empty string.",
+            "description": "Verifiable condition that defines completion.",
             "title": "Acceptance Condition",
             "type": "string"
           },
           "achievement_method": {
             "default": "",
-            "description": "For op=init: optional execution guidance. For op=decision: pass an empty string.",
+            "description": "Optional execution guidance.",
             "title": "Achievement Method",
-            "type": "string"
-          },
-          "evidence": {
-            "default": "",
-            "description": "For op=decision: verification evidence; otherwise empty.",
-            "title": "Evidence",
             "type": "string"
           },
           "max_attempts": {
             "default": 20,
-            "description": "For op=init: attempt budget. For op=decision: pass 20.",
+            "description": "Attempt budget.",
             "maximum": 200,
             "minimum": 1,
             "title": "Max Attempts",
             "type": "integer"
-          },
-          "next": {
-            "default": "",
-            "description": "For op=decision: suggested next action; otherwise empty.",
-            "title": "Next",
+          }
+        },
+        "required": [
+          "objective",
+          "acceptance_condition"
+        ],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "goal_checkpoint",
+      "description": "Persist a structured checkpoint for the current Goal work attempt.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "summary": {
+            "description": "Concise summary of the work attempt.",
+            "title": "Summary",
             "type": "string"
           },
-          "objective": {
-            "default": "",
-            "description": "For op=init: required objective sentence. For op=decision: pass an empty string.",
-            "title": "Objective",
-            "type": "string"
+          "evidence": {
+            "description": "Concrete evidence supporting the checkpoint.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence",
+            "type": "array"
           },
-          "op": {
-            "description": "init submits the intake GoalSpec; decision submits the evaluator outcome.",
-            "enum": [
-              "init",
-              "decision"
-            ],
-            "title": "Op",
+          "changed_files": {
+            "description": "Files changed by the work attempt.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Changed Files",
+            "type": "array"
+          },
+          "verification": {
+            "description": "Verification commands or observations.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Verification",
+            "type": "array"
+          },
+          "next_hint": {
+            "default": "",
+            "description": "Suggested next action.",
+            "title": "Next Hint",
             "type": "string"
           },
           "progress": {
             "default": "none",
-            "description": "For op=decision: progress level; for op=init pass none.",
             "enum": [
               "none",
               "partial",
@@ -797,81 +827,104 @@
             ],
             "title": "Progress",
             "type": "string"
-          },
-          "reason": {
-            "default": "",
-            "description": "For op=decision: stable reason/progress key; otherwise empty.",
-            "title": "Reason",
-            "type": "string"
-          },
+          }
+        },
+        "required": [
+          "summary",
+          "evidence",
+          "changed_files",
+          "verification",
+          "next_hint",
+          "progress"
+        ],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "goal_decision",
+      "description": "Persist the evaluator's lifecycle decision for the current Goal attempt.",
+      "parameters": {
+        "type": "object",
+        "properties": {
           "status": {
-            "default": "",
-            "description": "For op=decision: required outcome. For op=init: pass an empty string.",
             "enum": [
               "finished",
               "continue",
-              "blocked",
-              ""
+              "blocked"
             ],
             "title": "Status",
             "type": "string"
           },
           "summary": {
-            "default": "",
-            "description": "For op=decision: required summary. For op=init: pass an empty string.",
+            "description": "Concise evaluator decision summary.",
             "title": "Summary",
+            "type": "string"
+          },
+          "evidence": {
+            "description": "Evidence used for the decision.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "reason": {
+            "default": "",
+            "description": "Reason or missing-progress key.",
+            "title": "Reason",
+            "type": "string"
+          },
+          "next_hint": {
+            "default": "",
+            "description": "Suggested next action when continuing.",
+            "title": "Next Hint",
+            "type": "string"
+          },
+          "missing_evidence": {
+            "description": "Evidence still required.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Evidence",
+            "type": "array"
+          },
+          "progress": {
+            "default": "none",
+            "enum": [
+              "none",
+              "partial",
+              "meaningful"
+            ],
+            "title": "Progress",
             "type": "string"
           }
         },
         "required": [
-          "op",
-          "objective",
-          "acceptance_condition",
-          "achievement_method",
-          "max_attempts",
           "status",
           "summary",
           "evidence",
-          "next",
           "reason",
+          "next_hint",
+          "missing_evidence",
           "progress"
         ],
-        "type": "object"
+        "additionalProperties": false
       },
       "strict": true
-    },
-    "type": "function"
+    }
   },
   {
+    "type": "function",
     "function": {
-      "description": "Runtime-backed /loop lifecycle control. The loop only ends when the user runs /loop stop or closes voidx — never end or pause it yourself. Call operation='start' with goal at iteration start. Call operation='commit' with outcome='continue' and a summary to submit the iteration decision and schedule the next wakeup — use it even when this iteration's work is done or you are waiting on something.",
       "name": "loop",
+      "description": "Runtime-backed /loop lifecycle control. The loop only ends when the user runs /loop stop or closes voidx — never end or pause it yourself. Call operation='start' with goal at iteration start. Call operation='commit' with outcome='continue' and a summary to submit the iteration decision and schedule the next wakeup — use it even when this iteration's work is done or you are waiting on something.",
       "parameters": {
-        "additionalProperties": false,
+        "type": "object",
         "properties": {
-          "goal": {
-            "default": "",
-            "description": "Iteration goal. Required for operation=start.",
-            "title": "Goal",
-            "type": "string"
-          },
-          "interval_seconds": {
-            "default": null,
-            "description": "For operation=init: fixed interval in seconds. Omit for dynamic mode.",
-            "title": "Interval Seconds",
-            "type": [
-              "number",
-              "null"
-            ]
-          },
-          "next_delay_seconds": {
-            "default": null,
-            "title": "Next Delay Seconds",
-            "type": [
-              "number",
-              "null"
-            ]
-          },
           "operation": {
             "default": "commit",
             "description": "start declares the iteration goal; commit submits the iteration decision (requires outcome/summary); init submits a LoopSpec for user approval (idle phase only, requires prompt).",
@@ -883,6 +936,27 @@
             "title": "Operation",
             "type": "string"
           },
+          "goal": {
+            "default": "",
+            "description": "Iteration goal. Required for operation=start.",
+            "title": "Goal",
+            "type": "string"
+          },
+          "prompt": {
+            "default": "",
+            "description": "For operation=init: the loop prompt/goal. Required for init.",
+            "title": "Prompt",
+            "type": "string"
+          },
+          "interval_seconds": {
+            "default": null,
+            "description": "For operation=init: fixed interval in seconds. Omit for dynamic mode.",
+            "title": "Interval Seconds",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
           "outcome": {
             "default": null,
             "description": "Iteration outcome. Required for operation=commit; the only valid value is 'continue', which schedules the next wakeup. The loop only ends when the user stops it, so finishing this iteration's work is NOT a reason to end the loop.",
@@ -891,6 +965,12 @@
               "string",
               "null"
             ]
+          },
+          "summary": {
+            "default": "",
+            "description": "Concise durable summary of this loop iteration.",
+            "title": "Summary",
+            "type": "string"
           },
           "progress": {
             "default": "none",
@@ -903,21 +983,17 @@
             "title": "Progress",
             "type": "string"
           },
-          "prompt": {
-            "default": "",
-            "description": "For operation=init: the loop prompt/goal. Required for init.",
-            "title": "Prompt",
-            "type": "string"
+          "next_delay_seconds": {
+            "default": null,
+            "title": "Next Delay Seconds",
+            "type": [
+              "number",
+              "null"
+            ]
           },
           "reason": {
             "default": "",
             "title": "Reason",
-            "type": "string"
-          },
-          "summary": {
-            "default": "",
-            "description": "Concise durable summary of this loop iteration.",
-            "title": "Summary",
             "type": "string"
           }
         },
@@ -932,18 +1008,18 @@
           "next_delay_seconds",
           "reason"
         ],
-        "type": "object"
+        "additionalProperties": false
       },
       "strict": true
-    },
-    "type": "function"
+    }
   },
   {
+    "type": "function",
     "function": {
-      "description": "Execute a Bash command; working directory is the workspace root. Returns stdout, stderr, and exit code.",
       "name": "bash",
+      "description": "Execute a Bash command; working directory is the workspace root. Returns stdout, stderr, and exit code.",
       "parameters": {
-        "additionalProperties": false,
+        "type": "object",
         "properties": {
           "command": {
             "description": "non-interactive Bash command string to execute.",
@@ -961,31 +1037,19 @@
           "command",
           "timeout"
         ],
-        "type": "object"
+        "additionalProperties": false
       },
       "strict": true
-    },
-    "type": "function"
+    }
   },
   {
+    "type": "function",
     "function": {
-      "description": "Track multi-step work with a short task list. Use write to replace the list, Use update to move items between pending/active/done, and use read to inspect current progress.",
       "name": "todo",
+      "description": "Track multi-step work with a short task list. Use write to replace the list, Use update to move items between pending/active/done, and use read to inspect current progress.",
       "parameters": {
-        "additionalProperties": false,
+        "type": "object",
         "properties": {
-          "filter": {
-            "default": "all",
-            "description": "Filter for 'read' operation: all, pending, active, done.",
-            "enum": [
-              "all",
-              "pending",
-              "active",
-              "done"
-            ],
-            "title": "Filter",
-            "type": "string"
-          },
           "op": {
             "default": "write",
             "description": "Operation: 'write' (full replace), 'update' (incremental by id), 'read' (query only).",
@@ -1000,30 +1064,34 @@
           "todos": {
             "default": null,
             "description": "Full todo list — required for 'write' operation.",
+            "title": "Todos",
+            "type": [
+              "array",
+              "null"
+            ],
             "items": {
-              "additionalProperties": false,
               "properties": {
-                "content": {
-                  "description": "Task description, one sentence.",
-                  "title": "Content",
-                  "type": "string"
-                },
                 "id": {
                   "description": "Semantic id for the todo item (e.g., 'schema', 'api').",
                   "maxLength": 20,
                   "title": "Id",
                   "type": "string"
                 },
+                "content": {
+                  "description": "Task description, one sentence.",
+                  "title": "Content",
+                  "type": "string"
+                },
                 "status": {
-                  "default": "pending",
-                  "description": "pending | active | done",
                   "enum": [
                     "pending",
                     "active",
                     "done"
                   ],
                   "title": "TodoStatus",
-                  "type": "string"
+                  "type": "string",
+                  "default": "pending",
+                  "description": "pending | active | done"
                 }
               },
               "required": [
@@ -1032,20 +1100,35 @@
                 "status"
               ],
               "title": "TodoItem",
-              "type": "object"
-            },
-            "title": "Todos",
-            "type": [
-              "array",
-              "null"
-            ]
+              "type": "object",
+              "additionalProperties": false
+            }
           },
           "updates": {
             "default": null,
             "description": "List of updates — required for 'update' operation.",
+            "title": "Updates",
+            "type": [
+              "array",
+              "null"
+            ],
             "items": {
-              "additionalProperties": false,
               "properties": {
+                "id": {
+                  "description": "Target item id.",
+                  "title": "Id",
+                  "type": "string"
+                },
+                "status": {
+                  "enum": [
+                    "pending",
+                    "active",
+                    "done"
+                  ],
+                  "title": "TodoStatus",
+                  "type": "string",
+                  "description": "New status."
+                },
                 "content": {
                   "default": null,
                   "description": "Optional: update description too. Omit or pass empty string to keep existing content.",
@@ -1054,21 +1137,6 @@
                     "string",
                     "null"
                   ]
-                },
-                "id": {
-                  "description": "Target item id.",
-                  "title": "Id",
-                  "type": "string"
-                },
-                "status": {
-                  "description": "New status.",
-                  "enum": [
-                    "pending",
-                    "active",
-                    "done"
-                  ],
-                  "title": "TodoStatus",
-                  "type": "string"
                 }
               },
               "required": [
@@ -1077,13 +1145,21 @@
                 "content"
               ],
               "title": "TodoUpdateOp",
-              "type": "object"
-            },
-            "title": "Updates",
-            "type": [
-              "array",
-              "null"
-            ]
+              "type": "object",
+              "additionalProperties": false
+            }
+          },
+          "filter": {
+            "default": "all",
+            "description": "Filter for 'read' operation: all, pending, active, done.",
+            "enum": [
+              "all",
+              "pending",
+              "active",
+              "done"
+            ],
+            "title": "Filter",
+            "type": "string"
           }
         },
         "required": [
@@ -1092,23 +1168,33 @@
           "updates",
           "filter"
         ],
-        "type": "object"
+        "additionalProperties": false
       },
       "strict": true
-    },
-    "type": "function"
+    }
   },
   {
+    "type": "function",
     "function": {
-      "description": "Load skill instructions, create a new SKILL.md, or list discovered skills. Load/list are read-only; create writes a SKILL.md file.",
       "name": "skill",
+      "description": "Load skill instructions, create a new SKILL.md, or list discovered skills. Load/list are read-only; create writes a SKILL.md file.",
       "parameters": {
-        "additionalProperties": false,
+        "type": "object",
         "properties": {
-          "body": {
+          "op": {
+            "description": "Operation: 'load' (fetch a skill's instructions), 'create' (write a new SKILL.md), 'list' (enumerate discovered skills).",
+            "enum": [
+              "load",
+              "create",
+              "list"
+            ],
+            "title": "Op",
+            "type": "string"
+          },
+          "name": {
             "default": null,
-            "description": "Markdown instruction body. Required for op=create.",
-            "title": "Body",
+            "description": "Skill name. Required for op=load and op=create. Lowercase, hyphen-separated (e.g. 'react-patterns').",
+            "title": "Name",
             "type": [
               "string",
               "null"
@@ -1123,24 +1209,14 @@
               "null"
             ]
           },
-          "name": {
+          "body": {
             "default": null,
-            "description": "Skill name. Required for op=load and op=create. Lowercase, hyphen-separated (e.g. 'react-patterns').",
-            "title": "Name",
+            "description": "Markdown instruction body. Required for op=create.",
+            "title": "Body",
             "type": [
               "string",
               "null"
             ]
-          },
-          "op": {
-            "description": "Operation: 'load' (fetch a skill's instructions), 'create' (write a new SKILL.md), 'list' (enumerate discovered skills).",
-            "enum": [
-              "load",
-              "create",
-              "list"
-            ],
-            "title": "Op",
-            "type": "string"
           },
           "scope": {
             "default": "project",
@@ -1160,19 +1236,29 @@
           "body",
           "scope"
         ],
-        "type": "object"
+        "additionalProperties": false
       },
       "strict": true
-    },
-    "type": "function"
+    }
   },
   {
+    "type": "function",
     "function": {
-      "description": "Fetch content from a URL and convert to readable text.",
       "name": "webfetch",
+      "description": "Fetch content from a URL and convert to readable text.",
       "parameters": {
-        "additionalProperties": false,
+        "type": "object",
         "properties": {
+          "url": {
+            "description": "URL to fetch content from",
+            "title": "Url",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "The prompt to run on the fetched content",
+            "title": "Prompt",
+            "type": "string"
+          },
           "max_chars": {
             "default": 12000,
             "description": "Maximum extracted text characters",
@@ -1180,16 +1266,6 @@
             "minimum": 1000,
             "title": "Max Chars",
             "type": "integer"
-          },
-          "prompt": {
-            "description": "The prompt to run on the fetched content",
-            "title": "Prompt",
-            "type": "string"
-          },
-          "url": {
-            "description": "URL to fetch content from",
-            "title": "Url",
-            "type": "string"
           }
         },
         "required": [
@@ -1197,42 +1273,47 @@
           "prompt",
           "max_chars"
         ],
-        "type": "object"
+        "additionalProperties": false
       },
       "strict": true
-    },
-    "type": "function"
+    }
   },
   {
+    "type": "function",
     "function": {
-      "description": "Search the web. Returns titles, URLs, and snippets.",
       "name": "websearch",
+      "description": "Search the web. Returns titles, URLs, and snippets.",
       "parameters": {
-        "additionalProperties": false,
+        "type": "object",
         "properties": {
+          "query": {
+            "description": "Search query, max 70 characters",
+            "title": "Query",
+            "type": "string"
+          },
           "allowed_domains": {
             "default": null,
             "description": "Only include search results from these domains",
-            "items": {
-              "type": "string"
-            },
             "title": "Allowed Domains",
             "type": [
               "array",
               "null"
-            ]
+            ],
+            "items": {
+              "type": "string"
+            }
           },
           "blocked_domains": {
             "default": null,
             "description": "Never include search results from these domains",
-            "items": {
-              "type": "string"
-            },
             "title": "Blocked Domains",
             "type": [
               "array",
               "null"
-            ]
+            ],
+            "items": {
+              "type": "string"
+            }
           },
           "max_results": {
             "default": 10,
@@ -1241,11 +1322,6 @@
             "minimum": 1,
             "title": "Max Results",
             "type": "integer"
-          },
-          "query": {
-            "description": "Search query, max 70 characters",
-            "title": "Query",
-            "type": "string"
           }
         },
         "required": [
@@ -1254,29 +1330,19 @@
           "blocked_domains",
           "max_results"
         ],
-        "type": "object"
+        "additionalProperties": false
       },
       "strict": true
-    },
-    "type": "function"
+    }
   },
   {
+    "type": "function",
     "function": {
-      "description": "Discover and use Model Context Protocol (MCP) servers through a stable gateway.\n\n- `mcp(op=\"list\")` returns semantic server summaries; it does not load tool documentation.\n- When a server is relevant, use `mcp(op=\"load\", server=\"...\")` before calling it.\n- `mcp(op=\"load\")` may target a whole server or one tool and returns current-turn context.\n- `mcp(op=\"call\", ...)` executes a real MCP tool; pass arguments as a JSON object.\n- Never invent server names, tool names, or parameters; list or load when uncertain.",
       "name": "mcp",
+      "description": "Discover and use Model Context Protocol (MCP) servers through a stable gateway.\n\n- `mcp(op=\"list\")` returns semantic server summaries; it does not load tool documentation.\n- When a server is relevant, use `mcp(op=\"load\", server=\"...\")` before calling it.\n- `mcp(op=\"load\")` may target a whole server or one tool and returns current-turn context.\n- `mcp(op=\"call\", ...)` executes a real MCP tool; pass arguments as a JSON object.\n- Never invent server names, tool names, or parameters; list or load when uncertain.",
       "parameters": {
-        "additionalProperties": false,
+        "type": "object",
         "properties": {
-          "arguments": {
-            "additionalProperties": true,
-            "default": null,
-            "description": "Tool arguments for op=call. Pass a JSON object, not a serialized JSON string.",
-            "title": "Arguments",
-            "type": [
-              "object",
-              "null"
-            ]
-          },
           "op": {
             "description": "Operation: 'list' (discover MCP servers and tool bundles), 'load' (fetch parameter details for a server or tool), 'call' (execute a real MCP tool).",
             "enum": [
@@ -1286,15 +1352,6 @@
             ],
             "title": "Op",
             "type": "string"
-          },
-          "query": {
-            "default": null,
-            "description": "Optional filter for op=list.",
-            "title": "Query",
-            "type": [
-              "string",
-              "null"
-            ]
           },
           "server": {
             "default": null,
@@ -1313,6 +1370,25 @@
               "string",
               "null"
             ]
+          },
+          "arguments": {
+            "default": null,
+            "description": "Tool arguments for op=call. Pass a JSON object, not a serialized JSON string.",
+            "title": "Arguments",
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true
+          },
+          "query": {
+            "default": null,
+            "description": "Optional filter for op=list.",
+            "title": "Query",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -1322,9 +1398,8 @@
           "arguments",
           "query"
         ],
-        "type": "object"
+        "additionalProperties": false
       }
-    },
-    "type": "function"
+    }
   }
 ]

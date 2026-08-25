@@ -74,6 +74,7 @@ from voidx.agent.application.instruction import InstructionService
 from voidx.llm.message_markers import GUIDANCE_MARKER
 from voidx.llm.structured import ainvoke_structured
 from voidx.agent.adapters.persistence.session_repository import SessionInfo
+from voidx.observability.tool_log import log_tool_event
 from voidx.agent.adapters.persistence.subagent_repository import append_subagent_event
 from voidx.agent.ports.ui import AgentUiPort
 from voidx.agent.ports.workspace_lock import WorkspaceWriteLockPort
@@ -186,8 +187,15 @@ class LangGraphExecution:
     ) -> None:
         return await _permission_flow_for(self)._ask_and_apply_permission(need_ask, approved, denied)
 
-    async def _ask_tool_permission(self: Any, tool_calls: list[dict] | list[PermissionDecision]) -> str | None:
-        return await _permission_flow_for(self)._ask_tool_permission(tool_calls)
+    async def _ask_tool_permission(
+        self: Any,
+        tool_calls: list[dict] | list[PermissionDecision],
+        request_id: str | None = None,
+    ) -> str | None:
+        return await _permission_flow_for(self)._ask_tool_permission(
+            tool_calls,
+            request_id=request_id,
+        )
 
     def _show_permission_output(self: Any, message: str) -> bool:
         return _permission_flow_for(self)._show_permission_output(message)
@@ -478,6 +486,7 @@ class LangGraphExecution:
         self._turn_metrics = TurnControlMetrics()
         self._pending_turn_stop_commit: dict[str, Any] | None = None
         self._pending_guidance: list[GuidanceEntry] = []
+        self._guidance_service: Any | None = None
         self._clear_session_tasks: set[asyncio.Task[None]] = set()
         self._title_generation: int = 0
         self._title_task: asyncio.Task[None] | None = None
@@ -719,6 +728,22 @@ class LangGraphExecution:
         guidance = " ".join(text.strip().split())
         if not guidance:
             return False
+        guidance_service = getattr(self, "_guidance_service", None)
+        if guidance_service is not None:
+            current_state = self._current_thread_state()
+            current_session = current_state.session if current_state is not None else self._session
+            submitted = guidance_service.submit_guidance(
+                guidance,
+                source=source,
+                thread_id=thread_id or (
+                    current_state.thread_id if current_state is not None else ""
+                ),
+                session_id=session_id or (
+                    current_session.id if current_session is not None else ""
+                ),
+            )
+            return submitted is not None
+
         truncated = False
         if len(guidance) > GUIDANCE_MAX_CHARS:
             guidance = guidance[:GUIDANCE_MAX_CHARS].rstrip()
@@ -830,9 +855,35 @@ class LangGraphExecution:
     def bind_presentation_snapshots(self, snapshots: PresentationSnapshotPort) -> None:
         self._session_runtime.presentation_snapshots = snapshots
 
+    def bind_guidance_service(self, guidance_service: Any) -> None:
+        self._guidance_service = guidance_service
+        add_callback = getattr(guidance_service, "add_submitted_callback", None)
+        if callable(add_callback):
+            add_callback(self._project_submitted_guidance)
+
     def bind_automation_services(self, loop_service, goal_service) -> None:
         self.loop_service = loop_service
         self.goal_service = goal_service
+
+    def _project_submitted_guidance(self, guidance: Any) -> None:
+        source = guidance.source if guidance.source in {"user", "guard"} else "guard"
+        if source == "user" and self._ui.via_events():
+            self._ui.events.emit_direct(
+                GuidanceSubmitted(text=guidance.text, truncated=guidance.truncated)
+            )
+        entry = GuidanceEntry(
+            text=guidance.text,
+            truncated=guidance.truncated,
+            source=source,
+            thread_id=guidance.target_thread_id or "",
+            session_id=guidance.target_session_id or "",
+            guidance_id=guidance.guidance_id,
+        )
+        target_state = self._guidance_target_state(entry)
+        if target_state is not None:
+            target_state.pending_guidance.append(entry)
+        else:
+            self._pending_guidance.append(entry)
 
     def bind_coding_turn_runner(
         self,
@@ -914,6 +965,12 @@ class LangGraphExecution:
         self._session_msg_cache = None
         self._context_cache = ContextCompilerCache()
         await self.restore_runtime_state()
+        try:
+            from voidx.agent.adapters.persistence.context_frame_repository import gc_context_frames
+
+            await gc_context_frames(session.id)
+        except Exception as exc:
+            log_tool_event("context_frame_gc_failed", message=str(exc), session_id=session.id)
         await self._resume_loop_for_session(session)
 
     async def _resume_loop_for_session(self, session: SessionInfo) -> None:
@@ -1217,6 +1274,7 @@ class LangGraphExecution:
         display_text: str | None = None,
         context: TurnExecutionContext,
         persist_user_input: bool = True,
+        guidance: tuple[dict[str, Any], ...] | None = None,
     ) -> None:
         if not isinstance(context, TurnExecutionContext):
             raise TypeError("run_turn requires TurnExecutionContext")
@@ -1225,6 +1283,7 @@ class LangGraphExecution:
             display_text=display_text,
             context=context,
             persist_user_input=persist_user_input,
+            guidance=guidance,
         )
 
 

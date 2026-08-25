@@ -23,6 +23,7 @@ class AgentToolRuntime:
     loop_control: object | None = None
     goal_control: object | None = None
     goal_intake: object | None = None
+    goal_checkpoint_controller: object | None = None
     loop_intake: object | None = None
     subagent_transport: SubagentTransport | None = None
     run_id: str = ""
@@ -39,6 +40,20 @@ class AgentToolRuntime:
     workflow_dag: object | None = None
     workflow_route: dict[str, str | None] | None = None
     goal_phase: str = "work"
+    goal_store: object | None = None
+    goal_generation: str = ""
+    goal_parent_session_id: str = ""
+    goal_parent_thread_id: str = ""
+    goal_profile_snapshot: dict[str, object] = field(default_factory=dict)
+    goal_main_session_id: str = ""
+    goal_work_session_id: str = ""
+    goal_evaluator_session_id: str = ""
+    goal_turn_id: str = ""
+    goal_attempt_number: int = 0
+    goal_attempt_id: str = ""
+    goal_lease_owner: str = ""
+    goal_fencing_token: int = 0
+    goal_protocol_ids: dict[str, str] = field(default_factory=dict)
     loop_phase: str = "work"
 
 

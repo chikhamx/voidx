@@ -75,6 +75,7 @@ class WakeupPumpMixin:
             lease_seconds=self._lease_seconds,
             claim_kind="wakeup",
             events=getattr(self, "_events", None),
+            guidance=getattr(self, "_guidance", None),
         )
         skipped: set[str] = set()
         for _ in range(16):

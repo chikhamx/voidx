@@ -124,3 +124,41 @@ def test_bound_tool_ids_compatibility_is_safe_for_unbounded_baseline() -> None:
     policy = _policy(block=frozenset({"write"}))
 
     assert policy.bound_tool_ids == frozenset()
+
+
+def test_goal_evaluator_allows_only_read_only_tools_and_goal_decision() -> None:
+    policy = _policy(run_mode="goal_eval", phase="evaluator")
+    capabilities = {
+        "read": "read_only",
+        "find": "read_only",
+        "websearch": "read_only",
+        "goal_decision": "orchestration",
+        "workflow": "orchestration",
+        "todo": "orchestration",
+        "goal": "orchestration",
+        "goal_checkpoint": "orchestration",
+        "bash": "execution_gated",
+        "write": "execution_gated",
+        "replace": "execution_gated",
+        "mcp": "external",
+    }
+
+    assert policy.visible_tool_ids(capabilities) == frozenset(
+        {"read", "find", "websearch", "goal_decision"}
+    )
+    assert policy.check_tool_call(
+        "goal_decision", {}, capability="orchestration"
+    ).allowed
+    for tool_name in (
+        "workflow",
+        "todo",
+        "goal",
+        "goal_checkpoint",
+        "bash",
+        "write",
+        "replace",
+        "mcp",
+    ):
+        assert not policy.check_tool_call(
+            tool_name, {}, capability=capabilities[tool_name]
+        ).allowed

@@ -179,14 +179,26 @@ class GoalProtocol:
         self.verification_tool_definitions = verification_tool_definitions or []
 
     def tool_definitions(self) -> list[dict[str, Any]]:
-        from voidx.agent.adapters.tools.automation.goal import GoalTool
+        from voidx.agent.adapters.tools.automation.goal import (
+            GoalCheckpointTool,
+            GoalDecisionTool,
+            GoalInitTool,
+        )
 
+        phase_tools = {
+            "idle": GoalInitTool,
+            "intake": GoalInitTool,
+            "work": GoalCheckpointTool,
+            "evaluator": GoalDecisionTool,
+        }
+        tool_type = phase_tools.get(self.phase, GoalCheckpointTool)
+        tool = tool_type()
         definitions = [{
             "type": "function",
             "function": {
-                "name": "goal",
-                "description": GoalTool.description,
-                "parameters": GoalTool().parameters_schema(),
+                "name": tool.id,
+                "description": tool.description,
+                "parameters": tool.parameters_schema(),
             },
         }, *self.verification_tool_definitions]
         existing = {item.get("function", {}).get("name") for item in definitions}
@@ -206,8 +218,10 @@ class GoalProtocol:
         if turn_context is None:
             return None
         self.phase = turn_context.goal_phase
-        if self.phase == "intake":
+        if self.phase in {"idle", "intake"}:
             return turn_context.goal_intake_controller
+        if self.phase == "work":
+            return turn_context.goal_checkpoint_controller
         if self.phase == "evaluator":
             return turn_context.goal_controller
         return None
@@ -230,6 +244,8 @@ class GoalProtocol:
             if getattr(controller, "cancelled", False):
                 return False
             return controller.final_spec() is None
+        if self.phase == "work":
+            return controller.final_checkpoint() is None
         if self.phase == "evaluator":
             return controller.final_decision() is None
         return False
@@ -238,13 +254,18 @@ class GoalProtocol:
         if self.phase == "intake":
             return (
                 "Do not execute the user's request; this stage only defines the goal. "
-                "Ask one concise clarification question if needed, otherwise call goal with "
-                "op=\"init\", objective, acceptance_condition, and optional achievement_method. "
+                "Ask one concise clarification question if needed, otherwise call goal_init "
+                "with objective, acceptance_condition, and optional achievement_method. "
                 "The spec is shown to the user for approval; revise and re-submit if they request changes."
+            )
+        if self.phase == "work":
+            return (
+                "Report the work attempt with goal_checkpoint using a concise summary, "
+                "concrete evidence, changed files, verification, and progress."
             )
         return (
             "Evaluate the acceptance condition using policy-approved verification tools when needed, "
-            "then call goal with op=\"decision\" and status=\"finished\", \"continue\", or \"blocked\"."
+            "then call goal_decision with status=\"finished\", \"continue\", or \"blocked\"."
         )
 
 

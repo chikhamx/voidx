@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 
 from voidx.agent.domain.automation.goal import GoalSpec, GoalState
 from voidx.agent.application.automation.goal.runner import GoalRuntimeRunner
@@ -28,12 +28,14 @@ class GoalRuntimeScheduler(WakeupPumpMixin):
         lease_seconds: float = 60,
         pump_poll_seconds: float = 1.0,
         events: AgentEventPublisher | None = None,
+        guidance: Any | None = None,
     ) -> None:
         self._store = store
         self._runtime = runtime
         self._workspace = workspace
         self._evaluator = evaluator
         self._events = events or NullAgentEventPublisher()
+        self._guidance = guidance
         self._init_pump(
             lease_owner=lease_owner,
             lease_seconds=lease_seconds,
@@ -51,21 +53,28 @@ class GoalRuntimeScheduler(WakeupPumpMixin):
         if loaded is None:
             raise RuntimeError("goal thread must be created before scheduling")
         state = GoalState.model_validate(loaded.state.context["goal_run"])
-        outbox = await self._store.enqueue_outbox(
-            thread_id=loaded.thread.thread_id,
-            kind="goal_prompt",
-            payload={
-                "spec": spec.model_dump(mode="json"),
-                "goal_state": state.model_dump(mode="json"),
-            },
-            expected_state_version=loaded.state_version,
-        )
+        pending = await self._store.list_pending_outbox(loaded.thread.thread_id)
+        outbox = next((item for item in pending if item.kind == "goal_prompt"), None)
+        if outbox is None:
+            binding = await self._store.get_goal_generation(state.generation)
+            if binding is not None:
+                raise RuntimeError("bound Goal generation is missing its phase outbox")
+            outbox = await self._store.enqueue_outbox(
+                thread_id=loaded.thread.thread_id,
+                kind="goal_prompt",
+                payload={
+                    "spec": spec.model_dump(mode="json"),
+                    "goal_state": state.model_dump(mode="json"),
+                },
+                expected_state_version=loaded.state_version,
+            )
         dispatcher = RuntimeDispatcher(
             store=self._store,
             runner=self._runner(),
             lease_owner=self._lease_owner,
             lease_seconds=self._lease_seconds,
             events=self._events,
+            guidance=self._guidance,
         )
         return await dispatcher.dispatch_outbox(outbox.outbox_id)
 
@@ -86,4 +95,8 @@ class GoalRuntimeScheduler(WakeupPumpMixin):
     def _runner(self):
         if self._evaluator is None:
             return self._runtime
-        return GoalRuntimeRunner(runtime=self._runtime, evaluator=self._evaluator)
+        return GoalRuntimeRunner(
+            runtime=self._runtime,
+            evaluator=self._evaluator,
+            store=self._store,
+        )

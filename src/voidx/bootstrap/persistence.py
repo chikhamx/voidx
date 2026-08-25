@@ -35,6 +35,26 @@ def initialize_persistence() -> None:
     initialize_shared_database()
 
 
+async def reconcile_goal_cleanup() -> list[str]:
+    from voidx.agent.adapters.persistence.thread_repository import ThreadStore
+    from voidx.agent.application.automation.goal.cleanup import GoalCleanupCoordinator
+
+    return await GoalCleanupCoordinator(store=ThreadStore()).reconcile_orphans()
+
+
+async def deliver_goal_public_summaries() -> int:
+    from voidx.agent.adapters.persistence.thread_repository import ThreadStore
+
+    store = ThreadStore()
+    pending = await store.list_pending_goal_public_summaries()
+    delivered = 0
+    for summary in pending:
+        delivered += int(
+            await store.deliver_goal_public_summary(summary["summary_id"])
+        )
+    return delivered
+
+
 def migrate_database(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path)
@@ -48,6 +68,8 @@ def migrate_database(path: Path) -> None:
 
 __all__ = [
     "initialize_persistence",
+    "reconcile_goal_cleanup",
+    "deliver_goal_public_summaries",
     "migrate_connection",
     "migrate_database",
     "migration_plan",

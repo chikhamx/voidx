@@ -79,6 +79,7 @@ import {
   _resetNavigationForTest,
   initThreadNavigation,
   recordThreadVisit,
+  clearPermissionRequests,
   showRequest,
   showPromptItemRequest,
   showConversationPrompt,
@@ -1298,7 +1299,9 @@ export function handleItem(
       }
     } else if (method === "item.completed") {
       if (type === "permission" && data.cleared) {
-        requestDialogEl.close();
+        clearPermissionRequests(
+          typeof data.request_id === "string" ? data.request_id : undefined,
+        );
       } else {
         completeConversationPrompt(data);
       }

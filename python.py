@@ -93,7 +93,7 @@ def _current_runtime(data_root: Path) -> tuple[Path, Path] | None:
 
 def _runtime_env(site_packages: Path, data_root: Path) -> dict[str, str]:
     env = os.environ.copy()
-    paths = [str(site_packages), str(_WORKSPACE_ROOT)]
+    paths = [str(_WORKSPACE_ROOT / "src"), str(_WORKSPACE_ROOT), str(site_packages)]
     existing = env.get("PYTHONPATH")
     if existing:
         paths.extend(

@@ -28,7 +28,22 @@ class TurnExecutionContext(BaseModel):
     loop_controller: Any | None = None
     goal_controller: Any | None = None
     goal_intake_controller: Any | None = None
+    goal_checkpoint_controller: Any | None = None
     goal_phase: str = "work"
+    goal_store: Any | None = None
+    goal_generation: str = ""
+    goal_parent_session_id: str = ""
+    goal_parent_thread_id: str = ""
+    goal_profile_snapshot: dict[str, Any] = Field(default_factory=dict)
+    goal_main_session_id: str = ""
+    goal_work_session_id: str = ""
+    goal_evaluator_session_id: str = ""
+    goal_turn_id: str = ""
+    goal_attempt_number: int = 0
+    goal_attempt_id: str = ""
+    goal_lease_owner: str = ""
+    goal_fencing_token: int = 0
+    goal_protocol_ids: dict[str, str] = Field(default_factory=dict)
     loop_intake_controller: Any | None = None
     loop_phase: str = "work"
     detached: bool = False

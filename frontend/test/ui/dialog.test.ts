@@ -1,7 +1,14 @@
 // @ts-nocheck
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { _setSocket, _resetForTest as _resetRpcForTest } from "../../src/rpc/client";
-import { _resetDialogForTest, renderTextRequest, showPromptItemRequest } from "../../src/ui/dialog";
+import {
+  _resetDialogForTest,
+  clearPermissionRequests,
+  pendingUiRequests,
+  renderTextRequest,
+  showPromptItemRequest,
+  showRequest,
+} from "../../src/ui/dialog";
 
 const controlsEl = document.querySelector("#request-controls");
 
@@ -182,5 +189,68 @@ describe("permission approval hierarchy", () => {
 
     expect(document.querySelector(".request-execution")?.textContent).toContain("npm run build");
     expect(document.querySelector(".request-scope-section")?.textContent).toContain("未提供额外授权范围");
+  });
+});
+
+
+describe("permission request lifecycle", () => {
+  it("clears timed-out permission requests without dropping other queued prompts", () => {
+    showRequest({
+      kind: "permission",
+      request_id: "permission-active",
+      prompt: "Allow active tool?",
+      choices: [["Allow", "y", "Allow once"]],
+      response_method: "session.respond",
+    });
+    showRequest({
+      kind: "permission",
+      request_id: "permission-stale",
+      prompt: "Allow stale tool?",
+      choices: [["Allow", "y", "Allow once"]],
+      response_method: "session.respond",
+    });
+    showRequest({
+      kind: "choice",
+      request_id: "choice-queued",
+      prompt: "Continue?",
+      choices: [["Yes", "y", "Continue"]],
+      response_method: "session.respond",
+    });
+
+    expect(pendingUiRequests.map((request) => request.request_id)).toEqual([
+      "permission-stale",
+      "choice-queued",
+    ]);
+
+    clearPermissionRequests();
+
+    expect(document.querySelector("#request-dialog").open).toBe(true);
+    expect(document.querySelector("#request-title").textContent).toBe("Continue?");
+    expect(pendingUiRequests).toHaveLength(0);
+  });
+
+
+  it("does not close a newer permission request when an older clear event arrives", () => {
+    showRequest({
+      kind: "permission",
+      request_id: "permission-old",
+      prompt: "Allow old tool?",
+      choices: [["Allow", "y", "Allow once"]],
+      response_method: "session.respond",
+    });
+    clearPermissionRequests("permission-old");
+    showRequest({
+      kind: "permission",
+      request_id: "permission-new",
+      prompt: "Allow new tool?",
+      choices: [["Allow", "y", "Allow once"]],
+      response_method: "session.respond",
+    });
+
+    clearPermissionRequests("permission-old");
+
+    expect(document.querySelector("#request-dialog").open).toBe(true);
+    expect(document.querySelector("#request-title").textContent).toBe("权限审批");
+    expect(document.querySelector(".request-permission-question")?.textContent).toContain("Allow new tool?");
   });
 });

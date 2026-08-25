@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 from voidx.agent.ports.ui import (
@@ -64,6 +65,15 @@ class PresentationUiAdapter:
     async def ask_choice(self, prompt: str, choices: list[Any], **kwargs: Any) -> str | None:
         if self._interaction_frontend is None:
             return None
+        try:
+            parameters = inspect.signature(self._interaction_frontend.ask_choice).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        if parameters and not any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        ):
+            kwargs = {key: value for key, value in kwargs.items() if key in parameters}
         return await self._interaction_frontend.ask_choice(prompt, choices, **kwargs)
 
     async def ask_text(self, prompt: str, **kwargs: Any) -> str | None:

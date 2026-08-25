@@ -192,12 +192,14 @@ async def test_headless_frontend_sends_permission_request_with_thread_context():
         "Allow tool use?",
         [("Yes", "y", "Allow once"), ("No", "n", "Deny")],
         details=[{"name": "edit", "pattern": "src/app.py"}],
+        request_id="permission-1",
     )
 
     assert result == "y"
     assert len(seen_requests) == 1
     request = seen_requests[0]
     assert isinstance(request, UiPermissionRequest)
+    assert request.request_id == "permission-1"
     assert request.thread_id == "t3"
     assert request.prompt == "Allow tool use?"
     assert request.choices[0] == ("Yes", "y", "Allow once")

@@ -1,10 +1,12 @@
+> **Status: Done** — Archived on 2026-08-25.
+
 ---
 name: goal-phase-transparent-resume
 display_name: Goal 阶段检查点、三 Session 与透明续跑
 description: Goal 使用 main、work、evaluator 三个 session，通过阶段专用协议工具和 durable checkpoint 实现透明续跑；用户不操作生命周期命令
 doc_type: tech-design
 audience: human+llm
-status: draft
+status: done
 date: 2026-08-21
 ---
 
@@ -341,23 +343,22 @@ main session 不属于 bundle，删除/归档一个 generation 不删除 main，
 
 归档规则：
 
-1. generation 只有进入 `completed | blocked | failed | cancelled` 后才可归档。
-2. 归档在 SQLite 事务中写 `archived_at`，并使该 bundle 不再参与 active/resumable 查询；work/evaluator session 行和目录仍保留，供审计或显式诊断。
-3. 归档不移动目录、不重命名 session ID，也不把 transcript 合并到 main；物理移动会破坏 `session_dir(session_id)` 和 context frame `file_path` 契约。
-4. archived bundle 可由 retention policy 进入清理，但不得通过通用 session age cleanup 单独选中其 work/evaluator session。
+1. generation 只有进入 `completed | blocked | failed | cancelled` 后才可归档。`archive_goal_generation()` 在 SQLite 事务中幂等写入 `archived_at`；归档不移动目录、不重命名 session ID，也不删除 main session 或 PublicSummary。
+2. `archived_at` 会使 Guidance、Goal phase outbox、generation lease 和 Goal protocol 新写入被拒绝；`GoalState` 与 `GoalStatePatch` 不再保存 `active`，运行/终态只由 lifecycle 与 `is_goal_terminal()` 判定。
+3. 归档后的物理清理只能通过 `ThreadStore.cleanup_goal_generation(generation)` 进行，不得由通用 session age cleanup 单独选中 work/evaluator session。
 
-清理必须以 generation bundle 为单位，并使用 durable tombstone 协调 SQLite 与文件系统：
+清理实现（已完成）：
+
+一个 generation 的 runtime state、Goal thread、两个内部 session 和目录构成不可拆分的 `GoalGenerationBundle`。main session 不属于 bundle。
 
 ```text
 active/archived
-  → cleanup_pending      # SQLite 事务：写 tombstone，禁止查询/恢复/新写入
-  → delete directories  # 幂等删除 work/evaluator 两个平级目录
-  → cleanup_committed    # SQLite 事务：删除内部 session 行与 generation runtime rows
+  → pending       # SQLite 事务：写 durable tombstone，封禁 Goal 写入口
+  → delete dirs   # 持有 work/evaluator 的有序跨进程目录锁后幂等删目录
+  → committed    # SQLite 事务：删除 runtime/journal/binding/internal sessions
 ```
 
-具体约束：
-
-1. 新增独立 tombstone 表；它不以待删除 generation/session 行为外键，committed 后仍保留定位信息：
+1. SQLite v11 新增独立 `goal_generation_cleanup` 表；表不引用待删除 generation/session 外键，`committed` 后仍保留 generation 与三个 session ID：
 
 ```sql
 CREATE TABLE goal_generation_cleanup (
@@ -366,21 +367,29 @@ CREATE TABLE goal_generation_cleanup (
     main_session_id TEXT NOT NULL,
     work_session_id TEXT NOT NULL,
     evaluator_session_id TEXT NOT NULL,
-    status TEXT NOT NULL,              -- pending | committed
+    status TEXT NOT NULL CHECK(status IN ('pending', 'committed')),
     requested_at TEXT NOT NULL,
     completed_at TEXT,
     last_error TEXT NOT NULL DEFAULT ''
 );
 ```
 
-2. `cleanup_pending` 事务先复制 generation 与三个 session ID 到 tombstone，递增 `cleanup_epoch`，确认 generation 已终态，并取消/封禁未完成 lease、attempt 和 outbox。之后 writer 的两次 SQLite 校验均因 pending/committed tombstone 而拒绝。
-3. cleanup 与 transcript writer 使用同一跨进程 session lock。cleanup 按 canonical session ID 字典序获取 work/evaluator 两把锁，writer 每次只获取一把；任何需要多把 session 锁的流程都遵守相同排序，禁止反向获取。这样 pending 事务会阻止尚未入场 writer，cleanup 等待已持锁 writer 退出。
-4. cleanup 持有两把锁期间，幂等删除 work/evaluator 两个平级目录、确认其不存在，并执行最终 SQLite 清理事务；释放锁前再次根据 tombstone ID 检查目录仍不存在。append helper 在持锁后的 tombstone 校验前不得 `mkdir`，因此迟到 writer 不能重建目录。
-5. 最终 SQLite 事务按外键顺序执行：先删除 `goal_transcript_records`、guidance/attempt/outbox/journal/failure 和 Goal thread 等引用行；再删除 `goal_generations` binding；最后删除 work/evaluator 两个 internal `sessions` 行。`context_frames`、session runtime state 等 session 子表可由现有 session FK cascade 清理；随后将独立 tombstone 标为 committed。不得先删 session row 后依赖重试绕过 `ON DELETE RESTRICT`。
-6. 任一步失败保留 `pending + last_error` 并重试；不得回滚成 active，也不得重新创建已删除目录。即使 binding/session row 已由人工修复删除，reconciler 仍可凭 tombstone 中的两个 opaque 子 ID 定位并清除迟到复活目录。
-7. 用户删除 main session 时，先枚举其所有非 committed bundle：运行中 generation 必须明确取消并完成终态事务；随后逐 bundle cleanup；最后才删除 main 目录和 session row。禁止依赖 `sessions` 外键级联静默遗留子目录。
-8. 通用 `delete_session(internal_session_id)` 必须拒绝；只有 `delete_goal_generation(generation)` 和 main-session bundle 删除流程能删除 Goal 内部 session。
-9. orphan reconciler 定期检查：binding 有 session row 但目录缺失、目录存在但 internal session row 缺失、cleanup tombstone 卡住或 committed 后目录复活。若 session 的 `message_count=0`、无 context frame 且无 accepted transcript index，目录尚未按需创建是合法状态；否则终态 bundle 可继续清理，非终态 bundle 的 canonical transcript/context 缺失则进入 durable runtime failure，不凭空创建替代历史。
+2. prepare 事务先读取 tombstone：`committed` 直接从 tombstone 重建 binding；`pending` 复用原定位信息；没有 tombstone 时要求 generation 已终态，补写 `archived_at` 并创建 `pending` tombstone。当前首次 `cleanup_epoch` 为 `1`，失败重试沿用同一 epoch 和 opaque session IDs。
+3. cleanup 与所有 session JSONL 读写共用 `session_directory_locks()`：进程内 asyncio lock 与 POSIX `fcntl.flock` 组合，按 canonical session ID 字典序获取，并通过 ContextVar 支持同一上下文嵌套。缺失目录的读取不会重新创建 session lock。
+4. 持有 work/evaluator 两把锁时删除两个目录；目录删除失败不会回滚 tombstone。随后最终 SQLite 事务按依赖顺序删除 runtime outbox、turn attempts、Goal thread messages/frames/state/thread、Guidance inbox、recovery lease、protocol journal、`goal_generations`，再删除 work/evaluator `sessions` 行，最后标记 tombstone 为 `committed`。
+5. 任一步失败都会保留 `pending` 并写入 `last_error`；再次调用从 tombstone 重试。提交成功后重复调用只返回 tombstone binding，不重复删除或重建目录。
+6. pending/committed tombstone 会在 `submit_guidance()`、`ensure_goal_phase_outbox()`、`acquire_goal_generation_lease()`、`submit_goal_protocol()` 的事务入口被检查；目标 generation、Goal thread 或内部 work/evaluator session 命中时均拒绝写入。
+7. 通用 `delete_session(internal_session_id)` 明确拒绝删除 Goal 内部 session；普通 session 删除全程持有目录锁，完成后释放进程锁。Goal 内部 session 只能由 generation cleanup 最终事务删除。
+
+本轮未实现、因此不作为已完成契约声称的能力：main session 删除时自动枚举并完成其所有 generation bundle，以及独立 orphan reconciler。它们仍需后续设计/实现，不得绕过本节的 generation cleanup 入口。
+
+实现与验证入口：
+
+- `src/voidx/persistence/sqlite.py`：schema v11 与 cleanup tombstone migration。
+- `src/voidx/persistence/jsonl.py`：session directory lock 与 JSONL 操作。
+- `src/voidx/agent/adapters/persistence/thread_repository.py`：两阶段 cleanup、写入口封禁与 retry。
+- `src/tests/test_goal/test_goal_cleanup.py`：幂等、失败重试、pending 写封禁、内部 session 删除回归。
+- 最终验证：`./test.py --backend`、`./python.py -m py_compile ...`、`git diff --check`。
 ## 5. 内部状态机与线性日志
 
 ### 5.1 线性阶段序列

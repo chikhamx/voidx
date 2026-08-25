@@ -127,6 +127,12 @@ class ProfileToolPolicy:
     ) -> str:
         if canonical in self.resource_policy.tools_block:
             return "profile_blocked"
+        if (
+            self.phase == "evaluator"
+            and canonical != "goal_decision"
+            and capability != "read_only"
+        ):
+            return "evaluator_tool_blocked"
         lifecycle = {"turn", "goal", "loop"}
         if canonical in lifecycle and not self._lifecycle_allowed(canonical):
             return "lifecycle_not_allowed"

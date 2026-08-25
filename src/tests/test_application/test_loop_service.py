@@ -184,14 +184,13 @@ async def test_loop_service_start_rejects_missing_reference(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_loop_service_start_creates_missing_parent_session(tmp_path) -> None:
-    from voidx.agent.adapters.persistence.session_repository import get_session
-
-    service = LoopService(store=ThreadStore(), scheduler=FakeScheduler(), workspace=str(tmp_path))
+    store = ThreadStore()
+    service = LoopService(store=store, scheduler=FakeScheduler(), workspace=str(tmp_path))
 
     status = await service.start("default", LoopSpec(prompt="check build"))
 
     assert status.active is True
-    parent = await get_session(status.loop_thread_id)
+    parent = await store.get_session(status.loop_thread_id)
     assert parent is not None
     assert parent.runtime_profile == "loop"
 
@@ -250,8 +249,6 @@ async def test_loop_full_dispatch_chain_without_fk_violation(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_loop_thread_uses_isolated_session_not_parent(tmp_path) -> None:
-    from voidx.agent.adapters.persistence.session_repository import get_session
-
     store = ThreadStore()
     service = LoopService(store=store, scheduler=FakeScheduler(), workspace=str(tmp_path))
 
@@ -261,7 +258,7 @@ async def test_loop_thread_uses_isolated_session_not_parent(tmp_path) -> None:
     assert loaded.thread.session_id != "parent-1"
     assert loaded.thread.session_id == status.loop_thread_id
     # The isolated loop session must exist so FK-guarded writes succeed.
-    assert await get_session(status.loop_thread_id) is not None
+    assert await store.get_session(status.loop_thread_id) is not None
 
 
 @pytest.mark.asyncio
@@ -551,3 +548,50 @@ async def test_resume_without_any_previous_loop_returns_none(tmp_path) -> None:
     service = LoopService(store=ThreadStore(), scheduler=FakeScheduler(), workspace=str(tmp_path))
 
     assert await service.resume("parent-1") is None
+
+
+@pytest.mark.asyncio
+async def test_loop_runner_forwards_dispatcher_guidance_snapshot_to_turn() -> None:
+    from voidx.agent.application.agent_registry import AgentRegistry
+    from voidx.agent.application.automation.loop.scheduler import LoopRuntimeRunner
+    from voidx.agent.domain.thread import AgentThread
+
+    class Runtime:
+        def __init__(self) -> None:
+            self.requests = []
+
+        async def run_turn(self, request):
+            self.requests.append(request)
+
+    class Events:
+        def clear_loop_waiting(self) -> None:
+            pass
+
+        def show_loop_waiting(self, _wakeup_at: float) -> None:
+            pass
+
+    snapshot = {
+        "guidance_id": "guidance-loop-1",
+        "text": "keep the iteration narrow",
+        "source": "user",
+        "target_phase": "work",
+    }
+    runtime = Runtime()
+    runner = LoopRuntimeRunner(runtime, Events())
+    spec = LoopSpec(prompt="check build", generation="loop-guidance")
+
+    await runner.run_turn(
+        thread=AgentThread(
+            thread_id=spec.loop_thread_id("parent"),
+            session_id=spec.loop_session_id("parent"),
+            workspace="/tmp/ws",
+        ),
+        profile=AgentRegistry("/tmp/ws").resolve("loop"),
+        input_frame={
+            "prompt": spec.prompt,
+            "spec": spec.model_dump(mode="json"),
+            "guidance": [snapshot],
+        },
+    )
+
+    assert runtime.requests[0].guidance == (snapshot,)

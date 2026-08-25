@@ -6,7 +6,11 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from voidx.agent.adapters.tools.automation.goal import GoalTool
+from voidx.agent.adapters.tools.automation.goal import (
+    GoalCheckpointTool,
+    GoalDecisionTool,
+    GoalInitTool,
+)
 from voidx.agent.adapters.tools.automation.loop import LoopTool
 from voidx.agent.adapters.tools.automation.workflow import WorkflowTool
 from voidx.agent.adapters.tools.compaction import CompactContextTool
@@ -72,7 +76,9 @@ def build_agent_plugins(
         PlanCheckpointTool(),
         WorkflowTool(),
         CompactContextTool(),
-        GoalTool(),
+        GoalInitTool(),
+        GoalCheckpointTool(),
+        GoalDecisionTool(),
         LoopTool(),
         TodoWriteTool(tracker=tracker),
         AgentTool(

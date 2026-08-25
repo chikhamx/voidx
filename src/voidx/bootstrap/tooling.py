@@ -34,7 +34,9 @@ TOOL_CAPABILITIES = {
     "workflow": ToolCapability.ORCHESTRATION,
     "compact": ToolCapability.ORCHESTRATION,
     "document": ToolCapability.READ_ONLY,
-    "goal": ToolCapability.ORCHESTRATION,
+    "goal_init": ToolCapability.ORCHESTRATION,
+    "goal_checkpoint": ToolCapability.ORCHESTRATION,
+    "goal_decision": ToolCapability.ORCHESTRATION,
     "loop": ToolCapability.ORCHESTRATION,
     "powershell" if os.name == "nt" else "bash": ToolCapability.EXECUTION_GATED,
     "todo": ToolCapability.ORCHESTRATION,
@@ -49,7 +51,8 @@ TOOL_CAPABILITIES = {
 _CATALOG_ORDER = (
     "read", "manage", "write", "replace", "git", "find", "search",
     "lsp", "lsp_format", "clarify", "checkpoint", "workflow", "compact",
-    "document", "goal", "loop", "powershell" if os.name == "nt" else "bash",
+    "document", "goal_init", "goal_checkpoint", "goal_decision", "loop",
+    "powershell" if os.name == "nt" else "bash",
     "todo", "skill", "webfetch", "websearch", "mcp", "agent", "agent_control",
 )
 

@@ -2,101 +2,93 @@ from __future__ import annotations
 
 import pytest
 
-from voidx.agent.domain.automation.goal import GOAL_PROFILE
+from voidx.agent.application.automation.goal.evaluator import GoalEvaluator
+from voidx.agent.domain.automation.goal import GOAL_PROFILE, WorkCheckpoint
 from voidx.agent.domain.thread import AgentThread
 from voidx.agent.domain.turn_context import TurnExecutionContext
-from voidx.agent.application.automation.goal.evaluator import GoalEvaluator
 
 
-class Runtime:
-    def __init__(self):
-        self.requests = []
 
-    async def run_turn(self, request):
-        self.requests.append(request)
+
+def _checkpoint() -> WorkCheckpoint:
+    return WorkCheckpoint(
+        generation="run",
+        attempt_number=1,
+        summary="reorganized src/tests into 25 test dirs",
+        evidence=("4073 tests passed",),
+        changed_files=("src/tests",),
+        verification=("backend suite passed",),
+        work_turn_id="work-turn-1",
+    )
+
+
+def _context(*, evaluator_session_id: str = "evaluator-session") -> TurnExecutionContext:
+    return TurnExecutionContext(
+        thread_id="goal:t:run",
+        session_id="work-session",
+        goal_evaluator_session_id=evaluator_session_id,
+        runtime_profile=GOAL_PROFILE,
+        goal_phase="evaluator",
+    )
 
 
 @pytest.mark.asyncio
 async def test_goal_evaluator_runs_tool_capable_phase() -> None:
-    runtime = Runtime()
-    thread = AgentThread(thread_id="goal:t:run", session_id="goal:t:run")
-    context = TurnExecutionContext(
-        thread_id=thread.thread_id,
-        session_id=thread.session_id or "",
-        runtime_profile=GOAL_PROFILE,
-        goal_phase="evaluator",
-    )
+    thread = AgentThread(thread_id="goal:t:run", session_id="work-session")
 
-    await GoalEvaluator().run_phase(
-        runtime=runtime,
+    request = GoalEvaluator().build_request(
         thread=thread,
-        context=context,
+        context=_context(),
         prompt="verify",
-        controller=object(),
-        work_result=object(),
+        checkpoint=_checkpoint(),
     )
 
-    assert runtime.requests[0].context.goal_phase == "evaluator"
-    assert runtime.requests[0].persist_user_input is False
+    assert request.context.goal_phase == "evaluator"
+    assert request.persist_user_input is False
 
 
 @pytest.mark.asyncio
 async def test_goal_evaluator_runs_with_independent_context() -> None:
-    """Evaluator turn must not load the work-phase session history."""
-    runtime = Runtime()
-    thread = AgentThread(thread_id="goal:t:run", session_id="goal:t:run")
-    context = TurnExecutionContext(
-        thread_id=thread.thread_id,
-        session_id=thread.session_id or "",
-        runtime_profile=GOAL_PROFILE,
-        goal_phase="evaluator",
-    )
+    thread = AgentThread(thread_id="goal:t:run", session_id="work-session")
 
-    await GoalEvaluator().run_phase(
-        runtime=runtime,
+    request = GoalEvaluator().build_request(
         thread=thread,
-        context=context,
+        context=_context(),
         prompt="verify",
-        controller=object(),
-        work_result=None,
+        checkpoint=_checkpoint(),
     )
-
-    request = runtime.requests[0]
-    assert request.thread.session_id is None
+    assert request.thread.session_id == "evaluator-session"
     assert request.thread.thread_id != thread.thread_id
-    assert request.context.session_id == ""
+    assert request.context.session_id == "evaluator-session"
+    assert request.context.detached is False
 
 
 @pytest.mark.asyncio
-async def test_goal_evaluator_prompt_includes_work_evidence() -> None:
-    from voidx.agent.domain.thread import LifecycleState
-    from voidx.agent.application.runtime.contracts import TurnResult
+async def test_goal_evaluator_prompt_uses_only_structured_checkpoint() -> None:
+    thread = AgentThread(thread_id="goal:t:run", session_id="work-session")
 
-    runtime = Runtime()
-    thread = AgentThread(thread_id="goal:t:run", session_id="goal:t:run")
-    context = TurnExecutionContext(
-        thread_id=thread.thread_id,
-        session_id=thread.session_id or "",
-        runtime_profile=GOAL_PROFILE,
-        goal_phase="evaluator",
-    )
-    work_result = TurnResult(
+    request = GoalEvaluator().build_request(
         thread=thread,
-        lifecycle=LifecycleState.COMPLETED,
-        final_assistant_summary="reorganized src/tests into 25 test_ dirs",
-        tool_result_summaries=("bash: 4073 passed, 0 failed", "find: 25 dirs"),
-    )
-
-    await GoalEvaluator().run_phase(
-        runtime=runtime,
-        thread=thread,
-        context=context,
+        context=_context(),
         prompt="verify",
-        controller=object(),
-        work_result=work_result,
+        checkpoint=_checkpoint(),
     )
 
-    prompt = runtime.requests[0].user_text
-    assert "reorganized src/tests into 25 test_ dirs" in prompt
-    assert "bash: 4073 passed, 0 failed" in prompt
-    assert "find: 25 dirs" in prompt
+    prompt = request.user_text
+    assert "reorganized src/tests into 25 test dirs" in prompt
+    assert "4073 tests passed" in prompt
+    assert "backend suite passed" in prompt
+    assert "src/tests" in prompt
+
+
+@pytest.mark.asyncio
+async def test_goal_evaluator_rejects_missing_durable_session_binding() -> None:
+    thread = AgentThread(thread_id="goal:t:run", session_id="work-session")
+
+    with pytest.raises(ValueError, match="Goal evaluator session binding is missing"):
+        GoalEvaluator().build_request(
+            thread=thread,
+            context=_context(evaluator_session_id=""),
+            prompt="verify",
+            checkpoint=_checkpoint(),
+        )

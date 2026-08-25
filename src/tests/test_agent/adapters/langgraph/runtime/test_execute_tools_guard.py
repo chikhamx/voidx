@@ -112,6 +112,15 @@ def _result_task_state(result: dict) -> TaskState:
     return TaskState.model_validate(result["task_state"])
 
 
+class RecordingGoalStore:
+    def __init__(self) -> None:
+        self.records = []
+
+    async def submit_goal_protocol(self, record, **kwargs):
+        self.records.append(record)
+        return record
+
+
 def _child_goal_resolution(
     goal_type: str = "feature",
     *,
@@ -229,6 +238,22 @@ async def test_execute_tools_keeps_non_todo_result_in_mixed_batch(tmp_path):
 
     assert [message.tool_call_id for message in result["messages"]] == ["call_todo", "call_read"]
     assert [message.content for message in result["messages"]] == ["todo output", "read output"]
+    todo_observation = result["messages"][0].additional_kwargs["voidx_tool_observation"]
+    read_observation = result["messages"][1].additional_kwargs["voidx_tool_observation"]
+    assert todo_observation == {
+        "source": "tool_executor",
+        "executed": True,
+        "synthetic": False,
+        "status": "success",
+        "fallback_eligible": False,
+    }
+    assert read_observation == {
+        "source": "tool_executor",
+        "executed": True,
+        "synthetic": False,
+        "status": "success",
+        "fallback_eligible": True,
+    }
     assert result["todo_state"]["active_items"] == [
         {"id": "mixed", "content": "track mixed batch", "status": "active"}
     ]
@@ -2196,7 +2221,7 @@ async def test_execute_tools_stops_turn_after_goal_intake_init(tmp_path):
         ThreadExecutionState,
         _CURRENT_THREAD_EXECUTION_STATE,
     )
-    from voidx.agent.adapters.tools.automation.goal import GoalTool
+    from voidx.agent.adapters.tools.automation.goal import GoalInitTool
 
     test_dock = BottomInputDock()
     set_dock(test_dock)
@@ -2214,12 +2239,18 @@ async def test_execute_tools_stops_turn_after_goal_intake_init(tmp_path):
             workspace=str(tmp_path),
             goal_intake_controller=controller,
             goal_phase="intake",
+            goal_store=RecordingGoalStore(),
+            goal_generation="generation-1",
+            goal_parent_session_id="goal-parent-session",
+            goal_main_session_id="goal-session",
+            goal_turn_id="turn-init",
+            goal_attempt_number=0,
         ),
         workspace=str(tmp_path),
     ))
     try:
         graph = _graph(tmp_path)
-        graph.tools.replace("goal", GoalTool(), "goal", {"type": "object", "properties": {}})
+        graph.tools.replace("goal_init", GoalInitTool(), "goal_init", {"type": "object", "properties": {}})
 
         executed = []
 
@@ -2243,7 +2274,7 @@ async def test_execute_tools_stops_turn_after_goal_intake_init(tmp_path):
         parent = AIMessage(
             content="",
             tool_calls=[
-                {"name": "goal", "args": {"op": "init", "objective": "ship", "acceptance_condition": "green", "achievement_method": "", "max_attempts": 20, "status": "", "summary": "", "evidence": "", "next": "", "reason": "", "progress": "none"}, "id": "call_init", "type": "tool_call"},
+                {"name": "goal_init", "args": {"objective": "ship", "acceptance_condition": "green", "achievement_method": "", "max_attempts": 20}, "id": "call_init", "type": "tool_call"},
                 {"name": "mcp", "args": {"op": "call"}, "id": "call_mcp", "type": "tool_call"},
             ],
         )
@@ -2276,7 +2307,7 @@ async def test_execute_tools_stops_turn_after_goal_intake_cancel(tmp_path):
         ThreadExecutionState,
         _CURRENT_THREAD_EXECUTION_STATE,
     )
-    from voidx.agent.adapters.tools.automation.goal import GoalTool
+    from voidx.agent.adapters.tools.automation.goal import GoalInitTool
 
     test_dock = BottomInputDock()
     set_dock(test_dock)
@@ -2294,12 +2325,18 @@ async def test_execute_tools_stops_turn_after_goal_intake_cancel(tmp_path):
             workspace=str(tmp_path),
             goal_intake_controller=controller,
             goal_phase="intake",
+            goal_store=RecordingGoalStore(),
+            goal_generation="generation-1",
+            goal_parent_session_id="goal-parent-session",
+            goal_main_session_id="goal-session",
+            goal_turn_id="turn-init-cancel",
+            goal_attempt_number=0,
         ),
         workspace=str(tmp_path),
     ))
     try:
         graph = _graph(tmp_path)
-        graph.tools.replace("goal", GoalTool(), "goal", {"type": "object", "properties": {}})
+        graph.tools.replace("goal_init", GoalInitTool(), "goal_init", {"type": "object", "properties": {}})
 
         class CancelApp:
             async def ask_choice(self, prompt, choices, **kwargs):
@@ -2332,7 +2369,7 @@ async def test_execute_tools_stops_turn_after_goal_intake_cancel(tmp_path):
         parent = AIMessage(
             content="",
             tool_calls=[
-                {"name": "goal", "args": {"op": "init", "objective": "ship", "acceptance_condition": "green", "achievement_method": "", "max_attempts": 20, "status": "", "summary": "", "evidence": "", "next": "", "reason": "", "progress": "none"}, "id": "call_init", "type": "tool_call"},
+                {"name": "goal_init", "args": {"objective": "ship", "acceptance_condition": "green", "achievement_method": "", "max_attempts": 20}, "id": "call_init", "type": "tool_call"},
                 {"name": "mcp", "args": {"op": "call"}, "id": "call_mcp", "type": "tool_call"},
             ],
         )
@@ -2363,7 +2400,7 @@ async def test_execute_tools_stops_turn_after_goal_evaluator_decision(tmp_path):
         ThreadExecutionState,
         _CURRENT_THREAD_EXECUTION_STATE,
     )
-    from voidx.agent.adapters.tools.automation.goal import GoalTool
+    from voidx.agent.adapters.tools.automation.goal import GoalDecisionTool
 
     test_dock = BottomInputDock()
     set_dock(test_dock)
@@ -2381,12 +2418,18 @@ async def test_execute_tools_stops_turn_after_goal_evaluator_decision(tmp_path):
             workspace=str(tmp_path),
             goal_controller=controller,
             goal_phase="evaluator",
+            goal_store=RecordingGoalStore(),
+            goal_generation="generation-1",
+            goal_parent_session_id="goal-parent-session",
+            goal_evaluator_session_id="goal-session",
+            goal_turn_id="turn-decision",
+            goal_attempt_number=1,
         ),
         workspace=str(tmp_path),
     ))
     try:
         graph = _graph(tmp_path)
-        graph.tools.replace("goal", GoalTool(), "goal", {"type": "object", "properties": {}})
+        graph.tools.replace("goal_decision", GoalDecisionTool(), "goal_decision", {"type": "object", "properties": {}})
 
         executed = []
 
@@ -2410,7 +2453,7 @@ async def test_execute_tools_stops_turn_after_goal_evaluator_decision(tmp_path):
         parent = AIMessage(
             content="",
             tool_calls=[
-                {"name": "goal", "args": {"op": "decision", "objective": "", "acceptance_condition": "", "achievement_method": "", "max_attempts": 20, "status": "finished", "summary": "done", "evidence": "verified", "next": "", "reason": "", "progress": "meaningful"}, "id": "call_decision", "type": "tool_call"},
+                {"name": "goal_decision", "args": {"status": "finished", "summary": "done", "evidence": ["verified"], "reason": "", "next_hint": "", "missing_evidence": [], "progress": "meaningful"}, "id": "call_decision", "type": "tool_call"},
                 {"name": "mcp", "args": {"op": "call"}, "id": "call_mcp", "type": "tool_call"},
             ],
         )

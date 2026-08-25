@@ -1310,3 +1310,34 @@ async def test_clear_current_session_invalidates_cached_thread_states(tmp_path):
         assert await load_messages(session.id) == []
     finally:
         await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_permission_prompt_is_cleared_when_frontend_wait_is_cancelled(tmp_path):
+    graph = _graph(tmp_path)
+    test_dock = BottomInputDock()
+    dock_token = set_dock(test_dock)
+    test_dock.begin_capture()
+
+    class CancelledApp:
+        async def ask_choice(self, _prompt, _choices, details=None):
+            raise asyncio.CancelledError
+
+    graph._ui.bind_frontend(CancelledApp())
+    try:
+        graph._ui.events.start(DockEventConsumer(test_dock))
+        await graph._ui.events.request(TurnStarted(text="demo"))
+
+        with pytest.raises(asyncio.CancelledError):
+            await graph._authorize_tool_calls(
+                [{"name": "bash", "args": {"command": "npm test"}, "id": "call_1"}],
+                plan_mode=False,
+                session_id="s",
+            )
+
+        await graph._ui.events.drain()
+        assert test_dock.status_record("permission:request") is None
+    finally:
+        await graph._ui.events.stop()
+        test_dock.deactivate()
+        reset_dock(dock_token)

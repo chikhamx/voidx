@@ -37,17 +37,11 @@ def _goal_decision_chunk() -> AIMessageChunk:
     return AIMessageChunk(
         content="",
         tool_calls=[{
-            "name": "goal",
+            "name": "goal_decision",
             "args": {
-                "op": "decision",
                 "status": "finished",
                 "summary": "done",
-                "objective": "",
-                "acceptance_condition": "",
-                "achievement_method": "",
-                "max_attempts": 20,
-                "evidence": "verified",
-                "next": "",
+                "evidence": ["verified"],
                 "reason": "verified",
                 "progress": "meaningful",
             },
@@ -142,7 +136,7 @@ async def test_goal_profile_injects_goal_tool_and_not_turn(tmp_path, monkeypatch
         _CURRENT_THREAD_EXECUTION_STATE.reset(token)
 
     names = [d["function"]["name"] for d in model.bound_tools]
-    assert "goal" in names
+    assert "goal_init" in names
     assert "turn" not in names
     assert model.call_index == 1
     assert result["turn_state"] == "committed"
@@ -179,4 +173,4 @@ async def test_goal_profile_uses_goal_controller_for_missing_decision_repair(tmp
 
     assert model.call_index == 2
     assert "should_continue" not in result
-    assert result["messages"][0].tool_calls[0]["name"] == "goal"
+    assert result["messages"][0].tool_calls[0]["name"] == "goal_decision"

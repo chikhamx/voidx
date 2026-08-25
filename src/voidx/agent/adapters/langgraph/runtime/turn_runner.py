@@ -25,8 +25,10 @@ from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.domain.turn_metadata import turn_metadata_from_context
 from voidx.agent.domain.task.intent import InteractionMode
 from voidx.agent.adapters.langgraph.runtime.thread_context import (
+    GuidanceEntry,
     bind_thread_execution_context,
     current_thread_execution_state,
+    save_turn_message,
 )
 from voidx.agent.adapters.langgraph.state import AgentState
 from voidx.agent.domain.task.state import (
@@ -39,7 +41,7 @@ from voidx.agent.domain.task.state import (
 )
 from voidx.llm.message_status import message_status
 from voidx.observability.tool_log import log_tool_event
-from voidx.agent.adapters.persistence.session_repository import MessageRow, count_messages, create_session, delete_messages_from, load_messages, save_message, touch_session, update_title
+from voidx.agent.adapters.persistence.session_repository import MessageRow, count_messages, create_session, delete_messages_from, load_messages, touch_session, update_title
 from voidx.agent.adapters.persistence.runtime_state_repository import MessageRuntimeSnapshot, save_message_runtime_snapshot
 from voidx.persistence.sqlite import now as memorynow
 from voidx.agent.application.automation.workflow.service import reconcile_workflow_runs_for_turn
@@ -88,6 +90,97 @@ def _initial_persona_for_goal(task_state: TaskState) -> str:
     }.get(goal_type_from_join(join), "coordinate"))
 
 
+def _guidance_phase(context: TurnExecutionContext) -> str:
+    goal_phase = str(getattr(context, "goal_phase", "") or "")
+    if goal_phase:
+        return goal_phase
+    loop_phase = str(getattr(context, "loop_phase", "") or "")
+    return loop_phase or "work"
+
+
+def _guidance_entry_from_snapshot(
+    snapshot: Any,
+    context: TurnExecutionContext,
+) -> GuidanceEntry | None:
+    def value(name: str, default: Any = None) -> Any:
+        if isinstance(snapshot, dict):
+            return snapshot.get(name, default)
+        return getattr(snapshot, name, default)
+
+    text = str(value("text", "") or "").strip()
+    if not text:
+        return None
+    source = str(value("source", "guard") or "guard")
+    if source not in {"user", "guard"}:
+        source = "guard"
+    created_at = value("created_at")
+    if hasattr(created_at, "isoformat"):
+        created_at = created_at.isoformat()
+    return GuidanceEntry(
+        text=text,
+        truncated=bool(value("truncated", False)),
+        source=source,
+        thread_id=str(value("target_thread_id", "") or context.thread_id or ""),
+        session_id=str(value("target_session_id", "") or context.session_id or ""),
+        created_at=str(created_at) if created_at else GuidanceEntry(text=text).created_at,
+        guidance_id=str(value("guidance_id", "") or ""),
+    )
+
+
+def _project_guidance_snapshots(
+    host: Any,
+    snapshots: Any,
+    context: TurnExecutionContext,
+) -> list[GuidanceEntry]:
+    entries = [
+        entry
+        for snapshot in snapshots
+        if (entry := _guidance_entry_from_snapshot(snapshot, context)) is not None
+    ]
+    if not entries:
+        return []
+    state = current_thread_execution_state()
+    pending = getattr(state, "pending_guidance", None) if state is not None else None
+    if pending is None:
+        pending = getattr(host, "_pending_guidance", None)
+    if isinstance(pending, list):
+        pending.extend(entries)
+    return entries
+
+
+def _remove_projected_guidance(host: Any, entries: list[GuidanceEntry]) -> None:
+    guidance_ids = {entry.guidance_id for entry in entries if entry.guidance_id}
+    if not guidance_ids:
+        return
+    state = current_thread_execution_state()
+    pending = getattr(state, "pending_guidance", None) if state is not None else None
+    if isinstance(pending, list):
+        pending[:] = [
+            entry for entry in pending
+            if getattr(entry, "guidance_id", "") not in guidance_ids
+        ]
+    host_pending = getattr(host, "_pending_guidance", None)
+    if isinstance(host_pending, list):
+        host_pending[:] = [
+            entry for entry in host_pending
+            if getattr(entry, "guidance_id", "") not in guidance_ids
+        ]
+
+
+def _guidance_pending(host: Any, entries: list[GuidanceEntry]) -> bool:
+    guidance_ids = {entry.guidance_id for entry in entries if entry.guidance_id}
+    if not guidance_ids:
+        return False
+    state = current_thread_execution_state()
+    pending_lists = [getattr(state, "pending_guidance", None)] if state is not None else []
+    pending_lists.append(getattr(host, "_pending_guidance", None))
+    return any(
+        isinstance(pending, list)
+        and any(getattr(entry, "guidance_id", "") in guidance_ids for entry in pending)
+        for pending in pending_lists
+    )
+
+
 class TurnRunner:
     """Runs one top-level user turn for a graph host."""
 
@@ -103,6 +196,7 @@ class TurnRunner:
         display_text: str | None = None,
         context: TurnExecutionContext,
         persist_user_input: bool = True,
+        guidance: tuple[dict[str, Any], ...] | None = None,
     ) -> None:
         host = self.host
         context_session_id = context.session_id
@@ -114,6 +208,30 @@ class TurnRunner:
             thread_id=context_thread_id,
             turn_context=context,
         ):
+            guidance_service = getattr(host, "_guidance_service", None)
+            guidance_delivery_id = ""
+            guidance_bound = False
+            projected_guidance: list[GuidanceEntry] = []
+            turn_succeeded = False
+            if guidance is None and guidance_service is not None:
+                guidance_delivery_id = (
+                    f"turn:{context_thread_id or context_session_id}:{time.time_ns()}"
+                )
+                bound_guidance = await guidance_service.bind_delivery(
+                    guidance_delivery_id,
+                    session_id=context_session_id,
+                    thread_id=context_thread_id,
+                    phase=_guidance_phase(context),
+                )
+                guidance_bound = bool(bound_guidance)
+                projected_guidance = _project_guidance_snapshots(
+                    host,
+                    bound_guidance,
+                    context,
+                )
+            elif guidance:
+                _project_guidance_snapshots(host, guidance, context)
+
             t_turn_start = time.monotonic()
             host._usage_stats.begin_turn()
             host._pending_turn_stop_commit = None
@@ -281,7 +399,7 @@ class TurnRunner:
 
                 if persist_user_input:
                     saved_user_content, user_content_format = serialize_message_content(payload.content)
-                    user_message_id = await save_message(MessageRow(
+                    user_message_id = await save_turn_message(MessageRow(
                         session_id=host._session.id,
                         role="user",
                         content=saved_user_content,
@@ -375,6 +493,11 @@ class TurnRunner:
                                 turn_index = i
                                 break
                     new_messages = final["messages"][turn_index + 1:] if turn_index is not None else []
+                    host._current_turn_tool_messages = tuple(
+                        message
+                        for message in new_messages
+                        if isinstance(message, ToolMessage)
+                    )
                     await _persist_new_messages(host, new_messages)
 
                     # Update session title to match current goal after turn completes
@@ -411,6 +534,7 @@ class TurnRunner:
                     host._ui.dock.commit_todo_state()
                 if host._session:
                     await host._persist_transcript_snapshot()
+                turn_succeeded = True
             except GraphRecursionError:
                 # 达到 recursion limit：用最后一次 state 生成总结，优雅收尾而非报错
                 final["max_steps"] = _resolve_recursion_limit()
@@ -440,6 +564,18 @@ class TurnRunner:
                     await host._ui.events.drain()
                 raise
             finally:
+                turn_calls = host._usage_stats.turn_calls
+                guidance_consumed = (
+                    guidance_bound
+                    and turn_succeeded
+                    and not _guidance_pending(host, projected_guidance)
+                )
+                if guidance_bound and guidance_service is not None:
+                    if guidance_consumed:
+                        await guidance_service.commit_delivery(guidance_delivery_id)
+                    else:
+                        await guidance_service.release_delivery(guidance_delivery_id)
+                    guidance_bound = False
                 host._usage_stats.end_turn()
                 host._pending_turn_stop_commit = None
                 discard_guidance = getattr(host, "_discard_pending_guidance", None)
@@ -490,7 +626,7 @@ async def _persist_new_messages(host: Any, new_messages: list) -> None:
             else:
                 saved = str(raw_content)
                 fmt = "text"
-            row_id = await save_message(MessageRow(
+            row_id = await save_turn_message(MessageRow(
                 session_id=host._session.id,
                 role="assistant",
                 content=saved,
@@ -510,7 +646,7 @@ async def _persist_new_messages(host: Any, new_messages: list) -> None:
                 ))
         elif isinstance(msg, ToolMessage):
             status = message_status(getattr(msg, "status", None))
-            row_id = await save_message(MessageRow(
+            row_id = await save_turn_message(MessageRow(
                 session_id=host._session.id,
                 role="tool",
                 content=str(msg.content),

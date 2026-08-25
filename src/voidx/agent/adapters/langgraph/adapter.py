@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.domain.turn.state import TurnPhase
+from voidx.agent.application.tool_messages import is_fallback_eligible_tool_observation
 from voidx.agent.adapters.langgraph.state_mapper import LangGraphStateMapper, LangGraphStateTarget
 
 
@@ -19,6 +20,7 @@ class LangGraphTurnHost(LangGraphStateTarget, Protocol):
     async def run_turn(
         self, user_text: str, *, display_text: str | None = None,
         context: Any | None = None, persist_user_input: bool = True,
+        guidance: tuple[dict[str, Any], ...] | None = None,
     ) -> None: ...
 
 
@@ -45,6 +47,7 @@ class LangGraphTurnEngine:
         display_text: str | None = None,
         context: Any | None = None,
         persist_user_input: bool = True,
+        guidance: tuple[dict[str, Any], ...] | None = None,
     ) -> SessionRuntimeState:
         self._mapper.apply_runtime(self._execution, runtime)
         await self._execution.run_turn(
@@ -52,8 +55,10 @@ class LangGraphTurnEngine:
             display_text=display_text,
             context=context,
             persist_user_input=persist_user_input,
+            guidance=guidance,
         )
         self.last_evidence = _evidence_from_execution(self._execution)
+        self._execution._current_turn_tool_messages = ()
         # Return the post-execution state still in RUNNING phase; the runtime
         # facade owns the COMMITTED transition via advance_turn.
         return self._mapper.runtime_from_execution(
@@ -67,6 +72,14 @@ def _evidence_from_execution(execution: LangGraphTurnHost) -> dict[str, Any]:
     assistant_messages = tuple(message for message in messages if isinstance(message, AIMessage))
     tool_messages = tuple(message for message in messages if isinstance(message, ToolMessage))
     tool_summaries = _summarize_tool_messages(tool_messages)
+    current_turn_tool_messages = tuple(
+        message
+        for message in tuple(getattr(execution, "_current_turn_tool_messages", ()) or ())
+        if is_fallback_eligible_tool_observation(message)
+    )
+    current_turn_tool_summaries = _summarize_tool_messages(
+        current_turn_tool_messages
+    )
     final_assistant_summary = ""
     if assistant_messages:
         final_assistant_summary = str(assistant_messages[-1].content or "")[:4000]
@@ -77,6 +90,7 @@ def _evidence_from_execution(execution: LangGraphTurnHost) -> dict[str, Any]:
         "final_llm_messages": assistant_messages[-4:],
         "final_assistant_summary": final_assistant_summary,
         "tool_result_summaries": tool_summaries,
+        "current_turn_tool_result_summaries": current_turn_tool_summaries,
         "stop_signal": "",
     }
 

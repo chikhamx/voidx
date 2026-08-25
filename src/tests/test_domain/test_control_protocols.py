@@ -138,10 +138,10 @@ def test_loop_protocol_ignores_regular_tool_calls() -> None:
 # ── GoalProtocol ─────────────────────────────────────────────────────────────
 
 
-def test_goal_protocol_exposes_goal_control_tool() -> None:
+def test_goal_protocol_exposes_phase_specific_control_tool() -> None:
     defs = GoalProtocol().tool_definitions()
 
-    assert [d["function"]["name"] for d in defs] == ["goal"]
+    assert [d["function"]["name"] for d in defs] == ["goal_checkpoint"]
 
 
 # ── Controller routing ───────────────────────────────────────────────────────
@@ -218,8 +218,23 @@ def test_goal_protocol_blocks_intake_until_init_submitted() -> None:
     protocol = GoalProtocol(phase="intake")
 
     assert protocol.decision_missing(_turn_stop_msg(), loop, controller=controller) is True
-    assert 'op="init"' in protocol.repair_prompt()
-    assert 'op="decision"' not in protocol.repair_prompt()
+    assert "goal_init" in protocol.repair_prompt()
+    assert "goal_decision" not in protocol.repair_prompt()
+
+
+
+
+def test_goal_protocol_blocks_work_until_checkpoint_submitted() -> None:
+    class WorkCheckpointController:
+        def final_checkpoint(self):
+            return None
+
+    controller = WorkCheckpointController()
+    loop = LlmLoopState(context_tokens=0)
+    protocol = GoalProtocol(phase="work")
+
+    assert protocol.decision_missing(_turn_stop_msg(), loop, controller=controller) is True
+    assert "goal_checkpoint" in protocol.repair_prompt()
 
 
 def test_goal_protocol_blocks_evaluator_until_decision_submitted() -> None:
@@ -228,7 +243,7 @@ def test_goal_protocol_blocks_evaluator_until_decision_submitted() -> None:
     protocol = GoalProtocol(phase="evaluator")
 
     assert protocol.decision_missing(_turn_stop_msg(), loop, controller=controller) is True
-    assert 'op="decision"' in protocol.repair_prompt()
+    assert "goal_decision" in protocol.repair_prompt()
 
 
 def test_resolve_control_protocol_falls_back_to_turn_for_unknown_profile() -> None:

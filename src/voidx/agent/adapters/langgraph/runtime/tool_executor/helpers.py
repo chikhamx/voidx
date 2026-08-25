@@ -6,10 +6,14 @@ import asyncio
 import json
 import inspect
 import os
+import uuid
 
 from langchain_core.messages import ToolMessage
 
-from voidx.agent.application.tool_messages import sanitize_tool_message_content
+from voidx.agent.application.tool_messages import (
+    sanitize_tool_message_content,
+    tool_observation_kwargs,
+)
 from voidx.agent.domain.task.intent import PersonaName
 from voidx.tooling.domain.result import ToolResult
 from voidx.tooling.domain.interaction import (
@@ -248,7 +252,19 @@ def _restore_deduped_read_results(
             continue
         output = f"Skipped duplicate read; same arguments already requested in tool call {source}."
         restored.append(_ExecutedTool(
-            message=ToolMessage(content=output, tool_call_id=call_id),
+            message=ToolMessage(
+                content=output,
+                tool_call_id=call_id,
+                name=str(call.get("name") or ""),
+                status="success",
+                additional_kwargs=tool_observation_kwargs(
+                    source="deduplication",
+                    tool_name=str(call.get("name") or ""),
+                    executed=False,
+                    synthetic=True,
+                    status="success",
+                ),
+            ),
             result=ToolResult(
                 title="read: duplicate skipped",
                 output=output,
@@ -310,10 +326,18 @@ def _requires_workspace_write_lock(tool_call: dict) -> bool:
         return name in {"bash", "powershell", "git", "agent"}
     return str(classified.capability.value) in _WORKSPACE_WRITE_LOCK_CAPABILITIES
 def _is_barrier_tool(tool_call: dict) -> bool:
-    # loop/goal must be serial: a commit or spec/decision submission ends the phase,
-    # so anything the model scheduled after it in the same batch must wait (and then
-    # be skipped). goal also interacts with the user during intake approval.
-    return tool_call.get("name") in {"clarify", "checkpoint", "workflow", "compact", "loop", "goal"}
+    # Lifecycle submissions interact with the user or end the current phase.
+    return tool_call.get("name") in {
+        "clarify",
+        "checkpoint",
+        "workflow",
+        "compact",
+        "loop",
+        "goal",
+        "goal_init",
+        "goal_checkpoint",
+        "goal_decision",
+    }
 
 
 def _split_at_first_barrier(tool_calls: list[dict]) -> tuple[list[dict], dict | None, list[dict]]:
@@ -335,7 +359,15 @@ def _blocked_after_barrier_messages(
                 workspace=workspace,
             ),
             tool_call_id=tc.get("id", ""),
+            name=str(tc.get("name") or ""),
             status="error",
+            additional_kwargs=tool_observation_kwargs(
+                source="barrier_skip",
+                tool_name=str(tc.get("name") or ""),
+                executed=False,
+                synthetic=True,
+                status="error",
+            ),
         )
         for tc in tool_calls
     ]
@@ -367,6 +399,17 @@ async def _authorize_tool_calls(
         return await authorize(tool_calls, **kwargs)
     filtered = {key: value for key, value in kwargs.items() if key in params}
     return await authorize(tool_calls, **filtered)
+
+
+async def _call_with_optional_kwargs(callable_obj, *args, **kwargs):
+    try:
+        parameters = inspect.signature(callable_obj).parameters
+    except (TypeError, ValueError):
+        return await callable_obj(*args, **kwargs)
+    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):
+        return await callable_obj(*args, **kwargs)
+    filtered = {key: value for key, value in kwargs.items() if key in parameters}
+    return await callable_obj(*args, **filtered)
 
 
 def _make_interact_callback(app, ui_port=None):
@@ -425,23 +468,30 @@ async def _ask_choice_with_permission_events(
     ui_port=None,
 ):
     shown = False
+    request_id = f"permission_{uuid.uuid4().hex}" if permission_details else None
     details_payload = [detail.model_dump(mode="json") for detail in permission_details]
     if permission_details and ui_port is not None:
         if ui_port.events.is_running:
             await ui_port.events.emit(PermissionPromptShown(
+                request_id=request_id,
                 prompt=request.prompt,
                 choices=choices,
                 tools=permission_details,
             ))
             shown = True
     try:
-        kwargs = {"timeout": timeout}
+        kwargs = {"timeout": timeout, "request_id": request_id}
         if details_payload:
             kwargs["details"] = details_payload
-        return await app.ask_choice(request.prompt, choices, **kwargs)
+        return await _call_with_optional_kwargs(
+            app.ask_choice,
+            request.prompt,
+            choices,
+            **kwargs,
+        )
     finally:
         if shown:
-            await ui_port.events.emit(PermissionPromptCleared())
+            await ui_port.events.emit(PermissionPromptCleared(request_id=request_id))
 
 
 def _permission_details_for_interaction(request: UserInteraction) -> list:
@@ -556,7 +606,15 @@ def _infrastructure_skipped_tool(tool_call: dict, *, reason: str) -> _ExecutedTo
         message=ToolMessage(
             content=output,
             tool_call_id=tool_call.get("id", ""),
+            name=tool_name,
             status="error",
+            additional_kwargs=tool_observation_kwargs(
+                source="infrastructure",
+                tool_name=tool_name,
+                executed=False,
+                synthetic=True,
+                status="error",
+            ),
         ),
         result=ToolResult(
             title=f"{tool_name}: infrastructure cancellation",

@@ -2,24 +2,39 @@ from types import SimpleNamespace
 
 import pytest
 
-from voidx.agent.domain.automation.goal import GoalSpec
 from tests.agent_tool_context import agent_tool_context as ToolContext
+from voidx.agent.adapters.tools.automation.goal import (
+    GoalCheckpointTool,
+    GoalDecisionTool,
+    GoalInitTool,
+)
 from voidx.agent.adapters.tools.context import AgentToolRuntime
-from voidx.agent.adapters.tools.automation.goal import GoalTool
+from voidx.agent.domain.automation.goal import GoalSpec
+from voidx.tooling.domain.interaction import UserInteraction, UserResponse
+
+
+class RecordingGoalStore:
+    def __init__(self) -> None:
+        self.records = []
+
+    async def submit_goal_protocol(self, record, **kwargs):
+        self.records.append(record)
+        return record
 
 
 class DecisionController:
     def __init__(self):
         self.calls = []
 
-    async def submit_decision(self, decision):
-        self.calls.append(decision)
+    async def submit_decision(self, decision, *, protocol_id=""):
+        self.calls.append({"decision": decision, "protocol_id": protocol_id})
         return SimpleNamespace(outcome="completed", summary=decision["summary"])
 
 
 class IntakeController:
     def __init__(self):
         self.spec = None
+        self.cancelled = False
 
     async def submit_init(self, spec):
         self.spec = spec
@@ -28,187 +43,219 @@ class IntakeController:
     def final_spec(self):
         return self.spec
 
+    def cancel(self):
+        self.cancelled = True
+
+
+def _runtime(
+    store=None,
+    *,
+    phase: str,
+    intake=None,
+    controller=None,
+    attempt: int = 0,
+    interaction=None,
+) -> AgentToolRuntime:
+    return AgentToolRuntime(
+        goal_intake=intake,
+        goal_control=controller,
+        goal_phase=phase,
+        goal_store=store,
+        goal_generation="gen-1",
+        goal_parent_session_id="parent-session",
+        goal_main_session_id="main-session",
+        goal_work_session_id="work-session",
+        goal_evaluator_session_id="evaluator-session",
+        goal_turn_id=f"turn-{phase}-{attempt}",
+        goal_attempt_number=attempt,
+        interaction=interaction,
+    )
+
+
+def _context(runtime: AgentToolRuntime, *, session_id: str = "parent-session"):
+    return ToolContext(workspace="/tmp", session_id=session_id, runtime=runtime)
+
 
 @pytest.mark.asyncio
-async def test_goal_tool_schema_requires_explicit_op() -> None:
-    schema = GoalTool().parameters_schema()
+async def test_goal_phase_tool_schemas_are_disjoint_and_typed() -> None:
+    init_schema = GoalInitTool().parameters_schema()
+    checkpoint_schema = GoalCheckpointTool().parameters_schema()
+    decision_schema = GoalDecisionTool().parameters_schema()
 
-    assert "op" in schema["required"]
-    assert schema["properties"]["op"]["enum"] == ["init", "decision"]
-    assert schema["properties"]["status"]["enum"] == ["finished", "continue", "blocked", ""]
+    assert init_schema["required"] == ["objective", "acceptance_condition"]
+    assert set(init_schema["properties"]) == {
+        "objective", "acceptance_condition", "achievement_method", "max_attempts",
+    }
+    assert set(checkpoint_schema["properties"]) == {
+        "summary", "evidence", "changed_files", "verification", "next_hint", "progress",
+    }
+    assert decision_schema["properties"]["status"]["enum"] == [
+        "finished", "continue", "blocked",
+    ]
+    assert set(decision_schema["properties"]) == {
+        "status", "summary", "evidence", "reason", "next_hint", "missing_evidence", "progress",
+    }
 
 
 @pytest.mark.asyncio
-async def test_goal_tool_rejects_legacy_status_without_op() -> None:
-    controller = DecisionController()
-    ctx = ToolContext(workspace="/tmp", runtime=AgentToolRuntime(goal_control=controller), goal_phase="evaluator")
+async def test_goal_init_rejects_missing_durable_binding() -> None:
+    controller = IntakeController()
+    runtime = _runtime(phase="intake", intake=controller)
 
-    result = await GoalTool().execute(
-        {"status": "finished", "summary": "done", "evidence": "verified"}, ctx
+    result = await GoalInitTool().execute(
+        {"objective": "ship feature", "acceptance_condition": "tests pass"},
+        _context(runtime),
     )
 
     assert result.metadata["error"] is True
-    assert controller.calls == []
-
-
-@pytest.mark.asyncio
-async def test_goal_tool_init_submits_only_in_intake_phase() -> None:
-    controller = IntakeController()
-    ctx = ToolContext(workspace="/tmp", runtime=AgentToolRuntime(goal_intake=controller), goal_phase="intake")
-
-    result = await GoalTool().execute(
-        {
-            "op": "init",
-            "objective": "ship feature",
-            "acceptance_condition": "tests pass",
-            "achievement_method": "use TDD",
-            "max_attempts": 12,
-            "status": "",
-            "summary": "",
-            "evidence": "",
-            "next": "",
-            "reason": "",
-            "progress": "none",
-        },
-        ctx,
-    )
-
-    assert result.metadata["goal_init_submitted"] is True
-    assert isinstance(controller.final_spec(), GoalSpec)
-    assert controller.final_spec().objective == "ship feature"
-    assert controller.final_spec().max_attempts == 12
-
-
-@pytest.mark.asyncio
-async def test_goal_tool_init_rejected_outside_intake_phase() -> None:
-    controller = IntakeController()
-    ctx = ToolContext(workspace="/tmp", runtime=AgentToolRuntime(goal_intake=controller), goal_phase="work")
-
-    result = await GoalTool().execute(
-        {
-            "op": "init",
-            "objective": "ship feature",
-            "acceptance_condition": "tests pass",
-            "achievement_method": "",
-            "max_attempts": 20,
-            "status": "",
-            "summary": "",
-            "evidence": "",
-            "next": "",
-            "reason": "",
-            "progress": "none",
-        },
-        ctx,
-    )
-
     assert result.metadata["goal_init_submitted"] is False
     assert controller.final_spec() is None
 
 
 @pytest.mark.asyncio
-async def test_goal_tool_decision_submits_only_in_evaluator_phase() -> None:
-    controller = DecisionController()
-    ctx = ToolContext(workspace="/tmp", runtime=AgentToolRuntime(goal_control=controller), goal_phase="evaluator")
+async def test_goal_init_submits_durable_record_before_controller() -> None:
+    store = RecordingGoalStore()
+    controller = IntakeController()
+    runtime = _runtime(store, phase="intake", intake=controller)
 
-    result = await GoalTool().execute(
+    result = await GoalInitTool().execute(
         {
-            "op": "decision",
-            "objective": "",
-            "acceptance_condition": "",
-            "achievement_method": "",
-            "max_attempts": 20,
-            "status": "finished",
-            "summary": "done",
-            "evidence": "verified",
-            "next": "",
-            "reason": "verified",
-            "progress": "meaningful",
+            "objective": "ship feature",
+            "acceptance_condition": "tests pass",
+            "achievement_method": "use TDD",
+            "max_attempts": 12,
         },
-        ctx,
+        _context(runtime, session_id="main-session"),
     )
 
-    assert result.metadata["goal_decision_submitted"] is True
-    assert controller.calls[0]["outcome"] == "completed"
-    assert controller.calls[0]["summary"] == "done"
-
+    assert result.metadata["goal_init_submitted"] is True
+    assert isinstance(controller.final_spec(), GoalSpec)
+    assert controller.final_spec().max_attempts == 12
+    assert len(store.records) == 1
+    assert store.records[0].phase == "init"
+    assert store.records[0].sequence_number == 0
 
 
 @pytest.mark.asyncio
-async def test_goal_tool_decision_rejects_empty_summary_without_controller_call() -> None:
-    controller = DecisionController()
-    ctx = ToolContext(workspace="/tmp", runtime=AgentToolRuntime(goal_control=controller), goal_phase="evaluator")
+async def test_goal_init_approval_revision_does_not_submit_record() -> None:
+    store = RecordingGoalStore()
+    controller = IntakeController()
 
-    result = await GoalTool().execute(
+    async def interact(request: UserInteraction) -> UserResponse:
+        return UserResponse(value="tighten acceptance", free_text=True)
+
+    runtime = _runtime(
+        store,
+        phase="intake",
+        intake=controller,
+        interaction=interact,
+    )
+    result = await GoalInitTool().execute(
+        {"objective": "ship feature", "acceptance_condition": "tests pass"},
+        _context(runtime, session_id="main-session"),
+    )
+
+    assert result.metadata["goal_init_submitted"] is False
+    assert result.metadata["goal_init_decision"] == "revised"
+    assert store.records == []
+    assert controller.final_spec() is None
+
+
+@pytest.mark.asyncio
+async def test_goal_checkpoint_submits_typed_work_record() -> None:
+    store = RecordingGoalStore()
+    runtime = _runtime(store, phase="work", attempt=1)
+
+    result = await GoalCheckpointTool().execute(
         {
-            "op": "decision",
-            "objective": "",
-            "acceptance_condition": "",
-            "achievement_method": "",
-            "max_attempts": 20,
-            "status": "finished",
-            "summary": "   ",
-            "evidence": "verified",
-            "next": "",
-            "reason": "",
-            "progress": "none",
+            "summary": "implemented",
+            "evidence": ["tests passed"],
+            "changed_files": ["src/app.py"],
+            "verification": ["./test.py --backend"],
+            "progress": "meaningful",
         },
-        ctx,
+        _context(runtime, session_id="work-session"),
+    )
+
+    assert result.metadata["goal_checkpoint_submitted"] is True
+    assert store.records[0].phase == "checkpoint"
+    assert store.records[0].sequence_number == 1
+    assert store.records[0].payload_model().summary == "implemented"
+
+
+@pytest.mark.asyncio
+async def test_goal_checkpoint_rejects_empty_summary_without_store_write() -> None:
+    store = RecordingGoalStore()
+    runtime = _runtime(store, phase="work", attempt=1)
+
+    result = await GoalCheckpointTool().execute(
+        {"summary": "   "},
+        _context(runtime, session_id="work-session"),
     )
 
     assert result.metadata["error"] is True
-    assert "summary" in result.output
-    assert controller.calls == []
+    assert result.metadata["goal_checkpoint_submitted"] is False
+    assert store.records == []
+
 
 @pytest.mark.asyncio
-async def test_goal_tool_decision_rejected_outside_evaluator_phase() -> None:
+async def test_goal_decision_submits_record_before_controller() -> None:
+    store = RecordingGoalStore()
     controller = DecisionController()
-    ctx = ToolContext(workspace="/tmp", runtime=AgentToolRuntime(goal_control=controller), goal_phase="work")
+    runtime = _runtime(store, phase="evaluator", controller=controller, attempt=1)
 
-    result = await GoalTool().execute(
+    result = await GoalDecisionTool().execute(
         {
-            "op": "decision",
-            "objective": "",
-            "acceptance_condition": "",
-            "achievement_method": "",
-            "max_attempts": 20,
             "status": "finished",
             "summary": "done",
-            "evidence": "verified",
-            "next": "",
-            "reason": "",
-            "progress": "none",
+            "evidence": ["tests passed"],
+            "reason": "acceptance verified",
+            "progress": "meaningful",
         },
-        ctx,
+        _context(runtime, session_id="evaluator-session"),
+    )
+
+    assert result.metadata["goal_decision_submitted"] is True
+    assert store.records[0].phase == "decision"
+    assert store.records[0].sequence_number == 2
+    assert controller.calls[0]["decision"]["outcome"] == "completed"
+    assert controller.calls[0]["protocol_id"] == result.metadata["protocol_id"]
+
+
+@pytest.mark.asyncio
+async def test_goal_decision_rejects_empty_summary_without_controller_call() -> None:
+    store = RecordingGoalStore()
+    controller = DecisionController()
+    runtime = _runtime(store, phase="evaluator", controller=controller, attempt=1)
+
+    result = await GoalDecisionTool().execute(
+        {"status": "finished", "summary": "   "},
+        _context(runtime, session_id="evaluator-session"),
+    )
+
+    assert result.metadata["error"] is True
+    assert result.metadata["goal_decision_submitted"] is False
+    assert controller.calls == []
+    assert store.records == []
+
+
+@pytest.mark.asyncio
+async def test_goal_decision_is_rejected_outside_evaluator_phase() -> None:
+    controller = DecisionController()
+    runtime = _runtime(phase="work", controller=controller, attempt=1)
+
+    result = await GoalDecisionTool().execute(
+        {"status": "finished", "summary": "done"},
+        _context(runtime, session_id="work-session"),
     )
 
     assert result.metadata["goal_decision_submitted"] is False
     assert controller.calls == []
 
 
-from voidx.tooling.domain.interaction import (
-    UserInteraction,
-    UserResponse,
-)
-
-
-def _init_args() -> dict:
-    return {
-        "op": "init",
-        "objective": "ship feature",
-        "acceptance_condition": "tests pass",
-        "achievement_method": "",
-        "max_attempts": 20,
-        "status": "",
-        "summary": "",
-        "evidence": "",
-        "next": "",
-        "reason": "",
-        "progress": "none",
-    }
-
-
 @pytest.mark.asyncio
-async def test_goal_tool_init_approved_via_interaction() -> None:
+async def test_goal_init_approval_options_remain_explicit() -> None:
+    store = RecordingGoalStore()
     controller = IntakeController()
     seen_prompts = []
 
@@ -216,131 +263,27 @@ async def test_goal_tool_init_approved_via_interaction() -> None:
         seen_prompts.append(request)
         return UserResponse(value="approved")
 
-    ctx = ToolContext(
-        workspace="/tmp",
-        runtime=AgentToolRuntime(goal_intake=controller, interaction=interact),
-        goal_phase="intake",
+    runtime = _runtime(
+        store,
+        phase="intake",
+        intake=controller,
+        interaction=interact,
+    )
+    result = await GoalInitTool().execute(
+        {"objective": "ship feature", "acceptance_condition": "tests pass"},
+        _context(runtime, session_id="main-session"),
     )
 
-    result = await GoalTool().execute(_init_args(), ctx)
-
     assert result.metadata["goal_init_submitted"] is True
-    assert result.metadata["goal_init_decision"] == "approved"
-    assert controller.final_spec() is not None
     assert len(seen_prompts) == 1
     assert seen_prompts[0].timeout == 300.0
-    values = {opt[1] for opt in seen_prompts[0].options}
-    assert values == {"approved", "revised", "cancelled"}
+    assert {option[1] for option in seen_prompts[0].options} == {
+        "approved", "revised", "cancelled",
+    }
 
 
-@pytest.mark.asyncio
-async def test_goal_tool_init_revise_returns_feedback_without_submitting() -> None:
-    controller = IntakeController()
+def test_legacy_goal_tool_is_not_exported() -> None:
+    import voidx.agent.adapters.tools.automation.goal as goal_tools
 
-    async def interact(request: UserInteraction) -> UserResponse:
-        return UserResponse(value="tighten the acceptance condition", free_text=True)
-
-    ctx = ToolContext(
-        workspace="/tmp",
-        runtime=AgentToolRuntime(goal_intake=controller, interaction=interact),
-        goal_phase="intake",
-    )
-
-    result = await GoalTool().execute(_init_args(), ctx)
-
-    assert result.metadata["goal_init_submitted"] is False
-    assert result.metadata["goal_init_decision"] == "revised"
-    assert "tighten the acceptance condition" in result.output
-    assert controller.final_spec() is None
-
-
-@pytest.mark.asyncio
-async def test_goal_tool_init_cancelled_by_user() -> None:
-    controller = IntakeController()
-
-    async def interact(request: UserInteraction) -> UserResponse:
-        return UserResponse(value="cancelled")
-
-    ctx = ToolContext(
-        workspace="/tmp",
-        runtime=AgentToolRuntime(goal_intake=controller, interaction=interact),
-        goal_phase="intake",
-    )
-
-    result = await GoalTool().execute(_init_args(), ctx)
-
-    assert result.metadata["goal_init_submitted"] is False
-    assert result.metadata["goal_init_decision"] == "cancelled"
-    assert controller.final_spec() is None
-
-
-@pytest.mark.asyncio
-async def test_goal_tool_init_timeout_auto_approves() -> None:
-    controller = IntakeController()
-
-    async def interact(request: UserInteraction) -> UserResponse:
-        return UserResponse(value="", cancelled=True)
-
-    ctx = ToolContext(
-        workspace="/tmp",
-        runtime=AgentToolRuntime(goal_intake=controller, interaction=interact),
-        goal_phase="intake",
-    )
-
-    result = await GoalTool().execute(_init_args(), ctx)
-
-    assert result.metadata["goal_init_submitted"] is True
-    assert result.metadata["goal_init_decision"] == "auto_approved"
-    assert controller.final_spec() is not None
-
-
-@pytest.mark.asyncio
-async def test_goal_tool_init_submits_in_idle_phase() -> None:
-    controller = IntakeController()
-    ctx = ToolContext(workspace="/tmp", runtime=AgentToolRuntime(goal_intake=controller), goal_phase="idle")
-
-    result = await GoalTool().execute(
-        {
-            "op": "init",
-            "objective": "ship feature",
-            "acceptance_condition": "tests pass",
-            "achievement_method": "",
-            "max_attempts": 20,
-            "status": "",
-            "summary": "",
-            "evidence": "",
-            "next": "",
-            "reason": "",
-            "progress": "none",
-        },
-        ctx,
-    )
-
-    assert result.metadata["goal_init_submitted"] is True
-    assert isinstance(controller.final_spec(), GoalSpec)
-
-
-@pytest.mark.asyncio
-async def test_goal_tool_init_still_rejected_in_work_phase() -> None:
-    controller = IntakeController()
-    ctx = ToolContext(workspace="/tmp", runtime=AgentToolRuntime(goal_intake=controller), goal_phase="work")
-
-    result = await GoalTool().execute(
-        {
-            "op": "init",
-            "objective": "ship feature",
-            "acceptance_condition": "tests pass",
-            "achievement_method": "",
-            "max_attempts": 20,
-            "status": "",
-            "summary": "",
-            "evidence": "",
-            "next": "",
-            "reason": "",
-            "progress": "none",
-        },
-        ctx,
-    )
-
-    assert result.metadata["goal_init_submitted"] is False
-    assert controller.final_spec() is None
+    assert not hasattr(goal_tools, "GoalTool")
+    assert "GoalTool" not in getattr(goal_tools, "__all__", ())

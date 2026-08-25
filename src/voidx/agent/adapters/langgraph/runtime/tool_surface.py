@@ -23,11 +23,11 @@ from voidx.agent.adapters.langgraph.runtime.control_protocol import (
 
 EXECUTION_ONLY_TOOLS = frozenset({"git", "lsp_format", "compact"})
 CHILD_BLOCKED_TOOLS = frozenset({"agent", "clarify", "checkpoint"})
-LIFECYCLE_TOOLS = frozenset({"turn", "goal", "loop"})
+LIFECYCLE_TOOLS = frozenset({"turn", "goal", "goal_init", "goal_checkpoint", "goal_decision", "loop"})
 
 _GOAL_PHASES = frozenset({"idle", "intake", "work", "evaluator"})
 _LOOP_PHASES = frozenset({"idle", "work"})
-_GOAL_VISIBLE_PHASES = frozenset({"idle", "intake", "evaluator"})
+_GOAL_VISIBLE_PHASES = frozenset({"idle", "intake", "work", "evaluator"})
 
 
 class ToolNamePolicy(Protocol):
@@ -120,7 +120,9 @@ def resolve_tool_surface(registry, context: ToolSurfaceContext) -> ToolSurface:
         elif protocol_id == "loop":
             injected = protocol.tool_definitions()
         elif protocol_id == "goal" and phase in _GOAL_VISIBLE_PHASES:
-            injected = protocol.tool_definitions()
+            from voidx.agent.adapters.langgraph.runtime.control_protocol import GoalProtocol
+
+            injected = GoalProtocol(phase=phase).tool_definitions()
 
     injected_names = frozenset(_definition_name(t) for t in injected)
     if injected_names:
@@ -129,7 +131,9 @@ def resolve_tool_surface(registry, context: ToolSurfaceContext) -> ToolSurface:
 
     if policy is not None:
         reject("policy", frozenset(
-            name for name in (_definition_name(t) for t in definitions) if not policy.allows(name)
+            name
+            for name in (_definition_name(tool) for tool in definitions)
+            if not policy_allows(policy, registry, name)
         ))
 
     definitions = filter_unavailable_lsp_tools(definitions, context.lsp_manager)

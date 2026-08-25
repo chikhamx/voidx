@@ -41,12 +41,17 @@ class AgentRuntime:
             update={"lifecycle": LifecycleState.RUNNING}
         )
         try:
+            engine_kwargs = {
+                "display_text": request.display_text,
+                "context": request.context,
+                "persist_user_input": request.persist_user_input,
+            }
+            if request.guidance is not None:
+                engine_kwargs["guidance"] = request.guidance
             result = await self._resources.turn_engine.run(
                 request.user_text,
                 runtime,
-                display_text=request.display_text,
-                context=request.context,
-                persist_user_input=request.persist_user_input,
+                **engine_kwargs,
             )
         except asyncio.CancelledError:
             if resolved_session_id:
@@ -79,5 +84,8 @@ class AgentRuntime:
             final_llm_messages=tuple(evidence.get("final_llm_messages", ()) or ()),
             final_assistant_summary=str(evidence.get("final_assistant_summary", "") or ""),
             tool_result_summaries=tuple(evidence.get("tool_result_summaries", ()) or ()),
+            current_turn_tool_result_summaries=tuple(
+                evidence.get("current_turn_tool_result_summaries", ()) or ()
+            ),
             stop_signal=str(evidence.get("stop_signal", "") or ""),
         )

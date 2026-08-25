@@ -85,7 +85,7 @@
     "display": "",
     "metadata": {},
     "next_step_hint": "",
-    "output": "Unknown tool: missing. Available: ['read', 'manage', 'write', 'replace', 'git', 'find', 'search', 'lsp', 'lsp_format', 'clarify', 'checkpoint', 'workflow', 'compact', 'document', 'goal', 'loop', 'bash', 'todo', 'skill', 'webfetch', 'websearch', 'mcp']",
+    "output": "Unknown tool: missing. Available: ['read', 'manage', 'write', 'replace', 'git', 'find', 'search', 'lsp', 'lsp_format', 'clarify', 'checkpoint', 'workflow', 'compact', 'document', 'goal_init', 'goal_checkpoint', 'goal_decision', 'loop', 'bash', 'todo', 'skill', 'webfetch', 'websearch', 'mcp']",
     "summary": "",
     "title": ""
   }

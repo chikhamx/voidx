@@ -10,8 +10,12 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from pydantic import BaseModel, Field
 
-from voidx.persistence.jsonl import read_session_records, write_session_records
+from voidx.persistence.jsonl import delete_session_file, read_session_records, session_dir, write_session_records
 from voidx.persistence.sqlite import execute_commit, fetch_all, now
+from voidx.observability.tool_log import log_tool_event
+
+
+CONTEXT_FRAME_KEEP_PER_KIND = 5
 
 
 class ContextFrameRecord(BaseModel):
@@ -95,6 +99,10 @@ async def save_context_frame(record: ContextFrameRecord) -> int:
         file_path,
         record.messages,
     )
+    try:
+        await _trim_context_frames(record.session_id, record.frame_kind)
+    except Exception as exc:
+        log_tool_event("context_frame_trim_failed", message=str(exc), session_id=record.session_id)
     return frame_id
 
 
@@ -162,6 +170,77 @@ async def load_context_frames(session_id: str, limit: int = 50) -> list[ContextF
             created_at=row["created_at"],
         ))
     return list(reversed(records))
+
+
+async def gc_context_frames(
+    session_id: str,
+    keep_per_kind: int = CONTEXT_FRAME_KEEP_PER_KIND,
+) -> int:
+    live_rows = await fetch_all(
+        "SELECT id, file_path, frame_kind FROM context_frames WHERE session_id = ?",
+        (session_id,),
+    )
+    live_paths = {str(row["file_path"]) for row in live_rows if row["file_path"]}
+    removed = 0
+    for file_path in await _list_context_frame_files(session_id):
+        if file_path in live_paths:
+            continue
+        if await _unlink_context_file(session_id, file_path):
+            removed += 1
+    kinds = {str(row["frame_kind"]) for row in live_rows}
+    for frame_kind in kinds:
+        removed += await _trim_context_frames(session_id, frame_kind, keep=keep_per_kind)
+    return removed
+
+
+async def _trim_context_frames(
+    session_id: str,
+    frame_kind: str,
+    keep: int = CONTEXT_FRAME_KEEP_PER_KIND,
+) -> int:
+    rows = await fetch_all(
+        """SELECT id, file_path FROM context_frames
+           WHERE session_id = ? AND frame_kind = ?
+           ORDER BY id DESC""",
+        (session_id, frame_kind),
+    )
+    return await _delete_context_frame_rows(session_id, rows[keep:])
+
+
+async def _delete_context_frame_rows(session_id: str, rows: list[Any]) -> int:
+    removed = 0
+    stale_ids: list[int] = []
+    for row in rows:
+        file_path = str(row["file_path"] or "")
+        if file_path and await _unlink_context_file(session_id, file_path):
+            removed += 1
+        stale_ids.append(int(row["id"]))
+    if stale_ids:
+        placeholders = ", ".join("?" for _ in stale_ids)
+        await execute_commit(
+            f"DELETE FROM context_frames WHERE id IN ({placeholders})",
+            tuple(stale_ids),
+        )
+    return removed
+
+
+async def _list_context_frame_files(session_id: str) -> list[str]:
+    context_dir = session_dir(session_id) / "context"
+    if not context_dir.exists():
+        return []
+    names: list[str] = []
+    for path in context_dir.glob("*.jsonl"):
+        if path.name == "deletes.jsonl" or not path.stem.isdigit():
+            continue
+        names.append(f"context/{path.name}")
+    return names
+
+
+async def _unlink_context_file(session_id: str, file_path: str) -> bool:
+    try:
+        return await delete_session_file(session_id, file_path)
+    except (ValueError, OSError):
+        return False
 
 
 def _context_frame_deleted(row: Any, delete_records: list[dict[str, Any]]) -> bool:

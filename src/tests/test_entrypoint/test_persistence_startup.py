@@ -22,6 +22,20 @@ async def test_build_settings_migrates_before_constructing_profile_store(monkeyp
         "voidx.bootstrap.persistence.initialize_persistence",
         lambda: events.append("migration"),
     )
+    async def reconcile_goal_cleanup() -> None:
+        events.append("goal_cleanup")
+
+    monkeypatch.setattr(
+        "voidx.bootstrap.persistence.reconcile_goal_cleanup",
+        reconcile_goal_cleanup,
+    )
+    async def deliver_goal_public_summaries() -> None:
+        events.append("goal_summaries")
+
+    monkeypatch.setattr(
+        "voidx.bootstrap.persistence.deliver_goal_public_summaries",
+        deliver_goal_public_summaries,
+    )
     monkeypatch.setattr("voidx.config.Settings", Settings)
     monkeypatch.setattr(
         "voidx.config.adapters.profile_store.MemoryModelProfileStore",
@@ -32,4 +46,10 @@ async def test_build_settings_migrates_before_constructing_profile_store(monkeyp
 
     await build_settings("${WORKSPACE}")
 
-    assert events == ["migration", "profile_store", "settings"]
+    assert events == [
+        "migration",
+        "goal_cleanup",
+        "goal_summaries",
+        "profile_store",
+        "settings",
+    ]

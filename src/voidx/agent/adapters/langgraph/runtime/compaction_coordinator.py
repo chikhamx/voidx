@@ -32,7 +32,7 @@ from voidx.llm.domain.provider import resolve_protocol
 from voidx.observability.tool_log import log_tool_event
 from voidx.observability.request_log import log_llm_exchange
 from voidx.llm.usage import estimate_context_tokens, estimate_message_tokens, extract_token_usage
-from voidx.agent.adapters.persistence.context_frame_repository import save_context_frame_from_messages
+from voidx.agent.adapters.persistence.context_frame_repository import gc_context_frames, save_context_frame_from_messages
 from voidx.agent.application.automation.workflow.service import is_workflow_context_content
 
 RunCompactionAgent = Callable[[list, str | None], Awaitable[str | None]]
@@ -538,6 +538,10 @@ class CompactionCoordinator:
         from voidx.agent.adapters.persistence.session_repository import delete_messages_through
 
         await delete_messages_through(host._session.id, last_message_id)
+        try:
+            await gc_context_frames(host._session.id)
+        except Exception as exc:
+            log_tool_event("context_frame_gc_failed", message=str(exc), session_id=host._session.id)
 
         cache = getattr(host, "_session_msg_cache", None)
         if cache is not None:

@@ -58,6 +58,7 @@ class FakeBackend:
         display_text: str | None = None,
         context=None,
         persist_user_input: bool = True,
+        guidance=None,
     ) -> None:
         self.calls.append((user_text, display_text, persist_user_input))
 

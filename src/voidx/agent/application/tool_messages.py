@@ -40,3 +40,62 @@ def sanitize_tool_message_content(
         omitted = len(text) - max_chars
         text = text[:max_chars] + f"\n\n[Tool output truncated: omitted {omitted} chars]"
     return text
+
+
+TOOL_OBSERVATION_MARKER = "voidx_tool_observation"
+_NON_FALLBACK_OBSERVATION_TOOLS = frozenset({
+    "turn",
+    "goal",
+    "goal_init",
+    "goal_checkpoint",
+    "goal_decision",
+    "loop",
+    "workflow",
+    "todo",
+    "compact",
+    "clarify",
+    "checkpoint",
+})
+
+
+def tool_observation_kwargs(
+    *,
+    source: str,
+    tool_name: str = "",
+    executed: bool,
+    synthetic: bool,
+    status: str,
+) -> dict[str, object]:
+    normalized_status = str(status or "error").strip().lower()
+    fallback_eligible = bool(
+        source == "tool_executor"
+        and executed
+        and not synthetic
+        and normalized_status == "success"
+        and tool_name not in _NON_FALLBACK_OBSERVATION_TOOLS
+    )
+    return {
+        TOOL_OBSERVATION_MARKER: {
+            "source": source,
+            "executed": bool(executed),
+            "synthetic": bool(synthetic),
+            "status": normalized_status,
+            "fallback_eligible": fallback_eligible,
+        }
+    }
+
+
+def is_fallback_eligible_tool_observation(message: object) -> bool:
+    additional_kwargs = getattr(message, "additional_kwargs", None)
+    if not isinstance(additional_kwargs, dict):
+        return False
+    observation = additional_kwargs.get(TOOL_OBSERVATION_MARKER)
+    if not isinstance(observation, dict):
+        return False
+    return bool(
+        observation.get("source") == "tool_executor"
+        and observation.get("executed") is True
+        and observation.get("synthetic") is False
+        and observation.get("status") == "success"
+        and observation.get("fallback_eligible") is True
+    )

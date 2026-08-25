@@ -53,7 +53,15 @@ class FakeHost:
     def set_session_date(self, value):
         self._session_date = value
 
-    async def run_turn(self, user_text, *, display_text=None, context=None, persist_user_input=True):
+    async def run_turn(
+        self,
+        user_text,
+        *,
+        display_text=None,
+        context=None,
+        persist_user_input=True,
+        guidance=None,
+    ):
         self.calls.append((user_text, display_text, persist_user_input))
 
 
@@ -116,3 +124,54 @@ def test_evidence_from_execution_keeps_large_tool_batch_counts():
     assert "ok_true=100" in summaries
     assert "omitted_middle_tool_results=60" in summaries
 
+
+
+def test_evidence_from_execution_only_uses_eligible_executor_results_for_current_turn():
+    host = FakeHost()
+    host._current_messages = []
+    host._current_turn_tool_messages = (
+        ToolMessage(
+            content="Tool result unavailable: previous tool call was not executed.",
+            tool_call_id="synthetic",
+            status="error",
+        ),
+        ToolMessage(
+            content="invalid tool arguments",
+            tool_call_id="invalid",
+            status="error",
+        ),
+        ToolMessage(
+            content="checkpoint submitted",
+            tool_call_id="control",
+            name="goal_checkpoint",
+            additional_kwargs={
+                "voidx_tool_observation": {
+                    "source": "tool_executor",
+                    "fallback_eligible": False,
+                }
+            },
+        ),
+        ToolMessage(
+            content="src/app.py exists",
+            tool_call_id="executed",
+            name="read",
+            additional_kwargs={
+                "voidx_tool_observation": {
+                    "source": "tool_executor",
+                    "executed": True,
+                    "synthetic": False,
+                    "status": "success",
+                    "fallback_eligible": True,
+                }
+            },
+        ),
+    )
+
+    evidence = _evidence_from_execution(host)
+
+    summaries = "\n".join(evidence["current_turn_tool_result_summaries"])
+    assert "Observed tool result total: 1" in summaries
+    assert "src/app.py exists" in summaries
+    assert "unavailable" not in summaries
+    assert "invalid tool arguments" not in summaries
+    assert "checkpoint submitted" not in summaries

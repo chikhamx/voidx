@@ -417,6 +417,7 @@ class UiEventItemAdapter:
             "started",
             {
                 "prompt_type": "permission",
+                "request_id": event.request_id,
                 "interactive": False,
                 "prompt": event.prompt,
                 "choices": event.choices,
@@ -452,7 +453,14 @@ class UiEventItemAdapter:
 
     def _on_permission_prompt_cleared(self, event: PermissionPromptCleared) -> JsonRpcNotification:
         return self._item_notification(
-            _uid(), "prompt", "completed", {"prompt_type": "permission", "cleared": True},
+            _uid(),
+            "prompt",
+            "completed",
+            {
+                "prompt_type": "permission",
+                "request_id": event.request_id,
+                "cleared": True,
+            },
         )
 
     def _on_checkpoint_decision(self, event: CheckpointDecisionSubmitted) -> JsonRpcNotification:

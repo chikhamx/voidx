@@ -24,7 +24,11 @@ class LifecycleState(str, Enum):
 
 
 TERMINAL_LIFECYCLES = frozenset(
-    {LifecycleState.COMPLETED, LifecycleState.FAILED, LifecycleState.CANCELLED}
+    {
+        LifecycleState.COMPLETED,
+        LifecycleState.FAILED,
+        LifecycleState.CANCELLED,
+    }
 )
 
 
@@ -39,7 +43,9 @@ class GoalStatePatch(BaseModel):
     last_evaluator_next_hint: str | None = None
     last_evaluator_missing: tuple[str, ...] | None = None
     blocked_reason: str | None = None
-    active: bool | None = None
+    current_phase: Literal["work", "evaluator"] | None = None
+    phase_status: Literal["running", "needs_resume"] | None = None
+    interrupt_reason: str | None = None
 
 
 class DecisionMetadata(BaseModel):
@@ -52,7 +58,7 @@ class DecisionMetadata(BaseModel):
 class RuntimeDecision(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    outcome: Literal["continue", "completed", "blocked", "needs_user", "failed", "stop"]
+    outcome: Literal["continue", "completed", "blocked", "needs_user", "needs_resume", "failed", "stop"]
     summary: str
     progress: Literal["none", "partial", "meaningful"] = "none"
     next_delay_seconds: float | None = None
@@ -128,6 +134,7 @@ def apply_lifecycle_decision(
         "completed": LifecycleState.COMPLETED,
         "blocked": LifecycleState.BLOCKED,
         "needs_user": LifecycleState.NEEDS_USER,
+        "needs_resume": LifecycleState.NEEDS_USER,
         "failed": LifecycleState.FAILED,
         "stop": LifecycleState.CANCELLED,
     }[decision.outcome]

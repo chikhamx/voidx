@@ -84,7 +84,7 @@ def _run_with_locked_retry(operation: Callable[[], T]) -> T:
     raise RuntimeError("unreachable sqlite retry state")
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 14
 
 
 def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
@@ -127,6 +127,233 @@ def _migrate_to_v5(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, "sessions", "runtime_profile_hash", "TEXT")
     _add_column_if_missing(conn, "sessions", "runtime_profile_source", "TEXT")
     _add_column_if_missing(conn, "sessions", "runtime_profile_snapshot", "TEXT")
+
+
+def _create_goal_protocol_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS goal_protocol_records (
+            protocol_id TEXT PRIMARY KEY,
+            parent_session_id TEXT NOT NULL,
+            generation TEXT NOT NULL,
+            phase TEXT NOT NULL CHECK (phase IN ('init', 'checkpoint', 'decision')),
+            attempt_number INTEGER NOT NULL,
+            sequence_number INTEGER NOT NULL,
+            turn_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            payload_type TEXT NOT NULL CHECK (
+                payload_type IN ('GoalSpecSnapshot', 'WorkCheckpoint', 'GoalDecision')
+            ),
+            payload_json TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('submitted', 'projected')),
+            payload_hash TEXT NOT NULL,
+            submitted_at TEXT NOT NULL,
+            projected_at TEXT,
+            UNIQUE (generation, sequence_number),
+            UNIQUE (generation, phase, attempt_number)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_goal_protocol_generation_sequence
+            ON goal_protocol_records(generation, sequence_number);
+        CREATE INDEX IF NOT EXISTS idx_goal_protocol_status
+            ON goal_protocol_records(generation, status);
+    """)
+
+
+def _migrate_to_v6(conn: sqlite3.Connection) -> None:
+    """v5 → v6: add the durable Goal protocol journal."""
+    _create_goal_protocol_tables(conn)
+
+
+def _create_goal_generation_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS goal_generations (
+            generation TEXT PRIMARY KEY,
+            main_session_id TEXT NOT NULL,
+            evaluator_session_id TEXT NOT NULL UNIQUE,
+            work_session_id TEXT NOT NULL UNIQUE,
+            goal_thread_id TEXT UNIQUE,
+            visibility TEXT NOT NULL DEFAULT 'internal'
+                CHECK (visibility = 'internal'),
+            created_at TEXT NOT NULL,
+            terminal_at TEXT,
+            archived_at TEXT,
+            FOREIGN KEY (main_session_id) REFERENCES sessions(id) ON DELETE RESTRICT,
+            FOREIGN KEY (evaluator_session_id) REFERENCES sessions(id) ON DELETE RESTRICT,
+            FOREIGN KEY (work_session_id) REFERENCES sessions(id) ON DELETE RESTRICT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_goal_generations_main
+            ON goal_generations(main_session_id, created_at);
+    """)
+
+
+
+
+def _create_goal_recovery_lease_table(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS goal_recovery_leases (
+            generation TEXT PRIMARY KEY,
+            lease_owner TEXT NOT NULL,
+            lease_expires_at REAL NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_goal_recovery_leases_expiry
+            ON goal_recovery_leases(lease_expires_at);
+    """)
+
+
+def _migrate_to_v7(conn: sqlite3.Connection) -> None:
+    """v6 → v7: persist opaque Goal generation/session bindings."""
+    _create_goal_generation_tables(conn)
+
+
+def _migrate_to_v8(conn: sqlite3.Connection) -> None:
+    """v7 → v8: persist cross-worker Goal recovery leases."""
+    _create_goal_recovery_lease_table(conn)
+
+
+
+def _create_guidance_inbox_table(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS guidance_inbox (
+            guidance_id TEXT PRIMARY KEY,
+            text TEXT NOT NULL,
+            source TEXT NOT NULL CHECK (source IN ('user', 'system', 'guard')),
+            created_at TEXT NOT NULL,
+            target_session_id TEXT,
+            target_thread_id TEXT,
+            target_run_id TEXT,
+            target_phase TEXT,
+            delivery_id TEXT,
+            delivered_phase TEXT,
+            consumed_at TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_guidance_inbox_pending_session
+            ON guidance_inbox(target_session_id, created_at, guidance_id)
+            WHERE consumed_at IS NULL AND delivery_id IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_guidance_inbox_pending_thread
+            ON guidance_inbox(target_thread_id, created_at, guidance_id)
+            WHERE consumed_at IS NULL AND delivery_id IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_guidance_inbox_pending_run
+            ON guidance_inbox(target_run_id, target_phase, created_at, guidance_id)
+            WHERE consumed_at IS NULL AND delivery_id IS NULL;
+    """)
+
+
+def _migrate_to_v9(conn: sqlite3.Connection) -> None:
+    """v8 → v9: persist cross-mode Guidance inbox records."""
+    _create_guidance_inbox_table(conn)
+
+
+def _migrate_to_v10(conn: sqlite3.Connection) -> None:
+    """v9 → v10: persist whether the submitted Guidance text was truncated."""
+    _add_column_if_missing(
+        conn,
+        "guidance_inbox",
+        "truncated",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+
+
+def _create_goal_generation_cleanup_table(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS goal_generation_cleanup (
+            generation TEXT PRIMARY KEY,
+            cleanup_epoch INTEGER NOT NULL,
+            main_session_id TEXT NOT NULL,
+            work_session_id TEXT NOT NULL,
+            evaluator_session_id TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('pending', 'committed')),
+            requested_at TEXT NOT NULL,
+            completed_at TEXT,
+            last_error TEXT NOT NULL DEFAULT ''
+        );
+    """)
+
+
+def _migrate_to_v11(conn: sqlite3.Connection) -> None:
+    """v10 → v11: persist durable Goal generation cleanup tombstones."""
+    _create_goal_generation_cleanup_table(conn)
+
+
+
+
+def _create_goal_transcript_table(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS goal_transcript_records (
+            session_id TEXT NOT NULL,
+            generation TEXT NOT NULL,
+            attempt_id TEXT NOT NULL,
+            attempt_number INTEGER NOT NULL,
+            local_sequence INTEGER NOT NULL,
+            session_sequence INTEGER NOT NULL,
+            fencing_token INTEGER NOT NULL,
+            filename TEXT NOT NULL,
+            start_offset INTEGER NOT NULL,
+            end_offset INTEGER NOT NULL,
+            payload_hash TEXT NOT NULL,
+            accepted_at TEXT NOT NULL,
+            PRIMARY KEY (session_id, attempt_id, local_sequence),
+            UNIQUE (session_id, session_sequence),
+            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE RESTRICT,
+            FOREIGN KEY (generation) REFERENCES goal_generations(generation) ON DELETE RESTRICT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_goal_transcript_order
+            ON goal_transcript_records(session_id, session_sequence);
+    """)
+
+
+def _migrate_to_v12(conn: sqlite3.Connection) -> None:
+    """v11 → v12: index accepted Goal transcript byte ranges."""
+    _create_goal_transcript_table(conn)
+
+
+def _create_goal_runtime_failure_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS goal_runtime_failures (
+            generation TEXT PRIMARY KEY,
+            observed_sequence INTEGER NOT NULL,
+            reason TEXT NOT NULL,
+            evidence_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (generation) REFERENCES goal_generations(generation)
+                ON DELETE RESTRICT
+        );
+
+        CREATE TABLE IF NOT EXISTS goal_public_summary_outbox (
+            summary_id TEXT PRIMARY KEY,
+            generation TEXT NOT NULL,
+            main_session_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            delivered_at TEXT,
+            UNIQUE (generation, kind),
+            FOREIGN KEY (main_session_id) REFERENCES sessions(id)
+                ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_goal_public_summary_pending
+            ON goal_public_summary_outbox(main_session_id, delivered_at, created_at);
+    """)
+
+
+def _migrate_to_v13(conn: sqlite3.Connection) -> None:
+    """v12 → v13: persist atomic Goal runtime failures and public summaries."""
+    _create_goal_runtime_failure_tables(conn)
+
+
+def _migrate_to_v14(conn: sqlite3.Connection) -> None:
+    """v13 → v14: persist structured Goal public summary payloads."""
+    _add_column_if_missing(
+        conn,
+        "goal_public_summary_outbox",
+        "payload_json",
+        "TEXT NOT NULL DEFAULT '{}'",
+    )
 
 
 def _create_agent_thread_tables(conn: sqlite3.Connection) -> None:
@@ -249,6 +476,15 @@ MIGRATIONS = (
     MigrationStep(3, "agent-thread-tables", _migrate_to_v3),
     MigrationStep(4, "provisional-sessions", _migrate_to_v4),
     MigrationStep(5, "profile-snapshot", _migrate_to_v5),
+    MigrationStep(6, "goal-protocol-journal", _migrate_to_v6),
+    MigrationStep(7, "goal-generation-bindings", _migrate_to_v7),
+    MigrationStep(8, "goal-recovery-leases", _migrate_to_v8),
+    MigrationStep(9, "guidance-inbox", _migrate_to_v9),
+    MigrationStep(10, "guidance-truncated-flag", _migrate_to_v10),
+    MigrationStep(11, "goal-generation-cleanup", _migrate_to_v11),
+    MigrationStep(12, "goal-transcript-records", _migrate_to_v12),
+    MigrationStep(13, "goal-runtime-failures", _migrate_to_v13),
+    MigrationStep(14, "goal-public-summary-payload", _migrate_to_v14),
 )
 
 

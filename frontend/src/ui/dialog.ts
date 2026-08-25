@@ -38,9 +38,37 @@ export const pendingUiRequests: UiRequest[] = [];
 
 export function _resetDialogForTest(): void {
   pendingUiRequests.length = 0;
+  requestDialogEl.dataset.requestKind = "";
+  requestDialogEl.dataset.requestId = "";
   requestDialogEl.dataset.responseMethod = "";
   requestDialogEl.dataset.responseThreadId = "";
   requestDialogEl.close();
+}
+
+export function clearPermissionRequests(requestId?: string): void {
+  for (let index = pendingUiRequests.length - 1; index >= 0; index -= 1) {
+    const request = pendingUiRequests[index];
+    if (
+      request.kind === "permission" &&
+      (!requestId || request.request_id === requestId)
+    ) {
+      pendingUiRequests.splice(index, 1);
+    }
+  }
+
+  if (
+    requestDialogEl.dataset.requestKind !== "permission" ||
+    (requestId && requestDialogEl.dataset.requestId !== requestId)
+  ) {
+    return;
+  }
+
+  requestDialogEl.dataset.requestKind = "";
+  requestDialogEl.dataset.requestId = "";
+  requestDialogEl.dataset.responseMethod = "";
+  requestDialogEl.dataset.responseThreadId = "";
+  requestDialogEl.close();
+  showNextQueuedRequest();
 }
 
 export function showRequest(request: Record<string, unknown>): void {
@@ -53,6 +81,8 @@ export function showRequest(request: Record<string, unknown>): void {
 }
 
 export function renderRequest(req: UiRequest): void {
+  requestDialogEl.dataset.requestKind = req.kind;
+  requestDialogEl.dataset.requestId = req.request_id || "";
   requestDialogEl.dataset.responseMethod = req.response_method || "";
   requestDialogEl.dataset.responseThreadId = req.thread_id || "";
   requestTitleEl.textContent = req.kind === "permission" ? "权限审批" : req.prompt;

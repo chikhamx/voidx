@@ -130,13 +130,14 @@ class GatewayHeadlessFrontend:
         anchor: str = "",
         details: list[dict[str, Any]] | None = None,
         timeout: float | None = None,
+        request_id: str | None = None,
     ) -> str | None:
         if self._external_request_handler is None:
             return None
         details_payload = [
             PermissionToolDetail.model_validate(item) for item in (details or [])
         ]
-        request_id = f"choice_{uuid.uuid4().hex}"
+        request_id = request_id or f"choice_{uuid.uuid4().hex}"
         thread_id = self._current_thread_id()
         if details_payload:
             request = UiPermissionRequest(

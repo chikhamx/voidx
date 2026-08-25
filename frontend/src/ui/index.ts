@@ -2,7 +2,7 @@ export { initContextMenu } from "./context-menu";
 export { HISTORY_LIMIT, historyNext, historyPrev, isHistoryBrowsing, pushHistory, resetHistoryNavigation } from "./history";
 export { type ImageAttachment, addImageAttachment, clearImageAttachments, imageAttachmentTokens } from "./image-attachments";
 export { type PasteEntry, type PasteKind, clearPasteEntries, computeTextPasteDisplay, expandPasteTokens, registerTextPaste } from "./paste";
-export { type PermissionToolDetail, type UiRequest, pendingUiRequests, renderChoiceButtons, renderPermissionDetails, renderRequest, renderTextRequest, sendResponse, showNextQueuedRequest, showPromptItemRequest, showRequest } from "./dialog";
+export { type PermissionToolDetail, type UiRequest, clearPermissionRequests, pendingUiRequests, renderChoiceButtons, renderPermissionDetails, renderRequest, renderTextRequest, sendResponse, showNextQueuedRequest, showPromptItemRequest, showRequest } from "./dialog";
 export {
   type ConversationPrompt,
   beginConversationPromptResponse,

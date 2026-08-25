@@ -16,7 +16,13 @@ from voidx.agent.adapters.langgraph.runtime.runtime_guards import RuntimeGuardSt
 from voidx.agent.adapters.langgraph.runtime.topology import session_date
 from voidx.agent.application.runtime_context import ContextCompilerCache, InteractionMode
 from voidx.agent.domain.task.state import TaskState
-from voidx.agent.adapters.persistence.session_repository import SessionInfo, get_session
+from voidx.agent.adapters.persistence.session_repository import (
+    MessageRow,
+    SessionInfo,
+    append_goal_transcript_message,
+    get_session,
+    save_message,
+)
 from voidx.agent.adapters.persistence.runtime_state_repository import load_runtime_state
 from voidx.platform.execution_context import ExecutionIdentity, bind_execution_identity
 
@@ -33,6 +39,7 @@ class GuidanceEntry:
     thread_id: str = ""
     session_id: str = ""
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    guidance_id: str = ""
 
 @dataclass
 class ThreadExecutionState:
@@ -54,6 +61,7 @@ class ThreadExecutionState:
     tool_policy: ToolPolicy | None = None
     tool_registry: Any | None = None
     workspace: str = ""
+    goal_transcript_local_sequence: int = 0
     host_id: int | None = None
 
 
@@ -65,6 +73,45 @@ _CURRENT_THREAD_EXECUTION_STATE: ContextVar[ThreadExecutionState | None] = Conte
 
 def current_thread_execution_state() -> ThreadExecutionState | None:
     return _CURRENT_THREAD_EXECUTION_STATE.get()
+
+
+async def save_turn_message(row: MessageRow) -> int:
+    state = current_thread_execution_state()
+    context = state.turn_context if state is not None else None
+    generation = str(getattr(context, "goal_generation", "") or "")
+    if not generation:
+        return await save_message(row)
+    if state is None or context is None or row.session_id != context.session_id:
+        raise ValueError("Goal transcript turn/session binding is invalid")
+
+    local_sequence = state.goal_transcript_local_sequence + 1
+    record: dict[str, Any] = {
+        "role": row.role,
+        "content": row.content,
+        "content_format": row.content_format,
+        "created_at": row.created_at,
+    }
+    if row.additional_kwargs:
+        record["additional_kwargs"] = row.additional_kwargs
+    if row.tool_calls:
+        record["tool_calls"] = row.tool_calls
+    if row.tool_call_id:
+        record["tool_call_id"] = row.tool_call_id
+    if row.role == "tool" and row.status == "error":
+        record["status"] = "error"
+
+    accepted = await append_goal_transcript_message(
+        session_id=row.session_id,
+        generation=generation,
+        attempt_id=context.goal_attempt_id,
+        attempt_number=context.goal_attempt_number,
+        local_sequence=local_sequence,
+        lease_owner=context.goal_lease_owner,
+        fencing_token=context.goal_fencing_token,
+        message=record,
+    )
+    state.goal_transcript_local_sequence = local_sequence
+    return accepted.session_sequence
 
 
 
@@ -257,6 +304,7 @@ async def bind_thread_execution_context(
     if turn_context is not None and workspace != turn_context.workspace:
         turn_context = turn_context.model_copy(update={"workspace": workspace})
     state.turn_context = turn_context
+    state.goal_transcript_local_sequence = 0
     state.runtime_profile = turn_context.runtime_profile if turn_context else None
     state.tool_policy = turn_context.tool_policy if turn_context else None
     profile_tool_registry_factory = getattr(

@@ -15,7 +15,10 @@ from voidx.agent.adapters.langgraph.runtime.runtime import current_parent_tool_c
 from voidx.agent.domain.workflow_utils import active_workflow_names
 from voidx.agent.application.todo_state import todo_run_state_from_result
 from voidx.agent.domain.task.state import goal_label, goal_type_from_join
-from voidx.agent.application.tool_messages import sanitize_tool_message_content
+from voidx.agent.application.tool_messages import (
+    sanitize_tool_message_content,
+    tool_observation_kwargs,
+)
 from voidx.agent.adapters.tools.result_storage import maybe_persist_tool_result
 from voidx.agent.adapters.langgraph.runtime.todo_events import todo_updated_event
 from voidx.agent.ports.ui import UiEventTimeout
@@ -80,13 +83,17 @@ def _goal_phase_committed(turn_context) -> str | None:
     if turn_context is None:
         return None
     phase = getattr(turn_context, "goal_phase", "")
-    if phase == "intake":
+    if phase in {"idle", "intake"}:
         controller = getattr(turn_context, "goal_intake_controller", None)
         if controller is None:
             return None
         if controller.final_spec() is not None or getattr(controller, "cancelled", False):
             return "was skipped after goal intake submission"
         return None
+    if phase == "work":
+        controller = getattr(turn_context, "goal_checkpoint_controller", None)
+        if controller is not None and controller.final_checkpoint() is not None:
+            return "was skipped after goal checkpoint submission"
     if phase == "evaluator":
         controller = getattr(turn_context, "goal_controller", None)
         if controller is not None and controller.final_decision() is not None:
@@ -149,6 +156,14 @@ async def _apply_pending_turn_stop_commit(host: Any, result: dict) -> dict:
 
 
 
+
+
+def _tool_invoker_has_registered_tool(tools: object, tool_id: str) -> bool:
+    get_tool = getattr(tools, "get", None)
+    if not callable(get_tool):
+        return True
+    return get_tool(tool_id) is not None
+
 def _profile_policy_denial(
     tool_call: dict, decision: ToolPolicyDecision
 ) -> _ExecutedTool:
@@ -157,7 +172,15 @@ def _profile_policy_denial(
         message=ToolMessage(
             content=output,
             tool_call_id=tool_call.get("id", ""),
+            name=str(tool_call.get("name") or ""),
             status="error",
+            additional_kwargs=tool_observation_kwargs(
+                source="policy_denial",
+                tool_name=str(tool_call.get("name") or ""),
+                executed=False,
+                synthetic=True,
+                status="error",
+            ),
         ),
         result=ToolResult(
             output=output,
@@ -236,13 +259,30 @@ class ToolExecutorAdapter:
         runtime_task_state_ref = [runtime_task_state, runtime_goal, runtime_workflow_runs]
 
         permission = host._permission
-        workflow_context = getattr(thread_state.turn_context, "workflow_context", None)
+        turn_context = thread_state.turn_context
+        workflow_context = getattr(turn_context, "workflow_context", None)
         workflow_dag = getattr(workflow_context, "dag", None)
         agent_runtime = AgentToolRuntime(
-            loop_control=getattr(thread_state.turn_context, "loop_controller", None),
-            goal_control=getattr(thread_state.turn_context, "goal_controller", None),
-            goal_intake=getattr(thread_state.turn_context, "goal_intake_controller", None),
-            loop_intake=getattr(thread_state.turn_context, "loop_intake_controller", None),
+            loop_control=getattr(turn_context, "loop_controller", None),
+            goal_control=getattr(turn_context, "goal_controller", None),
+            goal_intake=getattr(turn_context, "goal_intake_controller", None),
+            goal_checkpoint_controller=getattr(turn_context, "goal_checkpoint_controller", None),
+            loop_intake=getattr(turn_context, "loop_intake_controller", None),
+            goal_phase=getattr(turn_context, "goal_phase", "work"),
+            goal_store=getattr(turn_context, "goal_store", None),
+            goal_generation=getattr(turn_context, "goal_generation", ""),
+            goal_parent_session_id=getattr(turn_context, "goal_parent_session_id", ""),
+            goal_parent_thread_id=getattr(turn_context, "goal_parent_thread_id", ""),
+            goal_profile_snapshot=getattr(turn_context, "goal_profile_snapshot", {}),
+            goal_main_session_id=getattr(turn_context, "goal_main_session_id", ""),
+            goal_work_session_id=getattr(turn_context, "goal_work_session_id", ""),
+            goal_evaluator_session_id=getattr(turn_context, "goal_evaluator_session_id", ""),
+            goal_turn_id=getattr(turn_context, "goal_turn_id", ""),
+            goal_attempt_number=getattr(turn_context, "goal_attempt_number", 0),
+            goal_attempt_id=getattr(turn_context, "goal_attempt_id", ""),
+            goal_lease_owner=getattr(turn_context, "goal_lease_owner", ""),
+            goal_fencing_token=getattr(turn_context, "goal_fencing_token", 0),
+            goal_protocol_ids=getattr(turn_context, "goal_protocol_ids", {}),
             workflow_repeat_state=host._workflow_repeat_tracker,
             workflow_dag=workflow_dag,
             subagent_transport=getattr(host, "agent_gateway", None),
@@ -373,7 +413,15 @@ class ToolExecutorAdapter:
                             workspace=ctx.workspace,
                         ),
                         tool_call_id=cid,
+                        name=tid,
                         status="error",
+                        additional_kwargs=tool_observation_kwargs(
+                            source="infrastructure",
+                            tool_name=tid,
+                            executed=False,
+                            synthetic=True,
+                            status="error",
+                        ),
                     ),
                     result=ToolResult(
                         output="UI event bus timeout",
@@ -515,10 +563,19 @@ class ToolExecutorAdapter:
             if next_step_hint:
                 llm_content = f"{llm_content}\n\nNext step hint: {next_step_hint}"
             llm_content = sanitize_tool_message_content(llm_content, workspace=ctx.workspace)
+            status = "success" if ok else "error"
             message = ToolMessage(
                 content=llm_content,
                 tool_call_id=cid,
-                status="success" if ok else "error",
+                name=tid,
+                status=status,
+                additional_kwargs=tool_observation_kwargs(
+                    source="tool_executor",
+                    tool_name=tid,
+                    executed=_tool_invoker_has_registered_tool(tools, tid),
+                    synthetic=False,
+                    status=status,
+                ),
             )
             return _ExecutedTool(message=message, result=result, tool_call=tc, todo_state=todo_state)
 
@@ -673,7 +730,15 @@ class ToolExecutorAdapter:
             ToolMessage(
                 content=sanitize_tool_message_content(reason, workspace=ctx.workspace),
                 tool_call_id=tc.get("id", ""),
+                name=str(tc.get("name") or ""),
                 status="error",
+                additional_kwargs=tool_observation_kwargs(
+                    source="authorization_denial",
+                    tool_name=str(tc.get("name") or ""),
+                    executed=False,
+                    synthetic=True,
+                    status="error",
+                ),
             )
             for tc, reason in denied
         ]

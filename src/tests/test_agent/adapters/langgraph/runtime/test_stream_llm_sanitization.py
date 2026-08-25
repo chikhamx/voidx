@@ -140,6 +140,13 @@ async def test_stream_llm_repairs_missing_tool_results_before_replay():
     assert isinstance(model.messages[2], ToolMessage)
     assert model.messages[2].tool_call_id == "call_missing"
     assert model.messages[2].status == "error"
+    assert model.messages[2].additional_kwargs["voidx_tool_observation"] == {
+        "source": "replay_repair",
+        "executed": False,
+        "synthetic": True,
+        "status": "error",
+        "fallback_eligible": False,
+    }
     assert model.messages[3].content == "next"
 
 

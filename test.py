@@ -18,6 +18,21 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 
+
+def _workspace_pythonpath() -> None:
+    paths = [str(ROOT / "src"), str(ROOT)]
+    existing = os.environ.get("PYTHONPATH")
+    if existing:
+        paths.extend(
+            entry
+            for entry in existing.split(os.pathsep)
+            if entry and entry not in paths
+        )
+    os.environ["PYTHONPATH"] = os.pathsep.join(paths)
+
+
+_workspace_pythonpath()
+
 # Ensure we run under the voidx venv Python so sys.executable can find pytest.
 _VOIDX_HOME = os.environ.get(
     "VOIDX_HOME", os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share")) + "/voidx"

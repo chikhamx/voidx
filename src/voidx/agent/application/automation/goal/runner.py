@@ -1,185 +1,312 @@
-"""Runtime runner for one autonomous Goal attempt."""
+"""Runtime runner for one durable Goal protocol phase."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from voidx.agent.domain.agent_profile import ResolvedAgentProfile
-from voidx.agent.domain.automation.goal import GOAL_ITERATION_USER_TEXT, GoalSpec, GoalState, GoalToolView
-from voidx.agent.domain.thread import DecisionMetadata, RuntimeDecision
-from voidx.agent.domain.turn_context import TurnExecutionContext
+from voidx.agent.application.automation.goal.checkpoint_controller import (
+    GoalCheckpointController,
+)
 from voidx.agent.application.automation.goal.controller import GoalController
 from voidx.agent.application.automation.goal.evaluator import GoalEvaluator
-from voidx.agent.application.runtime.contracts import TurnRequest
 from voidx.agent.application.profile_tool_policy import profile_tool_policy_for
-
-
-_DEFAULT_CONTINUE_DELAY_SECONDS = 0.0
+from voidx.agent.application.runtime.contracts import GoalPhaseResult, TurnRequest
+from voidx.agent.domain.agent_profile import ResolvedAgentProfile
+from voidx.agent.domain.automation.goal import (
+    GOAL_ITERATION_USER_TEXT,
+    GoalProtocolRecord,
+    GoalSpec,
+    GoalState,
+    GoalToolView,
+    WorkCheckpoint,
+)
+from voidx.agent.domain.thread import AgentThread
+from voidx.agent.domain.turn_context import TurnExecutionContext
 
 
 @dataclass(frozen=True)
 class GoalRuntimeRunner:
     runtime: object
-    evaluator: object
+    evaluator: object | None = None
+    store: object | None = None
 
     async def run_turn(
         self, *, thread, profile: ResolvedAgentProfile, input_frame: dict
-    ) -> RuntimeDecision:
+    ) -> GoalPhaseResult:
+        phase = str(input_frame.get("phase") or "").strip()
+        if phase not in {"work", "evaluator"}:
+            return GoalPhaseResult(
+                phase="work",
+                attempt_number=0,
+                needs_resume=True,
+                reason="invalid_goal_phase",
+            )
         try:
             spec = GoalSpec.model_validate(input_frame.get("spec") or {})
             state = GoalState.model_validate(input_frame.get("goal_state") or {})
+            attempt_number = int(input_frame.get("attempt_number") or 0)
         except Exception:
-            return RuntimeDecision(
-                outcome="failed",
-                summary="Goal input frame was missing required state.",
+            return GoalPhaseResult(
+                phase=phase,
+                attempt_number=0,
+                needs_resume=True,
                 reason="missing_goal_state",
             )
-
-        attempt_index = state.attempt_count + 1
-        if attempt_index > state.max_attempts:
-            return _decision_with_patch(
-                RuntimeDecision(
-                    outcome="blocked",
-                    summary="Goal reached its maximum number of attempts.",
-                    reason="max_attempts_exceeded",
-                ),
-                state,
-                attempt_index=state.attempt_count,
-                active=False,
-                blocked_reason="max_attempts_exceeded",
+        expected_attempt = state.attempt_count + 1
+        if attempt_number != expected_attempt:
+            return GoalPhaseResult(
+                phase=phase,
+                attempt_number=max(attempt_number, 0),
+                needs_resume=True,
+                reason="goal_attempt_mismatch",
             )
-        controller = GoalController(attempt_id=f"{thread.thread_id}:{attempt_index}")
-        work_context = TurnExecutionContext(
-            thread_id=thread.thread_id,
-            session_id=thread.session_id or "",
-            runtime_profile=profile.runtime_profile,
-            workflow_context=profile.workflow_context,
-            workspace=thread.workspace,
-            tool_policy=profile_tool_policy_for(
-                profile,
-                baseline=GoalToolView.default(
-                    workflow_enabled=spec.workflow_enabled, phase="work"
-                ).bind(_available_goal_tool_ids()),
-                phase="work",
-            ),
-            goal_controller=controller,
-            goal_phase="work",
+        if phase == "work" and attempt_number > state.max_attempts:
+            return GoalPhaseResult(
+                phase=phase,
+                attempt_number=attempt_number,
+                needs_resume=True,
+                reason="max_attempts_exceeded",
+            )
+
+        context = _phase_context(
+            thread=thread,
+            profile=profile,
+            spec=spec,
+            state=state,
+            phase=phase,
+            attempt_number=attempt_number,
+            input_frame=input_frame,
+            store=self.store,
         )
+        if phase == "work":
+            return await self._run_work(
+                thread=thread,
+                spec=spec,
+                state=state,
+                attempt_number=attempt_number,
+                input_frame=input_frame,
+                context=context,
+            )
+        return await self._run_evaluator(
+            thread=thread,
+            spec=spec,
+            state=state,
+            attempt_number=attempt_number,
+            input_frame=input_frame,
+            context=context,
+        )
+
+    async def _run_work(
+        self,
+        *,
+        thread,
+        spec: GoalSpec,
+        state: GoalState,
+        attempt_number: int,
+        input_frame: dict,
+        context: TurnExecutionContext,
+    ) -> GoalPhaseResult:
+        work_session_id = state.work_session_id or thread.session_id or ""
+        work_thread = thread.model_copy(update={"session_id": work_session_id})
         result = await self.runtime.run_turn(
             TurnRequest(
-                thread=thread,
-                user_text=_prompt_for_attempt(spec, state, attempt_index),
-                display_text=f"[goal] {spec.objective_summary()}",
-                context=work_context,
+                thread=work_thread,
+                user_text=_prompt_for_attempt(spec, state, attempt_number),
+                display_text=f"[goal:work] {spec.objective_summary()}",
+                context=context.model_copy(
+                    update={"thread_id": work_thread.thread_id, "session_id": work_session_id}
+                ),
                 runtime=None,
                 persist_user_input=False,
+                guidance=tuple(input_frame.get("guidance") or ()),
             )
         )
         if getattr(result, "stop_signal", ""):
-            return _decision_with_patch(
-                RuntimeDecision(
-                    outcome="needs_user",
-                    summary=f"Goal attempt stopped: {result.stop_signal}",
-                    reason=str(result.stop_signal),
-                ),
-                state,
-                attempt_index=attempt_index,
-                active=True,
+            return GoalPhaseResult(
+                phase="work",
+                attempt_number=attempt_number,
+                needs_resume=True,
+                reason=str(result.stop_signal),
             )
-
-        evaluator_context = work_context.model_copy(
-            update={
-                "goal_phase": "evaluator",
-                "tool_policy": profile_tool_policy_for(
-                    profile,
-                    baseline=GoalToolView.default(
-                        workflow_enabled=spec.workflow_enabled, phase="evaluator"
-                    ).bind(_available_goal_tool_ids()),
-                    phase="evaluator",
-                ),
-            }
+        controller = context.goal_checkpoint_controller
+        protocol_id = controller.final_protocol_id() if controller is not None else ""
+        observations = tuple(
+            getattr(result, "current_turn_tool_result_summaries", ()) or ()
         )
-        await self.evaluator.run_phase(
-            runtime=self.runtime,
+        if (
+            not protocol_id
+            and observations
+            and self.store is not None
+            and controller is not None
+            and context.goal_attempt_id
+            and context.goal_lease_owner
+            and context.goal_fencing_token > 0
+        ):
+            checkpoint = WorkCheckpoint(
+                generation=state.generation,
+                attempt_number=attempt_number,
+                source="runtime_fallback",
+                completeness="incomplete",
+                summary="Current work turn produced tool observations without a model checkpoint.",
+                progress="none",
+                work_turn_id=context.goal_turn_id,
+                observed_assistant_summary=str(
+                    getattr(result, "final_assistant_summary", "") or ""
+                ),
+                observed_tool_result_summaries=observations,
+            )
+            record = GoalProtocolRecord.submitted(
+                protocol_id=f"goal-fallback-{context.goal_attempt_id}",
+                parent_session_id=context.goal_parent_session_id,
+                generation=state.generation,
+                phase="checkpoint",
+                attempt_number=attempt_number,
+                turn_id=context.goal_turn_id,
+                session_id=work_session_id,
+                payload=checkpoint,
+            )
+            stored = await self.store.submit_goal_protocol(
+                record,
+                attempt_id=context.goal_attempt_id,
+                lease_owner=context.goal_lease_owner,
+                fencing_token=context.goal_fencing_token,
+            )
+            await controller.submit_checkpoint(
+                checkpoint,
+                protocol_id=stored.protocol_id,
+            )
+            protocol_id = controller.final_protocol_id()
+        if not protocol_id:
+            return GoalPhaseResult(
+                phase="work",
+                attempt_number=attempt_number,
+                needs_resume=True,
+                reason="missing_work_checkpoint",
+            )
+        return GoalPhaseResult(
+            phase="work",
+            attempt_number=attempt_number,
+            protocol_id=protocol_id,
+        )
+
+    async def _run_evaluator(
+        self,
+        *,
+        thread,
+        spec: GoalSpec,
+        state: GoalState,
+        attempt_number: int,
+        input_frame: dict,
+        context: TurnExecutionContext,
+    ) -> GoalPhaseResult:
+        try:
+            checkpoint = WorkCheckpoint.model_validate(input_frame.get("checkpoint") or {})
+        except Exception:
+            return GoalPhaseResult(
+                phase="evaluator",
+                attempt_number=attempt_number,
+                needs_resume=True,
+                reason="missing_work_checkpoint",
+            )
+        if (
+            checkpoint.generation != state.generation
+            or checkpoint.attempt_number != attempt_number
+        ):
+            return GoalPhaseResult(
+                phase="evaluator",
+                attempt_number=attempt_number,
+                needs_resume=True,
+                reason="checkpoint_binding_mismatch",
+            )
+        evaluator = self.evaluator or GoalEvaluator()
+        request = evaluator.build_request(
             thread=thread,
-            context=evaluator_context,
-            prompt=_evaluator_prompt(spec, state, attempt_index),
-            controller=controller,
-            work_result=result,
+            context=context,
+            prompt=_evaluator_prompt(spec, attempt_number),
+            checkpoint=checkpoint,
+            guidance=tuple(input_frame.get("guidance") or ()),
         )
-        decision = controller.final_decision()
-        if decision is None:
-            return _decision_with_patch(
-                RuntimeDecision(
-                    outcome="blocked",
-                    summary="Evaluator did not submit a goal decision.",
-                    reason="missing_goal_decision",
-                ),
-                state,
-                attempt_index=attempt_index,
-                active=False,
-                blocked_reason="missing_goal_decision",
+        await self.runtime.run_turn(request)
+        controller = context.goal_controller
+        protocol_id = controller.final_protocol_id() if controller is not None else ""
+        if not protocol_id:
+            return GoalPhaseResult(
+                phase="evaluator",
+                attempt_number=attempt_number,
+                needs_resume=True,
+                reason="missing_goal_decision",
             )
-        return _decision_from_controller(state, decision, attempt_index=attempt_index)
+        return GoalPhaseResult(
+            phase="evaluator",
+            attempt_number=attempt_number,
+            protocol_id=protocol_id,
+        )
 
 
-def _evaluator_prompt(spec: GoalSpec, state: GoalState, attempt_index: int) -> str:
+def _phase_context(
+    *,
+    thread,
+    profile: ResolvedAgentProfile,
+    spec: GoalSpec,
+    state: GoalState,
+    phase: str,
+    attempt_number: int,
+    input_frame: dict,
+    store: object | None,
+) -> TurnExecutionContext:
+    checkpoint_controller = GoalCheckpointController(
+        attempt_id=str(input_frame.get("attempt_id") or "")
+    )
+    decision_controller = GoalController(
+        attempt_id=str(input_frame.get("attempt_id") or "")
+    )
+    baseline = GoalToolView.default(
+        workflow_enabled=spec.workflow_enabled,
+        phase=phase,
+    ).bind(_available_goal_tool_ids())
+    session_id = (
+        state.work_session_id if phase == "work" else state.evaluator_session_id
+    ) or thread.session_id or ""
+    return TurnExecutionContext(
+        thread_id=thread.thread_id,
+        session_id=session_id,
+        runtime_profile=profile.runtime_profile,
+        workflow_context=profile.workflow_context,
+        workspace=thread.workspace,
+        tool_policy=profile_tool_policy_for(profile, baseline=baseline, phase=phase),
+        goal_controller=decision_controller,
+        goal_checkpoint_controller=checkpoint_controller,
+        goal_phase=phase,
+        goal_store=store,
+        goal_generation=state.generation,
+        goal_parent_session_id=state.main_session_id or thread.session_id or "",
+        goal_main_session_id=state.main_session_id or thread.session_id or "",
+        goal_work_session_id=state.work_session_id or thread.session_id or "",
+        goal_evaluator_session_id=state.evaluator_session_id,
+        goal_turn_id=str(
+            input_frame.get("turn_id")
+            or f"{thread.thread_id}:{phase}:{attempt_number}"
+        ),
+        goal_attempt_number=attempt_number,
+        goal_attempt_id=str(input_frame.get("attempt_id") or ""),
+        goal_lease_owner=str(input_frame.get("lease_owner") or ""),
+        goal_fencing_token=int(input_frame.get("fencing_token") or 0),
+    )
+
+
+def _evaluator_prompt(spec: GoalSpec, attempt_number: int) -> str:
     return (
         "Evaluate the Goal acceptance condition for this attempt.\n"
         f"Objective: {spec.objective}\n"
         f"Acceptance condition: {spec.acceptance_condition}\n"
-        f"Attempt: {attempt_index}/{spec.max_attempts}\n"
-        "Use policy-approved verification tools when needed, then call goal with "
-        "op=\"decision\" and status=\"finished\", \"continue\", or \"blocked\"."
+        f"Attempt: {attempt_number}/{spec.max_attempts}\n"
+        "Use policy-approved verification tools when needed, then call goal_decision with "
+        'status="finished", "continue", or "blocked".'
     )
 
 
-def _decision_from_controller(
-    state: GoalState, decision: RuntimeDecision, *, attempt_index: int
-) -> RuntimeDecision:
-    active = decision.outcome == "continue"
-    blocked_reason = decision.reason if decision.outcome == "blocked" else ""
-    return _decision_with_patch(
-        decision,
-        state,
-        attempt_index=attempt_index,
-        active=active,
-        blocked_reason=blocked_reason,
-    )
-
-
-
-
-def _decision_with_patch(
-    decision: RuntimeDecision,
-    state: GoalState,
-    *,
-    attempt_index: int,
-    active: bool,
-    blocked_reason: str = "",
-) -> RuntimeDecision:
-    progress_key = decision.reason or state.last_progress_key
-    repeated = (
-        state.repeated_progress_count + 1
-        if progress_key and progress_key == state.last_progress_key
-        else 0
-    )
-    patch = {
-        "attempt_count": attempt_index,
-        "evaluator_failure_count": 0,
-        "last_progress_key": progress_key,
-        "repeated_progress_count": repeated,
-        "last_evaluator_summary": decision.summary,
-        "last_evaluator_next_hint": "",
-        "last_evaluator_missing": state.last_evaluator_missing,
-        "blocked_reason": blocked_reason,
-        "active": active,
-    }
-    return decision.model_copy(update={"metadata": DecisionMetadata(goal_state_patch=patch)})
-
-
-def _prompt_for_attempt(spec: GoalSpec, state: GoalState, attempt_index: int) -> str:
-    if attempt_index <= 1:
+def _prompt_for_attempt(spec: GoalSpec, state: GoalState, attempt_number: int) -> str:
+    if attempt_number <= 1:
         method = spec.achievement_method or (
             "Use the safest direct method that satisfies the acceptance condition."
         )
@@ -189,9 +316,7 @@ def _prompt_for_attempt(spec: GoalSpec, state: GoalState, attempt_index: int) ->
             f"Acceptance condition:\n{spec.acceptance_condition}\n\n"
             f"Method:\n{method}\n\n"
             "Work only on actions that directly advance this objective. "
-            "Do not inspect or modify the Goal Runtime implementation unless the objective "
-            "explicitly asks for it. "
-            "Before finishing, collect concrete evidence for the acceptance condition."
+            "Before finishing, collect concrete evidence and call goal_checkpoint."
         )
     return (
         "Continue the autonomous goal attempt.\n\n"
@@ -218,7 +343,11 @@ def _available_goal_tool_ids() -> set[str]:
         "webfetch",
         "mcp",
         "skill",
-        "goal",
-        "workflow",
+        "goal_init",
+        "goal_checkpoint",
+        "goal_decision",
         "todo",
     }
+
+
+__all__ = ["GoalRuntimeRunner"]

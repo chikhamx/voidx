@@ -3,6 +3,7 @@ from __future__ import annotations
 from langchain_core.messages import ToolMessage
 
 from voidx.agent.adapters.langgraph.runtime.thread_context import GuidanceEntry
+from voidx.agent.application.tool_messages import tool_observation_kwargs
 from voidx.agent.adapters.langgraph.runtime.runtime_guards import (
     GuardDecision,
     GuardGuidance,
@@ -55,7 +56,19 @@ def _runtime_guard_blocked_tool(tool_call: dict) -> _ExecutedTool:
         },
     )
     return _ExecutedTool(
-        message=ToolMessage(content=message, tool_call_id=tool_call.get("id", ""), status="error"),
+        message=ToolMessage(
+            content=message,
+            tool_call_id=tool_call.get("id", ""),
+            name=tool_name,
+            status="error",
+            additional_kwargs=tool_observation_kwargs(
+                source="runtime_guard",
+                tool_name=tool_name,
+                executed=False,
+                synthetic=True,
+                status="error",
+            ),
+        ),
         result=result,
         tool_call=tool_call,
     )
@@ -86,7 +99,19 @@ def _runtime_guard_tool_messages(
     metadata: dict | None = None,
 ) -> list[ToolMessage]:
     return [
-        ToolMessage(content=message, tool_call_id=call.get("id", ""), status="error")
+        ToolMessage(
+            content=message,
+            tool_call_id=call.get("id", ""),
+            name=str(call.get("name") or ""),
+            status="error",
+            additional_kwargs=tool_observation_kwargs(
+                source="runtime_guard",
+                tool_name=str(call.get("name") or ""),
+                executed=False,
+                synthetic=True,
+                status="error",
+            ),
+        )
         for call in tool_calls
     ]
 

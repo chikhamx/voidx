@@ -26,13 +26,16 @@ class FakeRuntime:
         self.requests.append(request)
         controller = getattr(request.context, "goal_intake_controller", None)
         if self.spec is not None and controller is not None:
-            await controller.submit_init(GoalSpec(**self.spec))
+            generation = getattr(request.context, "goal_generation", "") or "active"
+            await controller.submit_init(GoalSpec(**self.spec, generation=generation))
         return SimpleNamespace(final_assistant_summary="", stop_signal="")
 
 
 class FakeGoalService:
     def __init__(self):
         self.started: list[tuple[str | None, object]] = []
+        self.store = object()
+        self.profile_snapshot = {"profile_id": "goal"}
 
     async def start(self, parent_thread_id, spec):
         self.started.append((parent_thread_id, spec))
@@ -75,7 +78,8 @@ async def test_idle_turn_binds_readonly_tools_plus_goal_and_clarify() -> None:
     await service.run("hi", thread, parent_thread_id="host-1")
 
     policy = runtime.requests[0].context.tool_policy
-    assert policy.allows("goal")
+    assert policy.allows("goal_init")
+    assert not policy.allows("goal")
     assert policy.allows("clarify")
     assert policy.allows("read")
     assert not policy.allows("bash")
@@ -95,7 +99,35 @@ async def test_idle_turn_starts_goal_when_init_submitted() -> None:
     assert len(goal_service.started) == 1
     parent, spec = goal_service.started[0]
     assert parent == "host-1"
-    assert spec.objective == "fix flaky tests"
+
+
+@pytest.mark.asyncio
+async def test_idle_turn_injects_durable_goal_binding_into_context() -> None:
+    runtime = FakeRuntime()
+    goal_service = FakeGoalService()
+    service = _make_service(runtime, goal_service)
+    thread = AgentThread(thread_id="host-1", session_id="host-1", workspace="/ws")
+
+    await service.run("shape a goal", thread, parent_thread_id="host-1")
+
+    context = runtime.requests[0].context
+    assert context.goal_generation
+    assert context.goal_parent_thread_id == "host-1"
+    assert context.goal_store is goal_service.store
+    assert context.goal_profile_snapshot == {"profile_id": "goal"}
+
+
+@pytest.mark.asyncio
+async def test_idle_turn_starts_goal_with_the_same_generation_as_submitted_init() -> None:
+    runtime = FakeRuntime({"objective": "fix flaky tests", "acceptance_condition": "suite green"})
+    goal_service = FakeGoalService()
+    service = _make_service(runtime, goal_service)
+    thread = AgentThread(thread_id="host-1", session_id="host-1")
+
+    await service.run("make the tests reliable", thread, parent_thread_id="host-1")
+
+    context_generation = runtime.requests[0].context.goal_generation
+    assert goal_service.started[0][1].generation == context_generation
 
 
 @pytest.mark.asyncio

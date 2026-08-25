@@ -12,9 +12,15 @@ async def build_settings(workspace: str = ".") -> Settings:
     from voidx.config import Settings
     from voidx.config.adapters.profile_store import MemoryModelProfileStore
 
-    from voidx.bootstrap.persistence import initialize_persistence
+    from voidx.bootstrap.persistence import (
+        deliver_goal_public_summaries,
+        initialize_persistence,
+        reconcile_goal_cleanup,
+    )
 
     initialize_persistence()
+    await reconcile_goal_cleanup()
+    await deliver_goal_public_summaries()
     return await Settings.create(
         workspace,
         profile_store=MemoryModelProfileStore(),

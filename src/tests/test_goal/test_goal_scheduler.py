@@ -54,6 +54,19 @@ async def test_goal_scheduler_enqueues_and_dispatches_goal_prompt(tmp_path) -> N
         ),
     )
 
+    await store.enqueue_outbox(
+        thread_id=spec.goal_thread_id("parent-1"),
+        kind="goal_prompt",
+        payload={
+            "phase": "work",
+            "generation": spec.generation,
+            "attempt_number": 1,
+            "spec": spec.model_dump(mode="json"),
+            "goal_state": state.model_dump(mode="json"),
+        },
+        expected_state_version=0,
+    )
+
     result = await scheduler.run_goal("parent-1", spec)
 
     assert result is not None
@@ -62,6 +75,7 @@ async def test_goal_scheduler_enqueues_and_dispatches_goal_prompt(tmp_path) -> N
     assert frame["kind"] == "goal_prompt"
     assert frame["spec"]["objective"] == "ship"
     assert frame["goal_state"]["attempt_count"] == 0
+    assert await store.list_pending_outbox(spec.goal_thread_id("parent-1")) == []
 
 
 @pytest.mark.asyncio

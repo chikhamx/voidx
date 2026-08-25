@@ -202,3 +202,11 @@ class TestToolRegistry:
         assert r.get("file") is None
         names = [tool["function"]["name"] for tool in r.serialize_definitions()]
         assert names == ["read", "search"]
+
+
+def test_registry_exposes_only_phase_specific_goal_tools() -> None:
+    registry = build_registry()
+    tool_ids = set(registry.ids())
+
+    assert {"goal_init", "goal_checkpoint", "goal_decision"}.issubset(tool_ids)
+    assert "goal" not in tool_ids

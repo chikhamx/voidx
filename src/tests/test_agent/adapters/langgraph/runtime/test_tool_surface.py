@@ -97,22 +97,23 @@ def test_loop_profile_exposes_loop_in_idle_and_work() -> None:
             assert hidden not in names
 
 
-def test_goal_profile_exposes_goal_in_idle_intake_evaluator_but_not_work() -> None:
+def test_goal_profile_exposes_phase_specific_tool_by_phase() -> None:
     profile = RuntimeProfile(profile_id="goal", revision=1, name="Goal", protocol="goal")
-    registry = _registry("read", "write", "agent", "goal", "loop", "git", "lsp_format")
+    registry = _registry(
+        "read", "write", "agent", "goal", "goal_init", "goal_checkpoint", "goal_decision",
+        "loop", "git", "lsp_format",
+    )
 
     policy = _Deny({"agent"})
-    for phase in ("idle", "intake", "evaluator"):
+    expected = {"idle": "goal_init", "intake": "goal_init", "work": "goal_checkpoint", "evaluator": "goal_decision"}
+    for phase, control_tool in expected.items():
         surface = resolve_tool_surface(
             registry,
-            ToolSurfaceContext(
-                runtime_profile=profile,
-                goal_phase=phase,
-                tool_policy=policy,
-            ),
+            ToolSurfaceContext(runtime_profile=profile, goal_phase=phase, tool_policy=policy),
         )
         names = _names(surface)
-        assert "goal" in names
+        assert control_tool in names
+        assert "goal" not in names
         for hidden in ("loop", "turn", "agent"):
             assert hidden not in names
 
@@ -121,7 +122,7 @@ def test_goal_profile_exposes_goal_in_idle_intake_evaluator_but_not_work() -> No
         ToolSurfaceContext(runtime_profile=profile, goal_phase="work", tool_policy=_AllowAll()),
     )
     work_names = _names(work)
-    assert "goal" not in work_names
+    assert "goal_checkpoint" in work_names
     assert "read" in work_names and "write" in work_names
     assert "git" not in work_names and "lsp_format" not in work_names
 
@@ -142,8 +143,9 @@ def test_unknown_or_missing_phase_uses_minimal_visibility() -> None:
             ToolSurfaceContext(runtime_profile=profile, tool_policy=_AllowAll(), **kwargs),
         )
         names = _names(surface)
-        for hidden in ("goal", "loop", "turn"):
+        for hidden in ("goal", "goal_init", "goal_checkpoint", "goal_decision", "loop", "turn"):
             assert hidden not in names
+
 
 
 def test_child_surface_blocks_delegation_and_lifecycle_but_keeps_message() -> None:
@@ -161,7 +163,9 @@ def test_child_surface_blocks_delegation_and_lifecycle_but_keeps_message() -> No
     names = _names(surface)
     assert "message" in names
     assert "read" in names
-    for hidden in ("agent", "clarify", "checkpoint", "goal", "loop", "turn"):
+    for hidden in (
+        "agent", "clarify", "checkpoint", "goal", "goal_init", "goal_checkpoint", "goal_decision", "loop", "turn",
+    ):
         assert hidden not in names
 
 
@@ -260,3 +264,55 @@ def test_protocol_definition_overrides_catalog_same_name() -> None:
     loop_defs = [item for item in surface.definitions if item["function"]["name"] == "loop"]
     assert len(loop_defs) == 1
     assert loop_defs[0]["function"]["description"] != "loop description"
+
+
+def test_goal_evaluator_surface_is_read_only_plus_goal_decision() -> None:
+    import os
+
+    from voidx.agent.domain.agent_profile import ResourcePolicy
+    from voidx.agent.domain.automation.goal import GoalToolView
+    from voidx.agent.domain.run_config import resolve_run_config
+    from voidx.agent.domain.tool_policy import ProfileToolPolicy
+
+    registry = build_registry()
+    policy = ProfileToolPolicy(
+        baseline=GoalToolView.default(
+            workflow_enabled=True, phase="evaluator"
+        ).bind(registry.ids()),
+        resource_policy=ResourcePolicy(hitl_mode="autonomous"),
+        run_config=resolve_run_config("goal_eval"),
+        snapshot_hash="snapshot-1",
+        phase="evaluator",
+    )
+    profile = RuntimeProfile(
+        profile_id="goal", revision=1, name="Goal", protocol="goal"
+    )
+
+    surface = resolve_tool_surface(
+        registry,
+        ToolSurfaceContext(
+            runtime_profile=profile,
+            goal_phase="evaluator",
+            tool_policy=policy,
+        ),
+    )
+
+    assert set(_names(surface)) == {
+        "read",
+        "find",
+        "search",
+        "document",
+        "goal_decision",
+    }
+    shell = "powershell" if os.name == "nt" else "bash"
+    for hidden in (
+        "workflow",
+        "todo",
+        shell,
+        "write",
+        "replace",
+        "manage",
+        "mcp",
+        "goal_checkpoint",
+    ):
+        assert hidden not in _names(surface)

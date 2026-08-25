@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from voidx.agent.domain.ui_events import PermissionPromptCleared, PermissionPromptShown, PermissionToolDetail, RefreshRequested
-
+import inspect
 import json
+import uuid
 from dataclasses import replace
 from typing import Any
+
+from voidx.agent.domain.ui_events import PermissionPromptCleared, PermissionPromptShown, PermissionToolDetail, RefreshRequested
 from voidx.tooling.domain.permission import PermissionMode
 from voidx.observability.tool_log import log_tool_event
 from voidx.tooling.application.ai_approval import is_ai_approval_candidate
@@ -240,6 +242,21 @@ def _scope_values(scopes: tuple[object, ...]) -> set[str]:
     return {scope.value if hasattr(scope, "value") else str(scope) for scope in scopes}
 
 
+def _permission_request_id() -> str:
+    return f"permission_{uuid.uuid4().hex}"
+
+
+async def _call_with_optional_kwargs(callable_obj, *args, **kwargs):
+    try:
+        parameters = inspect.signature(callable_obj).parameters
+    except (TypeError, ValueError):
+        return await callable_obj(*args, **kwargs)
+    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):
+        return await callable_obj(*args, **kwargs)
+    filtered = {key: value for key, value in kwargs.items() if key in parameters}
+    return await callable_obj(*args, **filtered)
+
+
 class PermissionFlow:
     def __init__(self, host: Any) -> None:
         self.host = host
@@ -390,9 +407,16 @@ class PermissionFlow:
         approvable = [decision for decision in need_ask if decision.action != Action.BLOCKED_ACK]
 
         if blocked:
-            await host._ask_tool_permission(blocked)
-            if host._ui.via_events():
-                await host._ui.events.emit(PermissionPromptCleared())
+            request_id = _permission_request_id()
+            try:
+                await _call_with_optional_kwargs(
+                    host._ask_tool_permission,
+                    blocked,
+                    request_id=request_id,
+                )
+            finally:
+                if host._ui.via_events():
+                    await host._ui.events.emit(PermissionPromptCleared(request_id=request_id))
             for decision in blocked:
                 denied.append((decision.tool_call, decision.reason or "Blocked command"))
 
@@ -403,12 +427,18 @@ class PermissionFlow:
             permission_mode=host._permission.permission_mode,
             revocation_epoch=host._permission.revocation_epoch,
         )
-        choice = await host._ask_tool_permission(approvable)
+        request_id = _permission_request_id()
+        try:
+            choice = await _call_with_optional_kwargs(
+                host._ask_tool_permission,
+                approvable,
+                request_id=request_id,
+            )
+        finally:
+            if host._ui.via_events():
+                await host._ui.events.emit(PermissionPromptCleared(request_id=request_id))
         if choice is None:
             choice = "n"
-
-        if host._ui.via_events():
-            await host._ui.events.emit(PermissionPromptCleared())
 
         tool_calls = [_tool_call_with_approval_risk(decision) for decision in approvable]
         if choice == "a" and _all_decisions_allow_scope(approvable, ApprovalScope.SESSION):
@@ -442,22 +472,34 @@ class PermissionFlow:
                 denied.append((tc, f"User denied: {tc['name']}"))
 
 
-    async def _ask_tool_permission(self: Any, tool_calls: list[dict] | list[PermissionDecision]) -> str | None:
+    async def _ask_tool_permission(
+        self: Any,
+        tool_calls: list[dict] | list[PermissionDecision],
+        request_id: str | None = None,
+    ) -> str | None:
         host = self.host
         decisions = [_coerce_permission_decision(item) for item in tool_calls]
         raw_tool_calls = [decision.tool_call for decision in decisions]
         tool_list = ", ".join(t["name"] for t in raw_tool_calls)
         choices = _permission_choices(decisions)
         details = [item.model_dump(mode="json") for item in host._permission_tool_details(decisions)]
+        request_id = request_id or _permission_request_id()
 
         if host._ui.via_events():
             await host._ui.events.emit(PermissionPromptShown(
+                request_id=request_id,
                 prompt=f"Allow tools: {tool_list}?",
                 choices=choices,
                 tools=host._permission_tool_details(decisions),
             ))
 
-        choice = await host._ui.ask_choice("Allow tool use?", choices, details=details)
+        choice = await _call_with_optional_kwargs(
+            host._ui.ask_choice,
+            "Allow tool use?",
+            choices,
+            details=details,
+            request_id=request_id,
+        )
         if choice is not None:
             return choice
         host._ui.ui.print("")

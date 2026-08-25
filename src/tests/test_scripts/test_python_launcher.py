@@ -66,8 +66,12 @@ def test_runtime_env_prioritizes_bundled_site_and_safe_path(tmp_path: Path, monk
     env = launcher._runtime_env(site_packages, tmp_path / "data")
     paths = env["PYTHONPATH"].split(launcher.os.pathsep)
 
-    assert paths[0] == str(site_packages)
-    assert paths.index(str(launcher._WORKSPACE_ROOT)) > paths.index(str(site_packages))
+    assert paths[:3] == [
+        str(launcher._WORKSPACE_ROOT / "src"),
+        str(launcher._WORKSPACE_ROOT),
+        str(site_packages),
+    ]
+    assert str(tmp_path / "existing") in paths
     assert env["PYTHONSAFEPATH"] == "1"
     assert env["PYTHONNOUSERSITE"] == "1"
     assert env["VOIDX_HOME"] == str(tmp_path / "data")

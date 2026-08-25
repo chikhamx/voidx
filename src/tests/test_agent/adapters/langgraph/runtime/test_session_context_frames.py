@@ -20,10 +20,12 @@ from voidx.agent.adapters.persistence.session_repository import (
     load_messages,
     delete_messages_from,
     delete_messages_through,
+    clear_messages,
     MessageRow,
 )
 from voidx.agent.adapters.persistence.context_frame_repository import (
     build_context_frame,
+    gc_context_frames,
     load_context_frames,
     save_context_frame,
 )
@@ -195,5 +197,222 @@ async def test_context_frame_loader_applies_delete_tombstones_to_existing_frames
 
         assert [frame.id for frame in frames] == [second_frame_id]
         assert first_frame_id != second_frame_id
+    finally:
+        await delete_session(session.id)
+
+
+def _context_jsonl_ids(session_id: str) -> set[int]:
+    context_dir = _session_dir(session_id) / "context"
+    if not context_dir.exists():
+        return set()
+    return {
+        int(path.stem)
+        for path in context_dir.glob("*.jsonl")
+        if path.name != "deletes.jsonl" and path.stem.isdigit()
+    }
+
+
+async def _save_kind(session_id: str, frame_kind: str, content: str, user_message_id: int | None = None) -> int:
+    return await save_context_frame(build_context_frame(
+        session_id=session_id,
+        user_message_id=user_message_id,
+        frame_kind=frame_kind,
+        provider="mimo",
+        model="mimo-v2.5",
+        messages=[HumanMessage(content=content)],
+    ))
+
+
+async def _insert_legacy_frame(session_id: str, frame_kind: str, content: str) -> int:
+    record = build_context_frame(
+        session_id=session_id,
+        frame_kind=frame_kind,
+        provider="mimo",
+        model="mimo-v2.5",
+        messages=[HumanMessage(content=content)],
+    )
+    cur = await store.execute_commit(
+        """INSERT INTO context_frames (
+               session_id, user_message_id, frame_kind, agent_persona, provider,
+               model, prefix_hash, frame_hash, message_count, token_estimate,
+               file_path, metadata_json, created_at
+           )
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            record.session_id,
+            record.user_message_id,
+            record.frame_kind,
+            record.agent_persona,
+            record.provider,
+            record.model,
+            record.prefix_hash,
+            record.frame_hash,
+            record.message_count,
+            record.token_estimate,
+            "",
+            json.dumps(record.metadata, ensure_ascii=False, sort_keys=True),
+            record.created_at,
+        ),
+    )
+    frame_id = cur.lastrowid
+    file_path = f"context/{frame_id}.jsonl"
+    await store.execute_commit(
+        "UPDATE context_frames SET file_path = ? WHERE id = ?",
+        (file_path, frame_id),
+    )
+    context_dir = _session_dir(session_id) / "context"
+    context_dir.mkdir(parents=True, exist_ok=True)
+    (context_dir / f"{frame_id}.jsonl").write_text(
+        json.dumps({"role": "user", "content": content}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return frame_id
+
+
+@pytest.mark.asyncio
+async def test_save_context_frame_keeps_five_files_per_kind():
+    session = await create_session()
+    try:
+        main_ids = [await _save_kind(session.id, "main", f"main-{index}") for index in range(6)]
+        worker_ids = [await _save_kind(session.id, "worker", f"worker-{index}") for index in range(5)]
+
+        frames = await load_context_frames(session.id)
+        disk_ids = _context_jsonl_ids(session.id)
+
+        assert [frame.id for frame in frames if frame.frame_kind == "main"] == main_ids[-5:]
+        assert [frame.id for frame in frames if frame.frame_kind == "worker"] == worker_ids
+        assert main_ids[0] not in disk_ids
+        assert set(main_ids[-5:] + worker_ids) == disk_ids
+        assert not (_session_dir(session.id) / "context" / f"{main_ids[0]}.jsonl").exists()
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_delete_messages_through_unlinks_matching_context_files():
+    session = await create_session()
+    try:
+        first_id = await save_message(MessageRow(session_id=session.id, role="user", content="old"))
+        second_id = await save_message(MessageRow(session_id=session.id, role="user", content="live"))
+        old_frame_id = await _save_kind(session.id, "main", "old", user_message_id=first_id)
+        live_frame_id = await _save_kind(session.id, "main", "live", user_message_id=second_id)
+
+        await delete_messages_through(session.id, first_id)
+
+        disk_ids = _context_jsonl_ids(session.id)
+        assert old_frame_id not in disk_ids
+        assert live_frame_id in disk_ids
+        assert [frame.id for frame in await load_context_frames(session.id)] == [live_frame_id]
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_gc_context_frames_removes_orphans_and_enforces_retention():
+    session = await create_session()
+    try:
+        live_ids = [await _save_kind(session.id, "main", f"frame-{index}") for index in range(5)]
+        stale_ids = [
+            await _insert_legacy_frame(session.id, "main", f"stale-{index}")
+            for index in range(3)
+        ]
+        orphan_path = _session_dir(session.id) / "context" / "999001.jsonl"
+        orphan_path.write_text('{"role":"user","content":"orphan"}\n', encoding="utf-8")
+        deletes_path = _session_dir(session.id) / "context" / "deletes.jsonl"
+        deletes_path.write_text(
+            json.dumps({
+                "type": "context_frame_deleted",
+                "mode": "through",
+                "last_user_message_id": -1,
+                "reason": "keep",
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        removed = await gc_context_frames(session.id)
+
+        kept_ids = (live_ids + stale_ids)[-5:]
+        frames = await load_context_frames(session.id)
+        disk_ids = _context_jsonl_ids(session.id)
+        assert removed >= 4
+        assert [frame.id for frame in frames] == kept_ids
+        assert disk_ids == set(kept_ids)
+        assert live_ids[0] not in disk_ids
+        assert stale_ids[0] in disk_ids
+        assert 999001 not in disk_ids
+        assert not orphan_path.exists()
+        assert deletes_path.exists()
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_delete_messages_through_keeps_null_user_message_id_worker_until_gc():
+    session = await create_session()
+    try:
+        first_id = await save_message(MessageRow(session_id=session.id, role="user", content="old"))
+        second_id = await save_message(MessageRow(session_id=session.id, role="user", content="live"))
+        old_main_id = await _save_kind(session.id, "main", "old", user_message_id=first_id)
+        live_main_id = await _save_kind(session.id, "main", "live", user_message_id=second_id)
+        worker_id = await _save_kind(session.id, "worker", "worker-null")
+
+        await delete_messages_through(session.id, first_id)
+
+        disk_ids = _context_jsonl_ids(session.id)
+        assert old_main_id not in disk_ids
+        assert live_main_id in disk_ids
+        assert worker_id in disk_ids
+        assert {frame.id for frame in await load_context_frames(session.id)} == {live_main_id, worker_id}
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_clear_messages_unlinks_all_context_jsonl():
+    session = await create_session()
+    try:
+        main_id = await _save_kind(session.id, "main", "main")
+        worker_id = await _save_kind(session.id, "worker", "worker")
+        compaction_id = await _save_kind(session.id, "compaction", "compaction")
+
+        await clear_messages(session.id)
+
+        disk_ids = _context_jsonl_ids(session.id)
+        assert disk_ids == set()
+        assert not (_session_dir(session.id) / "context" / f"{main_id}.jsonl").exists()
+        assert not (_session_dir(session.id) / "context" / f"{worker_id}.jsonl").exists()
+        assert not (_session_dir(session.id) / "context" / f"{compaction_id}.jsonl").exists()
+        assert await load_context_frames(session.id) == []
+        deletes = _read_jsonl(_session_dir(session.id) / "context" / "deletes.jsonl")
+        assert deletes[-1]["mode"] == "all"
+        assert deletes[-1]["reason"] == "clear_messages"
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_gc_context_frames_deletes_sqlite_row_when_jsonl_missing():
+    session = await create_session()
+    try:
+        live_ids = [await _save_kind(session.id, "main", f"frame-{index}") for index in range(5)]
+        stale_id = await _insert_legacy_frame(session.id, "main", "stale-kept")
+        missing_id = live_ids[0]
+        (_session_dir(session.id) / "context" / f"{missing_id}.jsonl").unlink()
+
+        removed = await gc_context_frames(session.id)
+
+        kept_ids = live_ids[1:] + [stale_id]
+        frames = await load_context_frames(session.id)
+        disk_ids = _context_jsonl_ids(session.id)
+        leftover = await store.fetch_all(
+            "SELECT id FROM context_frames WHERE session_id = ? AND id = ?",
+            (session.id, missing_id),
+        )
+        assert removed == 0
+        assert leftover == []
+        assert [frame.id for frame in frames] == kept_ids
+        assert missing_id not in {frame.id for frame in frames}
+        assert disk_ids == set(kept_ids)
+        assert not (_session_dir(session.id) / "context" / f"{missing_id}.jsonl").exists()
     finally:
         await delete_session(session.id)

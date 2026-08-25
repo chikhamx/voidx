@@ -556,6 +556,22 @@ async def test_permission_prompt_cleared_to_item_completed():
     assert params["data"]["cleared"] is True
 
 
+
+@pytest.mark.asyncio
+async def test_permission_prompt_lifecycle_forwards_request_id():
+    adapter = _adapter()
+    shown = await adapter.handle(
+        PermissionPromptShown(
+            request_id="permission-1",
+            prompt="Allow tool?",
+            choices=[("allow", "y", "Allow once")],
+        )
+    )
+    cleared = await adapter.handle(PermissionPromptCleared(request_id="permission-1"))
+
+    assert _item_params(shown)["data"]["request_id"] == "permission-1"
+    assert _item_params(cleared)["data"]["request_id"] == "permission-1"
+
 @pytest.mark.asyncio
 async def test_checkpoint_decision_submitted_to_item_completed():
     adapter = _adapter()
