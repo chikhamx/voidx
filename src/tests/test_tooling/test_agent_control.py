@@ -117,6 +117,19 @@ def test_agent_control_normalizes_and_deduplicates_run_ids():
 
 
 @pytest.mark.asyncio
+async def test_agent_control_cancel_result_omits_redundant_agent_name():
+    run = _run("run_cancel", status="cancelled")
+
+    result = await AgentControlTool().execute(
+        {"action": "cancel", "run_id": run.run_id},
+        _ctx(FakeTransport({run.run_id: run})),
+    )
+
+    assert result.display == "canceled."
+    assert result.summary == "canceled"
+
+
+@pytest.mark.asyncio
 async def test_wait_single_completed_uses_compact_output_and_compatible_metadata():
     run = _run(
         "run_done",

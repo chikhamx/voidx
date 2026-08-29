@@ -180,10 +180,12 @@ def _single_result(action: str, item: dict) -> ToolResult:
         key: value for key, value in item.items()
         if key != "run_id" and not key.startswith("_")
     }
+    result_name = "canceled" if action == "cancel" else f"{name} {item['status']}"
+    result_display = f"{result_name}."
     return ToolResult(
         output=output,
-        display=f"{name} {item['status']}.",
-        summary=f"{name} {item['status']}",
+        display=result_display,
+        summary=result_name,
         metadata=metadata,
         next_step_hint=_hints(action, [item]),
     )
