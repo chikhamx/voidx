@@ -1,3 +1,5 @@
+> **Status: Done** — Archived on 2026-08-27; implementation and verification record updated.
+
 ---
 name: context-frame-retention
 display_name: Context Frame Retention and Physical GC
@@ -11,11 +13,9 @@ status: implemented
 
 ## TL;DR
 
-`sessions/<sid>/context/` 现在是每次 LLM 调用的整包审计快照。删除只写 tombstone、清 SQLite 索引，jsonl 文件不删。实测一个 3 天会话就能堆出 3200 个文件、约 1.2GB，其中约 1.18GB 已无索引。
+`sessions/<sid>/context/` 曾是每次 LLM 调用的整包审计快照，删除只写 tombstone、清 SQLite 索引而不删 jsonl；实测一个 3 天会话堆出约 3200 个文件、1.2GB，其中约 1.18GB 已无索引。
 
-本方案不改 resume 路径，也不做增量编码。context frame 继续作为“那一次发给模型的 payload”快照，但每种 `frame_kind` 只保留最近 5 份，tombstone 时 unlink 对应文件，并提供一次 GC 清掉历史孤儿。
-
-实现已落地：save 时按 kind 保留 5 份，tombstone 时 unlink，resume/compaction 对该 session 跑 GC。
+本方案不改 resume 路径，也不做增量编码。context frame 继续作为“那一次发给模型的 payload”快照；当前实现按每种 `frame_kind` 保留最近 5 份，删除时尽力 unlink 目标文件，clear 额外清理无索引孤儿，并在 resume/compaction 时对该 session 跑 GC。
 
 ## Context
 
@@ -49,7 +49,7 @@ session `3cb0aea89645`（2026-08-19 至 2026-08-21）：
 | `context/deletes.jsonl` | 56 条，全是 compaction 的 `delete_messages_through` |
 | 相邻两份 frame | 通常只多 1–2 条消息，但整份 system + 历史再写一遍 |
 
-### 删除现状
+### 删除现状（实施前基线）
 
 `delete_messages_through()` / `delete_messages_from()` / `clear_messages()` 会：
 
@@ -59,7 +59,7 @@ session `3cb0aea89645`（2026-08-19 至 2026-08-21）：
 
 它们不 `unlink` jsonl。`user_message_id IS NULL` 的 worker / compaction frame 也不会被 `through` / `from` 的 SQL 删掉。只有 `/session del` 或 `delete_session()` 整目录 `rmtree` 才会物理删除。
 
-### 测试已经超前于实现
+### 实施前测试基线
 
 `src/tests/test_agent/adapters/langgraph/runtime/test_session_context_frames.py` 已经要求：
 
@@ -67,11 +67,11 @@ session `3cb0aea89645`（2026-08-19 至 2026-08-21）：
 - `test_delete_messages_through_unlinks_matching_context_files`：范围删除时 unlink 对应文件
 - `test_gc_context_frames_removes_orphans_and_enforces_retention`：`gc_context_frames()` 删除孤儿，并把每种保留截到 5 份
 
-当前 `context_frame_repository.py` 没有 `gc_context_frames`，`save_context_frame()` 也没有 retention trim。
+实施前 `context_frame_repository.py` 没有 `gc_context_frames`，`save_context_frame()` 也没有 retention trim；这些缺口已由本方案的实现补齐。
 
-这三份测试的 **keep=5 断言** 是验收标准，不能改数字来迁就实现。但 GC 测试的 **setup 和实现冲突**：它通过 `save_context_frame()` 连写 8 份 main，再断言 `removed >= 4`。若 save 当时就 trim 到 5，GC 只会删掉那 1 个孤儿，`removed >= 4` 必失败。
+这三份测试的 **keep=5 断言** 是验收标准，不能改数字来迁就实现。GC 测试 setup 已改为绕过 save trim，直接构造超量 live 行和孤儿文件，确保同时验证 GC 的两类职责。
 
-实现时必须改 GC 测试的 setup，不能改 keep=5：先用 save 留下 5 份 live，再直接插入额外 SQLite 行和 jsonl（绕过 save trim），模拟升级前的脏会话，然后 GC。
+实际 setup 先用 save 留下 5 份 live，再直接插入额外 SQLite 行和 jsonl（绕过 save trim），模拟升级前的脏会话后执行 GC；keep=5 未降低。
 
 ## Goals / Non-Goals
 
@@ -242,8 +242,8 @@ context/deletes.jsonl   # tombstone 仍写，供 load_context_frames() 过滤
 | 第 6 个 `main` frame 写入 | 最小 id 的 main 文件和 SQLite 行消失；worker 不受影响 | `test_save_context_frame_keeps_five_files_per_kind` |
 | `delete_messages_through` 命中带 `user_message_id` 的 frame | 对应 jsonl unlink，live frame 保留 | `test_delete_messages_through_unlinks_matching_context_files` |
 | 磁盘上有无索引的 `999001.jsonl` | GC 删除它 | `test_gc_context_frames_removes_orphans_and_enforces_retention` |
-| 升级前留下超过 5 份 live 行 + 孤儿 | GC 两者都收；setup 必须绕过 save trim | 同上；实现时只改 setup，不改 keep=5 断言 |
-| worker `user_message_id is NULL` 遇到 `through` | SQL 不删这些行；后续 worker save / GC 按 kind cap 收 | 现有 through 测试不覆盖 NULL；实现时补一个 |
+| 升级前留下超过 5 份 live 行 + 孤儿 | GC 两者都收；setup 绕过 save trim | 同上；setup 已绕过 save trim，keep=5 断言未改 |
+| worker `user_message_id is NULL` 遇到 `through` | SQL 不删这些行；后续 worker save / GC 按 kind cap 收 | `test_delete_messages_through_keeps_null_user_message_id_worker_until_gc` |
 | `deletes.jsonl` 与数字 jsonl 同目录 | GC 永不删 `deletes.jsonl` | GC 测试已隐含；可显式断言 |
 | jsonl 已缺、SQLite 行还在 | unlink 视为成功，继续删行 | 单元测试 |
 | `clear_messages` | 该 session 全部 context jsonl 删除，索引清空，tombstone mode=`all` | 扩展现有 clear 测试或新增 |
@@ -278,4 +278,46 @@ context/deletes.jsonl   # tombstone 仍写，供 load_context_frames() 过滤
 - [x] 不提供 debug 开关保留无限 frame。排障看 `messages.jsonl`。
 - [x] `load_context_frames(limit=50)` 保持 50，避免无关 diff。
 - [x] 不提供 slash/`/session gc`。GC 是内部维护。
-- [x] 本文件只定方案。实现另开任务，先改 GC 测试 setup，再按 TDD 补 `gc_context_frames()` 和 save-time trim。
+- [x] 本文件原定方案；实现、故障注入测试、触发链验证与限制说明见下方记录。
+
+
+## Implementation / Verification Record
+
+- 实现位置：`src/voidx/agent/adapters/persistence/context_frame_repository.py`、`src/voidx/agent/adapters/persistence/session_repository.py`、`src/voidx/persistence/jsonl.py`，以及 `resume_session()` / `persist_compaction()` 调用方。
+- `save_context_frame()` 在 session lock 内写入索引和 JSONL；写入失败会始终补偿删除本次索引，文件 unlink 仅尽力执行并记录失败，因此不影响既有 frame；同 kind 保留最近 5 份，trim 失败只记录事件，不升级为当前调用失败。
+- `clear_messages()` 会清理该 session 下所有允许删除的 `context/<digits>.jsonl`，包括无索引孤儿；`context/deletes.jsonl`、`messages.jsonl`、`runtime*.jsonl` 和其他非目标文件保留。范围删除仍只 unlink 命中的索引 frame。
+- JSONL 删除和扫描沿用 session lock 与 `context/<digits>.jsonl` 路径约束，并拒绝跟随符号链接的 session/context/frame；GC 的严格扫描遇到目录访问失败会安全退出并保留 SQLite 索引，避免把不可见文件误判为缺失。
+- `resume_session()` 和 `persist_compaction()` 在恢复/compaction 删除之后触发该 session 的 GC，GC 异常只记录并继续既有流程。
+- 测试覆盖 clear 孤儿与非目标文件保护、写入失败补偿/重试/文件清理失败、索引补偿 fallback 与原始异常保留、缺文件、trim/GC 容错、NULL worker、GC retention、resume/compaction GC 触发链及符号链接路径保护；keep=5 未放宽。
+
+### Verification
+
+本轮新鲜验证：
+
+```text
+./test.py --backend -- src/tests/test_agent/adapters/langgraph/runtime/test_session_context_frames.py -v
+19 passed
+
+./test.py --backend -- \
+  src/tests/test_agent/adapters/langgraph/runtime/test_session_context_frames.py \
+  src/tests/test_agent/adapters/langgraph/runtime/test_session_crud.py \
+  src/tests/test_agent/adapters/langgraph/runtime/test_session_messages.py \
+  src/tests/test_agent/adapters/langgraph/runtime/test_session_runtime_state.py \
+  src/tests/test_agent/adapters/langgraph/runtime/test_compaction_flow_run_once.py \
+  src/tests/test_agent/adapters/langgraph/runtime/test_run_loop_title_misc.py \
+  src/tests/test_agent/adapters/langgraph/runtime/test_call_llm_compaction.py \
+  src/tests/test_persistence/test_session_storage_safety.py \
+  src/tests/test_persistence/test_jsonl_store.py -v
+132 passed
+
+./python.py -m py_compile \
+  src/voidx/agent/adapters/persistence/context_frame_repository.py \
+  src/voidx/agent/adapters/persistence/session_repository.py \
+  src/voidx/persistence/jsonl.py
+passed
+
+git diff --check
+passed
+```
+
+代码审查确认：clear 的扫描和删除只针对当前 session 的 `context/<digits>.jsonl`，并保留 `deletes.jsonl` 与非目标文件；save 写入失败会保留原始异常并补偿本次 SQLite 索引，索引主清理失败时走 fallback；trim/GC 失败保持非阻断。限制：unlink/GC 遇到持续的文件系统错误时按契约容错并留待后续 GC；GC 只在 resume/compaction 触发，不做全局扫描；本轮未声称跨进程故障下的绝对物理删除保证。
