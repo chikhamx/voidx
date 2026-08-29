@@ -1,3 +1,4 @@
+export const BUILTIN_RUNTIME_PROFILES = ["coding", "chat", "loop", "goal"] as const;
 export type RuntimeProfile = string;
 
 export interface AgentProfileDiagnostic {
