@@ -17,10 +17,267 @@ from voidx.persistence.jsonl import (
     read_session_records_from_offset,
     read_session_records_between_offsets,
     session_dir,
+    session_directory_locks,
     write_session_json,
 )
 from voidx.persistence.sqlite import now
 from voidx.presentation.protocol.node_types import NodeType, Status
+
+
+async def append_transcript_turns(
+    session_id: str,
+    turns: list[tuple[int, list[TranscriptNodeRow]]],
+) -> list[int]:
+    """Append complete turn transactions and return the ids actually written.
+
+    The JSONL file is the durable source of truth.  A stale or missing index is
+    rebuilt from the physical file before deciding which turn ids are already
+    complete, so a crash between fsync and index replacement cannot duplicate a
+    turn on retry.
+    """
+    if not turns:
+        return []
+    normalized: dict[int, list[TranscriptNodeRow]] = {}
+    for turn_id, rows in turns:
+        if turn_id < 0:
+            raise ValueError("turn_id must not be negative")
+        if turn_id in normalized:
+            raise ValueError(f"duplicate turn_id: {turn_id}")
+        normalized[turn_id] = sorted(rows, key=lambda row: (row.sort_order, row.node_id))
+
+    timestamp = now()
+    records: list[dict[str, Any]] = []
+    for turn_id in sorted(normalized):
+        records.append({"type": "turn_start", "turn_id": turn_id, "timestamp": timestamp})
+        records.extend(_node_record(row) for row in normalized[turn_id])
+        records.append({"type": "turn_end", "turn_id": turn_id, "timestamp": timestamp})
+
+    written: list[int] = []
+    async with session_directory_locks((session_id,)):
+        path = session_dir(session_id) / "transcript.jsonl"
+        index = _load_transcript_index(session_id)
+        transcript_size = path.stat().st_size if path.exists() else 0
+        if not _transcript_index_matches(index, transcript_size):
+            index = await asyncio.to_thread(_scan_transcript_index, path) if path.exists() else None
+        existing = _complete_turn_ids_from_index(index)
+        if path.exists() and (
+            not existing or not (index and index.get("range_readable") is True)
+        ):
+            existing = _scan_complete_turn_ids(path)
+        pending_turns = [turn_id for turn_id in sorted(normalized) if turn_id not in existing]
+        if pending_turns:
+            pending_records: list[dict[str, Any]] = []
+            for record in records:
+                turn_id = record.get("turn_id")
+                if isinstance(turn_id, int) and turn_id in pending_turns:
+                    pending_records.append(record)
+            offsets, transcript_size = await append_session_records(
+                session_id,
+                "transcript.jsonl",
+                pending_records,
+            )
+            delta = _build_transcript_index(pending_records, offsets, transcript_size)
+            index = _merge_transcript_index(index, delta, transcript_size)
+            written = pending_turns
+        elif index is None:
+            index = _build_transcript_index([], [], transcript_size)
+
+        if index is not None:
+            index["transcript_size"] = transcript_size
+            index["indexed_end_offset"] = transcript_size
+            await write_session_json(session_id, "transcript.idx.json", index)
+
+    await maybe_compact_transcript(session_id)
+    return written
+
+
+def tree_turn_count(tree: OutputTree) -> int:
+    """Count logical root turns without walking their descendants."""
+    return sum(
+        1
+        for child in tree.root.children
+        if child.node_type == "turn" and not _is_blank_separator(child)
+    )
+
+
+def tree_to_transcript_turn_rows(
+    session_id: str,
+    tree: OutputTree,
+    turn_id: int,
+) -> list[TranscriptNodeRow]:
+    """Export one root turn and its logical root siblings without older turns."""
+    if turn_id < 0:
+        raise ValueError("turn_id must not be negative")
+    current_turn = -1
+    target_index: int | None = None
+    for index, child in enumerate(tree.root.children):
+        if child.node_type == "startup" or _is_blank_separator(child):
+            continue
+        if child.node_type == "turn":
+            current_turn += 1
+            if current_turn == turn_id:
+                target_index = index
+                break
+    if target_index is None:
+        return []
+
+    rows: list[TranscriptNodeRow] = []
+    next_node_id = 0
+    sort_order = 0
+
+    def add_node(node: OutputNode, parent_node_id: int | None) -> None:
+        nonlocal next_node_id, sort_order
+        if _is_blank_separator(node):
+            return
+        node_id = next_node_id
+        next_node_id += 1
+        metadata = {
+            "tree_id": node.id,
+            "header_style": node.header_style,
+            "agent_name": node.agent_name,
+            "step_info": node.step_info,
+            "meta": node.meta,
+            "payload": node.payload,
+        }
+        rows.append(
+            TranscriptNodeRow(
+                session_id=session_id,
+                turn_id=turn_id,
+                node_id=node_id,
+                parent_node_id=parent_node_id,
+                sort_order=sort_order,
+                node_type=node.node_type,
+                header=node.header,
+                body_lines=list(node.body_lines),
+                status=node.status,
+                collapsed=node.collapsed,
+                elapsed=node.elapsed,
+                message_id=node.message_id,
+                tool_call_id=node.tool_call_id,
+                agent_run_id=node.agent_run_id,
+                metadata={key: value for key, value in metadata.items() if value not in (None, "", {})},
+            )
+        )
+        sort_order += 1
+        for child in node.children:
+            add_node(child, node_id)
+
+    for index, child in enumerate(tree.root.children[target_index:], start=target_index):
+        if index > target_index and child.node_type == "turn":
+            break
+        if child.node_type == "startup" or _is_blank_separator(child):
+            continue
+        add_node(child, None)
+
+    return rows
+
+
+async def compact_transcript(session_id: str) -> None:
+    """Rewrite the durable transcript as one canonical snapshot."""
+    rows = await load_transcript(session_id)
+    await replace_transcript(session_id, rows)
+
+
+async def maybe_compact_transcript(session_id: str) -> bool:
+    """Compact only when the indexed append tail is large enough to matter."""
+    path = session_dir(session_id) / "transcript.jsonl"
+    index = _load_transcript_index(session_id)
+    if not path.exists() or not index or not _transcript_index_matches(index, path.stat().st_size):
+        return False
+    checkpoint_offset = index.get("last_checkpoint_offset")
+    if not isinstance(checkpoint_offset, int):
+        checkpoint_offset = 0
+    tail_size = max(path.stat().st_size - checkpoint_offset, 0)
+    completed_since_checkpoint = sum(
+        1
+        for value in (index.get("turn_ranges") or {}).values()
+        if isinstance(value, list) and len(value) == 2 and isinstance(value[1], int) and value[1] > checkpoint_offset
+    )
+    if completed_since_checkpoint < 25 and tail_size < 32 * 1024 * 1024:
+        return False
+    await compact_transcript(session_id)
+    return True
+
+
+def _transcript_index_matches(index: dict[str, Any] | None, transcript_size: int) -> bool:
+    return bool(
+        index
+        and index.get("version") in (1, 2)
+        and index.get("transcript_size") == transcript_size
+        and isinstance(index.get("last_reset_offset"), int)
+    )
+
+
+def _complete_turn_ids_from_index(index: dict[str, Any] | None) -> set[int]:
+    if not _transcript_index_matches(index, int(index.get("transcript_size", 0)) if index else 0):
+        return set()
+    ranges = index.get("turn_ranges")
+    if isinstance(ranges, dict) and index.get("range_readable") is True:
+        return {int(turn_id) for turn_id in ranges if str(turn_id).lstrip("-").isdigit()}
+    return set()
+
+def _scan_complete_turn_ids(path) -> set[int]:
+    """Read only complete turn transactions from the physical JSONL tail."""
+    completed: set[int] = set()
+    open_turn: int | None = None
+    try:
+        with path.open("rb") as handle:
+            for raw_line in handle:
+                try:
+                    record = json.loads(raw_line.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+                if not isinstance(record, dict):
+                    continue
+                record_type = record.get("type")
+                if record_type == "transcript_reset":
+                    completed.clear()
+                    open_turn = None
+                elif record_type == "turn_start":
+                    turn_id = record.get("turn_id")
+                    open_turn = turn_id if isinstance(turn_id, int) else None
+                elif record_type == "turn_end":
+                    turn_id = record.get("turn_id")
+                    if isinstance(turn_id, int) and open_turn == turn_id:
+                        completed.add(turn_id)
+                        open_turn = None
+    except OSError:
+        return set()
+    return completed
+
+
+async def complete_transcript_turn_ids(session_id: str) -> set[int]:
+    """Return complete turn ids using the durable transcript as source of truth."""
+    path = session_dir(session_id) / "transcript.jsonl"
+    if not path.exists():
+        return set()
+    transcript_size = path.stat().st_size
+    index = _load_transcript_index(session_id)
+    if _transcript_index_matches(index, transcript_size) and index.get("range_readable") is True:
+        return _complete_turn_ids_from_index(index)
+    return await asyncio.to_thread(_scan_complete_turn_ids, path)
+
+
+def _merge_transcript_index(
+    existing: dict[str, Any] | None,
+    delta: dict[str, Any],
+    transcript_size: int,
+) -> dict[str, Any]:
+    if existing is None:
+        delta["transcript_size"] = transcript_size
+        return delta
+    merged = dict(existing)
+    for key in ("turn_offsets", "turn_ranges", "summary_offsets"):
+        values = dict(existing.get(key) or {})
+        values.update(delta.get(key) or {})
+        merged[key] = values
+    merged["version"] = 2
+    merged["transcript_size"] = transcript_size
+    merged["indexed_end_offset"] = transcript_size
+    merged["range_readable"] = bool(existing.get("range_readable", False)) and bool(delta.get("range_readable", True))
+    return merged
+
+
 
 
 class TranscriptTurnRow(BaseModel):
@@ -270,6 +527,10 @@ class _TranscriptIndexBuilder:
 
     def build(self, transcript_size: int) -> dict[str, Any]:
         if self._open_turn_id is not None:
+            self.turn_offsets.pop(str(self._open_turn_id), None)
+            self.turn_ranges.pop(str(self._open_turn_id), None)
+            self._open_turn_id = None
+            self._open_turn_start = None
             self.range_readable = False
         return {
             "version": 2,
@@ -454,6 +715,52 @@ def _page_from_rows(
     )
 
 
+def _complete_transaction_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep complete turn transactions and compatible legacy records only."""
+    completed: list[dict[str, Any]] = []
+    open_turn_id: int | None = None
+    open_records: list[dict[str, Any]] = []
+
+    for record in records:
+        record_type = record.get("type")
+        turn_id = record.get("turn_id")
+
+        if open_turn_id is None:
+            if record_type == "turn_start" and isinstance(turn_id, int):
+                open_turn_id = turn_id
+                open_records = [record]
+            elif record_type != "turn_end":
+                completed.append(record)
+            continue
+
+        if record_type in ("node", "node_update") and turn_id == open_turn_id:
+            open_records.append(record)
+            continue
+        if record_type == "turn_end" and turn_id == open_turn_id:
+            completed.extend((*open_records, record))
+            open_turn_id = None
+            open_records = []
+            continue
+        if record_type == "turn_start" and isinstance(turn_id, int):
+            # The previous transaction has no matching end; discard it and
+            # start a fresh candidate transaction.
+            open_turn_id = turn_id
+            open_records = [record]
+            continue
+        if record_type in ("turn_start", "turn_end", "node", "node_update"):
+            # Transaction records for another turn cannot be replayed as
+            # legacy records while this transaction is still open.
+            continue
+
+        # A reset or a legacy record terminates an incomplete transaction.  A
+        # reset/legacy record itself remains replayable after the discard.
+        open_turn_id = None
+        open_records = []
+        completed.append(record)
+
+    return completed
+
+
 def _apply_transcript_records(
     session_id: str,
     base_rows: list[TranscriptNodeRow],
@@ -462,7 +769,7 @@ def _apply_transcript_records(
     rows: dict[tuple[int, int], TranscriptNodeRow] = {
         (row.turn_id, row.node_id): row for row in base_rows
     }
-    for record in records:
+    for record in _complete_transaction_records(records):
         rtype = record.get("type")
         if rtype == "transcript_reset":
             rows.clear()

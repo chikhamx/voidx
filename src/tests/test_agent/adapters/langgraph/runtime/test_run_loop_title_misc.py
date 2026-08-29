@@ -29,7 +29,7 @@ from voidx.agent.domain.task.state import (
 from voidx.config import Config
 from voidx.llm.usage import UsageStats
 from voidx.agent.adapters.persistence.runtime_state_repository import RuntimeStateSnapshot, save_runtime_state
-from voidx.agent.adapters.persistence.session_repository import MessageRow, create_session, get_session, load_messages, save_message, update_title
+from voidx.agent.adapters.persistence.session_repository import MessageRow, create_session, delete_session, get_session, load_messages, save_message, update_title
 from voidx.update.service import UpdateCheckResult
 from voidx.agent.application.automation.workflow.runtime import WorkflowActivationSource, WorkflowRunState, WorkflowRunStatus
 from voidx.agent.application.runtime.task_tracker import TaskTracker
@@ -180,3 +180,40 @@ async def test_smart_title_does_not_update_resumed_session(tmp_path):
     assert loaded_old.title == "temporary"
     assert loaded_resumed is not None
     assert loaded_resumed.title == "Resumed title"
+
+
+@pytest.mark.asyncio
+async def test_resume_session_runs_context_gc_after_restore_without_blocking_on_failure(
+    tmp_path,
+    monkeypatch,
+):
+    import voidx.agent.adapters.persistence.context_frame_repository as context_repository
+
+    session = await create_session(workspace=str(tmp_path), provider="mimo", model="mimo-v2.5")
+    try:
+        graph = make_langgraph_execution(
+            Config(workspace=str(tmp_path)),
+            api_key="test-key",
+            session=session,
+        )
+        events = []
+
+        async def fake_restore():
+            events.append("restore")
+
+        async def fail_gc(session_id):
+            events.append(("gc", session_id))
+            raise OSError("injected gc failure")
+
+        async def fake_resume_loop(resumed):
+            events.append(("loop", resumed.id))
+
+        monkeypatch.setattr(graph, "restore_runtime_state", fake_restore)
+        monkeypatch.setattr(context_repository, "gc_context_frames", fail_gc)
+        monkeypatch.setattr(graph, "_resume_loop_for_session", fake_resume_loop)
+
+        await graph.resume_session(session)
+
+        assert events == ["restore", ("gc", session.id), ("loop", session.id)]
+    finally:
+        await delete_session(session.id)

@@ -29,7 +29,7 @@ from voidx.agent.adapters.persistence.context_frame_repository import (
     load_context_frames,
     save_context_frame,
 )
-from voidx.persistence.jsonl import append_session_record
+from voidx.persistence.jsonl import append_session_record, delete_session_file, list_context_frame_files
 
 def test_context_frame_hashes_stable_prefix_before_long_summary():
     first = build_context_frame(
@@ -415,4 +415,305 @@ async def test_gc_context_frames_deletes_sqlite_row_when_jsonl_missing():
         assert disk_ids == set(kept_ids)
         assert not (_session_dir(session.id) / "context" / f"{missing_id}.jsonl").exists()
     finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_clear_messages_removes_orphan_context_jsonl_without_touching_other_files():
+    session = await create_session()
+    try:
+        await save_message(MessageRow(session_id=session.id, role="user", content="before clear"))
+        indexed_id = await _save_kind(session.id, "main", "indexed")
+        context_dir = _session_dir(session.id) / "context"
+        orphan_path = context_dir / "987654.jsonl"
+        orphan_path.write_text('{"role":"user","content":"orphan"}\n', encoding="utf-8")
+        ignored_context_path = context_dir / "notes.jsonl"
+        ignored_context_path.write_text('{"type":"keep"}\n', encoding="utf-8")
+        deletes_path = context_dir / "deletes.jsonl"
+        deletes_path.write_text('{"type":"keep-marker"}\n', encoding="utf-8")
+        runtime_path = _session_dir(session.id) / "runtime.jsonl"
+        runtime_path.write_text('{"type":"keep"}\n', encoding="utf-8")
+
+        await clear_messages(session.id)
+
+        assert not (_session_dir(session.id) / "context" / f"{indexed_id}.jsonl").exists()
+        assert not orphan_path.exists()
+        assert _context_jsonl_ids(session.id) == set()
+        assert ignored_context_path.exists()
+        assert runtime_path.exists()
+        assert (_session_dir(session.id) / "messages.jsonl").exists()
+        assert deletes_path.exists()
+        assert _read_jsonl(deletes_path)[0] == {"type": "keep-marker"}
+        assert await load_messages(session.id) == []
+        assert await store.fetch_all(
+            "SELECT id FROM context_frames WHERE session_id = ?",
+            (session.id,),
+        ) == []
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_save_context_frame_write_failure_compensates_and_allows_retry(monkeypatch):
+    import voidx.agent.adapters.persistence.context_frame_repository as repository
+
+    session = await create_session()
+    try:
+        existing_id = await _save_kind(session.id, "main", "existing")
+        original_write = repository.write_session_records
+
+        async def write_then_fail(session_id, filename, records):
+            await original_write(session_id, filename, records)
+            raise OSError("injected context frame write failure")
+
+        monkeypatch.setattr(repository, "write_session_records", write_then_fail)
+        failed_record = build_context_frame(
+            session_id=session.id,
+            frame_kind="main",
+            provider="mimo",
+            model="mimo-v2.5",
+            messages=[HumanMessage(content="failed")],
+        )
+
+        with pytest.raises(OSError, match="injected context frame write failure"):
+            await repository.save_context_frame(failed_record)
+
+        rows = await store.fetch_all(
+            "SELECT id, file_path FROM context_frames WHERE session_id = ? ORDER BY id",
+            (session.id,),
+        )
+        assert [row["id"] for row in rows] == [existing_id]
+        assert _context_jsonl_ids(session.id) == {existing_id}
+        assert _read_jsonl(
+            _session_dir(session.id) / "context" / f"{existing_id}.jsonl"
+        ) == [{"role": "user", "content": "existing"}]
+        assert not any(
+            row["file_path"] != f"context/{existing_id}.jsonl"
+            for row in rows
+        )
+
+        monkeypatch.setattr(repository, "write_session_records", original_write)
+        retried_id = await repository.save_context_frame(failed_record)
+
+        assert retried_id != existing_id
+        assert _context_jsonl_ids(session.id) == {existing_id, retried_id}
+        assert [frame.id for frame in await repository.load_context_frames(session.id)] == [
+            existing_id,
+            retried_id,
+        ]
+    finally:
+        await delete_session(session.id)
+
+
+
+
+
+
+@pytest.mark.asyncio
+async def test_save_context_frame_fallback_index_cleanup_removes_dangling_row(monkeypatch):
+    import voidx.agent.adapters.persistence.context_frame_repository as repository
+
+    session = await create_session()
+    try:
+        existing_id = await _save_kind(session.id, "main", "existing")
+
+        async def fail_write(*_args, **_kwargs):
+            raise OSError("injected context frame write failure")
+
+        async def fail_primary_index_cleanup(*_args, **_kwargs):
+            raise OSError("injected primary index cleanup failure")
+
+        monkeypatch.setattr(repository, "write_session_records", fail_write)
+        monkeypatch.setattr(
+            repository,
+            "_delete_context_frame_index",
+            fail_primary_index_cleanup,
+        )
+        failed_record = build_context_frame(
+            session_id=session.id,
+            frame_kind="main",
+            provider="mimo",
+            model="mimo-v2.5",
+            messages=[HumanMessage(content="failed index cleanup")],
+        )
+
+        with pytest.raises(OSError, match="injected context frame write failure"):
+            await repository.save_context_frame(failed_record)
+
+        rows = await store.fetch_all(
+            "SELECT id, file_path FROM context_frames WHERE session_id = ? ORDER BY id",
+            (session.id,),
+        )
+        assert [(row["id"], row["file_path"]) for row in rows] == [
+            (existing_id, f"context/{existing_id}.jsonl"),
+        ]
+        assert _context_jsonl_ids(session.id) == {existing_id}
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_save_context_frame_fallback_index_cleanup_preserves_write_error(monkeypatch):
+    import voidx.agent.adapters.persistence.context_frame_repository as repository
+
+    session = await create_session()
+    try:
+        async def fail_write(*_args, **_kwargs):
+            raise RuntimeError("injected non-os write failure")
+
+        async def fail_primary_index_cleanup(*_args, **_kwargs):
+            raise OSError("injected primary index cleanup failure")
+
+        monkeypatch.setattr(repository, "write_session_records", fail_write)
+        monkeypatch.setattr(
+            repository,
+            "_delete_context_frame_index",
+            fail_primary_index_cleanup,
+        )
+        record = build_context_frame(
+            session_id=session.id,
+            frame_kind="main",
+            provider="mimo",
+            model="mimo-v2.5",
+            messages=[HumanMessage(content="preserve original error")],
+        )
+
+        with pytest.raises(RuntimeError, match="injected non-os write failure"):
+            await repository.save_context_frame(record)
+
+        assert await store.fetch_all(
+            "SELECT id FROM context_frames WHERE session_id = ?",
+            (session.id,),
+        ) == []
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_save_context_frame_removes_index_when_file_cleanup_fails(monkeypatch):
+    import voidx.agent.adapters.persistence.context_frame_repository as repository
+
+    session = await create_session()
+    try:
+        existing_id = await _save_kind(session.id, "main", "existing")
+        original_write = repository.write_session_records
+
+        async def write_then_fail(session_id, filename, records):
+            await original_write(session_id, filename, records)
+            raise OSError("injected context frame write failure")
+
+        async def fail_delete(*_args, **_kwargs):
+            raise OSError("injected context frame cleanup failure")
+
+        monkeypatch.setattr(repository, "write_session_records", write_then_fail)
+        monkeypatch.setattr(repository, "delete_session_file", fail_delete)
+        failed_record = build_context_frame(
+            session_id=session.id,
+            frame_kind="main",
+            provider="mimo",
+            model="mimo-v2.5",
+            messages=[HumanMessage(content="failed cleanup")],
+        )
+
+        with pytest.raises(OSError, match="injected context frame write failure"):
+            await repository.save_context_frame(failed_record)
+
+        rows = await store.fetch_all(
+            "SELECT id FROM context_frames WHERE session_id = ? ORDER BY id",
+            (session.id,),
+        )
+        assert [row["id"] for row in rows] == [existing_id]
+        assert (_session_dir(session.id) / "context" / f"{existing_id}.jsonl").exists()
+        assert len(_context_jsonl_ids(session.id) - {existing_id}) == 1
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_save_context_frame_ignores_trim_failure(monkeypatch):
+    import voidx.agent.adapters.persistence.context_frame_repository as repository
+
+    session = await create_session()
+    try:
+        async def fail_trim(*_args, **_kwargs):
+            raise OSError("injected trim failure")
+
+        monkeypatch.setattr(repository, "_trim_context_frames", fail_trim)
+        record = build_context_frame(
+            session_id=session.id,
+            frame_kind="main",
+            provider="mimo",
+            model="mimo-v2.5",
+            messages=[HumanMessage(content="trim failure is non-fatal")],
+        )
+
+        frame_id = await repository.save_context_frame(record)
+
+        rows = await store.fetch_all(
+            "SELECT id, file_path FROM context_frames WHERE session_id = ? AND id = ?",
+            (session.id, frame_id),
+        )
+        assert [row["id"] for row in rows] == [frame_id]
+        assert _context_jsonl_ids(session.id) == {frame_id}
+    finally:
+        await delete_session(session.id)
+
+
+
+
+@pytest.mark.asyncio
+async def test_gc_context_frames_keeps_indexes_when_context_scan_fails(monkeypatch):
+    import voidx.agent.adapters.persistence.context_frame_repository as repository
+
+    session = await create_session()
+    try:
+        frame_id = await _save_kind(session.id, "main", "scan failure keeps frame")
+
+        async def fail_scan(*_args, **_kwargs):
+            raise OSError("injected context scan failure")
+
+        monkeypatch.setattr(repository, "list_context_frame_files", fail_scan)
+
+        assert await repository.gc_context_frames(session.id) == 0
+        rows = await store.fetch_all(
+            "SELECT id, file_path FROM context_frames WHERE session_id = ?",
+            (session.id,),
+        )
+        assert [(row["id"], row["file_path"]) for row in rows] == [
+            (frame_id, f"context/{frame_id}.jsonl"),
+        ]
+        assert (_session_dir(session.id) / "context" / f"{frame_id}.jsonl").exists()
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_context_file_helpers_do_not_follow_symlinked_context_directory(tmp_path):
+    session = await create_session()
+    context_dir = None
+    real_context_dir = None
+    try:
+        frame_id = await _save_kind(session.id, "main", "protected")
+        context_dir = _session_dir(session.id) / "context"
+        real_context_dir = tmp_path / "real-context"
+        outside_dir = tmp_path / "outside-context"
+        outside_dir.mkdir()
+        outside_file = outside_dir / "999001.jsonl"
+        outside_file.write_text('{"role":"user","content":"outside"}\n', encoding="utf-8")
+        context_dir.rename(real_context_dir)
+        context_dir.symlink_to(outside_dir, target_is_directory=True)
+
+        with pytest.raises(ValueError, match="symlinked context directory"):
+            await delete_session_file(session.id, "context/999001.jsonl")
+        assert await list_context_frame_files(session.id) == []
+        assert outside_file.exists()
+
+        context_dir.unlink()
+        real_context_dir.rename(context_dir)
+        assert (context_dir / f"{frame_id}.jsonl").exists()
+    finally:
+        if context_dir is not None and context_dir.is_symlink():
+            context_dir.unlink()
+        if real_context_dir is not None and real_context_dir.exists():
+            real_context_dir.rename(context_dir)
         await delete_session(session.id)

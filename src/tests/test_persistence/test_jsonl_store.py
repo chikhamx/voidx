@@ -55,3 +55,39 @@ async def test_delete_session_file_rejects_non_context_digit_jsonl(tmp_path, mon
     assert await jsonl_store.delete_session_file(session_id, "context/12.jsonl") is True
     assert not (session_path / "context" / "12.jsonl").exists()
     assert await jsonl_store.delete_session_file(session_id, "context/12.jsonl") is False
+
+
+@pytest.mark.asyncio
+async def test_replace_session_records_keeps_old_file_when_replace_fails(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path)
+    session_id = "session-replace"
+    await jsonl_store.append_session_record(
+        session_id,
+        "transcript.jsonl",
+        {"version": "old"},
+    )
+    path = jsonl_store.session_dir(session_id) / "transcript.jsonl"
+    old_contents = path.read_text(encoding="utf-8")
+
+    real_replace = jsonl_store.os.replace
+
+    def fail_replace(source, destination):
+        if destination == path:
+            raise OSError("simulated replace failure")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(jsonl_store.os, "replace", fail_replace)
+    with pytest.raises(OSError, match="simulated replace failure"):
+        await jsonl_store.replace_session_records(
+            session_id,
+            "transcript.jsonl",
+            [{"version": "new"}],
+        )
+
+    assert path.read_text(encoding="utf-8") == old_contents
+    assert await jsonl_store.read_session_records(session_id, "transcript.jsonl") == [
+        {"version": "old"}
+    ]

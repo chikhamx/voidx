@@ -370,3 +370,49 @@ async def test_slash_compact_runs_manual_session_compaction(tmp_path):
         assert graph._compaction_summary == "manual summary"
     finally:
         await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_persist_compaction_runs_context_gc_after_delete_and_ignores_gc_failure(
+    tmp_path,
+    monkeypatch,
+):
+    import voidx.agent.adapters.langgraph.runtime.compaction_coordinator as compaction_module
+    import voidx.agent.adapters.persistence.session_repository as session_repository
+
+    session = await create_session(workspace=str(tmp_path))
+    try:
+        await save_message(MessageRow(session_id=session.id, role="user", content="old question"))
+        await save_message(MessageRow(session_id=session.id, role="assistant", content="old answer"))
+        await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
+        graph = make_langgraph_execution(
+            Config(workspace=str(tmp_path)),
+            api_key="test-key",
+            session=session,
+        )
+        graph._context_cache.row_messages = {
+            1: RowMessageCacheEntry("old-user", HumanMessage(content="old question", id="1")),
+            2: RowMessageCacheEntry("old-assistant", AIMessage(content="old answer", id="2")),
+            3: RowMessageCacheEntry("tail-user", HumanMessage(content="tail question", id="3")),
+        }
+        events = []
+
+        async def fake_delete(session_id, last_message_id):
+            events.append(("delete", session_id, last_message_id))
+
+        async def fail_gc(session_id):
+            events.append(("gc", session_id))
+            raise OSError("injected gc failure")
+
+        monkeypatch.setattr(session_repository, "delete_messages_through", fake_delete)
+        monkeypatch.setattr(compaction_module, "gc_context_frames", fail_gc)
+
+        await graph._persist_compaction([
+            HumanMessage(content="old question", id="1"),
+            AIMessage(content="old answer", id="2"),
+        ])
+
+        assert events == [("delete", session.id, 2), ("gc", session.id)]
+        assert set(graph._context_cache.row_messages) == {3}
+    finally:
+        await delete_session(session.id)

@@ -22,7 +22,7 @@ from voidx.persistence.session_ids import validate_session_storage_id
 
 
 _MAX_SESSION_LOCKS = 64
-_CONTEXT_FRAME_FILE_RE = re.compile(r"^context/\d+\.jsonl$")
+_CONTEXT_FRAME_FILE_RE = re.compile(r"^context/[0-9]+\.jsonl$")
 _session_locks: dict[str, asyncio.Lock] = {}
 _locks_lock = asyncio.Lock()
 _held_session_lock_ids: contextvars.ContextVar[frozenset[str]] = contextvars.ContextVar(
@@ -256,11 +256,23 @@ async def read_session_bytes(
 
 def _write_jsonl_sync(path: Path, records: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        for record in records:
-            f.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
-        f.flush()
-        os.fsync(f.fileno())
+    temp_path = path.with_name(f".{path.name}.tmp")
+    try:
+        with temp_path.open("w", encoding="utf-8") as f:
+            for record in records:
+                f.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, path)
+        if os.name != "nt":
+            dir_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
 
 
 def _write_json_sync(path: Path, value: dict[str, Any]) -> None:
@@ -483,8 +495,50 @@ async def delete_session_file(session_id: str, filename: str) -> bool:
     if not _CONTEXT_FRAME_FILE_RE.fullmatch(filename):
         raise ValueError(f"refusing to delete session file: {filename}")
     async with session_directory_locks((session_id,)):
-        path = session_dir(session_id) / filename
+        session_path = session_dir(session_id)
+        if session_path.is_symlink():
+            raise ValueError("refusing to access symlinked session directory")
+        context_dir = session_path / "context"
+        if context_dir.is_symlink():
+            raise ValueError("refusing to access symlinked context directory")
+        path = context_dir / filename.removeprefix("context/")
+        if path.is_symlink():
+            raise ValueError("refusing to delete symlinked context frame")
         return await asyncio.to_thread(_unlink_session_file_sync, path)
+
+
+async def list_context_frame_files(
+    session_id: str,
+    *,
+    strict: bool = False,
+) -> list[str]:
+    """List numeric context frame JSONL files under the session lock."""
+    async with session_directory_locks((session_id,)):
+        session_path = session_dir(session_id)
+        if session_path.is_symlink():
+            if strict:
+                raise ValueError("refusing to access symlinked session directory")
+            return []
+        context_dir = session_path / "context"
+        if context_dir.is_symlink():
+            if strict:
+                raise ValueError("refusing to access symlinked context directory")
+            return []
+        try:
+            paths = context_dir.iterdir()
+            return sorted(
+                f"context/{path.name}"
+                for path in paths
+                if path.is_file()
+                and not path.is_symlink()
+                and _CONTEXT_FRAME_FILE_RE.fullmatch(f"context/{path.name}")
+            )
+        except FileNotFoundError:
+            return []
+        except OSError:
+            if strict:
+                raise
+            return []
 
 
 async def delete_session_directories(session_ids: list[str] | tuple[str, ...]) -> None:

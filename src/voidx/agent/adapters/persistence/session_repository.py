@@ -31,6 +31,7 @@ from voidx.persistence.jsonl import (
     append_session_bytes,
     append_session_record,
     delete_session_file,
+    list_context_frame_files,
     drop_session_lock,
     encode_jsonl_record,
     read_session_bytes,
@@ -845,109 +846,119 @@ async def _append_delete_cascade_records(
 
 
 async def clear_messages(session_id: str) -> None:
-    previous_message_count = 0
-    row = await fetch_one(
-        "SELECT message_count FROM sessions WHERE id = ?",
-        (session_id,),
-    )
-    previous_message_count = int(row["message_count"] or 0) if row else 0
+    async with session_directory_locks((session_id,)):
+        row = await fetch_one(
+            "SELECT message_count FROM sessions WHERE id = ?",
+            (session_id,),
+        )
+        previous_message_count = int(row["message_count"] or 0) if row else 0
 
-    await append_session_record(session_id, "messages.jsonl", {
-        "type": "session_cleared",
-        "reason": "clear_messages",
-        "cleared_at": now(),
-        "previous_message_count": previous_message_count,
-    })
-    await _append_delete_cascade_records(
-        session_id,
-        mode="all",
-        reason="clear_messages",
-    )
-    await _unlink_context_frame_files(
-        session_id,
-        await fetch_all(
+        await append_session_record(session_id, "messages.jsonl", {
+            "type": "session_cleared",
+            "reason": "clear_messages",
+            "cleared_at": now(),
+            "previous_message_count": previous_message_count,
+        })
+        await _append_delete_cascade_records(
+            session_id,
+            mode="all",
+            reason="clear_messages",
+        )
+        context_rows = await fetch_all(
             "SELECT id, file_path FROM context_frames WHERE session_id = ?",
             (session_id,),
-        ),
-    )
+        )
+        await _unlink_context_frame_files(
+            session_id,
+            context_rows,
+            extra_file_paths=await list_context_frame_files(session_id),
+        )
 
-    def _run(conn):
-        conn.execute("DELETE FROM context_frames WHERE session_id = ?", (session_id,))
-        conn.execute("DELETE FROM session_runtime_state WHERE session_id = ?", (session_id,))
-        conn.execute("UPDATE sessions SET message_count = 0 WHERE id = ?", (session_id,))
+        def _run(conn):
+            conn.execute("DELETE FROM context_frames WHERE session_id = ?", (session_id,))
+            conn.execute("DELETE FROM session_runtime_state WHERE session_id = ?", (session_id,))
+            conn.execute("UPDATE sessions SET message_count = 0 WHERE id = ?", (session_id,))
 
-    await write_transaction(_run)
+        await write_transaction(_run)
 
 
 async def delete_messages_from(session_id: str, first_message_id: int) -> None:
-    await _unlink_context_frame_files(
-        session_id,
-        await fetch_all(
-            "SELECT id, file_path FROM context_frames WHERE session_id = ? AND user_message_id >= ?",
-            (session_id, first_message_id),
-        ),
-    )
-
-    def _run(conn):
-        conn.execute(
-            "DELETE FROM context_frames WHERE session_id = ? AND user_message_id >= ?",
-            (session_id, first_message_id),
+    async with session_directory_locks((session_id,)):
+        await _unlink_context_frame_files(
+            session_id,
+            await fetch_all(
+                "SELECT id, file_path FROM context_frames WHERE session_id = ? AND user_message_id >= ?",
+                (session_id, first_message_id),
+            ),
         )
 
-    await write_transaction(_run)
-    await append_session_record(session_id, "messages.jsonl", {
-        "type": "message_deleted",
-        "mode": "from",
-        "first_message_id": first_message_id,
-        "reason": "delete_messages_from",
-        "created_at": now(),
-    })
-    await _append_delete_cascade_records(
-        session_id,
-        mode="from",
-        reason="delete_messages_from",
-        first_message_id=first_message_id,
-    )
-    await _refresh_message_count_from_jsonl(session_id)
-    await touch_session(session_id)
+        def _run(conn):
+            conn.execute(
+                "DELETE FROM context_frames WHERE session_id = ? AND user_message_id >= ?",
+                (session_id, first_message_id),
+            )
+
+        await write_transaction(_run)
+        await append_session_record(session_id, "messages.jsonl", {
+            "type": "message_deleted",
+            "mode": "from",
+            "first_message_id": first_message_id,
+            "reason": "delete_messages_from",
+            "created_at": now(),
+        })
+        await _append_delete_cascade_records(
+            session_id,
+            mode="from",
+            reason="delete_messages_from",
+            first_message_id=first_message_id,
+        )
+        await _refresh_message_count_from_jsonl(session_id)
+        await touch_session(session_id)
 
 
 async def delete_messages_through(session_id: str, last_message_id: int) -> None:
-    await _unlink_context_frame_files(
-        session_id,
-        await fetch_all(
-            "SELECT id, file_path FROM context_frames WHERE session_id = ? AND user_message_id <= ?",
-            (session_id, last_message_id),
-        ),
-    )
-
-    def _run(conn):
-        conn.execute(
-            "DELETE FROM context_frames WHERE session_id = ? AND user_message_id <= ?",
-            (session_id, last_message_id),
+    async with session_directory_locks((session_id,)):
+        await _unlink_context_frame_files(
+            session_id,
+            await fetch_all(
+                "SELECT id, file_path FROM context_frames WHERE session_id = ? AND user_message_id <= ?",
+                (session_id, last_message_id),
+            ),
         )
 
-    await write_transaction(_run)
-    await append_session_record(session_id, "messages.jsonl", {
-        "type": "message_deleted",
-        "mode": "through",
-        "last_message_id": last_message_id,
-        "reason": "delete_messages_through",
-        "created_at": now(),
-    })
-    await _append_delete_cascade_records(
-        session_id,
-        mode="through",
-        reason="delete_messages_through",
-        last_message_id=last_message_id,
-    )
-    await _refresh_message_count_from_jsonl(session_id)
-    await touch_session(session_id)
+        def _run(conn):
+            conn.execute(
+                "DELETE FROM context_frames WHERE session_id = ? AND user_message_id <= ?",
+                (session_id, last_message_id),
+            )
+
+        await write_transaction(_run)
+        await append_session_record(session_id, "messages.jsonl", {
+            "type": "message_deleted",
+            "mode": "through",
+            "last_message_id": last_message_id,
+            "reason": "delete_messages_through",
+            "created_at": now(),
+        })
+        await _append_delete_cascade_records(
+            session_id,
+            mode="through",
+            reason="delete_messages_through",
+            last_message_id=last_message_id,
+        )
+        await _refresh_message_count_from_jsonl(session_id)
+        await touch_session(session_id)
 
 
-async def _unlink_context_frame_files(session_id: str, rows: list[Any]) -> None:
-    for row in rows:
-        file_path = str(row["file_path"] or f"context/{row['id']}.jsonl")
+async def _unlink_context_frame_files(
+    session_id: str,
+    rows: list[Any],
+    *,
+    extra_file_paths: list[str] | None = None,
+) -> None:
+    file_paths = {f"context/{row['id']}.jsonl" for row in rows}
+    file_paths.update(extra_file_paths or ())
+    for file_path in file_paths:
         try:
             await delete_session_file(session_id, file_path)
         except (ValueError, OSError):
