@@ -1,9 +1,12 @@
 from tui_helpers import *  # noqa: F403
 
+import asyncio
 import sys
 import types
 
 import pytest
+
+import voidx_cli.parser as parser_module
 
 
 class _FakeMsvcrt:
@@ -12,11 +15,15 @@ class _FakeMsvcrt:
     def __init__(self, chars: list[str]) -> None:
         self._chars = list(chars)
         self._consumed: list[str] = []
+        self.kbhit_calls = 0
+        self.getwch_calls = 0
 
     def kbhit(self) -> bool:
+        self.kbhit_calls += 1
         return bool(self._chars)
 
     def getwch(self) -> str:
+        self.getwch_calls += 1
         if not self._chars:
             raise AssertionError("getwch called on empty buffer")
         ch = self._chars.pop(0)
@@ -31,6 +38,55 @@ def _install_fake_msvcrt(monkeypatch, chars: list[str]) -> _FakeMsvcrt:
 
 
 # ── _read_input_raw_win32 integration ──────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_read_input_raw_win32_polling_is_cancellable_without_executor(
+    tmp_path, monkeypatch
+):
+    fake_msvcrt = _install_fake_msvcrt(monkeypatch, [])
+    tui = _tui(tmp_path)
+    sleep_calls: list[float] = []
+    first_sleep_release = asyncio.Event()
+    second_sleep_started = asyncio.Event()
+    to_thread_calls = 0
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        if len(sleep_calls) == 1:
+            await first_sleep_release.wait()
+            return
+        second_sleep_started.set()
+        await asyncio.Event().wait()
+
+    async def forbidden_to_thread(*args, **kwargs):
+        nonlocal to_thread_calls
+        to_thread_calls += 1
+        raise AssertionError("input polling must not use an executor thread")
+
+    monkeypatch.setattr(
+        parser_module,
+        "asyncio",
+        types.SimpleNamespace(sleep=fake_sleep, to_thread=forbidden_to_thread),
+    )
+
+    task = asyncio.create_task(tui._read_input_raw_win32())
+    try:
+        await asyncio.sleep(0)
+        assert sleep_calls == [0.01]
+        assert fake_msvcrt.kbhit_calls == 0
+
+        first_sleep_release.set()
+        await asyncio.wait_for(second_sleep_started.wait(), timeout=1)
+        assert sleep_calls == [0.01, 0.01]
+        assert fake_msvcrt.kbhit_calls == 1
+    finally:
+        task.cancel()
+        result = await asyncio.gather(task, return_exceptions=True)
+
+    assert isinstance(result[0], asyncio.CancelledError)
+    assert fake_msvcrt.getwch_calls == 0
+    assert to_thread_calls == 0
+
 
 
 @pytest.mark.asyncio

@@ -68,29 +68,22 @@ class _InputParserMixin:
             "R": "\x1b[2;2~",  # Shift+Insert
         }
 
-        def _read() -> bytes:
+        while True:
+            await asyncio.sleep(0.01)
+            if not msvcrt.kbhit():
+                continue
+
             ch = msvcrt.getwch()
             if ch == "\x00" or ch == "\xe0":
-                # Function / arrow key: read the second byte
                 ch2 = msvcrt.getwch()
                 mapped = _WIN_KEY_MAP.get(ch2)
                 if mapped:
                     return mapped.encode("utf-8")
                 return ("\x00" + ch2).encode("utf-8")
-            # Any character could be the start of a paste. Probe for
-            # quickly-following chars; if they look like a paste (multiple
-            # newlines or a long run), wrap the whole thing as bracketed
-            # paste. This fixes the case where pasted text starts with a
-            # regular char (e.g. "line1\r\nline2") — previously only
-            # newline-first pastes triggered the drain, so the leading
-            # "line1" was inserted char-by-char while the rest became a
-            # partial [Pasted text] token.
             pasted = self._try_drain_win32_paste(ch)
             if pasted is not None:
                 return pasted
             return ch.encode("utf-8")
-
-        return await asyncio.to_thread(_read)
 
     def _try_drain_win32_paste(self, first_char: str, timeout_ms: int = 20) -> bytes | None:
         """Drain remaining console input to detect a paste.
