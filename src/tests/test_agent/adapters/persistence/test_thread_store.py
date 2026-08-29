@@ -417,9 +417,21 @@ async def test_renew_attempt_lease_requires_owner_and_fencing_token(tmp_path):
     )
     loaded = await store.load("loop-1")
     assert loaded is not None
+    source = await store.enqueue_outbox(
+        thread_id="loop-1",
+        kind="goal_prompt",
+        payload={},
+        expected_state_version=loaded.state_version,
+    )
+    claimed = await store.claim_outbox(
+        source.outbox_id,
+        lease_owner="worker-a",
+        lease_seconds=1,
+    )
+    assert claimed is not None
     attempt = await store.begin_attempt(
         thread_id="loop-1",
-        source_outbox_id="wake-1",
+        source_outbox_id=source.outbox_id,
         input_frame={},
         expected_state_version=loaded.state_version,
         lease_owner="worker-a",
@@ -444,6 +456,43 @@ async def test_renew_attempt_lease_requires_owner_and_fencing_token(tmp_path):
         fencing_token=attempt.fencing_token,
         lease_seconds=60,
     ) is True
+
+
+
+@pytest.mark.asyncio
+async def test_renew_attempt_lease_rejects_missing_source_outbox_without_extending_attempt(
+    tmp_path,
+) -> None:
+    store = ThreadStore(db_path=tmp_path / "store.db")
+    await store.create_thread(
+        AgentThread(thread_id="loop-1"),
+        profile=RuntimeProfile(profile_id="loop", revision=1, name="Loop"),
+    )
+    loaded = await store.load("loop-1")
+    assert loaded is not None
+    attempt = await store.begin_attempt(
+        thread_id="loop-1",
+        source_outbox_id="missing-source",
+        input_frame={},
+        expected_state_version=loaded.state_version,
+        lease_owner="worker-a",
+        lease_seconds=60,
+    )
+    before = await store.get_attempt(attempt.attempt_id)
+    assert before is not None
+
+    with pytest.raises(ThreadStateConflict, match="source outbox lease conflict"):
+        await store.renew_attempt_lease(
+            attempt.attempt_id,
+            lease_owner="worker-a",
+            fencing_token=attempt.fencing_token,
+            lease_seconds=60,
+        )
+
+    after = await store.get_attempt(attempt.attempt_id)
+    assert after is not None
+    assert after.lease_owner == before.lease_owner
+    assert after.fencing_token == before.fencing_token
 
 
 @pytest.mark.asyncio

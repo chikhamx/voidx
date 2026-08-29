@@ -553,3 +553,46 @@ async def test_stream_llm_reports_start_and_each_stream_chunk_activity():
     )
 
     assert observed == ["activity", "activity", "activity", "activity"]
+
+
+@pytest.mark.asyncio
+async def test_stream_llm_discards_partial_stream_before_done_on_failure():
+    class FailingStreamingModel:
+        async def astream(self, _messages):
+            yield AIMessageChunk(content="partial answer")
+            raise RuntimeError("mid-stream failure")
+
+    class RecordingRenderer:
+        def __init__(self):
+            self.events: list[str] = []
+            self.discarded = False
+
+        def start(self):
+            self.events.append("start")
+
+        def feed_text(self, text: str):
+            self.events.append(f"text:{text}")
+
+        def feed_thinking(self, text: str):
+            self.events.append(f"thinking:{text}")
+
+        def discard(self):
+            self.discarded = True
+            self.events.append("discard")
+
+        def done(self):
+            self.events.append("done")
+            if not self.discarded:
+                self.events.append("commit")
+
+    renderer = RecordingRenderer()
+
+    with pytest.raises(RuntimeError, match="mid-stream failure"):
+        await _stream_llm(FailingStreamingModel(), [], renderer, "openai")
+
+    assert renderer.events == [
+        "start",
+        "text:partial answer",
+        "discard",
+        "done",
+    ]

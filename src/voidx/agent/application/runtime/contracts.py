@@ -40,11 +40,21 @@ class TurnResult(BaseModel):
         return self.thread.session_id
 
 
+GoalPhaseDisposition = Literal[
+    "committed",
+    "retry_same_phase",
+    "fallback_committed",
+    "needs_user",
+    "terminal",
+]
+
+
 class GoalPhaseResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     phase: Literal["work", "evaluator"]
     attempt_number: int = Field(ge=0)
+    disposition: GoalPhaseDisposition = "committed"
     protocol_id: str = ""
     needs_resume: bool = False
     reason: str = ""

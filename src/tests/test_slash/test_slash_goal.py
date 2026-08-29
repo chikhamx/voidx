@@ -64,7 +64,7 @@ async def test_goal_command_starts_goal_runtime_with_acceptance(monkeypatch) -> 
     assert parent_id == "session-1"
     assert spec.objective == "ship feature"
     assert spec.acceptance_condition == "tests pass"
-    assert any("/goal started" in line for line in output)
+    assert not any("/goal started" in line for line in output)
 
 
 @pytest.mark.asyncio

@@ -1341,3 +1341,59 @@ async def test_permission_prompt_is_cleared_when_frontend_wait_is_cancelled(tmp_
         await graph._ui.events.stop()
         test_dock.deactivate()
         reset_dock(dock_token)
+
+
+@pytest.mark.asyncio
+async def test_clear_current_session_removes_persisted_runtime_state(tmp_path):
+    from voidx.agent.adapters.persistence.runtime_state_repository import load_runtime_state
+
+    session = await create_session(workspace=str(tmp_path))
+    graph = _graph(tmp_path)
+    graph._session = session
+    graph._task_state.set_goal("old goal")
+    graph._compaction_summary = "old summary"
+    await graph.persist_runtime_state()
+    try:
+        await graph.clear_current_session()
+        runtime = await load_runtime_state(session.id)
+        assert runtime.task_state.current_goal is None
+        assert runtime.compaction_summary == ""
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_clear_current_session_removes_workflow_todo_and_tool_results(tmp_path):
+    from voidx.agent.adapters.persistence.runtime_state_repository import load_runtime_state
+    from voidx.agent.adapters.tools.result_storage import persist_named_tool_result
+    from voidx.agent.domain.task.todo import TodoRunItem, TodoRunState, TodoStatus
+    from voidx.agent.domain.automation.workflow import WorkflowRoute
+
+    session = await create_session(workspace=str(tmp_path))
+    graph = _graph(tmp_path)
+    graph._session = session
+    graph._task_state.set_goal("old goal")
+    graph._task_state.workflow_route = WorkflowRoute(route=["debug"])
+    graph._task_state.todo_state = TodoRunState(
+        summary="old todo",
+        total=1,
+        active=1,
+        active_items=[TodoRunItem(id="old", content="old item", status=TodoStatus.ACTIVE)],
+        items=[TodoRunItem(id="old", content="old item", status=TodoStatus.ACTIVE)],
+    )
+    graph._compaction_summary = "old summary"
+    await graph.persist_runtime_state()
+    result_path = persist_named_tool_result(
+        "large output", "clear-test", session_id=session.id, workspace=str(tmp_path)
+    )
+    try:
+        await graph.clear_current_session()
+        runtime = await load_runtime_state(session.id)
+        assert runtime.task_state.current_goal is None
+        assert runtime.task_state.workflow_route is None
+        assert runtime.task_state.workflow_runs == {}
+        assert runtime.task_state.todo_state is None
+        assert runtime.compaction_summary == ""
+        assert not Path(result_path).exists()
+    finally:
+        await delete_session(session.id)

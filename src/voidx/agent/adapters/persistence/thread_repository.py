@@ -1666,7 +1666,36 @@ class ThreadStore:
         lease_seconds: float,
     ) -> bool:
         def _tx(conn):
-            expires_at = time.time() + lease_seconds
+            now_ts = time.time()
+            attempt = conn.execute(
+                "SELECT * FROM runtime_turn_attempts WHERE id = ?",
+                (attempt_id,),
+            ).fetchone()
+            if attempt is None:
+                raise KeyError(attempt_id)
+            if (
+                attempt["status"] != "prepared"
+                or attempt["lease_owner"] != lease_owner
+                or int(attempt["fencing_token"]) != int(fencing_token)
+                or float(attempt["lease_expires_at"]) <= now_ts
+            ):
+                return False
+
+            source_outbox_id = attempt["source_outbox_id"]
+            source_outbox = conn.execute(
+                "SELECT * FROM runtime_outbox WHERE id = ?",
+                (source_outbox_id,),
+            ).fetchone()
+            if (
+                source_outbox is None
+                or source_outbox["delivered_at"] is not None
+                or source_outbox["claimed_by"] != lease_owner
+                or source_outbox["claimed_until"] is None
+                or float(source_outbox["claimed_until"]) <= now_ts
+            ):
+                raise ThreadStateConflict("source outbox lease conflict")
+
+            expires_at = now_ts + lease_seconds
             timestamp = now()
             cur = conn.execute(
                 """UPDATE runtime_turn_attempts
@@ -1680,28 +1709,21 @@ class ThreadStore:
                     attempt_id,
                     lease_owner,
                     fencing_token,
-                    time.time(),
+                    now_ts,
                 ),
             )
             if cur.rowcount != 1:
                 return False
-            attempt = conn.execute(
-                "SELECT source_outbox_id FROM runtime_turn_attempts WHERE id = ?",
-                (attempt_id,),
-            ).fetchone()
-            source_outbox = conn.execute(
-                "SELECT id FROM runtime_outbox WHERE id = ?",
-                (attempt["source_outbox_id"],),
-            ).fetchone()
-            if source_outbox is not None:
-                outbox = conn.execute(
-                    """UPDATE runtime_outbox
-                       SET claimed_until = ?
-                       WHERE id = ? AND delivered_at IS NULL AND claimed_by = ?""",
-                    (expires_at, attempt["source_outbox_id"], lease_owner),
-                )
-                if outbox.rowcount != 1:
-                    raise ThreadStateConflict("source outbox lease conflict")
+
+            outbox = conn.execute(
+                """UPDATE runtime_outbox
+                   SET claimed_until = ?
+                   WHERE id = ? AND delivered_at IS NULL
+                     AND claimed_by = ? AND claimed_until > ?""",
+                (expires_at, source_outbox_id, lease_owner, now_ts),
+            )
+            if outbox.rowcount != 1:
+                raise ThreadStateConflict("source outbox lease conflict")
             return True
 
         return await self._write(_tx)
@@ -2235,6 +2257,126 @@ class ThreadStore:
 
         return await self._write(_tx)
 
+    async def commit_goal_phase_retry(
+        self,
+        *,
+        attempt_id: str,
+        phase: str,
+        reason: str,
+        lease_owner: str,
+        fencing_token: int,
+        guidance_delivery_id: str = "",
+        delay_seconds: float = 0,
+    ) -> LoadedThread:
+        if phase not in {"work", "evaluator"}:
+            raise ValueError("invalid Goal phase")
+        if delay_seconds < 0:
+            raise ValueError("Goal retry delay must not be negative")
+        return await self._write(
+            lambda conn: _commit_goal_phase_retry_tx(
+                conn,
+                attempt_id=attempt_id,
+                phase=phase,
+                reason=reason,
+                lease_owner=lease_owner,
+                fencing_token=fencing_token,
+                guidance_delivery_id=guidance_delivery_id,
+                delay_seconds=delay_seconds,
+            )
+        )
+
+    async def commit_goal_phase_failure(
+        self,
+        *,
+        attempt_id: str,
+        phase: str,
+        reason: str,
+        lease_owner: str,
+        fencing_token: int,
+        guidance_delivery_id: str = "",
+    ) -> LoadedThread:
+        if phase not in {"work", "evaluator"}:
+            raise ValueError("invalid Goal phase")
+
+        def _tx(conn):
+            context = _goal_phase_attempt_context_tx(
+                conn,
+                attempt_id=attempt_id,
+                phase=phase,
+                lease_owner=lease_owner,
+                fencing_token=fencing_token,
+                allow_expired_lease=True,
+            )
+            submitted = conn.execute(
+                """SELECT * FROM goal_protocol_records
+                   WHERE generation = ? AND sequence_number = ?
+                     AND status = 'submitted'""",
+                (context.generation, context.sequence_number),
+            ).fetchone()
+            if submitted is not None:
+                return _commit_submitted_goal_phase_tx(
+                    conn,
+                    context=context,
+                    protocol_id=str(submitted["protocol_id"]),
+                    attempt_id=attempt_id,
+                    lease_owner=lease_owner,
+                    fencing_token=fencing_token,
+                    guidance_delivery_id=guidance_delivery_id,
+                )
+            failure_count = context.goal_state.protocol_repair_count + 1
+            if failure_count < 3:
+                return _commit_goal_phase_retry_tx(
+                    conn,
+                    attempt_id=attempt_id,
+                    phase=phase,
+                    reason=reason,
+                    lease_owner=lease_owner,
+                    fencing_token=fencing_token,
+                    guidance_delivery_id=guidance_delivery_id,
+                    repair_count=failure_count,
+                    context=context,
+                )
+            return _commit_goal_phase_blocked_tx(
+                conn,
+                attempt_id=attempt_id,
+                phase=phase,
+                reason="goal_runtime_failure_exhausted",
+                summary="Goal runtime failed repeatedly; stopping safely.",
+                lease_owner=lease_owner,
+                fencing_token=fencing_token,
+                guidance_delivery_id=guidance_delivery_id,
+                repair_count=failure_count,
+                interrupt_reason=reason,
+                context=context,
+            )
+
+        return await self._write(_tx)
+
+    async def commit_goal_phase_blocked(
+        self,
+        *,
+        attempt_id: str,
+        phase: str,
+        reason: str,
+        lease_owner: str,
+        fencing_token: int,
+        guidance_delivery_id: str = "",
+    ) -> LoadedThread:
+        if phase not in {"work", "evaluator"}:
+            raise ValueError("invalid Goal phase")
+        return await self._write(
+            lambda conn: _commit_goal_phase_blocked_tx(
+                conn,
+                attempt_id=attempt_id,
+                phase=phase,
+                reason=reason,
+                summary="Goal stopped safely because it cannot continue.",
+                lease_owner=lease_owner,
+                fencing_token=fencing_token,
+                guidance_delivery_id=guidance_delivery_id,
+            )
+        )
+
     async def commit_goal_needs_resume(
         self,
         *,
@@ -2366,6 +2508,363 @@ class ThreadStore:
             )
 
         await self._write(_tx)
+
+
+
+
+@dataclass(frozen=True)
+class _GoalPhaseAttemptContext:
+    attempt: Any
+    source: Any
+    payload: dict[str, Any]
+    loaded: LoadedThread
+    goal_state: GoalState
+    generation: str
+    sequence_number: int
+
+
+def _goal_phase_attempt_context_tx(
+    conn,
+    *,
+    attempt_id: str,
+    phase: str,
+    lease_owner: str,
+    fencing_token: int,
+    allow_expired_lease: bool = False,
+) -> _GoalPhaseAttemptContext:
+    attempt = conn.execute(
+        "SELECT * FROM runtime_turn_attempts WHERE id = ?", (attempt_id,)
+    ).fetchone()
+    if attempt is None:
+        raise KeyError(attempt_id)
+    if (
+        attempt["status"] != "prepared"
+        or not bool(attempt["side_effect_started"])
+        or attempt["lease_owner"] != lease_owner
+        or int(attempt["fencing_token"]) != int(fencing_token)
+        or (
+            not allow_expired_lease
+            and float(attempt["lease_expires_at"]) <= time.time()
+        )
+    ):
+        raise ThreadStateConflict("attempt lease conflict")
+    frame = json.loads(attempt["input_frame_json"] or "{}")
+    if frame.get("phase") != phase:
+        raise GoalProtocolConflict("Goal attempt phase conflict")
+    source = conn.execute(
+        "SELECT * FROM runtime_outbox WHERE id = ?",
+        (attempt["source_outbox_id"],),
+    ).fetchone()
+    if (
+        source is None
+        or source["kind"] != "goal_prompt"
+        or source["delivered_at"] is not None
+    ):
+        raise GoalProtocolConflict("Goal phase source outbox is missing")
+    payload = json.loads(source["payload_json"] or "{}")
+    if payload.get("phase") != phase:
+        raise GoalProtocolConflict("Goal phase outbox conflict")
+    loaded = _loaded_from_conn(conn, attempt["thread_id"])
+    if is_goal_terminal(loaded.state.lifecycle):
+        raise GoalProtocolConflict("Goal generation is terminal")
+    goal_state = GoalState.model_validate(loaded.state.context.get("goal_run") or {})
+    generation = str(payload.get("generation") or "")
+    sequence_number = int(payload.get("sequence_number", -1))
+    if (
+        goal_state.generation != generation
+        or goal_state.current_phase != phase
+        or sequence_number != goal_state.projected_sequence_number + 1
+        or frame.get("generation") != generation
+        or int(frame.get("sequence_number", -1)) != sequence_number
+        or int(frame.get("attempt_number", -1))
+        != int(payload.get("attempt_number", -1))
+    ):
+        raise GoalProtocolConflict("Goal phase state binding conflict")
+    return _GoalPhaseAttemptContext(
+        attempt=attempt,
+        source=source,
+        payload=payload,
+        loaded=loaded,
+        goal_state=goal_state,
+        generation=generation,
+        sequence_number=sequence_number,
+    )
+
+
+def _commit_submitted_goal_phase_tx(
+    conn,
+    *,
+    context: _GoalPhaseAttemptContext,
+    protocol_id: str,
+    attempt_id: str,
+    lease_owner: str,
+    fencing_token: int,
+    guidance_delivery_id: str = "",
+) -> LoadedThread:
+    projected = _project_goal_protocol_tx(
+        conn,
+        protocol_id,
+        close_source_attempt=False,
+    )
+    expected_protocol_phase = {
+        "work": "checkpoint",
+        "evaluator": "decision",
+    }[str(context.payload["phase"])]
+    if (
+        projected.generation != context.generation
+        or projected.sequence_number != context.sequence_number
+        or projected.phase != expected_protocol_phase
+    ):
+        raise GoalProtocolConflict("Goal submitted protocol binding conflict")
+    timestamp = now()
+    committed = conn.execute(
+        """UPDATE runtime_turn_attempts
+           SET status = 'committed', updated_at = ?
+           WHERE id = ? AND status = 'prepared'
+             AND lease_owner = ? AND fencing_token = ?""",
+        (timestamp, attempt_id, lease_owner, fencing_token),
+    )
+    if committed.rowcount != 1:
+        raise ThreadStateConflict("Goal submitted protocol attempt commit race")
+    conn.execute(
+        """UPDATE runtime_outbox
+           SET delivered_at = COALESCE(delivered_at, ?),
+               claimed_by = NULL, claimed_until = NULL
+           WHERE id = ?""",
+        (timestamp, context.attempt["source_outbox_id"]),
+    )
+    if guidance_delivery_id:
+        conn.execute(
+            """UPDATE guidance_inbox
+               SET consumed_at = COALESCE(consumed_at, ?)
+               WHERE delivery_id = ? AND consumed_at IS NULL""",
+            (timestamp, guidance_delivery_id),
+        )
+    return _loaded_from_conn(conn, context.loaded.thread.thread_id)
+
+
+def _commit_goal_phase_retry_tx(
+    conn,
+    *,
+    attempt_id: str,
+    phase: str,
+    reason: str,
+    lease_owner: str,
+    fencing_token: int,
+    guidance_delivery_id: str = "",
+    delay_seconds: float = 0,
+    repair_count: int | None = None,
+    context: _GoalPhaseAttemptContext | None = None,
+) -> LoadedThread:
+    context = context or _goal_phase_attempt_context_tx(
+        conn,
+        attempt_id=attempt_id,
+        phase=phase,
+        lease_owner=lease_owner,
+        fencing_token=fencing_token,
+    )
+    next_repair_count = (
+        context.goal_state.protocol_repair_count + 1
+        if repair_count is None
+        else repair_count
+    )
+    retried_goal_state = context.goal_state.model_copy(
+        update={
+            "current_phase": phase,
+            "phase_status": "running",
+            "interrupt_reason": "",
+            "protocol_repair_count": next_repair_count,
+        }
+    )
+    next_state = context.loaded.state.model_copy(
+        update={
+            "lifecycle": LifecycleState.WAITING,
+            "lifecycle_decision": RuntimeDecision(
+                outcome="continue",
+                summary="Goal phase retry scheduled.",
+                reason=reason,
+            ),
+            "context": {
+                **context.loaded.state.context,
+                "goal_run": retried_goal_state.model_dump(mode="json"),
+            },
+        }
+    )
+    timestamp = now()
+    next_version = context.loaded.state_version + 1
+    updated = conn.execute(
+        """UPDATE agent_thread_state
+           SET state_json = ?, state_version = ?, updated_at = ?
+           WHERE thread_id = ? AND state_version = ?""",
+        (
+            _json_model(next_state),
+            next_version,
+            timestamp,
+            context.loaded.thread.thread_id,
+            context.loaded.state_version,
+        ),
+    )
+    if updated.rowcount != 1:
+        raise ThreadStateConflict("Goal state_version conflict")
+    committed = conn.execute(
+        """UPDATE runtime_turn_attempts
+           SET status = 'committed', updated_at = ?
+           WHERE id = ? AND status = 'prepared'
+             AND lease_owner = ? AND fencing_token = ?""",
+        (timestamp, attempt_id, lease_owner, fencing_token),
+    )
+    if committed.rowcount != 1:
+        raise ThreadStateConflict("Goal retry attempt commit race")
+    conn.execute(
+        """UPDATE runtime_outbox
+           SET delivered_at = COALESCE(delivered_at, ?),
+               claimed_by = NULL, claimed_until = NULL
+           WHERE id = ?""",
+        (timestamp, context.attempt["source_outbox_id"]),
+    )
+    if guidance_delivery_id:
+        conn.execute(
+            """UPDATE guidance_inbox
+               SET delivery_id = NULL, delivered_phase = NULL
+               WHERE delivery_id = ? AND consumed_at IS NULL""",
+            (guidance_delivery_id,),
+        )
+    retry_payload = {
+        **context.payload,
+        "goal_state": retried_goal_state.model_dump(mode="json"),
+    }
+    _ensure_goal_successor_outbox(
+        conn,
+        generation=context.generation,
+        thread_id=context.loaded.thread.thread_id,
+        phase=phase,
+        sequence_number=context.sequence_number,
+        payload=retry_payload,
+        expected_state_version=next_version,
+        timestamp=timestamp,
+        delay_seconds=delay_seconds,
+    )
+    return _loaded_from_conn(conn, context.loaded.thread.thread_id)
+
+
+def _commit_goal_phase_blocked_tx(
+    conn,
+    *,
+    attempt_id: str,
+    phase: str,
+    reason: str,
+    summary: str,
+    lease_owner: str,
+    fencing_token: int,
+    guidance_delivery_id: str = "",
+    repair_count: int | None = None,
+    interrupt_reason: str = "",
+    context: _GoalPhaseAttemptContext | None = None,
+) -> LoadedThread:
+    context = context or _goal_phase_attempt_context_tx(
+        conn,
+        attempt_id=attempt_id,
+        phase=phase,
+        lease_owner=lease_owner,
+        fencing_token=fencing_token,
+    )
+    binding = conn.execute(
+        "SELECT * FROM goal_generations WHERE generation = ?",
+        (context.generation,),
+    ).fetchone()
+    if binding is None or binding["goal_thread_id"] != context.loaded.thread.thread_id:
+        raise GoalProtocolConflict("Goal generation binding conflict")
+    goal_updates: dict[str, Any] = {
+        "current_phase": phase,
+        "phase_status": "running",
+        "blocked_reason": reason,
+        "interrupt_reason": interrupt_reason or reason,
+    }
+    if repair_count is not None:
+        goal_updates["protocol_repair_count"] = repair_count
+    blocked_goal_state = context.goal_state.model_copy(update=goal_updates)
+    blocked_state = context.loaded.state.model_copy(
+        update={
+            "lifecycle": LifecycleState.BLOCKED,
+            "lifecycle_decision": RuntimeDecision(
+                outcome="blocked",
+                summary=summary,
+                reason=reason,
+            ),
+            "context": {
+                **context.loaded.state.context,
+                "goal_run": blocked_goal_state.model_dump(mode="json"),
+            },
+        }
+    )
+    timestamp = now()
+    updated = conn.execute(
+        """UPDATE agent_thread_state
+           SET state_json = ?, state_version = state_version + 1, updated_at = ?
+           WHERE thread_id = ? AND state_version = ?""",
+        (
+            _json_model(blocked_state),
+            timestamp,
+            context.loaded.thread.thread_id,
+            context.loaded.state_version,
+        ),
+    )
+    if updated.rowcount != 1:
+        raise ThreadStateConflict("Goal blocked state race")
+    conn.execute(
+        "UPDATE agent_threads SET updated_at = ? WHERE id = ?",
+        (timestamp, context.loaded.thread.thread_id),
+    )
+    conn.execute(
+        """UPDATE runtime_turn_attempts
+           SET status = 'committed', lease_owner = '', lease_expires_at = 0,
+               updated_at = ?
+           WHERE thread_id = ? AND status = 'prepared'""",
+        (timestamp, context.loaded.thread.thread_id),
+    )
+    conn.execute(
+        """UPDATE runtime_outbox
+           SET delivered_at = COALESCE(delivered_at, ?),
+               claimed_by = NULL, claimed_until = NULL
+           WHERE thread_id = ? AND delivered_at IS NULL""",
+        (timestamp, context.loaded.thread.thread_id),
+    )
+    if guidance_delivery_id:
+        conn.execute(
+            """UPDATE guidance_inbox
+               SET consumed_at = COALESCE(consumed_at, ?)
+               WHERE delivery_id = ? AND consumed_at IS NULL""",
+            (timestamp, guidance_delivery_id),
+        )
+    conn.execute(
+        "DELETE FROM goal_recovery_leases WHERE generation = ?",
+        (context.generation,),
+    )
+    conn.execute(
+        """UPDATE goal_generations
+           SET terminal_at = COALESCE(terminal_at, ?)
+           WHERE generation = ?""",
+        (timestamp, context.generation),
+    )
+    public_summary = PublicSummary(
+        generation=context.generation,
+        phase=phase,
+        outcome="blocked",
+        objective_summary=_goal_spec_from_thread_state(
+            context.loaded.state
+        ).objective_summary(),
+        attempt_count=blocked_goal_state.attempt_count,
+        summary=summary,
+        created_at=timestamp,
+    )
+    _insert_goal_public_summary_tx(
+        conn,
+        generation=context.generation,
+        main_session_id=binding["main_session_id"],
+        kind="blocked",
+        summary=public_summary,
+    )
+    return _loaded_from_conn(conn, context.loaded.thread.thread_id)
 
 
 def _validate_goal_attempt_lease(
@@ -2513,6 +3012,8 @@ def _project_goal_protocol_tx(
         "projected_sequence_number": record.sequence_number,
         "phase_status": "running",
         "last_protocol_id": record.protocol_id,
+        "protocol_repair_count": 0,
+        "interrupt_reason": "",
     }
 
     if record.phase == "checkpoint":
@@ -2911,6 +3412,7 @@ def _ensure_goal_successor_outbox(
     payload: dict[str, Any],
     expected_state_version: int,
     timestamp: str,
+    delay_seconds: float = 0,
 ) -> None:
     """Insert exactly one phase outbox for a projected journal position."""
     rows = conn.execute(
@@ -2924,15 +3426,20 @@ def _ensure_goal_successor_outbox(
             existing_payload.get("generation") == generation
             and int(existing_payload.get("sequence_number", -1)) == sequence_number
         ):
+            attempt = conn.execute(
+                """SELECT status FROM runtime_turn_attempts
+                   WHERE source_outbox_id = ? LIMIT 1""",
+                (row["id"],),
+            ).fetchone()
+            if attempt is not None and attempt["status"] == "committed":
+                # A committed Goal attempt may be resumed at the same journal
+                # position after a transient runtime failure. Keep the old
+                # outbox as audit history and create a fresh phase wakeup.
+                continue
             if existing_payload != payload:
                 raise GoalProtocolConflict(
                     "Goal successor outbox payload conflict"
                 )
-            attempt = conn.execute(
-                """SELECT 1 FROM runtime_turn_attempts
-                   WHERE source_outbox_id = ? LIMIT 1""",
-                (row["id"],),
-            ).fetchone()
             if (
                 row["delivered_at"] is not None
                 and row["source_attempt_id"] is None
@@ -2956,7 +3463,7 @@ def _ensure_goal_successor_outbox(
             thread_id,
             _json(payload),
             expected_state_version,
-            time.time(),
+            time.time() + delay_seconds,
             timestamp,
         ),
     )

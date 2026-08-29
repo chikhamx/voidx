@@ -174,3 +174,232 @@ async def test_goal_profile_uses_goal_controller_for_missing_decision_repair(tmp
     assert model.call_index == 2
     assert "should_continue" not in result
     assert result["messages"][0].tool_calls[0]["name"] == "goal_decision"
+
+
+
+
+@pytest.mark.asyncio
+async def test_goal_evaluator_after_decision_requests_final_text_without_tools(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class RecordingModel(ScriptedStreamingModel):
+        def __init__(self):
+            super().__init__([[_text_chunk("验收完成，所有条件均有证据支持。")]])
+            self.bind_calls = 0
+            self.requests: list[list] = []
+
+        def bind_tools(self, tool_defs, **kwargs):
+            self.bind_calls += 1
+            self.bound_tools = tool_defs
+            return self
+
+        async def astream(self, messages):
+            self.requests.append(list(messages))
+            async for chunk in super().astream(messages):
+                yield chunk
+
+    model = RecordingModel()
+    graph = _make_graph(tmp_path, model, monkeypatch)
+    controller = GoalController()
+    await controller.submit_decision(
+        {
+            "outcome": "completed",
+            "summary": "acceptance verified",
+            "progress": "meaningful",
+        },
+        protocol_id="decision-1",
+    )
+    token = _CURRENT_THREAD_EXECUTION_STATE.set(
+        ThreadExecutionState(
+            runtime_profile=GOAL_PROFILE,
+            turn_context=TurnExecutionContext(
+                thread_id="goal:parent:active:evaluator",
+                session_id="goal-evaluator-session",
+                runtime_profile=GOAL_PROFILE,
+                workspace=str(tmp_path),
+                goal_controller=controller,
+                goal_phase="evaluator",
+            ),
+        )
+    )
+    try:
+        result = await graph._call_llm({
+            "messages": [
+                HumanMessage(content="[goal:evaluator] verify"),
+                AIMessage(
+                    content="",
+                    tool_calls=[{
+                        "name": "goal_decision",
+                        "args": {
+                            "status": "finished",
+                            "summary": "acceptance verified",
+                            "progress": "meaningful",
+                        },
+                        "id": "decision-1",
+                        "type": "tool_call",
+                    }],
+                ),
+                ToolMessage(
+                    content="Goal decision durably recorded.",
+                    tool_call_id="decision-1",
+                    name="goal_decision",
+                ),
+            ],
+            "step_count": 1,
+            "persona": "review",
+            "turn_state": "initial",
+        })
+    finally:
+        _CURRENT_THREAD_EXECUTION_STATE.reset(token)
+
+    assert model.call_index == 1
+    assert model.bind_calls == 0
+    assert any(
+        isinstance(message, HumanMessage)
+        and "decision has been durably submitted" in str(message.content)
+        for message in model.requests[0]
+    )
+    assert result["messages"][0].content == "验收完成，所有条件均有证据支持。"
+    assert result["messages"][0].tool_calls == []
+
+
+
+@pytest.mark.asyncio
+async def test_goal_evaluator_final_response_retries_tool_call_as_plain_text(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class RecordingModel(ScriptedStreamingModel):
+        def __init__(self):
+            super().__init__([
+                [_goal_decision_chunk()],
+                [_text_chunk("验收完成，目标已经闭环。")],
+            ])
+            self.bind_calls = 0
+            self.requests: list[list] = []
+
+        def bind_tools(self, tool_defs, **kwargs):
+            self.bind_calls += 1
+            self.bound_tools = tool_defs
+            return self
+
+        async def astream(self, messages):
+            self.requests.append(list(messages))
+            async for chunk in super().astream(messages):
+                yield chunk
+
+    model = RecordingModel()
+    graph = _make_graph(tmp_path, model, monkeypatch)
+    controller = GoalController()
+    await controller.submit_decision(
+        {
+            "outcome": "completed",
+            "summary": "acceptance verified",
+            "progress": "meaningful",
+        },
+        protocol_id="decision-1",
+    )
+    token = _CURRENT_THREAD_EXECUTION_STATE.set(
+        ThreadExecutionState(
+            runtime_profile=GOAL_PROFILE,
+            turn_context=TurnExecutionContext(
+                thread_id="goal:parent:active:evaluator",
+                session_id="goal-evaluator-session",
+                runtime_profile=GOAL_PROFILE,
+                workspace=str(tmp_path),
+                goal_controller=controller,
+                goal_phase="evaluator",
+            ),
+        )
+    )
+    try:
+        result = await graph._call_llm({
+            "messages": [
+                HumanMessage(content="[goal:evaluator] verify"),
+                AIMessage(
+                    content="",
+                    tool_calls=[{
+                        "name": "goal_decision",
+                        "args": {
+                            "status": "finished",
+                            "summary": "acceptance verified",
+                            "progress": "meaningful",
+                        },
+                        "id": "decision-1",
+                        "type": "tool_call",
+                    }],
+                ),
+                ToolMessage(
+                    content="Goal decision durably recorded.",
+                    tool_call_id="decision-1",
+                    name="goal_decision",
+                ),
+            ],
+            "step_count": 1,
+            "persona": "review",
+            "turn_state": "initial",
+        })
+    finally:
+        _CURRENT_THREAD_EXECUTION_STATE.reset(token)
+
+    assert model.call_index == 2
+    assert model.bind_calls == 0
+    assert any(
+        isinstance(message, HumanMessage)
+        and "plain text only" in str(message.content)
+        for message in model.requests[-1]
+    )
+    assert result["messages"][0].content == "验收完成，目标已经闭环。"
+    assert result["messages"][0].tool_calls == []
+
+@pytest.mark.asyncio
+async def test_goal_evaluator_exhaustion_forces_decision_tool_and_reports_failure(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class RecordingModel(ScriptedStreamingModel):
+        def __init__(self):
+            super().__init__([
+                [_text_chunk("Looks done.")],
+                [_text_chunk("Still looks done.")],
+                [_text_chunk("No decision tool call.")],
+            ])
+            self.bound_tool_history: list[tuple[list[str], dict]] = []
+
+        def bind_tools(self, tool_defs, **kwargs):
+            names = [item["function"]["name"] for item in tool_defs]
+            self.bound_tool_history.append((names, kwargs))
+            self.bound_tools = tool_defs
+            return self
+
+    model = RecordingModel()
+    graph = _make_graph(tmp_path, model, monkeypatch)
+    controller = GoalController()
+    token = _CURRENT_THREAD_EXECUTION_STATE.set(
+        ThreadExecutionState(
+            runtime_profile=GOAL_PROFILE,
+            turn_context=TurnExecutionContext(
+                thread_id="goal:parent:active",
+                session_id="goal:parent:active",
+                runtime_profile=GOAL_PROFILE,
+                workspace=str(tmp_path),
+                goal_controller=controller,
+                goal_phase="evaluator",
+            ),
+        )
+    )
+    try:
+        result = await graph._call_llm({
+            "messages": [HumanMessage(content="[goal:evaluator] verify")],
+            "step_count": 0,
+            "persona": "coordinate",
+            "turn_state": "initial",
+        })
+    finally:
+        _CURRENT_THREAD_EXECUTION_STATE.reset(token)
+
+    assert model.call_index == 3
+    assert model.bound_tool_history[-1][0] == ["goal_decision"]
+    assert result["should_continue"] is False
+    assert result["stop_signal"] == "missing_goal_decision"

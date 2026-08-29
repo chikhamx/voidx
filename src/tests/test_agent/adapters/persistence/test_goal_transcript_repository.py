@@ -380,3 +380,29 @@ async def test_generic_save_message_rejects_goal_internal_session(goal_sessions)
                 content="bypass",
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_idle_goal_turn_without_attempt_lease_falls_back_to_save_message(goal_sessions) -> None:
+    await create_session(session_id="idle-session", profile="goal")
+    context = TurnExecutionContext(
+        thread_id="goal-thread-1",
+        session_id="idle-session",
+        goal_phase="idle",
+        goal_generation="generation-1",
+    )
+    state = ThreadExecutionState(thread_id="goal-thread-1", turn_context=context)
+    token = _CURRENT_THREAD_EXECUTION_STATE.set(state)
+    host = SimpleNamespace(
+        _session=SimpleNamespace(id="idle-session"),
+        _session_msg_cache=[],
+    )
+    try:
+        await _persist_new_messages(
+            host,
+            [AIMessage(content="idle chat")],
+        )
+    finally:
+        _CURRENT_THREAD_EXECUTION_STATE.reset(token)
+
+    assert await count_messages("idle-session") == 1

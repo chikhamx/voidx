@@ -10,7 +10,12 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from voidx.agent.domain.profile import RuntimeProfile
-from voidx.agent.domain.prompt_policy import GoalPromptPolicy
+from voidx.agent.domain.prompt_policy import (
+    GOAL_EVALUATOR_DIRECTIVE,
+    GOAL_IDLE_DIRECTIVE,
+    GOAL_INTAKE_DIRECTIVE,
+    GoalPromptPolicy,
+)
 from voidx.agent.domain.thread import LifecycleState
 from voidx.agent.domain.tool_view import BoundToolView
 
@@ -358,60 +363,6 @@ GOAL_PROFILE = RuntimeProfile(
     prompt_policy=GoalPromptPolicy(),
 )
 
-GOAL_INTAKE_DIRECTIVE = """\
-## Goal Intake Stage
-
-This turn is the intake stage of an autonomous Goal. Its sole responsibility is to
-produce a GoalSpec from the user's request — never to execute the request itself.
-
-- Permitted outcomes: call clarify with one targeted question, or call goal_init with
-  a complete spec.
-- Forbidden: performing the task, producing the requested analysis/answer, writing
-  code, or running commands for the task. The work phase starts only after intake.
-- goal_init presents the spec for user approval; on revision feedback, update the
-  spec and submit again.
-"""
-
-GOAL_EVALUATOR_DIRECTIVE = """\
-## Goal Evaluator Stage
-
-This turn is the evaluator stage of an autonomous Goal. Its sole responsibility is
-to judge whether the work-phase evidence satisfies the acceptance condition, then
-submit exactly one lifecycle decision.
-
-Follow this procedure:
-1. Review — read the work-phase evidence in this turn's input and check each
-   acceptance condition against it. The work phase already ran; never re-run the
-   task, and never answer with a plain-text acceptance report.
-2. Verify — spot-check any evidence that looks missing or unreliable with read-only
-   tools (read, find, search, lsp, document). You have no execution tools; do not
-   attempt to run commands.
-3. Decide — call goal_decision:
-   - status="finished" when every condition is backed by concrete evidence;
-   - status="continue" when evidence is insufficient — name the missing evidence
-     in the reason so the next work attempt collects it;
-   - status="blocked" when the goal cannot proceed.
-   In the reason field, cite the evidence or files you relied on. This call is the
-   only way the turn ends.
-"""
-
-GOAL_IDLE_DIRECTIVE = """\
-## Goal Idle Stage
-
-This turn runs in goal mode while no autonomous goal is active. You may converse
-with the user, answer questions with read-only tools, and help shape the next
-GoalSpec — but you never execute the task itself.
-
-Hard rules:
-- NEVER perform the work: do not write code, do not run commands, do not produce
-  the requested artifact. Work happens only inside the autonomous goal loop.
-- You have read-only tools plus clarify and goal_init; no write or shell tools.
-- When the user wants a goal to run, convert the request into a GoalSpec and call
-  goal_init. It presents the spec for user approval; on revision feedback, update
-  the spec and submit again. On cancel, drop it.
-- Do not call goal_checkpoint or goal_decision; those are autonomous phases only.
-- Otherwise answer directly and conversationally.
-"""
 
 
 class GoalState(BaseModel):
@@ -474,23 +425,29 @@ class GoalToolView(BoundToolView):
         return cls(workflow_enabled=workflow_enabled, phase=phase)
 
     def bind(self, available_tool_ids: set[str] | list[str] | tuple[str, ...]) -> "GoalToolView":
-        allowed = {
+        readonly = {
             "read", "find", "search", "lsp", "document", "websearch", "webfetch",
             "mcp", "skill",
         }
         if self.phase == "work":
-            allowed.update({"bash", "write", "replace", "manage", "lsp_format", "goal_checkpoint"})
+            allowed = readonly | {
+                "bash", "powershell", "write", "replace", "manage", "git",
+                "agent", "agent_control", "workflow", "todo", "goal_checkpoint",
+            }
         elif self.phase == "intake":
-            allowed.update({"clarify", "goal_init"})
-            allowed -= {"websearch", "webfetch", "mcp", "skill"}
+            allowed = (readonly - {"websearch", "webfetch", "mcp", "skill"}) | {
+                "clarify", "goal_init",
+            }
         elif self.phase == "evaluator":
-            allowed.add("goal_decision")
-            allowed -= {"websearch", "webfetch", "mcp", "skill"}
+            allowed = (readonly - {"websearch", "webfetch", "mcp", "skill"}) | {
+                "goal_decision",
+            }
         elif self.phase == "idle":
-            allowed.update({"clarify", "goal_init"})
-            allowed -= {"websearch", "webfetch", "mcp", "skill"}
-        if self.workflow_enabled and self.phase != "evaluator":
-            allowed.update({"workflow", "todo"})
+            allowed = (readonly - {"websearch", "webfetch", "mcp", "skill"}) | {
+                "clarify", "goal_init",
+            }
+        else:
+            allowed = set()
         return self.model_copy(update={"bound_tool_ids": frozenset(set(available_tool_ids) & allowed)})
 
 

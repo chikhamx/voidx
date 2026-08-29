@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from voidx.agent.application.runtime.contracts import GoalPhaseResult
+from voidx.agent.application.tool_messages import sanitize_tool_message_content
 from voidx.agent.application.runtime.lifecycle import LifecycleController
 from voidx.agent.domain.agent_profile import ResolvedAgentProfile
 from voidx.agent.domain.automation.goal import GoalRuntimeFailure
@@ -37,6 +38,23 @@ class DispatchResult:
     thread_id: str
     decision: RuntimeDecision | None = None
     goal_phase: GoalPhaseResult | None = None
+
+
+
+
+def _goal_phase_from_frame(outbox: Any, frame: dict[str, Any]) -> str | None:
+    if getattr(outbox, "kind", "") != "goal_prompt":
+        return None
+    phase = str(frame.get("phase") or "").strip()
+    return phase if phase in {"work", "evaluator"} else None
+
+
+def _goal_resume_message(*, phase: str, reason: str) -> str:
+    detail = reason or "LLM retries exhausted"
+    return (
+        f"Goal paused in the {phase} phase: {detail}. "
+        "Send \"继续\" (continue) or any message to resume the Goal."
+    )
 
 
 class RuntimeDispatcher:
@@ -157,7 +175,37 @@ class RuntimeDispatcher:
                 "lease_owner": self._lease_owner,
                 "fencing_token": attempt.fencing_token,
             }
+            goal_phase = _goal_phase_from_frame(outbox, runner_frame)
             lease_lost = asyncio.Event()
+
+            async def commit_runtime_failure(reason: str) -> None:
+                nonlocal guidance_bound
+                reason = sanitize_tool_message_content(
+                    reason,
+                    workspace=loaded.thread.workspace,
+                )
+                if goal_phase is None:
+                    await self._store.set_needs_user_for_attempt(
+                        attempt.attempt_id,
+                        reason=reason,
+                        lease_owner=self._lease_owner,
+                        fencing_token=attempt.fencing_token,
+                    )
+                    return
+                await self._store.commit_goal_phase_failure(
+                    attempt_id=attempt.attempt_id,
+                    phase=goal_phase,
+                    reason=reason,
+                    lease_owner=self._lease_owner,
+                    fencing_token=attempt.fencing_token,
+                    guidance_delivery_id=(
+                        guidance_delivery_id if guidance_bound else ""
+                    ),
+                )
+                guidance_bound = False
+                await self._store.deliver_goal_public_summaries(
+                    generation=str(runner_frame.get("generation") or "")
+                )
 
             async def renew_lease() -> None:
                 interval = max(0.005, self._lease_seconds / 3)
@@ -209,11 +257,8 @@ class RuntimeDispatcher:
                     return None
                 except Exception as exc:
                     try:
-                        await self._store.set_needs_user_for_attempt(
-                            attempt.attempt_id,
-                            reason=f"Runtime turn failed after side effect started: {exc}",
-                            lease_owner=self._lease_owner,
-                            fencing_token=attempt.fencing_token,
+                        await commit_runtime_failure(
+                            f"Runtime turn failed after side effect started: {exc}"
                         )
                     except ThreadStateConflict:
                         await release_guidance()
@@ -229,11 +274,8 @@ class RuntimeDispatcher:
 
                 if lease_lost.is_set():
                     try:
-                        await self._store.set_needs_user_for_attempt(
-                            attempt.attempt_id,
-                            reason="Runtime turn lease was lost before commit.",
-                            lease_owner=self._lease_owner,
-                            fencing_token=attempt.fencing_token,
+                        await commit_runtime_failure(
+                            "Runtime turn lease was lost before commit."
                         )
                     except ThreadStateConflict:
                         await release_guidance()
@@ -259,6 +301,28 @@ class RuntimeDispatcher:
                                     guidance_delivery_id if guidance_bound else ""
                                 ),
                             )
+                        elif result.disposition == "retry_same_phase":
+                            await self._store.commit_goal_phase_retry(
+                                attempt_id=attempt.attempt_id,
+                                phase=result.phase,
+                                reason=result.reason or "missing_goal_protocol",
+                                lease_owner=self._lease_owner,
+                                fencing_token=attempt.fencing_token,
+                                guidance_delivery_id=(
+                                    guidance_delivery_id if guidance_bound else ""
+                                ),
+                            )
+                        elif result.disposition == "terminal":
+                            await self._store.commit_goal_phase_blocked(
+                                attempt_id=attempt.attempt_id,
+                                phase=result.phase,
+                                reason=result.reason or "goal_phase_terminal",
+                                lease_owner=self._lease_owner,
+                                fencing_token=attempt.fencing_token,
+                                guidance_delivery_id=(
+                                    guidance_delivery_id if guidance_bound else ""
+                                ),
+                            )
                         else:
                             await self._store.commit_goal_needs_resume(
                                 attempt_id=attempt.attempt_id,
@@ -274,6 +338,13 @@ class RuntimeDispatcher:
                         await self._store.deliver_goal_public_summaries(
                             generation=str(runner_frame.get("generation") or "")
                         )
+                        if result.needs_resume and self._events is not None:
+                            self._events.publish_message(
+                                _goal_resume_message(
+                                    phase=result.phase,
+                                    reason=result.reason,
+                                )
+                            )
                     except (GoalProtocolConflict, ThreadStateConflict, ValueError, KeyError):
                         await release_guidance()
                         await self._store.release_outbox_claim(outbox.outbox_id)

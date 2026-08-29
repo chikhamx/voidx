@@ -293,3 +293,23 @@ async def test_goal_service_start_reuses_submitted_init_record(tmp_path) -> None
         ("submitted-init", "projected")
     ]
     assert scheduler.calls[0][1].generation == spec.generation
+
+
+@pytest.mark.asyncio
+async def test_goal_service_resume_restarts_pump_for_active_generation(tmp_path) -> None:
+    store = ThreadStore()
+    scheduler = FakeGoalScheduler()
+    service = GoalService(store=store, scheduler=scheduler, workspace=str(tmp_path))
+    status = await service.start(
+        "parent-resume",
+        GoalSpec(
+            objective="resume work",
+            acceptance_condition="done",
+            generation="run-resume-service",
+        ),
+    )
+
+    await service.resume_generation(status.generation)
+
+    assert scheduler.pump_starts == 2
+    assert status.goal_thread_id in scheduler.registered

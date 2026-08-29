@@ -277,12 +277,7 @@ class LangGraphAutonomousInputRouter:
             workspace=workspace,
         )
         idle = GoalIdleTurnService(self._runtime, goal_service)
-        status = await idle.run(user_input, thread, parent_thread_id=parent)
-        if status is not None and getattr(status, "active", False):
-            self._events.publish_message(
-                f"[dim]/goal started: [cyan]{status.objective_summary}[/cyan] "
-                f"attempt {status.attempt_count}/{status.max_attempts}[/dim]"
-            )
+        await idle.run(user_input, thread, parent_thread_id=parent)
 
     async def _run_loop_idle_turn(
         self,

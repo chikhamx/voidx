@@ -57,6 +57,9 @@ class WakeupPumpMixin:
     def _claim_wakeup_filters(self) -> dict[str, Any]:
         return {}
 
+    def _pump_outbox_kinds(self) -> tuple[str, ...]:
+        return ("wakeup",)
+
     async def _owns_wakeup(self, thread_id: str) -> bool:
         raise NotImplementedError
 
@@ -67,25 +70,28 @@ class WakeupPumpMixin:
         return True
 
     async def _dispatch_next_wakeup(self) -> DispatchResult | None:
-        """Claim and run the next due wakeup owned by this scheduler."""
+        """Claim and run the next due outbox owned by this scheduler."""
         dispatcher = RuntimeDispatcher(
             store=self._store,
             runner=self._runner(),
             lease_owner=self._lease_owner,
             lease_seconds=self._lease_seconds,
-            claim_kind="wakeup",
             events=getattr(self, "_events", None),
             guidance=getattr(self, "_guidance", None),
         )
         skipped: set[str] = set()
         for _ in range(16):
-            outbox = await self._store.claim_next_outbox(
-                lease_owner=self._lease_owner,
-                lease_seconds=self._lease_seconds,
-                kind="wakeup",
-                exclude_outbox_ids=skipped,
-                **self._claim_wakeup_filters(),
-            )
+            outbox = None
+            for kind in self._pump_outbox_kinds():
+                outbox = await self._store.claim_next_outbox(
+                    lease_owner=self._lease_owner,
+                    lease_seconds=self._lease_seconds,
+                    kind=kind,
+                    exclude_outbox_ids=skipped,
+                    **self._claim_wakeup_filters(),
+                )
+                if outbox is not None:
+                    break
             if outbox is None:
                 return None
             if not await self._owns_wakeup(outbox.thread_id):

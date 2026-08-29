@@ -948,6 +948,7 @@ class LangGraphExecution:
         try:
             await clear_messages(session_id)
             await self._session_runtime.presentation_snapshots.clear(session_id)
+            await self._session_runtime.clear_runtime_state(session_id)
             await update_title(session_id, "New session", touch=False)
         except Exception as exc:
             self._ui.ui.print(f"[red]Clear cleanup failed: {exc}[/red]")
@@ -1129,6 +1130,9 @@ class LangGraphExecution:
             )
             ok = True
             return result
+        except asyncio.CancelledError:
+            run_metadata["finish_reason"] = "cancelled"
+            raise
         except Exception as exc:
             error = str(exc).strip()[:500] or exc.__class__.__name__
             raise

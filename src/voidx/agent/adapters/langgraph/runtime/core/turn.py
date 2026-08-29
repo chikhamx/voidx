@@ -37,6 +37,7 @@ class TurnControlResult:
     turn_state: str
     runtime_task_state: TaskState
     failure_msg: AIMessage | None = None
+    stop_signal: str = ""
 
 
 async def handle_turn_control_response(
@@ -62,7 +63,10 @@ async def handle_turn_control_response(
     protocol = protocol or TurnToolProtocol()
     classification = protocol.classify(assistant_msg)
     has_text = bool(extract_text(assistant_msg).strip())
-    if _is_invalid_prompt_response(classification, has_text, loop):
+    if _is_invalid_prompt_response(classification, has_text, loop) and not (
+        getattr(protocol, "protocol_id", "") == "goal"
+        and classification == TurnClassification.REGULAR_TOOLS
+    ):
         classification = TurnClassification.INVALID_TURN
 
     if protocol.decision_missing(assistant_msg, loop, controller=loop_controller):
@@ -75,6 +79,23 @@ async def handle_turn_control_response(
             runtime_task_state=runtime_task_state,
             estimate_tokens=estimate_tokens,
             repair_prompt=protocol.repair_prompt(),
+        )
+    repair_exhausted = getattr(protocol, "decision_repair_exhausted", None)
+    if callable(repair_exhausted) and repair_exhausted(
+        assistant_msg,
+        loop,
+        controller=loop_controller,
+    ):
+        reason = str(getattr(protocol, "failure_reason")())
+        failure = AIMessage(content=f"Goal lifecycle protocol failed: {reason}.")
+        return TurnControlResult(
+            "fail",
+            llm_messages,
+            loop.context_tokens,
+            turn_state,
+            runtime_task_state,
+            failure_msg=failure,
+            stop_signal=reason,
         )
 
     if classification in {

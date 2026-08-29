@@ -354,6 +354,19 @@ class GoalCheckpointTool:
         if isinstance(binding, ToolResult):
             return binding
         store, generation, parent, turn_id, attempt, session_id, protocol_id = binding
+        checkpoint_controller = getattr(ctx.runtime, "goal_checkpoint_controller", None)
+        if (
+            checkpoint_controller is not None
+            and checkpoint_controller.final_checkpoint() is not None
+        ):
+            return ToolResult(
+                output="Goal checkpoint already durably recorded for this work attempt; this call was skipped.",
+                metadata={
+                    "goal_checkpoint_submitted": False,
+                    "already_submitted": True,
+                    "protocol_id": checkpoint_controller.final_protocol_id(),
+                },
+            )
         from voidx.agent.domain.automation.goal import GoalProtocolRecord, WorkCheckpoint
 
         checkpoint = WorkCheckpoint(

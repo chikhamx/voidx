@@ -246,6 +246,55 @@ def test_goal_protocol_blocks_evaluator_until_decision_submitted() -> None:
     assert "goal_decision" in protocol.repair_prompt()
 
 
+
+def _goal_tool_msg(name: str, *, content: str = "") -> AIMessage:
+    return AIMessage(
+        content=content,
+        tool_calls=[{
+            "name": name,
+            "args": {},
+            "id": f"call_{name}",
+            "type": "tool_call",
+        }],
+    )
+
+
+def test_goal_evaluator_allows_verification_tool_with_text_before_decision() -> None:
+    controller = GoalController()
+    loop = LlmLoopState(context_tokens=0)
+    protocol = GoalProtocol(phase="evaluator")
+
+    assert protocol.decision_missing(
+        _goal_tool_msg("read", content="I will inspect the evidence."),
+        loop,
+        controller=controller,
+    ) is False
+
+
+def test_goal_evaluator_allows_lifecycle_tool_with_text() -> None:
+    controller = GoalController()
+    loop = LlmLoopState(context_tokens=0)
+    protocol = GoalProtocol(phase="evaluator")
+
+    assert protocol.decision_missing(
+        _goal_tool_msg("goal_decision", content="Verification is complete."),
+        loop,
+        controller=controller,
+    ) is False
+
+
+def test_goal_evaluator_reports_protocol_exhaustion_without_decision() -> None:
+    controller = GoalController()
+    loop = LlmLoopState(context_tokens=0, protocol_repairs=2)
+    protocol = GoalProtocol(phase="evaluator")
+
+    assert protocol.decision_repair_exhausted(
+        AIMessage(content="Looks complete."),
+        loop,
+        controller=controller,
+    ) is True
+    assert protocol.failure_reason() == "missing_goal_decision"
+
 def test_resolve_control_protocol_falls_back_to_turn_for_unknown_profile() -> None:
     from voidx.agent.adapters.langgraph.runtime.control_protocol import (
         resolve_control_protocol,

@@ -52,6 +52,10 @@ class TestToolDisplayPolicy:
         rule = policy.rule_for("todo")
         assert rule.mode == ToolDisplayMode.HIDDEN
 
+
+    def test_goal_init_is_hidden(self):
+        policy = ToolDisplayPolicy(rules=DEFAULT_DISPLAY_RULES)
+        assert policy.rule_for("goal_init").mode == ToolDisplayMode.HIDDEN
     def test_agent_spawn_output_is_hidden_but_failures_remain_visible(self):
         policy = ToolDisplayPolicy(rules=DEFAULT_DISPLAY_RULES)
 

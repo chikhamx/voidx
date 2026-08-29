@@ -80,6 +80,11 @@ MALFORMED_TOOL_CALL_REPAIR_INSTRUCTION = (
     "Your previous response looked like an incomplete tool call. Re-emit a valid "
     "tool call using the bound tool schema, or answer normally without tool-call markup."
 )
+GOAL_FINAL_RESPONSE_REPAIR_INSTRUCTION = (
+    "The Goal decision is already durable. Respond in plain text only: do not emit, "
+    "describe, or call any tool. Give one concise, natural user-facing final response now."
+)
+_GOAL_FINAL_RESPONSE_MAX_REPAIRS = 2
 
 
 
@@ -92,6 +97,7 @@ class LlmTurn:
 
     async def call(self, state: AgentState) -> dict:
         host = self.host
+        host._last_stop_signal = ""
         step = state.get("step_count", 0)
 
         if host.model is None:
@@ -130,7 +136,22 @@ class LlmTurn:
             tool_registry_for,
         )
 
-        tool_defs = resolve_tool_surface(
+        final_response_prompt_resolver = getattr(
+            control_protocol,
+            "final_response_prompt",
+            None,
+        )
+        final_response_prompt = (
+            str(
+                final_response_prompt_resolver(
+                    controller=protocol_controller,
+                )
+                or ""
+            )
+            if callable(final_response_prompt_resolver)
+            else ""
+        )
+        resolved_tool_defs = resolve_tool_surface(
             tool_registry_for(host),
             ToolSurfaceContext(
                 runtime_profile=runtime_profile,
@@ -142,6 +163,7 @@ class LlmTurn:
                 model_protocol=resolve_protocol(host.config.model),
             ),
         ).definitions
+        tool_defs = [] if final_response_prompt else resolved_tool_defs
         runtime_task_state = _task_state_for_context(
             state.get("task_state"),
             getattr(host, "_task_state", None),
@@ -333,6 +355,15 @@ class LlmTurn:
             runtime_task_state,
         )
 
+        if final_response_prompt:
+            llm_messages = [
+                *llm_messages,
+                HumanMessage(
+                    content=final_response_prompt,
+                    additional_kwargs={GUIDANCE_MARKER: True},
+                ),
+            ]
+
         if host._debug:
             host._ui.ui.print()
 
@@ -436,7 +467,32 @@ class LlmTurn:
                     debug=host._debug,
                     headless=loop.turn_prompt_active,
                 )
-                model_with_tools = host.model.bind_tools(tool_defs) if tool_defs else host.model
+                forced_tool_name = ""
+                forced_tool_resolver = getattr(control_protocol, "forced_tool_name", None)
+                if callable(forced_tool_resolver):
+                    forced_tool_name = str(
+                        forced_tool_resolver(loop, controller=protocol_controller) or ""
+                    )
+                active_tool_defs = tool_defs
+                if forced_tool_name:
+                    active_tool_defs = [
+                        definition
+                        for definition in tool_defs
+                        if definition.get("function", {}).get("name") == forced_tool_name
+                    ]
+                if active_tool_defs:
+                    if forced_tool_name:
+                        try:
+                            model_with_tools = host.model.bind_tools(
+                                active_tool_defs,
+                                tool_choice="required",
+                            )
+                        except (TypeError, ValueError, NotImplementedError):
+                            model_with_tools = host.model.bind_tools(active_tool_defs)
+                    else:
+                        model_with_tools = host.model.bind_tools(active_tool_defs)
+                else:
+                    model_with_tools = host.model
                 assistant_msg = await _stream_llm(
                     model_with_tools,
                     request_llm_messages,
@@ -461,6 +517,35 @@ class LlmTurn:
                     model=host.config.model.model,
                     cache_key=f"{host.config.model.provider}/{host.config.model.model}",
                 )
+                if final_response_prompt and (
+                    getattr(assistant_msg, "tool_calls", None)
+                    or getattr(assistant_msg, "invalid_tool_calls", None)
+                ):
+                    if (
+                        loop.goal_final_response_repairs
+                        < _GOAL_FINAL_RESPONSE_MAX_REPAIRS
+                    ):
+                        loop.goal_final_response_repairs += 1
+                        llm_messages = [
+                            *llm_messages,
+                            HumanMessage(
+                                content=GOAL_FINAL_RESPONSE_REPAIR_INSTRUCTION,
+                                additional_kwargs={GUIDANCE_MARKER: True},
+                            ),
+                        ]
+                        loop.context_tokens = estimate_llm_context_tokens(
+                            request_messages()
+                        )
+                        host._usage_stats.update_context(loop.context_tokens)
+                        continue
+                    decision = (
+                        protocol_controller.final_decision()
+                        if protocol_controller is not None
+                        else None
+                    )
+                    assistant_msg = AIMessage(
+                        content=str(getattr(decision, "summary", "") or "").strip()
+                    )
                 if is_malformed_tool_call_response(assistant_msg):
                     if loop.malformed_tool_call_attempts < 1:
                         loop.malformed_tool_call_attempts += 1
@@ -532,10 +617,12 @@ class LlmTurn:
                     host._usage_stats.update_context(turn_result.context_tokens)
                     continue
                 if turn_result.action == "fail":
+                    host._last_stop_signal = turn_result.stop_signal
                     return {
                         "messages": replacement_messages(turn_result.failure_msg),
                         "step_count": step + 1,
                         "should_continue": False,
+                        "stop_signal": turn_result.stop_signal,
                     }
                 if turn_result.action == "break":
                     break
@@ -545,8 +632,6 @@ class LlmTurn:
                 from voidx.agent.adapters.langgraph.runtime.core.helpers import _classify_llm_error
 
                 kind = _classify_llm_error(e)
-                if kind.value == "unknown":
-                    raise
 
                 retry_result = await handle_llm_exception(
                     ui=host._ui,

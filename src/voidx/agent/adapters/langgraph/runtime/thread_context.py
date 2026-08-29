@@ -79,7 +79,9 @@ async def save_turn_message(row: MessageRow) -> int:
     state = current_thread_execution_state()
     context = state.turn_context if state is not None else None
     generation = str(getattr(context, "goal_generation", "") or "")
-    if not generation:
+    attempt_id = str(getattr(context, "goal_attempt_id", "") or "")
+    lease_owner = str(getattr(context, "goal_lease_owner", "") or "")
+    if not generation or not attempt_id or not lease_owner:
         return await save_message(row)
     if state is None or context is None or row.session_id != context.session_id:
         raise ValueError("Goal transcript turn/session binding is invalid")

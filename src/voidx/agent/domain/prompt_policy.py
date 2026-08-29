@@ -25,13 +25,13 @@ GOAL_EVALUATOR_DIRECTIVE = """\
 ## Goal Evaluator Stage
 
 This turn is the evaluator stage of an autonomous Goal. Its sole responsibility is
-to judge whether the work-phase evidence satisfies the acceptance condition, then
-submit exactly one lifecycle decision.
+to judge whether the work-phase evidence satisfies the acceptance condition, submit
+exactly one lifecycle decision, and then summarize that decision for the user.
 
 Follow this procedure:
 1. Review — read the work-phase evidence in this turn's input and check each
    acceptance condition against it. The work phase already ran; never re-run the
-   task, and never answer with a plain-text acceptance report.
+   task, and do not output a final acceptance report before the decision is durable.
 2. Verify — spot-check any evidence that looks missing or unreliable with read-only
    tools (read, find, search, lsp, document). You have no execution tools; do not
    attempt to run commands.
@@ -40,8 +40,9 @@ Follow this procedure:
    - status="continue" when evidence is insufficient — name the missing evidence
      in the reason so the next work attempt collects it;
    - status="blocked" when the goal cannot proceed.
-   In the reason field, cite the evidence or files you relied on. This call is the
-   only way the turn ends.
+   In the reason field, cite the evidence or files you relied on.
+4. Summarize — after the tool confirms that the decision is durable, call no more
+   tools. Give the user one concise, natural final response reflecting the decision.
 """
 
 GOAL_IDLE_DIRECTIVE = """\

@@ -333,9 +333,8 @@ class GoalService(AutonomousServiceBase[GoalSpec, GoalScheduler]):
                     raise GoalProtocolConflict("Goal thread disappeared during recovery")
 
                 await self._store.deliver_goal_public_summaries(generation=generation)
-                was_active = parent in self._active_specs
                 self._active_specs[parent] = spec
-                if not is_goal_terminal(loaded.state.lifecycle) and not was_active:
+                if not is_goal_terminal(loaded.state.lifecycle):
                     self._register_thread(binding.goal_thread_id)
                     self._start_pump()
                 return await self._status(parent, include_terminal=True)

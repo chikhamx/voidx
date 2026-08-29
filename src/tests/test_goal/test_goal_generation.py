@@ -180,6 +180,58 @@ async def test_boundary_a_projects_checkpoint_and_enqueues_evaluator(store: Thre
     assert pending[0].payload["checkpoint"]["summary"] == checkpoint.summary
 
 
+
+
+@pytest.mark.asyncio
+async def test_successful_phase_projection_resets_protocol_repair_count(
+    store: ThreadStore,
+) -> None:
+    await store.ensure_session(
+        "main_1", "/workspace", profile="goal", profile_snapshot=_profile_snapshot()
+    )
+    kwargs = _boundary_kwargs(store)
+    thread_state = kwargs["thread_state"]
+    goal_state = GoalState.model_validate(thread_state.context["goal_run"]).model_copy(
+        update={"protocol_repair_count": 2}
+    )
+    kwargs["thread_state"] = thread_state.model_copy(
+        update={
+            "context": {
+                **thread_state.context,
+                "goal_run": goal_state.model_dump(mode="json"),
+            }
+        }
+    )
+    await store.initialize_goal_generation(**kwargs)
+
+    checkpoint = WorkCheckpoint(
+        generation="gen_1",
+        attempt_number=1,
+        summary="implemented the feature",
+        work_turn_id="turn_work_1",
+    )
+    record = GoalProtocolRecord.submitted(
+        protocol_id="protocol_checkpoint_reset_repairs",
+        parent_session_id="main_1",
+        generation="gen_1",
+        phase="checkpoint",
+        attempt_number=1,
+        turn_id="turn_work_1",
+        session_id="work_1",
+        payload=checkpoint,
+    )
+    await submit_fenced_goal_protocol(store, record)
+
+    await store.project_goal_protocol(record.protocol_id)
+
+    loaded = await store.load("goal:main_1:gen_1")
+    assert loaded is not None
+    projected = GoalState.model_validate(loaded.state.context["goal_run"])
+    assert projected.protocol_repair_count == 0
+    pending = await store.list_pending_outbox("goal:main_1:gen_1")
+    assert len(pending) == 1
+    successor_state = GoalState.model_validate(pending[0].payload["goal_state"])
+    assert successor_state.protocol_repair_count == 0
 @pytest.mark.asyncio
 async def test_boundary_b_continue_projects_and_enqueues_next_work(store: ThreadStore) -> None:
     await store.ensure_session(

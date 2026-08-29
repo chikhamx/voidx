@@ -2392,7 +2392,9 @@ async def test_execute_tools_stops_turn_after_goal_intake_cancel(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_execute_tools_stops_turn_after_goal_evaluator_decision(tmp_path):
+async def test_execute_tools_continues_to_final_text_after_goal_evaluator_decision(
+    tmp_path,
+):
     from voidx.agent.domain.automation.goal import GOAL_PROFILE
     from voidx.agent.domain.turn_context import TurnExecutionContext
     from voidx.agent.application.automation.goal.controller import GoalController
@@ -2470,7 +2472,7 @@ async def test_execute_tools_stops_turn_after_goal_evaluator_decision(tmp_path):
         assert executed == [], "no tool may run after the evaluator decision was submitted"
         contents = {m.tool_call_id: m.content for m in result["messages"] if isinstance(m, ToolMessage)}
         assert "skipped" in contents["call_mcp"]
-        assert result["should_continue"] is False
+        assert result.get("should_continue", True) is True
     finally:
         _CURRENT_THREAD_EXECUTION_STATE.reset(token)
         await ui_events.stop()

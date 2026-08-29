@@ -326,3 +326,50 @@ async def test_goal_scheduler_new_instance_owns_custom_goal_profile_by_protocol(
 
     assert result is not None
     assert runtime.seen_frames[0][1].runtime_profile.profile_id == "my-goal"
+
+
+@pytest.mark.asyncio
+async def test_goal_scheduler_pump_dispatches_goal_prompt_after_resume(tmp_path) -> None:
+    store = ThreadStore()
+    runtime = FakeGoalRunnerRuntime()
+    scheduler = GoalRuntimeScheduler(store=store, runtime=runtime, workspace=str(tmp_path))
+    spec = GoalSpec(objective="resume work", acceptance_condition="done", generation="run-resume")
+    state = GoalState.from_spec(spec, run_id=spec.generation)
+    thread_id = spec.goal_thread_id("parent-resume")
+    await store.create_thread(
+        AgentThread(
+            thread_id=thread_id,
+            session_id=spec.goal_session_id("parent-resume"),
+            parent_thread_id="parent-resume",
+        ),
+        profile=GOAL_PROFILE,
+        state=AgentThreadState(
+            thread_id=thread_id,
+            lifecycle=LifecycleState.NEEDS_USER,
+            context={
+                "goal_spec": spec.model_dump(mode="json"),
+                "goal_run": state.model_copy(update={"phase_status": "needs_resume"}).model_dump(mode="json"),
+            },
+        ),
+    )
+    loaded = await store.load(thread_id)
+    assert loaded is not None
+    await store.enqueue_outbox(
+        thread_id=thread_id,
+        kind="goal_prompt",
+        payload={
+            "phase": "work",
+            "generation": spec.generation,
+            "attempt_number": 1,
+            "spec": spec.model_dump(mode="json"),
+            "goal_state": state.model_dump(mode="json"),
+        },
+        expected_state_version=loaded.state_version,
+    )
+    scheduler.register_goal_thread(thread_id)
+
+    result = await scheduler._dispatch_next_wakeup()
+
+    assert result is not None
+    assert runtime.seen_frames
+    assert runtime.seen_frames[0][2]["kind"] == "goal_prompt"

@@ -1177,10 +1177,10 @@ async def test_classify_llm_error_unknown(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_call_llm_unknown_programming_error_is_raised_without_retry(tmp_path, monkeypatch):
+async def test_call_llm_unknown_error_retries_then_returns_failure(tmp_path, monkeypatch):
     import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
 
-    class ProgrammingErrorModel(FakeStreamingModel):
+    class UnknownErrorModel(FakeStreamingModel):
         def __init__(self) -> None:
             super().__init__()
             self.calls = 0
@@ -1189,26 +1189,32 @@ async def test_call_llm_unknown_programming_error_is_raised_without_retry(tmp_pa
             self.calls += 1
             if False:
                 yield AIMessageChunk(content="")
-            raise ValueError("programming defect")
+            raise RuntimeError("upstream service temporarily unavailable")
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+    monkeypatch.setattr(graph_module, "_LLM_MAX_RETRIES", 1)
+    monkeypatch.setattr(
+        "voidx.agent.adapters.langgraph.runtime.core.loop._llm_retry_sleep_delay",
+        lambda _delay: 0,
+    )
     graph = make_langgraph_execution(
         Config(
             model=ModelConfig(provider="openai", model="gpt-4o"),
             workspace=str(tmp_path),
         ),
-        api_key="test-key",
+        api_key="unit-test-key",
     )
-    graph.model = ProgrammingErrorModel()
+    graph.model = UnknownErrorModel()
 
-    with pytest.raises(ValueError, match="programming defect"):
-        await graph._call_llm({
-            "messages": [HumanMessage(content="hi")],
-            "step_count": 0,
-            "persona": "voidx",
-        })
+    result = await graph._call_llm({
+        "messages": [HumanMessage(content="hi")],
+        "step_count": 0,
+        "persona": "voidx",
+    })
 
-    assert graph.model.calls == 1
+    assert graph.model.calls == 2
+    assert result["should_continue"] is False
+    assert result["messages"] == []
 @pytest.mark.asyncio
 async def test_call_llm_non_retryable_404_fail_fast(tmp_path, monkeypatch):
     """A 404 error should fail-fast without retrying."""
@@ -1286,3 +1292,52 @@ def test_clean_error_message():
     # Test case 4: Dict representation without error key
     exc4 = Exception("Error: {'message': 'Something went wrong'}")
     assert _clean_error_message(exc4) == "Error - Something went wrong"
+
+
+@pytest.mark.asyncio
+async def test_call_llm_retry_rebuilds_renderer_after_stream_failure(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
+
+    renderers = []
+
+    class RecordingRenderer(FakeRenderer):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.events: list[str] = []
+            renderers.append(self)
+
+        def start(self):
+            self.events.append("start")
+            super().start()
+
+        def discard(self):
+            self.events.append("discard")
+            super().discard()
+
+        def done(self):
+            self.events.append("done")
+            super().done()
+
+    monkeypatch.setattr(graph_module, "StreamingRenderer", RecordingRenderer)
+    graph = make_langgraph_execution(
+        Config(
+            model=ModelConfig(provider="mimo", model="mimo-v2.5"),
+            workspace=str(tmp_path),
+        ),
+        api_key=[],
+    )
+    graph.model = FailsOnceStreamingModel()
+
+    result = await graph._call_llm({
+        "messages": [HumanMessage(content="hi")],
+        "step_count": 0,
+        "persona": "voidx",
+    })
+
+    assert result["messages"][0].content == "answer"
+    assert graph.model.calls == 2
+    assert len(renderers) == 2
+    assert renderers[0].events == ["start", "discard", "done"]
+    assert renderers[0].discarded is True
+    assert renderers[1].events == ["start", "done"]
+    assert renderers[1].discarded is False

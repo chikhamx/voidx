@@ -133,6 +133,7 @@ async def test_goal_profile_first_message_starts_goal_from_message() -> None:
     assert parent == "host-session"
     assert isinstance(spec, GoalSpec)
     assert "refactor the auth module" in spec.objective
+    assert not any("/goal started" in message for message in service._events.messages)
 
 
 @pytest.mark.asyncio

@@ -117,6 +117,36 @@ def test_goal_profile_exposes_phase_specific_tool_by_phase() -> None:
         for hidden in ("loop", "turn", "agent"):
             assert hidden not in names
 
+
+
+def test_goal_work_matches_coding_tools_except_clarify_and_checkpoint() -> None:
+    from voidx.agent.domain.automation.goal import GoalToolView
+
+    profile = RuntimeProfile(profile_id="goal", revision=1, name="Goal", protocol="goal")
+    registry = _registry(
+        "read", "find", "search", "lsp", "document", "websearch", "webfetch",
+        "mcp", "skill", "bash", "powershell", "write", "replace", "manage",
+        "agent", "workflow", "todo", "clarify", "checkpoint", "goal_checkpoint",
+    )
+    policy = GoalToolView.default(phase="work").bind(set(registry.ids()))
+
+    surface = resolve_tool_surface(
+        registry,
+        ToolSurfaceContext(
+            runtime_profile=profile,
+            goal_phase="work",
+            tool_policy=policy,
+        ),
+    )
+    names = set(_names(surface))
+
+    import os
+
+    shell = "bash" if os.name != "nt" else "powershell"
+    assert {"read", shell, "write", "replace", "manage"} <= names
+    assert {"agent", "workflow", "todo", "goal_checkpoint"} <= names
+    assert "clarify" not in names
+    assert "checkpoint" not in names
     work = resolve_tool_surface(
         registry,
         ToolSurfaceContext(runtime_profile=profile, goal_phase="work", tool_policy=_AllowAll()),
@@ -316,3 +346,46 @@ def test_goal_evaluator_surface_is_read_only_plus_goal_decision() -> None:
         "goal_checkpoint",
     ):
         assert hidden not in _names(surface)
+
+
+def test_goal_work_keeps_goal_approval_for_normal_tools() -> None:
+    from voidx.agent.adapters.langgraph.runtime.tool_policy_bridge import check_tool_policy
+    from voidx.agent.domain.agent_profile import ResourcePolicy
+    from voidx.agent.domain.automation.goal import GoalToolView
+    from voidx.agent.domain.run_config import resolve_run_config
+    from voidx.agent.domain.tool_policy import CodingToolPolicy, ProfileToolPolicy
+
+    registry = ToolRegistry()
+    for tool_id in ("bash", "write"):
+        registry.register(
+            tool_id,
+            object(),
+            f"{tool_id} description",
+            {},
+            capability=ToolCapability.EXECUTION_GATED,
+        )
+    goal_policy = ProfileToolPolicy(
+        baseline=GoalToolView.default(phase="work").bind(registry.ids()),
+        resource_policy=ResourcePolicy(hitl_mode="interactive"),
+        run_config=resolve_run_config("goal_eval"),
+        snapshot_hash="goal-snapshot",
+        phase="work",
+    )
+    coding_policy = ProfileToolPolicy(
+        baseline=CodingToolPolicy(),
+        resource_policy=ResourcePolicy(hitl_mode="interactive"),
+        run_config=resolve_run_config("single"),
+        snapshot_hash="coding-snapshot",
+        phase="turn",
+    )
+
+    goal_bash = check_tool_policy(goal_policy, registry, "bash", {})
+    coding_bash = check_tool_policy(coding_policy, registry, "bash", {})
+    assert goal_bash.allowed is coding_bash.allowed is True
+    assert goal_bash.requests_approval is True
+    assert coding_bash.requests_approval is False
+
+    goal_write = check_tool_policy(goal_policy, registry, "write", {})
+    coding_write = check_tool_policy(coding_policy, registry, "write", {})
+    assert goal_write.allowed is coding_write.allowed is True
+    assert goal_write.requests_approval is coding_write.requests_approval is False

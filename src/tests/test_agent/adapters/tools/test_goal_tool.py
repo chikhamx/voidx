@@ -1,3 +1,4 @@
+from voidx.agent.application.automation.goal.checkpoint_controller import GoalCheckpointController
 from types import SimpleNamespace
 
 import pytest
@@ -180,6 +181,34 @@ async def test_goal_checkpoint_submits_typed_work_record() -> None:
     assert result.metadata["goal_checkpoint_submitted"] is True
     assert store.records[0].phase == "checkpoint"
     assert store.records[0].sequence_number == 1
+    assert store.records[0].payload_model().summary == "implemented"
+
+
+
+@pytest.mark.asyncio
+async def test_goal_checkpoint_duplicate_submission_is_skipped_after_first() -> None:
+    store = RecordingGoalStore()
+    runtime = _runtime(store, phase="work", attempt=1)
+    runtime.goal_checkpoint_controller = GoalCheckpointController(attempt_id="attempt-1")
+    args = {
+        "summary": "implemented",
+        "evidence": ["tests passed"],
+        "changed_files": ["src/app.py"],
+        "verification": ["./test.py --backend"],
+        "progress": "meaningful",
+    }
+
+    first = await GoalCheckpointTool().execute(args, _context(runtime, session_id="work-session"))
+    second = await GoalCheckpointTool().execute(
+        {**args, "summary": "implemented again"},
+        _context(runtime, session_id="work-session"),
+    )
+
+    assert first.metadata["goal_checkpoint_submitted"] is True
+    assert second.metadata["goal_checkpoint_submitted"] is False
+    assert second.metadata["already_submitted"] is True
+    assert "error" not in second.metadata
+    assert len(store.records) == 1
     assert store.records[0].payload_model().summary == "implemented"
 
 

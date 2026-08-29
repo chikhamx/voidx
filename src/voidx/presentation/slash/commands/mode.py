@@ -41,13 +41,9 @@ class ModeCommandsMixin:
         if not objective or not acceptance:
             self.mode_port.ui.print("Usage: /goal <objective> --accept <acceptance condition>")
             return
-        status = await service.start(
+        await service.start(
             parent_thread_id,
             GoalSpec(objective=objective, acceptance_condition=acceptance),
-        )
-        self.mode_port.ui.print(
-            f"[dim]/goal started: [cyan]{status.objective_summary}[/cyan] "
-            f"attempt {status.attempt_count}/{status.max_attempts}[/dim]"
         )
 
     def _usage(self) -> None:

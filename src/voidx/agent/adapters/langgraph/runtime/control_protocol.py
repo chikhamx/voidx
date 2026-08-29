@@ -112,6 +112,11 @@ _BARRIER_CLASSIFICATIONS = {
     TurnClassification.REGULAR_TOOLS,
 }
 _MAX_DECISION_REPAIRS = 2
+_GOAL_FINAL_RESPONSE_PROMPT = (
+    "The Goal decision has been durably submitted. Call no more tools. "
+    "Give the user one concise, natural final response that reflects the decision "
+    "and its evidence without mentioning this protocol instruction."
+)
 
 
 class LoopProtocol:
@@ -232,14 +237,55 @@ class GoalProtocol:
     def decision_missing(
         self, msg: AIMessage, loop: LlmLoopState, *, controller: Any | None
     ) -> bool:
-        if controller is None or self.classify(msg) not in _BARRIER_CLASSIFICATIONS:
+        classification = self.classify(msg)
+        if controller is None or classification not in _BARRIER_CLASSIFICATIONS:
+            return False
+        if classification is TurnClassification.REGULAR_TOOLS:
             return False
         if loop.protocol_repairs >= _MAX_DECISION_REPAIRS:
             return False
-        from voidx.agent.adapters.langgraph.runtime.streaming import extract_text
+        return self._phase_decision_missing(controller)
 
-        if self.classify(msg) is TurnClassification.REGULAR_TOOLS and not extract_text(msg).strip():
+    def decision_repair_exhausted(
+        self, msg: AIMessage, loop: LlmLoopState, *, controller: Any | None
+    ) -> bool:
+        classification = self.classify(msg)
+        if controller is None or classification not in _BARRIER_CLASSIFICATIONS:
             return False
+        if classification is TurnClassification.REGULAR_TOOLS:
+            return False
+        return (
+            loop.protocol_repairs >= _MAX_DECISION_REPAIRS
+            and self._phase_decision_missing(controller)
+        )
+
+    def forced_tool_name(self, loop: LlmLoopState, *, controller: Any | None) -> str:
+        if (
+            self.phase == "evaluator"
+            and controller is not None
+            and loop.protocol_repairs >= _MAX_DECISION_REPAIRS
+            and controller.final_decision() is None
+        ):
+            return "goal_decision"
+        return ""
+
+    def final_response_prompt(self, *, controller: Any | None) -> str:
+        if (
+            self.phase == "evaluator"
+            and controller is not None
+            and controller.final_decision() is not None
+        ):
+            return _GOAL_FINAL_RESPONSE_PROMPT
+        return ""
+
+    def failure_reason(self) -> str:
+        return {
+            "intake": "missing_goal_init",
+            "work": "missing_work_checkpoint",
+            "evaluator": "missing_goal_decision",
+        }.get(self.phase, "missing_goal_protocol")
+
+    def _phase_decision_missing(self, controller: Any) -> bool:
         if self.phase == "intake":
             if getattr(controller, "cancelled", False):
                 return False

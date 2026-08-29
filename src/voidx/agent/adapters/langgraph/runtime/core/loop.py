@@ -18,6 +18,7 @@ class LlmLoopState:
     timeout_retry_attempts: int = 0
     overflow_compaction_attempts: int = 0
     malformed_tool_call_attempts: int = 0
+    goal_final_response_repairs: int = 0
     retry_status_active: bool = False
     pending_provisional: AIMessage | None = None
     missing_turn_count: int = 0

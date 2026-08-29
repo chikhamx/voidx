@@ -27,3 +27,4 @@ class AgentState(TypedDict):
     should_continue: bool  # router flag
     convergence_forced: NotRequired[bool]  # final no-tools convergence prompt was injected
     turn_state: NotRequired[str]  # initial/running/committed within one user turn
+    stop_signal: NotRequired[str]

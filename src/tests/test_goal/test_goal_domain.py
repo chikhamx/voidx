@@ -67,7 +67,8 @@ def test_goal_tool_view_exposes_current_phase_control_tool() -> None:
         default.bound_tool_ids
     )
     assert "goal_checkpoint" in default.bound_tool_ids
-    assert {"clarify", "checkpoint", "turn", "loop", "goal_init", "goal_decision", "workflow", "todo"}.isdisjoint(
+    assert {"workflow", "todo"}.issubset(default.bound_tool_ids)
+    assert {"clarify", "checkpoint", "turn", "loop", "goal_init", "goal_decision"}.isdisjoint(
         default.bound_tool_ids
     )
     assert {"workflow", "todo"}.issubset(workflow.bound_tool_ids)

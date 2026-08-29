@@ -87,10 +87,15 @@ class SessionRuntime:
         )
         await SessionService(MemorySessionAdapter()).persist_runtime(host._session.id, runtime)
 
-    async def clear_runtime_state(self, *, reset_runtime_state_memory: Callable[[], None] | None = None) -> None:
+    async def clear_runtime_state(
+        self,
+        session_id: str | None = None,
+        *,
+        reset_runtime_state_memory: Callable[[], None] | None = None,
+    ) -> None:
         host = self.host
-        if host._session is not None:
-            session_id = host._session.id
+        session_id = session_id or (host._session.id if host._session is not None else None)
+        if session_id:
             await SessionService(MemorySessionAdapter()).clear_runtime(session_id)
             cleanup_session_results(session_id, workspace=host._workspace)
         reset = reset_runtime_state_memory or self.reset_runtime_state_memory

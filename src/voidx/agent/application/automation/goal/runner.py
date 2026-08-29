@@ -14,6 +14,7 @@ from voidx.agent.application.runtime.contracts import GoalPhaseResult, TurnReque
 from voidx.agent.domain.agent_profile import ResolvedAgentProfile
 from voidx.agent.domain.automation.goal import (
     GOAL_ITERATION_USER_TEXT,
+    GoalDecision,
     GoalProtocolRecord,
     GoalSpec,
     GoalState,
@@ -64,7 +65,7 @@ class GoalRuntimeRunner:
             return GoalPhaseResult(
                 phase=phase,
                 attempt_number=attempt_number,
-                needs_resume=True,
+                disposition="terminal",
                 reason="max_attempts_exceeded",
             )
 
@@ -121,21 +122,22 @@ class GoalRuntimeRunner:
                 guidance=tuple(input_frame.get("guidance") or ()),
             )
         )
-        if getattr(result, "stop_signal", ""):
+        stop_signal = str(getattr(result, "stop_signal", "") or "")
+        if stop_signal and stop_signal != "missing_work_checkpoint":
             return GoalPhaseResult(
                 phase="work",
                 attempt_number=attempt_number,
-                needs_resume=True,
-                reason=str(result.stop_signal),
+                disposition="retry_same_phase",
+                reason=stop_signal,
             )
         controller = context.goal_checkpoint_controller
         protocol_id = controller.final_protocol_id() if controller is not None else ""
+        used_fallback = False
         observations = tuple(
             getattr(result, "current_turn_tool_result_summaries", ()) or ()
         )
         if (
             not protocol_id
-            and observations
             and self.store is not None
             and controller is not None
             and context.goal_attempt_id
@@ -147,7 +149,7 @@ class GoalRuntimeRunner:
                 attempt_number=attempt_number,
                 source="runtime_fallback",
                 completeness="incomplete",
-                summary="Current work turn produced tool observations without a model checkpoint.",
+                summary="Current work turn ended without a model checkpoint.",
                 progress="none",
                 work_turn_id=context.goal_turn_id,
                 observed_assistant_summary=str(
@@ -176,16 +178,18 @@ class GoalRuntimeRunner:
                 protocol_id=stored.protocol_id,
             )
             protocol_id = controller.final_protocol_id()
+            used_fallback = True
         if not protocol_id:
             return GoalPhaseResult(
                 phase="work",
                 attempt_number=attempt_number,
-                needs_resume=True,
+                disposition="retry_same_phase",
                 reason="missing_work_checkpoint",
             )
         return GoalPhaseResult(
             phase="work",
             attempt_number=attempt_number,
+            disposition=("fallback_committed" if used_fallback else "committed"),
             protocol_id=protocol_id,
         )
 
@@ -226,20 +230,86 @@ class GoalRuntimeRunner:
             checkpoint=checkpoint,
             guidance=tuple(input_frame.get("guidance") or ()),
         )
-        await self.runtime.run_turn(request)
-        controller = context.goal_controller
-        protocol_id = controller.final_protocol_id() if controller is not None else ""
-        if not protocol_id:
+        result = await self.runtime.run_turn(request)
+        stop_signal = str(getattr(result, "stop_signal", "") or "")
+        if stop_signal and stop_signal != "missing_goal_decision":
             return GoalPhaseResult(
                 phase="evaluator",
                 attempt_number=attempt_number,
-                needs_resume=True,
+                disposition="retry_same_phase",
+                reason=stop_signal,
+            )
+        controller = context.goal_controller
+        protocol_id = controller.final_protocol_id() if controller is not None else ""
+        if protocol_id:
+            return GoalPhaseResult(
+                phase="evaluator",
+                attempt_number=attempt_number,
+                protocol_id=protocol_id,
+            )
+        if state.protocol_repair_count < 2:
+            return GoalPhaseResult(
+                phase="evaluator",
+                attempt_number=attempt_number,
+                disposition="retry_same_phase",
                 reason="missing_goal_decision",
+            )
+        if (
+            self.store is not None
+            and controller is not None
+            and context.goal_attempt_id
+            and context.goal_lease_owner
+            and context.goal_fencing_token > 0
+        ):
+            missing = (
+                "Evaluator did not submit a durable goal_decision after 3 attempts.",
+            )
+            decision = GoalDecision(
+                generation=state.generation,
+                attempt_number=attempt_number,
+                status="blocked",
+                summary="Goal evaluator protocol failed repeatedly; stopping safely.",
+                reason="goal_evaluator_protocol_exhausted",
+                missing_evidence=missing,
+                progress="none",
+            )
+            record = GoalProtocolRecord.submitted(
+                protocol_id=f"goal-evaluator-fallback-{context.goal_attempt_id}",
+                parent_session_id=context.goal_parent_session_id,
+                generation=state.generation,
+                phase="decision",
+                attempt_number=attempt_number,
+                turn_id=context.goal_turn_id,
+                session_id=context.goal_evaluator_session_id,
+                payload=decision,
+            )
+            stored = await self.store.submit_goal_protocol(
+                record,
+                attempt_id=context.goal_attempt_id,
+                lease_owner=context.goal_lease_owner,
+                fencing_token=context.goal_fencing_token,
+            )
+            await controller.submit_decision(
+                {
+                    "outcome": "blocked",
+                    "summary": decision.summary,
+                    "reason": decision.reason,
+                    "progress": decision.progress,
+                },
+                protocol_id=stored.protocol_id,
+            )
+            return GoalPhaseResult(
+                phase="evaluator",
+                attempt_number=attempt_number,
+                disposition="fallback_committed",
+                protocol_id=controller.final_protocol_id(),
+                reason=decision.reason,
             )
         return GoalPhaseResult(
             phase="evaluator",
             attempt_number=attempt_number,
-            protocol_id=protocol_id,
+            disposition="retry_same_phase",
+            reason="missing_goal_decision",
         )
 
 
@@ -330,23 +400,32 @@ def _prompt_for_attempt(spec: GoalSpec, state: GoalState, attempt_number: int) -
 def _available_goal_tool_ids() -> set[str]:
     return {
         "read",
+        "manage",
+        "write",
+        "replace",
+        "git",
         "find",
         "search",
         "lsp",
-        "document",
-        "bash",
-        "write",
-        "replace",
-        "manage",
         "lsp_format",
-        "websearch",
-        "webfetch",
-        "mcp",
-        "skill",
+        "clarify",
+        "checkpoint",
+        "workflow",
+        "compact",
+        "document",
         "goal_init",
         "goal_checkpoint",
         "goal_decision",
+        "loop",
+        "bash",
+        "powershell",
         "todo",
+        "skill",
+        "webfetch",
+        "websearch",
+        "mcp",
+        "agent",
+        "agent_control",
     }
 
 

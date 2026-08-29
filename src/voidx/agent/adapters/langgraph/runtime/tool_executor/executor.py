@@ -101,7 +101,17 @@ def _goal_phase_committed(turn_context) -> str | None:
     return None
 
 
-def _loop_commit_terminal_message(loop_controller, source_msg: AIMessage) -> AIMessage | None:
+def _goal_evaluator_final_response_pending(turn_context) -> bool:
+    if turn_context is None or getattr(turn_context, "goal_phase", "") != "evaluator":
+        return False
+    controller = getattr(turn_context, "goal_controller", None)
+    return controller is not None and controller.final_decision() is not None
+
+
+def _loop_commit_terminal_message(
+    loop_controller,
+    source_msg: AIMessage,
+) -> AIMessage | None:
     if str(source_msg.content or "").strip() or not _has_loop_commit_call(source_msg):
         return None
     decision = _loop_iteration_decision(loop_controller)
@@ -632,7 +642,11 @@ class ToolExecutorAdapter:
                         _infrastructure_skipped_tool(tc, reason=commit_skip_reason)
                         for tc in pending
                     )
-                    state_update["should_continue"] = False
+                    state_update["should_continue"] = (
+                        _goal_evaluator_final_response_pending(
+                            thread_state.turn_context
+                        )
+                    )
                     break
                 if any(item.terminal_reason is not None for item in segment_executed):
                     executed.extend(
@@ -680,7 +694,9 @@ class ToolExecutorAdapter:
                     _infrastructure_skipped_tool(tc, reason=commit_skip_reason)
                     for tc in suffix
                 )
-                state_update["should_continue"] = False
+                state_update["should_continue"] = (
+                    _goal_evaluator_final_response_pending(thread_state.turn_context)
+                )
                 break
             if any(item.terminal_reason is not None for item in segment_executed):
                 executed.extend(

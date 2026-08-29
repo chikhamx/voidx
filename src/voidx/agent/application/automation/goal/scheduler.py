@@ -78,6 +78,9 @@ class GoalRuntimeScheduler(WakeupPumpMixin):
         )
         return await dispatcher.dispatch_outbox(outbox.outbox_id)
 
+    def _pump_outbox_kinds(self) -> tuple[str, ...]:
+        return ("goal_prompt", "wakeup")
+
     def _claim_wakeup_filters(self) -> dict:
         return {"thread_id_prefix": "goal:"}
 

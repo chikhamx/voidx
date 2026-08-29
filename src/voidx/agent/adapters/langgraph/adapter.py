@@ -91,7 +91,7 @@ def _evidence_from_execution(execution: LangGraphTurnHost) -> dict[str, Any]:
         "final_assistant_summary": final_assistant_summary,
         "tool_result_summaries": tool_summaries,
         "current_turn_tool_result_summaries": current_turn_tool_summaries,
-        "stop_signal": "",
+        "stop_signal": str(getattr(execution, "_last_stop_signal", "") or ""),
     }
 
 

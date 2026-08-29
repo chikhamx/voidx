@@ -136,44 +136,139 @@ async def test_evaluator_outbox_skips_work_and_consumes_durable_checkpoint() -> 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("phase", "runtime", "reason"),
-    [
-        ("work", Runtime(submit_checkpoint=False), "missing_work_checkpoint"),
-        ("evaluator", Runtime(submit_decision=False), "missing_goal_decision"),
-    ],
-)
-async def test_missing_phase_protocol_returns_needs_resume_without_lifecycle_decision(
-    phase: str,
-    runtime: Runtime,
-    reason: str,
-) -> None:
-    spec = GoalSpec(objective="ship", acceptance_condition="tests pass", generation=f"run-{phase}-missing")
-    thread, state = _thread(spec)
-    checkpoint = None
-    if phase == "evaluator":
-        state = state.model_copy(update={"current_phase": "evaluator"})
-        checkpoint = WorkCheckpoint(
-            generation=spec.generation,
-            attempt_number=1,
-            summary="work done",
-            work_turn_id="work-turn",
-        )
+async def test_work_missing_checkpoint_synthesizes_fallback_without_tool_observations() -> None:
+    class RecordingStore:
+        def __init__(self) -> None:
+            self.records = []
 
-    result = await GoalRuntimeRunner(runtime=runtime).run_turn(
+        async def submit_goal_protocol(self, record, **kwargs):
+            self.records.append((record, kwargs))
+            return record
+
+    spec = GoalSpec(
+        objective="ship",
+        acceptance_condition="tests pass",
+        generation="run-work-missing",
+    )
+    thread, state = _thread(spec)
+    runtime = Runtime(submit_checkpoint=False)
+    store = RecordingStore()
+
+    result = await GoalRuntimeRunner(runtime=runtime, store=store).run_turn(
         thread=thread,
         profile=_goal_profile(),
-        input_frame=_frame(spec, state, phase=phase, checkpoint=checkpoint),
+        input_frame=_frame(spec, state, phase="work"),
     )
 
-    assert result.phase == phase
-    assert result.protocol_id == ""
-    assert result.needs_resume is True
-    assert result.reason == reason
+    assert result.disposition == "fallback_committed"
+    assert result.protocol_id == "goal-fallback-attempt-work"
+    assert result.needs_resume is False
+    assert len(store.records) == 1
+    record, fencing = store.records[0]
+    checkpoint = record.payload_model()
+    assert checkpoint.source == "runtime_fallback"
+    assert checkpoint.completeness == "incomplete"
+    assert checkpoint.observed_assistant_summary == "phase completed"
+    assert checkpoint.observed_tool_result_summaries == ()
+    assert fencing == {
+        "attempt_id": "attempt-work",
+        "lease_owner": "worker-a",
+        "fencing_token": 7,
+    }
 
 
 @pytest.mark.asyncio
-async def test_attempt_limit_never_synthesizes_blocked_without_decision_record() -> None:
+@pytest.mark.parametrize("repair_count", [0, 1])
+async def test_evaluator_missing_decision_retries_same_phase_without_user_pause(
+    repair_count: int,
+) -> None:
+    spec = GoalSpec(
+        objective="ship",
+        acceptance_condition="tests pass",
+        generation=f"run-evaluator-repair-{repair_count}",
+    )
+    thread, state = _thread(spec)
+    state = state.model_copy(
+        update={"current_phase": "evaluator", "protocol_repair_count": repair_count}
+    )
+    checkpoint = WorkCheckpoint(
+        generation=spec.generation,
+        attempt_number=1,
+        summary="work done",
+        work_turn_id="work-turn",
+    )
+
+    result = await GoalRuntimeRunner(
+        runtime=Runtime(submit_decision=False)
+    ).run_turn(
+        thread=thread,
+        profile=_goal_profile(),
+        input_frame=_frame(spec, state, phase="evaluator", checkpoint=checkpoint),
+    )
+
+    assert result.disposition == "retry_same_phase"
+    assert result.protocol_id == ""
+    assert result.needs_resume is False
+    assert result.reason == "missing_goal_decision"
+
+
+@pytest.mark.asyncio
+async def test_evaluator_third_missing_decision_persists_blocked_fallback() -> None:
+    class RecordingStore:
+        def __init__(self) -> None:
+            self.records = []
+
+        async def submit_goal_protocol(self, record, **kwargs):
+            self.records.append((record, kwargs))
+            return record
+
+    spec = GoalSpec(
+        objective="ship",
+        acceptance_condition="tests pass",
+        generation="run-evaluator-exhausted",
+    )
+    thread, state = _thread(spec)
+    state = state.model_copy(
+        update={"current_phase": "evaluator", "protocol_repair_count": 2}
+    )
+    checkpoint = WorkCheckpoint(
+        generation=spec.generation,
+        attempt_number=1,
+        summary="work done",
+        work_turn_id="work-turn",
+    )
+    store = RecordingStore()
+
+    result = await GoalRuntimeRunner(
+        runtime=Runtime(submit_decision=False),
+        store=store,
+    ).run_turn(
+        thread=thread,
+        profile=_goal_profile(),
+        input_frame=_frame(spec, state, phase="evaluator", checkpoint=checkpoint),
+    )
+
+    assert result.disposition == "fallback_committed"
+    assert result.protocol_id == "goal-evaluator-fallback-attempt-evaluator"
+    assert result.needs_resume is False
+    assert len(store.records) == 1
+    record, fencing = store.records[0]
+    decision = record.payload_model()
+    assert decision.status == "blocked"
+    assert decision.progress == "none"
+    assert decision.reason == "goal_evaluator_protocol_exhausted"
+    assert decision.missing_evidence == (
+        "Evaluator did not submit a durable goal_decision after 3 attempts.",
+    )
+    assert fencing == {
+        "attempt_id": "attempt-evaluator",
+        "lease_owner": "worker-a",
+        "fencing_token": 7,
+    }
+
+
+@pytest.mark.asyncio
+async def test_attempt_limit_returns_terminal_blocked_without_running_work() -> None:
     runtime = Runtime()
     spec = GoalSpec(objective="x", acceptance_condition="y", max_attempts=1, generation="run-limit")
     thread, state = _thread(spec)
@@ -185,7 +280,8 @@ async def test_attempt_limit_never_synthesizes_blocked_without_decision_record()
         input_frame=_frame(spec, state, phase="work"),
     )
 
-    assert result.needs_resume is True
+    assert result.disposition == "terminal"
+    assert result.needs_resume is False
     assert result.reason == "max_attempts_exceeded"
     assert result.protocol_id == ""
     assert runtime.requests == []
