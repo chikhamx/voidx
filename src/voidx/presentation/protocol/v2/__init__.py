@@ -18,10 +18,25 @@ from voidx.presentation.protocol.v2.envelope import (
     ParseError,
     parse_jsonrpc_message,
 )
+from voidx.presentation.protocol.v2.incremental import (
+    CAPABILITY_STREAM_APPEND,
+    CAPABILITY_TRANSCRIPT_WINDOW,
+    CAPABILITY_WORKSPACE_PATCH,
+    ClientCapabilities,
+    GatewayCapabilities,
+    StreamAppendDelta,
+    WorkspacePatch,
+)
 from voidx.presentation.protocol.v2.snapshot import ThreadSnapshot, WorkspaceSnapshot
 from voidx.presentation.protocol.v2.threads import Item, ThreadInfo, TurnInfo
 
 __all__ = [
+    "CAPABILITY_STREAM_APPEND",
+    "CAPABILITY_WORKSPACE_PATCH",
+    "ClientCapabilities",
+    "GatewayCapabilities",
+    "StreamAppendDelta",
+    "WorkspacePatch",
     "ERR_INTERNAL_ERROR",
     "ERR_INVALID_PARAMS",
     "ERR_INVALID_REQUEST",

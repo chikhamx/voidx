@@ -23,6 +23,8 @@ let nextId = 1;
 const pending = new Map<number, RpcPending>();
 const notificationHandlers = new Map<string, NotificationHandler>();
 const requestHandlers = new Map<string, RequestHandler>();
+type SocketChangeHandler = (ws: RpcSocket | null) => void;
+const socketChangeHandlers = new Set<SocketChangeHandler>();
 
 export function createWorkerSocket(
   url: string,
@@ -71,8 +73,18 @@ export function createWorkerSocket(
   return transport;
 }
 
+export function onSocketChange(handler: SocketChangeHandler): () => void {
+  socketChangeHandlers.add(handler);
+  handler(socket);
+  return () => socketChangeHandlers.delete(handler);
+}
+
 export function _setSocket(ws: RpcSocket | null): void {
+  if (socket === ws) return;
   socket = ws;
+  for (const handler of socketChangeHandlers) {
+    handler(ws);
+  }
   if (ws) {
     if (typeof ws.addEventListener === "function") {
       ws.addEventListener("message", handleMessage as (event: MessageEvent | Event) => void);

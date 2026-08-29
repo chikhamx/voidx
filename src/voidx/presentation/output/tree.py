@@ -101,9 +101,8 @@ class OutputNode:
         """Add a child node, updating its parent, depth, and sibling flags."""
         child.parent = self
         child.depth = self.depth + 1
-        # Update all existing children's _is_last_sibling
-        for c in self.children:
-            c._is_last_sibling = False
+        if self.children:
+            self.children[-1]._is_last_sibling = False
         child._is_last_sibling = True
         self.children.append(child)
 
@@ -131,6 +130,10 @@ class OutputTree:
         self._cached_width: int = 0
         self._render_width: int = 80
         self._revision: int = 0
+        self._pending_root_append_start: int | None = None
+        self._rendered_root_child_ids: tuple[str, ...] = ()
+        self._rendered_root_child_count: int = 0
+        self._last_render_strategy = "full"
 
     def startup_line_count(self) -> int:
         """Return the number of rendered lines occupied by startup nodes."""
@@ -199,9 +202,24 @@ class OutputTree:
 
     def add_node(self, parent: OutputNode, node: OutputNode) -> None:
         """Attach an existing node and register its subtree."""
+        is_root_append = parent is self.root and not any(existing is node for existing in parent.children)
         parent.add_child(node)
         self._register_subtree(node)
         self._sync_counter(node.id)
+        if (
+            is_root_append
+            and not self._dirty
+            and not self._dirty_nodes
+            and self._cached_width == self._render_width
+            and (
+                self._pending_root_append_start is not None
+                or self._rendered_root_child_count == len(parent.children) - 1
+            )
+        ):
+            self._revision += 1
+            if self._pending_root_append_start is None:
+                self._pending_root_append_start = len(parent.children) - 1
+            return
         self.mark_dirty()
 
     def move_child_to_first(self, parent: OutputNode, node: OutputNode) -> None:
@@ -279,6 +297,15 @@ class OutputTree:
         Returns list of plain strings (no Rich markup needed at this level —
         markup can be embedded in header/body_lines by the caller).
         """
+        if self._pending_root_append_start is not None and (self._dirty or self._dirty_nodes):
+            self._dirty = True
+        if (
+            not self._dirty
+            and not self._dirty_nodes
+            and self._pending_root_append_start is not None
+            and self._cached_width == console_width
+        ):
+            return self._append_root_render(console_width)
         if not self._dirty and not self._dirty_nodes and self._cached_width == console_width:
             return self._cached_lines
 
@@ -396,6 +423,7 @@ class OutputTree:
             and end == len(self.root.children)
             and not self._dirty
             and not self._dirty_nodes
+            and self._pending_root_append_start is None
             and self._cached_width == console_width
         ):
             trim = max(0, len(self._cached_lines) - row_limit)
@@ -470,6 +498,20 @@ class OutputTree:
         renderer._walk_render(root_child, [], lines, line_map)
         return [line for index, line in enumerate(lines) if line_map.get(index) == node_id]
 
+    def render_node_line_ids(self, node_id: str, console_width: int = 80) -> set[int]:
+        """Return absolute cached rows owned by one node."""
+        node = self._all.get(node_id)
+        if node is None or node is self.root:
+            return set()
+        self.render(console_width)
+        start, end = self._node_ranges.get(node_id, (0, 0))
+        return {
+            row
+            for row in range(start, end)
+            if self._line_map.get(row) == node_id
+        }
+
+
     def _full_render(self, console_width: int) -> list[str]:
         self._render_width = console_width
         self._line_map.clear()
@@ -486,7 +528,61 @@ class OutputTree:
         self._cached_width = console_width
         self._dirty = False
         self._dirty_nodes.clear()
+        self._pending_root_append_start = None
+        self._rendered_root_child_count = len(self.root.children)
+        self._rendered_root_child_ids = tuple(child.id for child in self.root.children)
+        self._last_render_strategy = "full"
         return lines
+
+    def _append_root_render(self, console_width: int) -> list[str]:
+        start = self._pending_root_append_start
+        if start is None or start < 0 or start > len(self.root.children):
+            self._dirty = True
+            self._pending_root_append_start = None
+            return self._full_render(console_width)
+        if tuple(child.id for child in self.root.children[:start]) != self._rendered_root_child_ids:
+            self._dirty = True
+            self._pending_root_append_start = None
+            return self._full_render(console_width)
+
+        lines: list[str] = []
+        line_map: dict[int, str] = {}
+        click_map: dict[int, str] = {}
+        base = len(self._cached_lines)
+        previous = None
+        for previous_candidate in reversed(self.root.children[:start]):
+            if _has_visible_output(previous_candidate):
+                previous = previous_candidate
+                break
+        renderer = OutputTree()
+        renderer.root = self.root
+        renderer._render_width = console_width
+        for child in self.root.children[start:]:
+            if not _has_visible_output(child):
+                continue
+            if _needs_gap_between_root_blocks(previous, child):
+                lines.append("")
+            renderer._walk_render(child, [], lines, line_map, click_map)
+            for node_id in _subtree_ids(child):
+                if node_id in renderer._node_ranges:
+                    left, right = renderer._node_ranges[node_id]
+                    self._node_ranges[node_id] = (left + base, right + base)
+                if node_id in renderer._node_prefixes:
+                    self._node_prefixes[node_id] = renderer._node_prefixes[node_id]
+            previous = child
+
+        base = len(self._cached_lines)
+        # Replace the list instead of mutating it: callers may retain the previous
+        # frame as the committed scrollback prefix.
+        self._cached_lines = self._cached_lines + lines
+        self._line_map.update({row + base: node_id for row, node_id in line_map.items()})
+        self._click_map.update({row + base: node_id for row, node_id in click_map.items()})
+        self._cached_width = console_width
+        self._pending_root_append_start = None
+        self._rendered_root_child_count = len(self.root.children)
+        self._rendered_root_child_ids = tuple(child.id for child in self.root.children)
+        self._last_render_strategy = "root-tail"
+        return self._cached_lines
 
     def _incremental_render(self, console_width: int) -> list[str]:
         """Incremental render: re-walk only dirty subtrees, splice into cache.
@@ -543,13 +639,19 @@ class OutputTree:
         nid = independent[0]
         old_start, old_end = self._node_ranges[nid]
         node = self._all[nid]
+        old_cached_length = len(self._cached_lines)
+        was_tail = old_end == old_cached_length
+        prefix = list(self._node_prefixes.get(nid, []))
 
         # _walk_render writes ranges for the dirty subtree relative to
-        # new_lines start (0); only that subtree should be shifted.
+        # new_lines start (0); remove ranges for hidden descendants that are
+        # no longer visited (for example after collapsing their ancestor).
         subtree_ids = _subtree_ids(node)
+        for r_nid in subtree_ids:
+            self._node_ranges.pop(r_nid, None)
+            self._node_prefixes.pop(r_nid, None)
 
         new_lines: list[str] = []
-        prefix = self._node_prefixes.get(nid, [])
         sub_line_map: dict[int, str] = {}
         sub_click_map: dict[int, str] = {}
         self._walk_render(node, prefix, new_lines, sub_line_map, sub_click_map)
@@ -560,37 +662,44 @@ class OutputTree:
                 s, e = self._node_ranges[r_nid]
                 self._node_ranges[r_nid] = (s + old_start, e + old_start)
 
-        # Splice: everything before + new subtree + everything after
-        self._cached_lines = (
-            self._cached_lines[:old_start]
-            + new_lines
-            + self._cached_lines[old_end:]
-        )
+        old_length = old_end - old_start
+        delta = len(new_lines) - old_length
+        if was_tail:
+            # Keep the previous frame immutable: callers may retain it as the
+            # committed scrollback prefix while the mutable tail is replaced.
+            self._cached_lines = self._cached_lines[:old_start] + new_lines
+        else:
+            self._cached_lines = (
+                self._cached_lines[:old_start]
+                + new_lines
+                + self._cached_lines[old_end:]
+            )
+
         # Fix stale ranges: ancestors and sibling-after nodes shifted by delta.
-        delta = len(new_lines) - (old_end - old_start)
         if delta != 0:
             for r_nid, (s, e) in list(self._node_ranges.items()):
+                if r_nid in subtree_ids:
+                    continue
                 if s >= old_end:
                     self._node_ranges[r_nid] = (s + delta, e + delta)
-                elif e > old_end and s < old_start:
+                elif s <= old_start and e >= old_end:
                     self._node_ranges[r_nid] = (s, e + delta)
         self._dirty_nodes.clear()
 
-        # Rebuild maps: old entries outside the splice range shift or stay,
-        # new entries from the re-walked subtree replace the spliced range.
-        def rebuild_map(old_map: dict[int, str], sub_map: dict[int, str]) -> dict[int, str]:
-            rebuilt: dict[int, str] = {}
-            for row, row_nid in old_map.items():
-                if row < old_start:
-                    rebuilt[row] = row_nid
-                elif row >= old_end:
-                    rebuilt[row + delta] = row_nid
-            for row, row_nid in sub_map.items():
-                rebuilt[row + old_start] = row_nid
-            return rebuilt
+        def update_map(mapping: dict[int, str], sub_map: dict[int, str]) -> None:
+            for row in range(old_start, old_end):
+                mapping.pop(row, None)
+            if not was_tail:
+                for row in sorted(
+                    (row for row in mapping if row >= old_end),
+                    reverse=True,
+                ):
+                    mapping[row + delta] = mapping.pop(row)
+            mapping.update({row + old_start: node_id for row, node_id in sub_map.items()})
 
-        self._line_map = rebuild_map(self._line_map, sub_line_map)
-        self._click_map = rebuild_map(self._click_map, sub_click_map)
+        update_map(self._line_map, sub_line_map)
+        update_map(self._click_map, sub_click_map)
+        self._last_render_strategy = "incremental"
 
         return self._cached_lines
 

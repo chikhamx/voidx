@@ -18,6 +18,10 @@ export type VoidxUiProtocol =
   | JsonRpcResult
   | JsonRpcError
   | ErrorPayload
+  | ClientCapabilities
+  | GatewayCapabilities
+  | WorkspacePatch
+  | StreamAppendDelta
   | WorkspaceSnapshot
   | ThreadSnapshot
   | ThreadInfo
@@ -79,6 +83,41 @@ export type Data = {
 export type Message1 = string;
 export type Id3 = number | string | null;
 export type Jsonrpc3 = string;
+export type Capabilities = string[];
+export type Protocol = string;
+export type Capabilities1 = string[];
+export type Protocol1 = string;
+export type Revision2 = number;
+export type ActiveThreadId = string;
+export type AiApprovalCount = number;
+export type Model = string;
+export type PermissionMode = string;
+export type ProfileConfigured = boolean | null;
+export type Provider = string;
+export type Revision3 = number;
+export type CreatedAt = string;
+export type Directory = string;
+export type MessageCount = number;
+export type ModelName = string;
+export type ModelProvider = string;
+export type RuntimeProfile = string;
+export type Status = "idle" | "running" | "waiting_for_user" | "waiting_for_write_lock" | "cancelling" | "failed";
+export type Temporary = boolean;
+export type ThreadId = string;
+export type Title = string;
+export type UpdatedAt = string;
+export type Workspace = string;
+export type Threads = ThreadInfo[];
+export type Workspace1 = string;
+export type BaseRevision = number;
+export type ItemId = string;
+export type Phase = string;
+export type Revision4 = number;
+export type StreamId = string;
+export type Text = string;
+export type ThreadId1 = string;
+export type TurnId = string;
+export type WorkspaceRevision = number;
 export type AfterTurnId = number | null;
 export type BeforeTurnId = number | null;
 export type HasEarlier = boolean;
@@ -112,64 +151,53 @@ export type NodeType =
   | "warn"
   | "diff";
 export type ParentId = string | null;
-export type Status = "running" | "done" | "error";
+export type Status1 = "running" | "done" | "error";
 export type StepInfo = string | null;
-export type Title = string;
+export type Title1 = string;
 export type ToolCallId = string | null;
 export type Nodes = TranscriptNode[];
-export type Revision2 = number;
-export type ThreadId = string;
+export type Revision5 = number;
+export type ThreadId2 = string;
 export type Windowed = boolean;
-export type ActiveThreadId = string;
-export type AiApprovalCount = number;
-export type Model = string;
-export type PermissionMode = string;
-export type ProfileConfigured = boolean | null;
-export type Provider = string;
-export type CreatedAt = string;
-export type Directory = string;
-export type MessageCount = number;
-export type ModelName = string;
-export type ModelProvider = string;
-export type RuntimeProfile = string;
-export type Status1 = "idle" | "running" | "waiting_for_user" | "waiting_for_write_lock" | "cancelling" | "failed";
-export type Temporary = boolean;
-export type ThreadId1 = string;
-export type Title1 = string;
-export type UpdatedAt = string;
-export type Workspace = string;
-export type Threads = ThreadInfo[];
-export type Workspace1 = string;
+export type ActiveThreadId1 = string;
+export type AiApprovalCount1 = number;
+export type Model1 = string;
+export type PermissionMode1 = string;
+export type ProfileConfigured1 = boolean | null;
+export type Provider1 = string;
+export type Revision6 = number;
+export type Threads1 = ThreadInfo[];
+export type Workspace2 = string;
 export type Elapsed1 = number | null;
 export type StartedAt = number;
 export type Status2 = "running" | "completed" | "cancelled" | "failed";
-export type ThreadId2 = string;
-export type TurnId = string;
-export type ItemId = string;
-export type Kind = "message" | "assistant_stream" | "tool" | "todo" | "subagent" | "status" | "prompt";
-export type Lifecycle = "started" | "delta" | "completed";
 export type ThreadId3 = string;
 export type TurnId1 = string;
+export type ItemId1 = string;
+export type Kind = "message" | "assistant_stream" | "tool" | "todo" | "subagent" | "status" | "prompt";
+export type Lifecycle = "started" | "delta" | "completed";
+export type ThreadId4 = string;
+export type TurnId2 = string;
 export type Nodes1 = TranscriptNode[];
-export type Revision3 = number;
+export type Revision7 = number;
 export type RootId = string;
 export type SessionId = string;
 export type Choices = [unknown, unknown, unknown][];
 export type Kind1 = "choice";
 export type Prompt = string;
 export type RequestId = string;
-export type ThreadId4 = string;
+export type ThreadId5 = string;
 export type Default = string;
 export type Kind2 = "text";
 export type Prompt1 = string;
 export type RequestId1 = string;
 export type Secret = boolean;
-export type ThreadId5 = string;
+export type ThreadId6 = string;
 export type Choices1 = [unknown, unknown, unknown][];
 export type Kind3 = "permission";
 export type Prompt2 = string;
 export type RequestId2 = string;
-export type ThreadId6 = string;
+export type ThreadId7 = string;
 export type AiApprovalFailure = string;
 export type AllowedScopes = string[];
 export type DefaultScope = string | null;
@@ -182,11 +210,11 @@ export type Tools1 = PermissionToolDetail[];
 export type Kind4 = "submit";
 export type RuntimeProfile1 = string;
 export type SessionId1 = string;
-export type Text = string;
-export type ThreadId7 = string;
-export type Workspace2 = string;
-export type Kind5 = "cancel";
+export type Text1 = string;
 export type ThreadId8 = string;
+export type Workspace3 = string;
+export type Kind5 = "cancel";
+export type ThreadId9 = string;
 
 export interface AgentCatalogDto {
   builtin_nodes?: BuiltinNodes;
@@ -310,6 +338,79 @@ export interface ErrorPayload {
   [k: string]: unknown;
 }
 /**
+ * Capabilities announced by a UI client after the socket opens.
+ */
+export interface ClientCapabilities {
+  capabilities?: Capabilities;
+  protocol?: Protocol;
+  [k: string]: unknown;
+}
+/**
+ * Capabilities supported by this Gateway instance.
+ */
+export interface GatewayCapabilities {
+  capabilities?: Capabilities1;
+  protocol?: Protocol1;
+  revision?: Revision2;
+  [k: string]: unknown;
+}
+/**
+ * Metadata-only workspace update.
+ *
+ * It deliberately has no transcript field: a patch cannot implicitly delete
+ * or replace canonical transcript items. A revision gap requires a snapshot.
+ */
+export interface WorkspacePatch {
+  active_thread_id?: ActiveThreadId;
+  ai_approval_count?: AiApprovalCount;
+  model?: Model;
+  permission_mode?: PermissionMode;
+  profile_configured?: ProfileConfigured;
+  provider?: Provider;
+  revision: Revision3;
+  runtime?: Runtime;
+  threads?: Threads;
+  workspace?: Workspace1;
+  workspace_write_lock?: WorkspaceWriteLock;
+  [k: string]: unknown;
+}
+export interface Runtime {
+  [k: string]: unknown;
+}
+export interface ThreadInfo {
+  created_at?: CreatedAt;
+  directory?: Directory;
+  message_count?: MessageCount;
+  model_name?: ModelName;
+  model_provider?: ModelProvider;
+  runtime_profile?: RuntimeProfile;
+  status?: Status;
+  temporary?: Temporary;
+  thread_id: ThreadId;
+  title?: Title;
+  updated_at?: UpdatedAt;
+  workspace?: Workspace;
+  [k: string]: unknown;
+}
+export interface WorkspaceWriteLock {
+  [k: string]: unknown;
+}
+/**
+ * A contiguous append to one assistant stream.
+ */
+export interface StreamAppendDelta {
+  base_revision: BaseRevision;
+  item_id: ItemId;
+  phase?: Phase;
+  revision: Revision4;
+  stream_id: StreamId;
+  text: Text;
+  thread_id: ThreadId1;
+  turn_id: TurnId;
+  workspace_revision?: WorkspaceRevision;
+  [k: string]: unknown;
+}
+/**
  * Full workspace state pushed on connect / refresh.
  *
  * Only the active thread carries a complete transcript snapshot; other
@@ -317,16 +418,17 @@ export interface ErrorPayload {
  */
 export interface WorkspaceSnapshot {
   active_snapshot?: ThreadSnapshot | null;
-  active_thread_id?: ActiveThreadId;
-  ai_approval_count?: AiApprovalCount;
-  model?: Model;
-  permission_mode?: PermissionMode;
-  profile_configured?: ProfileConfigured;
-  provider?: Provider;
-  runtime?: Runtime;
-  threads?: Threads;
-  workspace?: Workspace1;
-  workspace_write_lock?: WorkspaceWriteLock;
+  active_thread_id?: ActiveThreadId1;
+  ai_approval_count?: AiApprovalCount1;
+  model?: Model1;
+  permission_mode?: PermissionMode1;
+  profile_configured?: ProfileConfigured1;
+  provider?: Provider1;
+  revision?: Revision6;
+  runtime?: Runtime1;
+  threads?: Threads1;
+  workspace?: Workspace2;
+  workspace_write_lock?: WorkspaceWriteLock1;
   [k: string]: unknown;
 }
 /**
@@ -338,8 +440,8 @@ export interface ThreadSnapshot {
   has_earlier?: HasEarlier;
   has_later?: HasLater;
   nodes?: Nodes;
-  revision?: Revision2;
-  thread_id: ThreadId;
+  revision?: Revision5;
+  thread_id: ThreadId2;
   windowed?: Windowed;
   [k: string]: unknown;
 }
@@ -358,51 +460,36 @@ export interface TranscriptNode {
   node_type: NodeType;
   parent_id?: ParentId;
   payload?: Payload;
-  status?: Status;
+  status?: Status1;
   step_info?: StepInfo;
-  title?: Title;
+  title?: Title1;
   tool_call_id?: ToolCallId;
   [k: string]: unknown;
 }
 export interface Payload {
   [k: string]: unknown;
 }
-export interface Runtime {
+export interface Runtime1 {
   [k: string]: unknown;
 }
-export interface ThreadInfo {
-  created_at?: CreatedAt;
-  directory?: Directory;
-  message_count?: MessageCount;
-  model_name?: ModelName;
-  model_provider?: ModelProvider;
-  runtime_profile?: RuntimeProfile;
-  status?: Status1;
-  temporary?: Temporary;
-  thread_id: ThreadId1;
-  title?: Title1;
-  updated_at?: UpdatedAt;
-  workspace?: Workspace;
-  [k: string]: unknown;
-}
-export interface WorkspaceWriteLock {
+export interface WorkspaceWriteLock1 {
   [k: string]: unknown;
 }
 export interface TurnInfo {
   elapsed?: Elapsed1;
   started_at?: StartedAt;
   status?: Status2;
-  thread_id: ThreadId2;
-  turn_id: TurnId;
+  thread_id: ThreadId3;
+  turn_id: TurnId1;
   [k: string]: unknown;
 }
 export interface Item {
   data?: Data1;
-  item_id: ItemId;
+  item_id: ItemId1;
   kind: Kind;
   lifecycle?: Lifecycle;
-  thread_id: ThreadId3;
-  turn_id: TurnId1;
+  thread_id: ThreadId4;
+  turn_id: TurnId2;
   [k: string]: unknown;
 }
 export interface Data1 {
@@ -410,7 +497,7 @@ export interface Data1 {
 }
 export interface TranscriptSnapshot {
   nodes?: Nodes1;
-  revision?: Revision3;
+  revision?: Revision7;
   root_id?: RootId;
   session_id?: SessionId;
   [k: string]: unknown;
@@ -420,7 +507,7 @@ export interface UiChoiceRequest {
   kind?: Kind1;
   prompt: Prompt;
   request_id: RequestId;
-  thread_id?: ThreadId4;
+  thread_id?: ThreadId5;
   [k: string]: unknown;
 }
 export interface UiTextRequest {
@@ -429,7 +516,7 @@ export interface UiTextRequest {
   prompt: Prompt1;
   request_id: RequestId1;
   secret?: Secret;
-  thread_id?: ThreadId5;
+  thread_id?: ThreadId6;
   [k: string]: unknown;
 }
 export interface UiPermissionRequest {
@@ -437,7 +524,7 @@ export interface UiPermissionRequest {
   kind?: Kind3;
   prompt: Prompt2;
   request_id: RequestId2;
-  thread_id?: ThreadId6;
+  thread_id?: ThreadId7;
   tools?: Tools1;
   [k: string]: unknown;
 }
@@ -458,13 +545,13 @@ export interface UiSubmitCommand {
   kind?: Kind4;
   runtime_profile?: RuntimeProfile1;
   session_id?: SessionId1;
-  text: Text;
-  thread_id?: ThreadId7;
-  workspace?: Workspace2;
+  text: Text1;
+  thread_id?: ThreadId8;
+  workspace?: Workspace3;
   [k: string]: unknown;
 }
 export interface UiCancelCommand {
   kind?: Kind5;
-  thread_id?: ThreadId8;
+  thread_id?: ThreadId9;
   [k: string]: unknown;
 }

@@ -352,3 +352,289 @@ async def test_event_publisher_cancel_turn_closes_dock_turn(isolated_dock):
         assert isolated_dock.turn_in_progress is False
     finally:
         await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_ui_event_bus_yields_after_event_count_budget(isolated_dock):
+    processed: list[str] = []
+    probe_snapshot: list[tuple[str, ...]] = []
+
+    class Consumer:
+        def handle(self, event):
+            processed.append(event.text)
+
+    bus = UiEventBus(batch_event_limit=2, batch_time_budget=10.0)
+    bus.start(Consumer())
+    try:
+        for index in range(5):
+            assert bus.emitnowait(TurnStarted(text=str(index)))
+
+        probe_done = asyncio.Event()
+
+        async def probe() -> None:
+            probe_snapshot.append(tuple(processed))
+            probe_done.set()
+
+        asyncio.create_task(probe())
+        await asyncio.wait_for(probe_done.wait(), timeout=0.1)
+
+        assert probe_snapshot == [("0", "1")]
+        await bus.drain()
+        assert processed == ["0", "1", "2", "3", "4"]
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_ui_event_bus_yields_after_time_budget(isolated_dock):
+    class Clock:
+        value = 0.0
+
+        def __call__(self) -> float:
+            return self.value
+
+    clock = Clock()
+    processed: list[str] = []
+    probe_snapshot: list[tuple[str, ...]] = []
+
+    class Consumer:
+        def handle(self, event):
+            processed.append(event.text)
+            clock.value += 1.0
+
+    bus = UiEventBus(batch_event_limit=100, batch_time_budget=2.0, clock=clock)
+    bus.start(Consumer())
+    try:
+        for index in range(5):
+            assert bus.emitnowait(TurnStarted(text=str(index)))
+
+        probe_done = asyncio.Event()
+
+        async def probe() -> None:
+            probe_snapshot.append(tuple(processed))
+            probe_done.set()
+
+        asyncio.create_task(probe())
+        await asyncio.wait_for(probe_done.wait(), timeout=0.1)
+
+        assert probe_snapshot == [("0", "1")]
+        await bus.drain()
+        assert processed == ["0", "1", "2", "3", "4"]
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_ui_event_bus_coalesces_streams_only_within_the_same_thread():
+    received: list[tuple[str, str]] = []
+
+    class Consumer:
+        def handle(self, event):
+            received.append((event.thread_id, event.text))
+
+    bus = UiEventBus()
+    bus.start(Consumer())
+    try:
+        assert bus.emitnowait(
+            AssistantStreamUpdated(
+                thread_id="thread-a",
+                stream_id="shared",
+                text="a",
+            )
+        )
+        assert bus.emitnowait(
+            AssistantStreamUpdated(
+                thread_id="thread-b",
+                stream_id="shared",
+                text="b",
+            )
+        )
+        await bus.drain()
+
+        assert received == [("thread-a", "a"), ("thread-b", "b")]
+        assert bus.metrics.coalesced == 0
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_ui_event_bus_coalesces_cumulative_stream_to_latest_text():
+    received: list[tuple[str, str]] = []
+
+    class Consumer:
+        def handle(self, event):
+            received.append((event.stream_id, event.text))
+
+    bus = UiEventBus()
+    bus.start(Consumer())
+    try:
+        for text in ("a", "ab", "abc"):
+            assert bus.emitnowait(
+                AssistantStreamUpdated(
+                    thread_id="thread-a",
+                    stream_id="stream-a",
+                    text=text,
+                    phase="text",
+                    snapshot_contract="cumulative",
+                )
+            )
+
+        await bus.drain()
+
+        assert received == [("stream-a", "abc")]
+        assert bus.metrics.coalesced == 2
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_ui_event_bus_stream_barriers_preserve_phase_contract_and_order():
+    received: list[tuple[str, str, str, str]] = []
+
+    class Consumer:
+        def handle(self, event):
+            received.append((event.thread_id, event.stream_id, event.phase, event.text))
+
+    bus = UiEventBus()
+    bus.start(Consumer())
+    try:
+        assert bus.emitnowait(
+            AssistantStreamUpdated(
+                thread_id="thread-a",
+                stream_id="stream-a",
+                text="think 1",
+                phase="thinking",
+            )
+        )
+        assert bus.emitnowait(
+            AssistantStreamUpdated(
+                thread_id="thread-a",
+                stream_id="stream-a",
+                text="think 2",
+                phase="thinking",
+            )
+        )
+        assert bus.emitnowait(
+            AssistantStreamUpdated(
+                thread_id="thread-a",
+                stream_id="stream-a",
+                text="answer 1",
+                phase="text",
+            )
+        )
+        assert bus.emitnowait(
+            AssistantStreamUpdated(
+                thread_id="thread-a",
+                stream_id="stream-a",
+                text="answer 2",
+                phase="text",
+            )
+        )
+        assert bus.emitnowait(
+            AssistantStreamUpdated(
+                thread_id="thread-a",
+                stream_id="stream-b",
+                text="other stream",
+                phase="text",
+            )
+        )
+        assert bus.emitnowait(
+            AssistantStreamUpdated(
+                thread_id="thread-b",
+                stream_id="stream-a",
+                text="other thread",
+                phase="text",
+            )
+        )
+        assert bus.emitnowait(
+            AssistantStreamUpdated(
+                thread_id="thread-a",
+                stream_id="stream-a",
+                text="delta 1",
+                phase="text",
+                snapshot_contract="delta",
+            )
+        )
+        assert bus.emitnowait(
+            AssistantStreamUpdated(
+                thread_id="thread-a",
+                stream_id="stream-a",
+                text="delta 2",
+                phase="text",
+                snapshot_contract="delta",
+            )
+        )
+
+        await bus.drain()
+
+        assert received == [
+            ("thread-a", "stream-a", "thinking", "think 2"),
+            ("thread-a", "stream-a", "text", "answer 2"),
+            ("thread-a", "stream-b", "text", "other stream"),
+            ("thread-b", "stream-a", "text", "other thread"),
+            ("thread-a", "stream-a", "text", "delta 1"),
+            ("thread-a", "stream-a", "text", "delta 2"),
+        ]
+        assert bus.metrics.coalesced == 2
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_ui_event_bus_request_future_is_a_stream_barrier():
+    received: list[tuple[str, str]] = []
+    request_started = asyncio.Event()
+    release_request = asyncio.Event()
+
+    class Consumer:
+        async def handle(self, event):
+            if isinstance(event, TurnStarted):
+                request_started.set()
+                await release_request.wait()
+            received.append((type(event).__name__, getattr(event, "text", "")))
+            return "request-result"
+
+    bus = UiEventBus()
+    bus.start(Consumer())
+    try:
+        assert bus.emitnowait(
+            AssistantStreamUpdated(
+                thread_id="thread-a",
+                stream_id="stream-a",
+                text="a",
+            )
+        )
+        request_task = asyncio.create_task(
+            bus.request(TurnStarted(text="barrier"), timeout=0.5, max_retries=1)
+        )
+        await asyncio.wait_for(request_started.wait(), timeout=0.1)
+        assert bus.emitnowait(
+            AssistantStreamUpdated(
+                thread_id="thread-a",
+                stream_id="stream-a",
+                text="ab",
+            )
+        )
+        assert bus.emitnowait(
+            AssistantStreamUpdated(
+                thread_id="thread-a",
+                stream_id="stream-a",
+                text="abc",
+            )
+        )
+        release_request.set()
+
+        assert await request_task == "request-result"
+        await bus.drain()
+
+        assert received == [
+            ("AssistantStreamUpdated", "a"),
+            ("TurnStarted", "barrier"),
+            ("AssistantStreamUpdated", "abc"),
+        ]
+        assert bus.metrics.coalesced == 1
+    finally:
+        release_request.set()
+        if not request_task.done():
+            request_task.cancel()
+        await bus.stop()

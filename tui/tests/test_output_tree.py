@@ -158,6 +158,63 @@ def test_tree_incremental_render_shifts_sibling_after_ranges():
     assert "read file.py" in "\n".join(inc)
 
 
+
+
+def test_tree_root_append_keeps_all_render_caches_equivalent_to_full_render():
+    from voidx.presentation.output.tree import OutputNode, OutputTree
+
+    def build_tree() -> OutputTree:
+        tree = OutputTree()
+        turn = tree.new_node(tree.root, node_type="turn", header="Turn")
+        tree.new_node(turn, node_type="message", header="context", body_lines=["details"])
+        return tree
+
+    def appended_subtree() -> OutputNode:
+        assistant = OutputNode(id="appended", node_type="assistant", header="Working")
+        assistant.add_child(OutputNode(id="appended-tool", node_type="tool_call", header="read file"))
+        return assistant
+
+    incremental = build_tree()
+    incremental.render_with_click_map(80)
+    incremental.add_node(incremental.root, appended_subtree())
+    incremental.render(80)
+
+    full = build_tree()
+    full.add_node(full.root, appended_subtree())
+    full.render(80)
+
+    assert incremental._cached_lines == full._cached_lines
+    assert incremental._node_ranges == full._node_ranges
+    assert incremental._line_map == full._line_map
+    assert incremental._click_map == full._click_map
+    assert incremental._last_render_strategy == "root-tail"
+
+
+def test_tree_root_append_skips_invisible_children_like_full_render():
+    from voidx.presentation.output.tree import OutputTree
+
+    tree = OutputTree()
+    tree.new_node(tree.root, node_type="message", header="first")
+    tree.render(80)
+    tree.new_node(tree.root, node_type="todo", header="hidden snapshot")
+    tree.new_node(tree.root, node_type="assistant", header="second")
+
+    incremental = tree.render(80)
+
+    tree._dirty = True
+    full = tree.render(80)
+
+    assert incremental == full
+    assert tree._line_map == {0: tree.root.children[0].id, 1: tree.root.children[2].id}
+
+
+
+
+
+
+
+
+
 def test_output_tree_move_child_to_first_refreshes_sibling_flags():
     from voidx.presentation.output.tree import OutputTree
 

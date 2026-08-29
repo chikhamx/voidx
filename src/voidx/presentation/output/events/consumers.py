@@ -13,6 +13,11 @@ from rich.markup import escape
 from voidx.platform.formatting import format_compact_count
 from voidx.presentation.output.agent_display import subagent_display_name
 from voidx.presentation.output.dock import BottomInputDock
+from voidx.presentation.output.dock.stream import (
+    StreamCommitWorkItem,
+    build_canonical_stream_projection,
+    build_plain_stream_projection,
+)
 from voidx.presentation.output.dock.status import PERMISSION_REQUEST_STATUS_ID
 from voidx.presentation.output.dock.todo import (
     render_todo_header,
@@ -138,6 +143,53 @@ class DockEventConsumer:
         self._hidden_tool_ids: set[str] = set()
         self._agent_nodes: dict[int, OutputNode] = {}
         self._agents_with_specific_status: set[int] = set()
+
+        self._stream_commit_tasks: set[asyncio.Task[Any]] = set()
+
+    @property
+    def pending_stream_commit_count(self) -> int:
+        return len(self._stream_commit_tasks)
+
+    def _schedule_stream_commit(self, work_item: StreamCommitWorkItem) -> bool:
+        try:
+            task = asyncio.create_task(self._finish_stream_commit(work_item))
+        except RuntimeError:
+            return False
+        self._stream_commit_tasks.add(task)
+        task.add_done_callback(self._stream_commit_tasks.discard)
+        task.add_done_callback(self._log_stream_commit_error)
+        return True
+
+    async def _finish_stream_commit(self, work_item: StreamCommitWorkItem) -> None:
+        try:
+            projection = await asyncio.to_thread(
+                build_canonical_stream_projection,
+                work_item,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log_internal_error(exc, context="ui_stream_commit_fallback")
+            projection = await asyncio.to_thread(
+                build_plain_stream_projection,
+                work_item,
+            )
+        self._dock.apply_stream_commit(work_item, projection)
+
+    @staticmethod
+    def _log_stream_commit_error(task: asyncio.Task[Any]) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            log_internal_error(exc, context="ui_stream_commit")
+
+    async def drain_stream_commits(self) -> None:
+        while self._stream_commit_tasks:
+            await asyncio.gather(
+                *tuple(self._stream_commit_tasks),
+                return_exceptions=True,
+            )
 
     def _clear_turn_statuses(self) -> None:
         self._dock.clear_active_statuses(keep={"loop:waiting"})
@@ -276,7 +328,20 @@ class DockEventConsumer:
                     phase=e.phase,
                 )
             case AssistantStreamCommitted():
-                return self._dock.commit_stream()
+                if not self._dock.active:
+                    return False
+                work_item = self._dock.prepare_stream_commit(refresh=False)
+                if work_item is None:
+                    self._dock.refresh()
+                    return True
+                if self._schedule_stream_commit(work_item):
+                    return True
+                try:
+                    projection = build_canonical_stream_projection(work_item)
+                except Exception as exc:
+                    log_internal_error(exc, context="ui_stream_commit_fallback")
+                    projection = build_plain_stream_projection(work_item)
+                return self._dock.apply_stream_commit(work_item, projection)
             case AssistantStreamDiscarded():
                 return self._dock.discard_stream()
             case ToolStarted() as e:
@@ -412,7 +477,8 @@ class DockEventConsumer:
                 return node
             case SubagentFinished() as e:
                 node = self._agent_parent(e.agent_id)
-                label = "completed" if e.ok else "failed"
+                cancelled = e.finish_reason == "cancelled"
+                label = "canceled" if cancelled else ("completed" if e.ok else "failed")
                 details: list[str] = []
                 if e.calls is not None:
                     details.append(f"{e.calls} calls")
@@ -429,18 +495,18 @@ class DockEventConsumer:
                 self._dock.finish_status(
                     f"agent:{e.agent_id}:progress",
                     label=status_label,
-                    ok=e.ok,
+                    ok=e.ok or cancelled,
                     remove=False,
                 )
                 self._agents_with_specific_status.discard(e.agent_id)
                 if node is None:
                     return None
-                color = "dim" if e.ok else "red"
-                icon = "●" if e.ok else "✗"
+                color = "dim" if e.ok or cancelled else "red"
+                icon = "●" if e.ok or cancelled else "✗"
                 title = str(node.payload.get("title") or node.payload.get("role_name") or node.agent_name or e.subagent_id)
                 header = f"[{color}]{icon}[/{color}] [{color}]{escape(title)} {label}{suffix}[/{color}]"
                 node.header = header
-                node.status = "done" if e.ok else "error"
+                node.status = "done" if e.ok or cancelled else "error"
                 node.elapsed = e.elapsed
                 node.collapsed = False
                 self._dock.tree.mark_dirty()

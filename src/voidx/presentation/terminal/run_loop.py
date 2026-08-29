@@ -146,6 +146,8 @@ class TerminalRunLoop:
             if lsp_startup_tasks:
                 await asyncio.gather(*lsp_startup_tasks, return_exceptions=True)
             await self._integrations.stop_integrations()
+            if active_dock is not None:
+                await consumer.drain_stream_commits()
             if self._ui.events.is_running:
                 await self._ui.events.stop()
             self._workspace_write_lock.bind(None)

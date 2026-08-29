@@ -30,6 +30,12 @@ from voidx.presentation.protocol.v2.envelope import (
     JsonRpcRequest,
     JsonRpcResult,
 )
+from voidx.presentation.protocol.v2.incremental import (
+    ClientCapabilities,
+    GatewayCapabilities,
+    StreamAppendDelta,
+    WorkspacePatch,
+)
 from voidx.presentation.protocol.v2.snapshot import ThreadSnapshot, WorkspaceSnapshot
 from voidx.presentation.protocol.v2.threads import Item, ThreadInfo, TurnInfo
 
@@ -53,6 +59,10 @@ def export_protocol_schema() -> dict[str, Any]:
         | JsonRpcResult
         | JsonRpcError
         | ErrorPayload
+        | ClientCapabilities
+        | GatewayCapabilities
+        | WorkspacePatch
+        | StreamAppendDelta
         | WorkspaceSnapshot
         | ThreadSnapshot
         | ThreadInfo

@@ -6,7 +6,7 @@ import asyncio
 import contextvars
 import inspect
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from typing import Any, Protocol
 
 from voidx.agent.ports.persistence import SessionRepository
@@ -15,7 +15,13 @@ from voidx.presentation.gateway.diff_review import DiffReviewSession
 from voidx.presentation.gateway.run_manager import ThreadRunManager
 from voidx.presentation.gateway.terminal import TerminalManager
 from voidx.presentation.gateway.workspace_lock import GatewayWorkspaceWriteLock
-from voidx.presentation.output.events.schema import UiEvent
+from voidx.presentation.output.events.schema import (
+    AssistantStreamCommitted,
+    AssistantStreamDiscarded,
+    AssistantStreamStarted,
+    AssistantStreamUpdated,
+    UiEvent,
+)
 from voidx.presentation.output.tree import OutputTree
 from voidx.presentation.protocol import (
     TranscriptSnapshot,
@@ -30,6 +36,16 @@ from voidx.presentation.protocol.v2.envelope import (
     JsonRpcNotification,
     JsonRpcRequest,
     JsonRpcResult,
+)
+from voidx.presentation.protocol.v2.incremental import (
+    CAPABILITY_STREAM_APPEND,
+    CAPABILITY_TRANSCRIPT_WINDOW,
+    CAPABILITY_WORKSPACE_PATCH,
+    SUPPORTED_INCREMENTAL_CAPABILITIES,
+    ClientCapabilities,
+    GatewayCapabilities,
+    StreamAppendDelta,
+    WorkspacePatch,
 )
 from voidx.presentation.protocol.v2.methods import MethodDispatch, MethodParamsError
 from voidx.presentation.protocol.v2.snapshot import ThreadSnapshot, WorkspaceSnapshot
@@ -107,6 +123,9 @@ class GatewaySession(
         self._usage_stats_provider = usage_stats_provider
         self._clients: set[ProtocolClient] = set()
         self._client_snapshot_turn_limits: dict[ProtocolClient, int] = {}
+        self._client_capabilities: dict[ProtocolClient, frozenset[str]] = {}
+        self._client_workspace_revisions: dict[ProtocolClient, int] = {}
+        self._client_stream_revisions: dict[ProtocolClient, dict[str, tuple[str, int, str, str]]] = {}
         self._settings_factory = settings_factory
         self._skills_api_factory = skills_api_factory
         self._skills_api_provider = skills_api_provider
@@ -115,6 +134,7 @@ class GatewaySession(
         self._dock = dock
         self._owner_id = uuid.uuid4().hex
         self._seq = 0
+        self._workspace_revision = 0
         self._thread_id_provider: Callable[[], str] | None = None
         self._persisted_sync_task: asyncio.Task[None] | None = None
         self._active_snapshot_cache: tuple[tuple[str, int, int], TranscriptSnapshot] | None = None
@@ -179,18 +199,66 @@ class GatewaySession(
 
     # ── client connection ─────────────────────────────────────────────────
 
-    async def connect(self, client: ProtocolClient) -> None:
+    async def connect(
+        self,
+        client: ProtocolClient,
+        *,
+        capabilities: Iterable[str] | ClientCapabilities | None = None,
+    ) -> None:
         self._clients.add(client)
+        self._client_capabilities[client] = self._normalize_capabilities(capabilities)
+        self._client_workspace_revisions[client] = self._workspace_revision
+        self._client_stream_revisions[client] = {}
         try:
-            await client.send_text(await self._encode_snapshot(sync_persisted=False))
+            await client.send_text(
+                await self._encode_snapshot(
+                    sync_persisted=False,
+                    turn_limit=None,
+                )
+            )
+            self._client_workspace_revisions[client] = self._workspace_revision
             self._start_persisted_thread_sync()
         except Exception:
-            self._clients.discard(client)
+            self.disconnect(client)
             raise
+
+    @staticmethod
+    def _normalize_capabilities(
+        capabilities: Iterable[str] | ClientCapabilities | None,
+    ) -> frozenset[str]:
+        if isinstance(capabilities, ClientCapabilities):
+            values = capabilities.capabilities
+        elif capabilities is None:
+            values = ()
+        else:
+            values = capabilities
+        return frozenset(
+            value
+            for value in values
+            if isinstance(value, str) and value in SUPPORTED_INCREMENTAL_CAPABILITIES
+        )
+
+    def set_client_capabilities(
+        self,
+        client: ProtocolClient | None,
+        capabilities: Iterable[str] | ClientCapabilities | None,
+    ) -> frozenset[str]:
+        accepted = self._normalize_capabilities(capabilities)
+        if client is not None and client in self._clients:
+            self._client_capabilities[client] = accepted
+        return accepted
+
+    def client_capabilities(self, client: ProtocolClient | None) -> frozenset[str]:
+        if client is None:
+            return frozenset()
+        return self._client_capabilities.get(client, frozenset())
 
     def disconnect(self, client: ProtocolClient) -> None:
         self._clients.discard(client)
         self._client_snapshot_turn_limits.pop(client, None)
+        self._client_capabilities.pop(client, None)
+        self._client_workspace_revisions.pop(client, None)
+        self._client_stream_revisions.pop(client, None)
 
     def _remember_client_snapshot_limit(
         self,
@@ -385,9 +453,115 @@ class GatewaySession(
             self._active_thread_id = tid
         notification = await adapter.handle(event)
         if notification is not None:
-            await self._broadcast(notification.model_dump_json())
+            if isinstance(
+                event,
+                (AssistantStreamStarted, AssistantStreamUpdated,
+                 AssistantStreamCommitted, AssistantStreamDiscarded),
+            ):
+                await self._broadcast_stream_notification(event, notification)
+            else:
+                await self._broadcast(notification.model_dump_json())
         if getattr(event, "kind", "") in {"turn.completed", "turn.failed", "turn.cancelled"}:
             await self.broadcast_snapshot(sync_persisted=False)
+
+    async def _broadcast_stream_notification(
+        self,
+        event: AssistantStreamStarted
+        | AssistantStreamUpdated
+        | AssistantStreamCommitted
+        | AssistantStreamDiscarded,
+        notification: JsonRpcNotification,
+    ) -> None:
+        encoded: list[tuple[ProtocolClient, str]] = []
+        for client in tuple(self._clients):
+            if CAPABILITY_STREAM_APPEND in self.client_capabilities(client):
+                outgoing = self._stream_notification_for_client(client, event, notification)
+            else:
+                outgoing = notification
+            encoded.append((client, outgoing.model_dump_json()))
+        await self._send_encoded(encoded)
+
+    def _stream_notification_for_client(
+        self,
+        client: ProtocolClient,
+        event: AssistantStreamStarted
+        | AssistantStreamUpdated
+        | AssistantStreamCommitted
+        | AssistantStreamDiscarded,
+        notification: JsonRpcNotification,
+    ) -> JsonRpcNotification:
+        params = dict(notification.params)
+        data = dict(params.get("data") or {})
+        streams = self._client_stream_revisions.setdefault(client, {})
+        stream_id = event.stream_id
+        if isinstance(event, AssistantStreamStarted):
+            streams[stream_id] = (str(params.get("item_id") or ""), 0, "", "text")
+            data.update({"stream_id": stream_id, "revision": 0, "op": "replace"})
+        elif isinstance(event, AssistantStreamUpdated):
+            item_id, previous_revision, previous_text, previous_phase = streams.get(
+                stream_id,
+                (str(params.get("item_id") or ""), 0, "", event.phase),
+            )
+            current_text = event.text
+            same_phase = previous_phase == event.phase
+            if event.snapshot_contract == "delta":
+                append = same_phase
+                delta_text = event.text
+                current_text = previous_text + event.text if append else event.text
+            else:
+                append = same_phase and event.text.startswith(previous_text)
+                delta_text = event.text[len(previous_text):] if append else event.text
+            revision = previous_revision + 1
+            streams[stream_id] = (
+                item_id or str(params.get("item_id") or ""),
+                revision,
+                current_text,
+                event.phase,
+            )
+            data = {
+                "op": "append" if append else "replace",
+                "base_revision": previous_revision,
+                "revision": revision,
+                "text": delta_text,
+                "phase": event.phase,
+                "stream_id": stream_id,
+                "workspace_revision": self._workspace_revision,
+            }
+        elif isinstance(event, AssistantStreamCommitted):
+            state = streams.get(stream_id)
+            if state is not None:
+                data.update({
+                    "revision": state[1],
+                    "text_length": len(state[2]),
+                    "stream_id": stream_id,
+                })
+        else:
+            data.update({"stream_id": stream_id})
+            streams.pop(stream_id, None)
+        params["data"] = data
+        return notification.model_copy(update={"params": params})
+
+    async def request_snapshot(
+        self,
+        client: ProtocolClient,
+        *,
+        thread_id: str = "",
+    ) -> None:
+        if thread_id and thread_id != self._active_thread_id:
+            return
+        await self._send_snapshot_to_client(
+            client,
+            turn_limit=self._client_snapshot_turn_limits.get(client),
+        )
+
+    async def _method_client_capabilities(self, params: dict[str, Any]) -> dict[str, object]:
+        client = _request_client.get()
+        capabilities = ClientCapabilities.model_validate(params)
+        accepted = self.set_client_capabilities(client, capabilities)
+        return GatewayCapabilities(
+            capabilities=sorted(accepted),
+            revision=self._workspace_revision,
+        ).model_dump()
 
     async def _apply_turn_terminal_event(self, event: UiEvent, thread_id: str) -> None:
         kind = getattr(event, "kind", "")
@@ -414,13 +588,17 @@ class GatewaySession(
         *,
         sync_persisted: bool = True,
         turn_limit: int | None = None,
+        force_snapshot: bool = False,
     ) -> None:
-        if not self._clients:
-            return
         clients = tuple(self._clients)
+        if not clients:
+            return
+        self._workspace_revision += 1
         request_client = _request_client.get()
         if turn_limit is not None and request_client is not None:
             self._remember_client_snapshot_limit(request_client, turn_limit)
+
+        patch_text: str | None = None
         encoded: list[tuple[ProtocolClient, str]] = []
         for client in clients:
             if request_client is None:
@@ -435,6 +613,21 @@ class GatewaySession(
                     if client is request_client
                     else self._client_snapshot_turn_limits.get(client)
                 )
+            capabilities = self.client_capabilities(client)
+            if (
+                not force_snapshot
+                and effective_limit is None
+                and CAPABILITY_WORKSPACE_PATCH in capabilities
+            ):
+                if patch_text is None:
+                    patch = await self._build_workspace_patch(sync_persisted=sync_persisted)
+                    patch_text = JsonRpcNotification(
+                        method="workspace.patch",
+                        params=patch.model_dump(),
+                    ).model_dump_json()
+                encoded.append((client, patch_text))
+                self._client_workspace_revisions[client] = self._workspace_revision
+                continue
             encoded.append(
                 (
                     client,
@@ -444,16 +637,55 @@ class GatewaySession(
                     ),
                 )
             )
-        results = await asyncio.gather(
-            *(client.send_text(text) for client, text in encoded),
-            return_exceptions=True,
-        )
-        for (client, _), result in zip(encoded, results, strict=False):
-            if isinstance(result, Exception):
-                self._clients.discard(client)
-                self._client_snapshot_turn_limits.pop(client, None)
+            self._client_workspace_revisions[client] = self._workspace_revision
+        await self._send_encoded(encoded)
 
-    # ── v2 JSON-RPC dispatch ──────────────────────────────────────────────
+    async def _send_snapshot_to_client(
+        self,
+        client: ProtocolClient,
+        *,
+        turn_limit: int | None = None,
+    ) -> None:
+        if client not in self._clients:
+            return
+        await client.send_text(
+            await self._encode_snapshot(
+                sync_persisted=False,
+                turn_limit=turn_limit,
+            ),
+            priority=True,
+        )
+        self._client_workspace_revisions[client] = self._workspace_revision
+
+    async def _build_workspace_patch(self, *, sync_persisted: bool) -> WorkspacePatch:
+        if sync_persisted:
+            await self.sync_persisted_threads()
+        metadata = self._workspace_metadata()
+        return WorkspacePatch(revision=self._workspace_revision, **metadata)
+
+    def _workspace_metadata(self) -> dict[str, object]:
+        runtime_state = self._runtime_state_provider() if self._runtime_state_provider else {}
+        for thread_id in self._run_manager.active_thread_ids():
+            if thread_id not in self._threads:
+                self._threads[thread_id] = ThreadInfo(thread_id=thread_id)
+            self._sync_thread_status(thread_id)
+        return {
+            "threads": list(self._threads.values()),
+            "active_thread_id": self._active_thread_id,
+            "provider": str(runtime_state.get("provider") or ""),
+            "model": str(runtime_state.get("model") or ""),
+            "workspace": str(runtime_state.get("workspace") or self._workspace),
+            "profile_configured": (
+                runtime_state["profile_configured"]
+                if isinstance(runtime_state.get("profile_configured"), bool)
+                else None
+            ),
+            "permission_mode": str(runtime_state.get("permission_mode") or ""),
+            "ai_approval_count": int(runtime_state.get("ai_approval_count") or 0),
+            "runtime": self._run_manager.runtime_snapshot(),
+            "workspace_write_lock": self._run_manager.workspace_write_lock_snapshot(),
+        }
+
 
     async def dispatch_request(
         self,
@@ -698,6 +930,7 @@ class GatewaySession(
                 self._threads[thread_id] = ThreadInfo(thread_id=thread_id)
             self._sync_thread_status(thread_id)
         return WorkspaceSnapshot(
+            revision=self._workspace_revision,
             threads=list(self._threads.values()),
             active_thread_id=self._active_thread_id,
             active_snapshot=active_snapshot,
@@ -777,6 +1010,20 @@ class GatewaySession(
         self._seq += 1
         return self._seq
 
+    async def _send_encoded(
+        self,
+        encoded: list[tuple[ProtocolClient, str]],
+    ) -> None:
+        if not encoded:
+            return
+        results = await asyncio.gather(
+            *(client.send_text(text) for client, text in encoded),
+            return_exceptions=True,
+        )
+        for (client, _), result in zip(encoded, results, strict=False):
+            if isinstance(result, Exception):
+                self.disconnect(client)
+
     async def _broadcast(self, text: str) -> None:
         results = await asyncio.gather(
             *(client.send_text(text) for client in tuple(self._clients)),
@@ -790,6 +1037,7 @@ class GatewaySession(
 
     def _register_default_methods(self) -> None:
         m = self.methods
+        m.register("client.capabilities", self._method_client_capabilities)
 
         # Agent profiles
         m.register("list-agent-profiles", self._method_agent_profiles_list)

@@ -22,12 +22,18 @@ import {
   snapshotTurnText,
 } from "./utils";
 import { resetFileChangeCards } from "./utils/render-file-changes";
-import type { TranscriptSnapshot, SlashCommand } from "./utils";
+import type {
+  IncrementalStreamState,
+  TranscriptSnapshot,
+  SlashCommand,
+} from "./utils";
 
 import {
   rpcCall,
+  rpcNotify,
   onNotification,
   _setSocket,
+  onSocketChange,
   _resetForTest as _resetRpcForTest,
   isRpcConnected,
 } from "./rpc";
@@ -551,7 +557,18 @@ let pendingActivationTarget: string | null = null;
 let pendingActivationSnapshot: Record<string, unknown> | null = null;
 const staleSnapshotThreadIds = new Set<string>();
 const lastSnapshotRevisionByThread = new Map<string, number>();
+let lastWorkspaceRevision = 0;
+const pendingSnapshotRequests = new Set<string>();
+const incrementalStreamStates = new Map<string, IncrementalStreamState>();
 const renderedItemIdsByThread = new Map<string, Set<string>>();
+
+onSocketChange(() => {
+  lastWorkspaceRevision = 0;
+  pendingSnapshotRequests.clear();
+  lastSnapshotRevisionByThread.clear();
+  incrementalStreamStates.clear();
+  renderedItemIdsByThread.clear();
+});
 interface ThreadTurnContext {
   currentTurnId: string | null;
   retiredTurnIds: Set<string>;
@@ -726,6 +743,204 @@ function snapshotRevision(params: Record<string, unknown>): number | null {
   return typeof revision === "number" && Number.isFinite(revision) ? revision : null;
 }
 
+function workspaceRevision(params: Record<string, unknown>): number | null {
+  const revision = params.revision;
+  return typeof revision === "number" && Number.isInteger(revision) && revision >= 0
+    ? revision
+    : null;
+}
+
+function requestSnapshotRecovery(threadId?: unknown): void {
+  const targetThreadId = typeof threadId === "string" && threadId
+    ? threadId
+    : uiState.sessionId;
+  if (!targetThreadId || pendingSnapshotRequests.has(targetThreadId)) return;
+  pendingSnapshotRequests.add(targetThreadId);
+  rpcNotify("snapshot.requested", { thread_id: targetThreadId });
+}
+
+function applyWorkspacePatch(params: Record<string, unknown>): void {
+  const revision = workspaceRevision(params);
+  const activeThreadId = typeof params.active_thread_id === "string"
+    ? params.active_thread_id
+    : uiState.sessionId;
+  const recoveryThreadId = uiState.sessionId || activeThreadId;
+  if (revision === null) {
+    requestSnapshotRecovery(recoveryThreadId);
+    return;
+  }
+  if (revision <= lastWorkspaceRevision) return;
+  if (revision !== lastWorkspaceRevision + 1) {
+    requestSnapshotRecovery(recoveryThreadId);
+    return;
+  }
+  if (
+    pendingSnapshotRequests.has(recoveryThreadId) ||
+    (activeThreadId && uiState.sessionId && activeThreadId !== uiState.sessionId)
+  ) {
+    requestSnapshotRecovery(recoveryThreadId);
+    return;
+  }
+
+  applyRuntimeState(params);
+  const threads = Array.isArray(params.threads)
+    ? params.threads as Array<Record<string, unknown>>
+    : null;
+  const currentThreadId = uiState.sessionId || activeThreadId;
+  const activeThread = threads?.find(
+    (thread) => thread.thread_id === currentThreadId,
+  );
+  applyThreadStatus(
+    activeThread?.status ??
+    (activeThreadId === currentThreadId ? params.status : undefined),
+  );
+  if (threads) {
+    renderSidebar(
+      threads as unknown as ThreadInfo[],
+      currentThreadId || null,
+      workspaceBasename(uiState.workspace),
+      uiState.workspace,
+    );
+  }
+  lastWorkspaceRevision = revision;
+  updateStatusBar();
+}
+
+function snapshotStreamIdentity(
+  params: Record<string, unknown>,
+  data: Record<string, unknown>,
+): {
+  key: string;
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  streamId: string;
+} | null {
+  const threadId = typeof params.thread_id === "string" ? params.thread_id : "";
+  const turnId = typeof params.turn_id === "string" ? params.turn_id : "";
+  const itemId = typeof params.item_id === "string" ? params.item_id : "";
+  const streamId = typeof data.stream_id === "string" ? data.stream_id : "";
+  if (!threadId || !turnId || !itemId || !streamId) return null;
+  return {
+    key: JSON.stringify([threadId, turnId, itemId, streamId]),
+    threadId,
+    turnId,
+    itemId,
+    streamId,
+  };
+}
+
+function isRevision(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function isIncrementalStreamData(data: Record<string, unknown>): boolean {
+  return "op" in data || "base_revision" in data || "revision" in data || "stream_id" in data;
+}
+
+function startIncrementalStream(
+  params: Record<string, unknown>,
+  data: Record<string, unknown>,
+  itemId: string,
+): boolean {
+  const identity = snapshotStreamIdentity(params, data);
+  const revision = data.revision;
+  const text = data.text;
+  const phase = typeof data.phase === "string" ? data.phase : "text";
+  if (
+    !identity ||
+    data.op !== "replace" ||
+    !isRevision(revision) ||
+    typeof text !== "string"
+  ) {
+    requestSnapshotRecovery(params.thread_id);
+    return false;
+  }
+  const state: IncrementalStreamState = {
+    ...identity,
+    revision,
+    phase,
+    text,
+  };
+  incrementalStreamStates.set(identity.key, state);
+  appendStreamText(itemId, text, phase);
+  return true;
+}
+
+function consumeIncrementalStreamDelta(
+  params: Record<string, unknown>,
+  data: Record<string, unknown>,
+  itemId: string,
+): boolean {
+  const identity = snapshotStreamIdentity(params, data);
+  const op = data.op;
+  const baseRevision = data.base_revision;
+  const revision = data.revision;
+  const text = data.text;
+  if (
+    !identity ||
+    (op !== "append" && op !== "replace") ||
+    !isRevision(baseRevision) ||
+    !isRevision(revision) ||
+    typeof text !== "string"
+  ) {
+    requestSnapshotRecovery(params.thread_id);
+    return false;
+  }
+  if (pendingSnapshotRequests.has(identity.threadId)) return false;
+
+  const state = incrementalStreamStates.get(identity.key);
+  if (!state) {
+    requestSnapshotRecovery(identity.threadId);
+    return false;
+  }
+  if (revision <= state.revision) return true;
+  if (
+    baseRevision !== state.revision ||
+    revision !== state.revision + 1
+  ) {
+    requestSnapshotRecovery(identity.threadId);
+    return false;
+  }
+  const phase = typeof data.phase === "string" ? data.phase : state.phase;
+  if (op === "append" && phase !== state.phase) {
+    requestSnapshotRecovery(identity.threadId);
+    return false;
+  }
+
+  const nextText = op === "append" ? state.text + text : text;
+  state.revision = revision;
+  state.phase = phase;
+  state.text = nextText;
+  appendStreamText(itemId, nextText, phase);
+  return true;
+}
+
+function clearIncrementalStreamStatesForThread(threadId: string): void {
+  if (!threadId) return;
+  for (const [key, state] of incrementalStreamStates) {
+    if (state.threadId === threadId) incrementalStreamStates.delete(key);
+  }
+}
+
+function clearIncrementalStreamItem(params: Record<string, unknown>): void {
+  const threadId = typeof params.thread_id === "string" ? params.thread_id : "";
+  const turnId = typeof params.turn_id === "string" ? params.turn_id : "";
+  const itemId = typeof params.item_id === "string" ? params.item_id : "";
+  const data = (params.data as Record<string, unknown>) || {};
+  const streamId = typeof data.stream_id === "string" ? data.stream_id : "";
+  for (const [key, state] of incrementalStreamStates) {
+    if (
+      state.threadId === threadId &&
+      state.turnId === turnId &&
+      state.itemId === itemId &&
+      (!streamId || state.streamId === streamId)
+    ) {
+      incrementalStreamStates.delete(key);
+    }
+  }
+}
+
 function snapshotThreadMatchesActive(params: Record<string, unknown>, activeThreadId: string): boolean {
   if (!activeThreadId) {
     if (uiState.sessionId || pendingActivationTarget !== null) return false;
@@ -816,7 +1031,11 @@ function isCurrentThreadActivation(generation: number): boolean {
 
 function activateThread(threadId: string): void {
   if (threadId !== uiState.sessionId) {
-    if (uiState.sessionId) retireThreadTurn(uiState.sessionId);
+    if (uiState.sessionId) {
+      retireThreadTurn(uiState.sessionId);
+      clearIncrementalStreamStatesForThread(uiState.sessionId);
+      pendingSnapshotRequests.delete(uiState.sessionId);
+    }
     threadContextGeneration += 1;
     clearCommittedStreams();
     clearActiveStreams();
@@ -1059,6 +1278,7 @@ function requestCommandCatalogIfNeeded(): void {
 function registerNotificationHandlers(): void {
   for (const method of [
     "workspace.snapshot",
+    "workspace.patch",
     "ui.request",
     "startup.shown",
     "turn.started",
@@ -1095,6 +1315,22 @@ function renderWorkspaceSnapshot(params: Record<string, unknown>): void {
     return;
   }
   if (activeThreadId && staleSnapshotThreadIds.has(activeThreadId)) return;
+
+  const revision = workspaceRevision(params);
+  const recoveryThreadId = activeThreadId || uiState.sessionId;
+  const recovering = Boolean(
+    recoveryThreadId && pendingSnapshotRequests.has(recoveryThreadId),
+  );
+  if (recovering) {
+    clearIncrementalStreamStatesForThread(recoveryThreadId);
+    renderedItemIdsByThread.delete(recoveryThreadId);
+  }
+  if (revision !== null && revision < lastWorkspaceRevision) return;
+  if (revision !== null) {
+    lastWorkspaceRevision = revision;
+    pendingSnapshotRequests.delete(activeThreadId);
+    pendingSnapshotRequests.delete(uiState.sessionId);
+  }
 
   const snapshot = params.active_snapshot || { nodes: [] };
   if (activeThreadId) rememberSnapshotRevision(activeThreadId, params);
@@ -1136,6 +1372,10 @@ export function handleNotification(
 ): void {
   if (method === "workspace.snapshot") {
     renderWorkspaceSnapshot(params);
+    return;
+  }
+  if (method === "workspace.patch") {
+    applyWorkspacePatch(params);
     return;
   }
   if (method === "ui.request") {
@@ -1225,15 +1465,24 @@ export function handleItem(
 
   if (kind === "assistant_stream") {
     if (method === "item.started") {
-      appendStreamText(itemId, "", (data.phase as string) || "text");
+      if (isIncrementalStreamData(data)) {
+        startIncrementalStream(params, data, itemId);
+      } else {
+        appendStreamText(itemId, "", (data.phase as string) || "text");
+      }
     } else if (method === "item.delta") {
-      appendStreamText(
-        itemId,
-        (data.text as string) || "",
-        (data.phase as string) || "text",
-      );
+      if (isIncrementalStreamData(data)) {
+        consumeIncrementalStreamDelta(params, data, itemId);
+      } else {
+        appendStreamText(
+          itemId,
+          (data.text as string) || "",
+          (data.phase as string) || "text",
+        );
+      }
     } else if (method === "item.completed") {
       const result = commitStream(itemId);
+      clearIncrementalStreamItem(params);
       if (result && result.thinking) {
         const elapsed = typeof data.elapsed === "number" ? data.elapsed : null;
         appendThoughtItem(
@@ -1472,6 +1721,9 @@ export function _resetWorkbenchForTest(): void {
   pendingActivationSnapshot = null;
   staleSnapshotThreadIds.clear();
   lastSnapshotRevisionByThread.clear();
+  lastWorkspaceRevision = 0;
+  pendingSnapshotRequests.clear();
+  incrementalStreamStates.clear();
   renderedItemIdsByThread.clear();
   threadTurnContexts.clear();
   transcriptWindows.clear();

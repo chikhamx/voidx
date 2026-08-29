@@ -15,6 +15,8 @@ from voidx.presentation.output.dock import ANSI_LINE_PREFIX, BottomInputDock, se
 from voidx.presentation.output.display_policy import ToolDisplayMode
 from voidx.presentation.output.events import (
     AssistantStreamCommitted,
+    AssistantStreamDiscarded,
+    AssistantStreamStarted,
     AssistantStreamUpdated,
     DockEventConsumer,
     ErrorAppended,
@@ -395,3 +397,213 @@ async def test_subagent_manage_status_uses_action_display(isolated_dock):
     finally:
         await bus.stop()
 
+
+
+
+def test_prepare_stream_commit_blocks_scrollback_until_canonical_apply(isolated_dock):
+    isolated_dock.begin_capture()
+    isolated_dock.set_stream("hello **world**")
+
+    work_item = isolated_dock.prepare_stream_commit()
+
+    assert work_item is not None
+    assert work_item.raw_text == "hello **world**"
+    assert work_item.phase == "text"
+    lines = isolated_dock.tree.render(100)
+    assert isolated_dock.safe_flush_line_count(100, 0) < len(lines)
+
+    from voidx.presentation.output.dock.stream import build_canonical_stream_projection
+
+    projection = build_canonical_stream_projection(work_item)
+    assert isolated_dock.apply_stream_commit(work_item, projection)
+    assert isolated_dock.safe_flush_line_count(100, 0) == len(
+        isolated_dock.tree.render(100)
+    )
+    rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+    assert "hello world" in rendered
+    node = isolated_dock.tree.get(work_item.node_id)
+    assert node is not None
+    assert not node.payload.get("render_pending")
+
+
+def test_stream_commit_result_is_ignored_after_reset(isolated_dock):
+    isolated_dock.begin_capture()
+    isolated_dock.set_stream("old answer")
+    work_item = isolated_dock.prepare_stream_commit()
+
+    assert work_item is not None
+    from voidx.presentation.output.dock.stream import build_canonical_stream_projection
+
+    projection = build_canonical_stream_projection(work_item)
+    isolated_dock.reset()
+
+    assert isolated_dock.apply_stream_commit(work_item, projection) is False
+    assert isolated_dock.tree.root.children == []
+
+
+@pytest.mark.asyncio
+async def test_dock_event_consumer_schedules_stream_commit_without_waiting(
+    isolated_dock, monkeypatch
+):
+    import threading
+
+    from voidx.presentation.output.events import consumers as consumers_module
+
+    isolated_dock.begin_capture()
+    consumer = consumers_module.DockEventConsumer(isolated_dock)
+    consumer.handle(AssistantStreamUpdated(text="hello **world**"))
+    started = threading.Event()
+    release = threading.Event()
+    original_builder = consumers_module.build_canonical_stream_projection
+
+    def blocked_builder(work_item):
+        started.set()
+        assert release.wait(1)
+        return original_builder(work_item)
+
+    monkeypatch.setattr(
+        consumers_module,
+        "build_canonical_stream_projection",
+        blocked_builder,
+    )
+
+    assert consumer.handle(AssistantStreamCommitted()) is True
+    assert await asyncio.to_thread(started.wait, 1)
+    assert consumer.pending_stream_commit_count == 1
+
+    release.set()
+    await consumer.drain_stream_commits()
+
+    rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+    assert "hello world" in rendered
+    assert consumer.pending_stream_commit_count == 0
+
+
+@pytest.mark.asyncio
+async def test_stream_commit_worker_failure_installs_escaped_fallback(
+    isolated_dock, monkeypatch
+):
+    from voidx.presentation.output.events import consumers as consumers_module
+
+    isolated_dock.begin_capture()
+    consumer = consumers_module.DockEventConsumer(isolated_dock)
+    consumer.handle(AssistantStreamUpdated(text="hello **world**"))
+
+    def fail_builder(_work_item):
+        raise ValueError("markdown worker failed")
+
+    monkeypatch.setattr(
+        consumers_module,
+        "build_canonical_stream_projection",
+        fail_builder,
+    )
+    assert consumer.handle(AssistantStreamCommitted()) is True
+    await consumer.drain_stream_commits()
+
+    rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+    assert "hello **world**" in rendered
+    assert all(
+        not node.payload.get("render_pending")
+        for node in isolated_dock.tree.root.children
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_commit_worker_result_cannot_repopulate_reset_tree(
+    isolated_dock, monkeypatch
+):
+    import threading
+
+    from voidx.presentation.output.events import consumers as consumers_module
+
+    isolated_dock.begin_capture()
+    consumer = consumers_module.DockEventConsumer(isolated_dock)
+    consumer.handle(AssistantStreamUpdated(text="stale answer"))
+    started = threading.Event()
+    release = threading.Event()
+    original_builder = consumers_module.build_canonical_stream_projection
+
+    def blocked_builder(work_item):
+        started.set()
+        assert release.wait(1)
+        return original_builder(work_item)
+
+    monkeypatch.setattr(
+        consumers_module,
+        "build_canonical_stream_projection",
+        blocked_builder,
+    )
+    assert consumer.handle(AssistantStreamCommitted()) is True
+    assert await asyncio.to_thread(started.wait, 1)
+
+    isolated_dock.reset()
+    release.set()
+    await consumer.drain_stream_commits()
+
+    assert isolated_dock.tree.root.children == []
+    assert consumer.pending_stream_commit_count == 0
+
+
+
+def test_streaming_renderer_emits_cumulative_snapshots_before_commit(
+    isolated_dock,
+    monkeypatch,
+):
+    isolated_dock.begin_capture()
+    emitted = []
+
+    def capture(event):
+        emitted.append(event)
+        return True
+
+    monkeypatch.setattr(ui_events, "emitnowait", capture)
+    monkeypatch.setattr(StreamingRenderer, "FLUSH_INTERVAL", 0.0)
+    renderer = StreamingRenderer(Console(), debug=False)
+
+    renderer.start()
+    renderer.feed_thinking("inspect ")
+    renderer.feed_thinking("auth")
+    renderer.feed_text("ans")
+    renderer.feed_text("wer")
+    result = renderer.done()
+
+    updates = [event for event in emitted if isinstance(event, AssistantStreamUpdated)]
+
+    assert [(event.phase, event.text) for event in updates] == [
+        ("thinking", "inspect "),
+        ("thinking", "inspect auth"),
+        ("text", "● ans"),
+        ("text", "● answer"),
+        ("text", "● answer"),
+    ]
+    assert all(event.snapshot_contract == "cumulative" for event in updates)
+    assert [type(event) for event in emitted] == [
+        AssistantStreamStarted,
+        AssistantStreamUpdated,
+        AssistantStreamUpdated,
+        AssistantStreamUpdated,
+        AssistantStreamUpdated,
+        AssistantStreamUpdated,
+        AssistantStreamCommitted,
+    ]
+    assert result == "answer"
+
+
+def test_streaming_renderer_discard_emits_no_commit(isolated_dock, monkeypatch):
+    isolated_dock.begin_capture()
+    emitted = []
+
+    def capture(event):
+        emitted.append(event)
+        return True
+
+    monkeypatch.setattr(ui_events, "emitnowait", capture)
+    renderer = StreamingRenderer(Console(), debug=False)
+
+    renderer.start()
+    renderer.feed_text("discarded answer")
+    renderer.discard()
+    assert renderer.done() == "discarded answer"
+
+    assert any(isinstance(event, AssistantStreamDiscarded) for event in emitted)
+    assert not any(isinstance(event, AssistantStreamCommitted) for event in emitted)

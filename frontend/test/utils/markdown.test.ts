@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { describe, it, expect } from "vitest";
-import { renderMarkdown, highlightCode, stripPastedTags, renderUserMessage } from "../../src/utils/markdown";
+import { renderMarkdown, highlightCode, stripPastedTags, renderUserMessage, createStreamingMarkdownProjection } from "../../src/utils/markdown";
 
 describe("renderMarkdown", () => {
   it("renders bold text", () => {
@@ -143,5 +143,47 @@ describe("renderUserMessage", () => {
     const el = renderUserMessage("just plain text");
     expect(el.querySelector("blockquote")).toBeNull();
     expect(el.textContent).toContain("just plain text");
+  });
+});
+
+
+describe("createStreamingMarkdownProjection", () => {
+  it("keeps stable append-only blocks and preserves their DOM identity", () => {
+    const target = document.createElement("div");
+    const projection = createStreamingMarkdownProjection(target);
+
+    projection.update("# First\n\n");
+    const firstHeading = target.querySelector("h1");
+    expect(firstHeading).not.toBeNull();
+
+    projection.update("# First\n\n# Second\n\n");
+    expect(target.textContent).toContain("First");
+    expect(target.textContent).toContain("Second");
+    expect(target.querySelector("h1")).toBe(firstHeading);
+  });
+
+  it("falls back to a fresh projection for non-prefix replacement", () => {
+    const target = document.createElement("div");
+    const projection = createStreamingMarkdownProjection(target);
+
+    projection.update("old text");
+    projection.update("new text");
+
+    expect(target.textContent).toContain("new text");
+    expect(target.textContent).not.toContain("old text");
+  });
+
+  it("keeps DOMPurify and highlight behavior for preview and canonical commit", () => {
+    const target = document.createElement("div");
+    const projection = createStreamingMarkdownProjection(target);
+    const source = "<img src=x onerror=alert(1)>\n\n```python\nprint('hi')\n```";
+
+    projection.update(source);
+    expect(target.querySelector("img[onerror]")).toBeNull();
+
+    projection.commit();
+    const canonical = renderMarkdown(source);
+    expect(target.innerHTML).toBe(canonical.innerHTML);
+    expect(target.querySelector("pre code").innerHTML).toContain("hljs");
   });
 });

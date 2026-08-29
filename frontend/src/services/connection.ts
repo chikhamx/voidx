@@ -1,4 +1,5 @@
 import { createWorkerSocket, rpcCall, _setSocket } from "../rpc";
+import { DESKTOP_GATEWAY_CAPABILITIES } from "../utils/types";
 import {
   uiState,
   setConnectionStatus,
@@ -116,10 +117,29 @@ export async function resolveWsUrl(): Promise<string | null> {
   return url;
 }
 
+export function withDesktopGatewayCapabilities(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const existing = parsed.searchParams
+      .getAll("cap")
+      .flatMap((value) => value.split(","))
+      .map((value) => value.trim())
+      .filter(Boolean);
+    parsed.searchParams.delete("cap");
+    parsed.searchParams.set(
+      "cap",
+      [...new Set([...existing, ...DESKTOP_GATEWAY_CAPABILITIES])].join(","),
+    );
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 export function connect(url: string): void {
   const generation = connectionGeneration;
   setConnectionStatus("connecting");
-  const sock = createWorkerSocket(url);
+  const sock = createWorkerSocket(withDesktopGatewayCapabilities(url));
   socket = sock;
   let reconnecting = false;
   const scheduleReconnect = () => {

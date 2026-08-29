@@ -175,6 +175,7 @@ class AssistantStreamUpdated(UiEventBase):
     text: str
     stream_id: str = "default"
     phase: Literal["thinking", "text"] = "text"
+    snapshot_contract: Literal["cumulative", "delta"] = "cumulative"
 
 
 class AssistantStreamCommitted(UiEventBase):

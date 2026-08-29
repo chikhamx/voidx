@@ -356,6 +356,25 @@
       "title": "AgentProfileValidationDto",
       "type": "object"
     },
+    "ClientCapabilities": {
+      "description": "Capabilities announced by a UI client after the socket opens.",
+      "properties": {
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Capabilities",
+          "type": "array"
+        },
+        "protocol": {
+          "default": "voidx.ui.v2",
+          "title": "Protocol",
+          "type": "string"
+        }
+      },
+      "title": "ClientCapabilities",
+      "type": "object"
+    },
     "ErrorPayload": {
       "properties": {
         "code": {
@@ -385,6 +404,30 @@
         "message"
       ],
       "title": "ErrorPayload",
+      "type": "object"
+    },
+    "GatewayCapabilities": {
+      "description": "Capabilities supported by this Gateway instance.",
+      "properties": {
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Capabilities",
+          "type": "array"
+        },
+        "protocol": {
+          "default": "voidx.ui.v2",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "revision": {
+          "default": 0,
+          "title": "Revision",
+          "type": "integer"
+        }
+      },
+      "title": "GatewayCapabilities",
       "type": "object"
     },
     "Item": {
@@ -617,6 +660,60 @@
         "name"
       ],
       "title": "PermissionToolDetail",
+      "type": "object"
+    },
+    "StreamAppendDelta": {
+      "description": "A contiguous append to one assistant stream.",
+      "properties": {
+        "base_revision": {
+          "title": "Base Revision",
+          "type": "integer"
+        },
+        "item_id": {
+          "title": "Item Id",
+          "type": "string"
+        },
+        "phase": {
+          "default": "text",
+          "title": "Phase",
+          "type": "string"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "integer"
+        },
+        "stream_id": {
+          "title": "Stream Id",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "thread_id": {
+          "title": "Thread Id",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "workspace_revision": {
+          "default": 0,
+          "title": "Workspace Revision",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "item_id",
+        "turn_id",
+        "thread_id",
+        "stream_id",
+        "base_revision",
+        "revision",
+        "text"
+      ],
+      "title": "StreamAppendDelta",
       "type": "object"
     },
     "ThreadInfo": {
@@ -1215,6 +1312,79 @@
       "title": "UiTextRequest",
       "type": "object"
     },
+    "WorkspacePatch": {
+      "description": "Metadata-only workspace update.\n\nIt deliberately has no transcript field: a patch cannot implicitly delete\nor replace canonical transcript items. A revision gap requires a snapshot.",
+      "properties": {
+        "active_thread_id": {
+          "default": "",
+          "title": "Active Thread Id",
+          "type": "string"
+        },
+        "ai_approval_count": {
+          "default": 0,
+          "title": "Ai Approval Count",
+          "type": "integer"
+        },
+        "model": {
+          "default": "",
+          "title": "Model",
+          "type": "string"
+        },
+        "permission_mode": {
+          "default": "",
+          "title": "Permission Mode",
+          "type": "string"
+        },
+        "profile_configured": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Profile Configured"
+        },
+        "provider": {
+          "default": "",
+          "title": "Provider",
+          "type": "string"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "integer"
+        },
+        "runtime": {
+          "additionalProperties": true,
+          "title": "Runtime",
+          "type": "object"
+        },
+        "threads": {
+          "items": {
+            "$ref": "#/$defs/ThreadInfo"
+          },
+          "title": "Threads",
+          "type": "array"
+        },
+        "workspace": {
+          "default": "",
+          "title": "Workspace",
+          "type": "string"
+        },
+        "workspace_write_lock": {
+          "additionalProperties": true,
+          "title": "Workspace Write Lock",
+          "type": "object"
+        }
+      },
+      "required": [
+        "revision"
+      ],
+      "title": "WorkspacePatch",
+      "type": "object"
+    },
     "WorkspaceSnapshot": {
       "description": "Full workspace state pushed on connect / refresh.\n\nOnly the active thread carries a complete transcript snapshot; other\nthreads are listed as ThreadInfo metadata only.",
       "properties": {
@@ -1265,6 +1435,11 @@
           "default": "",
           "title": "Provider",
           "type": "string"
+        },
+        "revision": {
+          "default": 0,
+          "title": "Revision",
+          "type": "integer"
         },
         "runtime": {
           "additionalProperties": true,
@@ -1344,6 +1519,18 @@
     },
     {
       "$ref": "#/$defs/ErrorPayload"
+    },
+    {
+      "$ref": "#/$defs/ClientCapabilities"
+    },
+    {
+      "$ref": "#/$defs/GatewayCapabilities"
+    },
+    {
+      "$ref": "#/$defs/WorkspacePatch"
+    },
+    {
+      "$ref": "#/$defs/StreamAppendDelta"
     },
     {
       "$ref": "#/$defs/WorkspaceSnapshot"

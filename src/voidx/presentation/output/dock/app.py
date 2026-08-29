@@ -65,6 +65,9 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._stream_node: OutputNode | None = None
         self._stream_text = ""
         self._stream_thinking_text = ""
+        self._stream_revision = 0
+        self._stream_generation = 0
+        self._pending_stream_commits: dict[str, Any] = {}
         self._last_committed_stream_text = ""
         self._last_committed_stream_parent_id: str | None = None
         self._last_committed_stream_node_id: str | None = None
@@ -164,10 +167,16 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._needs_force_flush = False
         return requested
 
+    def request_force_flush(self) -> None:
+        self._needs_force_flush = True
+
     def consume_clear_screen_request(self) -> bool:
         requested = self._needs_clear_screen
         self._needs_clear_screen = False
         return requested
+
+    def request_clear_screen(self) -> None:
+        self._needs_clear_screen = True
 
     def activate(self) -> None:
         if self._live:
@@ -201,6 +210,8 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._stream_node = None
         self._stream_text = ""
         self._stream_thinking_text = ""
+        self._stream_generation += 1
+        self._pending_stream_commits.clear()
         self._last_committed_stream_text = ""
         self._last_committed_stream_parent_id = None
         self._last_committed_stream_node_id = None
@@ -255,6 +266,9 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._turn_in_progress = False
         self._current_agent = None
         self._current_tool = None
+        self._stream_generation += 1
+        self._stream_revision = 0
+        self._pending_stream_commits.clear()
         self._stream_node = None
         self._stream_text = ""
         self._stream_thinking_text = ""
@@ -330,6 +344,10 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         echoes = self._guidance_echoes
         self._guidance_echoes = []
         return echoes
+
+    def restore_guidance_echoes(self, echoes: list[str]) -> None:
+        if echoes:
+            self._guidance_echoes[:0] = echoes
 
     def append_guidance_turn(self, text: str) -> OutputNode | None:
         clean = _clean(text)
@@ -492,6 +510,8 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
     def _is_node_chain_settled(self, node_id: str) -> bool:
         node = self._tree.get(node_id)
         while node is not None and node is not self._tree.root:
+            if node.payload.get("render_pending"):
+                return False
             if node.id not in self._settled_node_ids and not is_transparent_container(node):
                 return False
             node = node.parent
@@ -548,8 +568,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         node = self._stream_node
         if not self.has_active_thinking_stream() or node is None:
             return set()
-        _lines, line_map = self._tree.render_with_line_map(width)
-        return {index for index, node_id in line_map.items() if node_id == node.id}
+        return self._tree.render_node_line_ids(node.id, width)
 
     def active_thinking_stream_lines(self, width: int) -> list[str]:
         node = self._stream_node

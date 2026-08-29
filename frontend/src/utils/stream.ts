@@ -1,4 +1,4 @@
-import { renderMarkdown } from "./markdown";
+import { createStreamingMarkdownProjection, type StreamingMarkdownProjection } from "./markdown";
 import type { StreamState } from "./types";
 
 const DEBOUNCE_MS = 100;
@@ -53,6 +53,7 @@ export function getOrCreateStream(streamId: string, phase: string): StreamState 
     thinkingBody,
     textEl,
     debounceTimer: null,
+    markdownProjection: createStreamingMarkdownProjection(textEl),
   };
   streams.set(streamId, stream);
   return stream;
@@ -143,22 +144,42 @@ export function discardStream(streamId: string): void {
   streams.delete(streamId);
 }
 
+const pendingRenders = new Map<StreamState, string | undefined>();
+let renderFrame: number | ReturnType<typeof setTimeout> | null = null;
+
 function scheduleRender(stream: StreamState, target?: string): void {
-  if (stream.debounceTimer) {
-    clearTimeout(stream.debounceTimer);
-  }
-  stream.debounceTimer = setTimeout(() => {
-    stream.debounceTimer = null;
-    if (target === "thinking") {
-      renderStreamThinking(stream);
-    } else {
-      renderStreamText(stream);
+  pendingRenders.set(stream, target);
+  if (renderFrame !== null) return;
+  const flush = () => {
+    renderFrame = null;
+    const pending = [...pendingRenders.entries()];
+    pendingRenders.clear();
+    for (const [queued, queuedTarget] of pending) {
+      if (!queued.committed) {
+        if (queuedTarget === "thinking") renderStreamThinking(queued);
+        else renderStreamText(queued);
+      }
     }
-  }, DEBOUNCE_MS);
+  };
+  if (typeof requestAnimationFrame === "function") {
+    renderFrame = requestAnimationFrame(flush);
+  } else {
+    renderFrame = setTimeout(flush, 16);
+  }
 }
 
 function renderStreamText(stream: StreamState): void {
-  stream.textEl.replaceChildren(renderMarkdown(stream.text));
+  stream.textEl.querySelector(".stream-cursor")?.remove();
+  if (stream.markdownProjection) {
+    if (stream.committed) {
+      stream.markdownProjection.update(stream.text);
+      stream.markdownProjection.commit();
+    } else {
+      stream.markdownProjection.update(stream.text);
+    }
+  } else {
+    stream.textEl.replaceChildren(renderMarkdown(stream.text));
+  }
   if (!stream.committed && stream.phase === "text") {
     const cursor = document.createElement("span");
     cursor.className = "stream-cursor";

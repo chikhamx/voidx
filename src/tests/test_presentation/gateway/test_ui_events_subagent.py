@@ -422,6 +422,40 @@ async def test_child_agent_stream_updates_status_without_rendering_text(isolated
         await bus.stop()
 
 
+
+
+@pytest.mark.asyncio
+async def test_subagent_cancelled_finish_updates_agent_node_status(isolated_dock):
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(TurnStarted(text="demo"))
+        await bus.emit(SubagentStarted(
+            agent_id=0,
+            subagent_id="agent_0",
+            name="reviewer",
+            description="cancelled task",
+        ))
+        await bus.emit(SubagentFinished(
+            agent_id=0,
+            subagent_id="agent_0",
+            ok=False,
+            elapsed=1.2,
+            finish_reason="cancelled",
+        ))
+        await bus.drain()
+
+        rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(100))
+        expected = _expected_subagent_title("agent_0", "cancelled task")
+        assert f"{expected} canceled (1.2s)" in rendered
+        assert f"{expected} failed" not in rendered
+        agent_node = next(
+            node for node in isolated_dock.tree.root.children
+            if node.node_type == "assistant"
+        ).children[0]
+        assert agent_node.status == "done"
+    finally:
+        await bus.stop()
 @pytest.mark.asyncio
 async def test_subagent_finish_shows_stats_in_header_and_error_in_status(isolated_dock):
     bus = UiEventBus()

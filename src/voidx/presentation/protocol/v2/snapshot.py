@@ -37,6 +37,7 @@ class WorkspaceSnapshot(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
+    revision: int = 0
     threads: list[ThreadInfo] = Field(default_factory=list)
     active_thread_id: str = ""
     active_snapshot: ThreadSnapshot | None = None

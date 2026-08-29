@@ -13,6 +13,7 @@ from voidx.observability import log_internal_error
 from voidx.observability.tool_log import log_tool_event
 
 from voidx.presentation.gateway.session import GatewaySession
+from voidx.presentation.protocol.v2.incremental import ClientCapabilities
 from voidx.presentation.protocol.v2.envelope import (
     JsonRpcError,
     JsonRpcNotification,
@@ -201,13 +202,26 @@ class GatewayServer:
             self._bound_port = None
             await self._session.close_provisional_lifecycle()
 
+    @staticmethod
+    def _capabilities_from_websocket(websocket: ServerConnection) -> ClientCapabilities:
+        request = getattr(websocket, "request", None)
+        path = getattr(request, "path", "")
+        query = parse_qs(urlparse(path).query)
+        values: list[str] = []
+        for raw in query.get("cap", []):
+            values.extend(item.strip() for item in raw.split(","))
+        return ClientCapabilities(capabilities=[item for item in values if item])
+
     async def _handle(self, websocket: ServerConnection) -> None:
         if not self._authorized(websocket):
             await websocket.close(code=1008, reason="unauthorized")
             return
         client = _WebSocketClient(websocket)
         await client.start()
-        await self._session.connect(client)
+        await self._session.connect(
+            client,
+            capabilities=self._capabilities_from_websocket(websocket),
+        )
         try:
             async for message in websocket:
                 await self._handle_message(client, str(message))
@@ -235,6 +249,18 @@ class GatewayServer:
         if isinstance(msg, JsonRpcRequest):
             result = await self._session.dispatch_request(msg, client=client)
             await client.send_text(result.model_dump_json(), priority=True)
+        elif isinstance(msg, JsonRpcNotification):
+            if msg.method == "snapshot.requested":
+                thread_id = msg.params.get("thread_id")
+                await self._session.request_snapshot(
+                    client,
+                    thread_id=thread_id if isinstance(thread_id, str) else "",
+                )
+            elif msg.method == "client.capabilities":
+                self._session.set_client_capabilities(
+                    client,
+                    ClientCapabilities.model_validate(msg.params),
+                )
         elif isinstance(msg, JsonRpcResult):
             result = msg.result if isinstance(msg.result, dict) else {}
             response = UiResponse(
