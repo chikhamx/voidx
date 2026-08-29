@@ -26,6 +26,7 @@ from voidx.presentation.output.dock import dock
 from voidx.presentation.output.dock.formatting import text_from_line
 from voidx.presentation.output.tree import OutputTree
 from voidx.presentation.output.types import SubmitHandler, ThreadExecutionContext, coding_turn_context_for_queue
+from .async_utils import await_cancellation_safe
 from .helpers import (
     _ENTER_TERMINAL_SEQUENCE,
     _EXIT_TERMINAL_SEQUENCE,
@@ -53,6 +54,7 @@ from .state import (
     TextPromptState,
 )
 from .terminal_mixin import _TerminalLifecycleMixin
+from .terminal_writer import BatchToken, TerminalWriter
 from .text_prompt_mixin import _TextPromptMixin
 
 
@@ -132,6 +134,7 @@ class PureTui(
         self.status = status
         self.commands = commands
         self._console = Console()
+        self._terminal_writer = TerminalWriter()
         self._input_state = InputState()
         self._submit_state = SubmitState()
         self._choice_state = ChoiceState()
@@ -146,60 +149,210 @@ class PureTui(
     # ── public API ───────────────────────────────────────────────────────
 
     async def run(self, on_submit: SubmitHandler) -> None:
-        dock.set_refresh_callback(self._on_dock_refresh)
-        dock.set_width_provider(lambda: self._console.width or 80)
+        terminal_setup_attempted = False
+        writer_started = False
+        startup_completed = False
+        consumer: asyncio.Task[None] | None = None
+        restore_external_logging = None
+        writer_failed_event = asyncio.Event()
+        writer_error: Exception | None = None
+        primary_error: BaseException | None = None
+        cleanup_error: BaseException | None = None
+        cleanup_cancellation: asyncio.CancelledError | None = None
+        self._terminal_writer_failed = False
 
-        self._tty = self._stdin_fd is not None and os.isatty(self._stdin_fd)
-        if self._tty:
-            self._setup_terminal()
-            sys.stdout.write("\x1b[2J\x1b[H")
-            sys.stdout.write(_ENTER_TERMINAL_SEQUENCE)
-            sys.stdout.flush()
+        def record_terminal_cleanup_error(
+            exc: BaseException,
+            *,
+            context: str,
+        ) -> None:
+            nonlocal cleanup_error
+            log_internal_error(exc, context=context)
+            if cleanup_error is None:
+                cleanup_error = exc
 
-        consumer = asyncio.create_task(self._consume(on_submit))
-        restore_external_logging = (
-            install_external_log_bridge("langchain_openai")
-            if self._tty
-            else None
-        )
+        def handle_writer_error(exc: Exception) -> None:
+            nonlocal writer_error, cleanup_error
+            if writer_error is not None:
+                return
+            writer_error = exc
+            if cleanup_error is None:
+                cleanup_error = exc
+            self._terminal_writer_failed = True
+            self._running = False
+            writer_failed_event.set()
+
+        async def read_tty_input() -> bytes:
+            input_task = asyncio.create_task(self._read_input_raw())
+            failure_task = asyncio.create_task(writer_failed_event.wait())
+            try:
+                await asyncio.wait(
+                    {input_task, failure_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if writer_failed_event.is_set():
+                    input_task.cancel()
+                    await asyncio.gather(input_task, return_exceptions=True)
+                    failure_task.cancel()
+                    await asyncio.gather(failure_task, return_exceptions=True)
+                    if writer_error is None:
+                        raise RuntimeError("terminal writer failed")
+                    raise writer_error
+
+                failure_task.cancel()
+                await asyncio.gather(failure_task, return_exceptions=True)
+                return input_task.result()
+            finally:
+                for task in (input_task, failure_task):
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(
+                    input_task,
+                    failure_task,
+                    return_exceptions=True,
+                )
 
         try:
+            dock.set_refresh_callback(self._on_dock_refresh)
+            dock.set_width_provider(lambda: self._console.width or 80)
+            self._tty = self._stdin_fd is not None and os.isatty(self._stdin_fd)
+            if self._tty:
+                terminal_setup_attempted = True
+                self._setup_terminal()
+                self._terminal_writer.start(
+                    loop=asyncio.get_running_loop(),
+                    on_frame_result=self._handle_terminal_frame_result,
+                    on_error=handle_writer_error,
+                )
+                writer_started = True
+                startup = self._terminal_writer.submit_barrier(
+                    kind="startup",
+                    ansi="\x1b[2J\x1b[H" + _ENTER_TERMINAL_SEQUENCE,
+                )
+                await self._terminal_writer.wait(startup)
+                startup_completed = True
+
+            consumer = asyncio.create_task(self._consume(on_submit))
+            restore_external_logging = (
+                install_external_log_bridge("langchain_openai")
+                if self._tty
+                else None
+            )
             self._running = True
-            # Flush startup banner directly to scrollback so it never
-            # appears inside the TUI frame (where it would be overwritten
-            # on every render and lost on exit).
             self._flush_committed(force=True)
             self._render_frame()
             while self._running:
-                if self._tty:
-                    data = await self._read_input_raw()
-                else:
-                    data = await self._read_input_line()
+                data = (
+                    await read_tty_input()
+                    if self._tty
+                    else await self._read_input_line()
+                )
                 if self._process_input(data):
                     self._render_after_input()
+        except BaseException as exc:
+            primary_error = exc
         finally:
-            self._running = False
-            self._close_stdin_reader()
-            if self._tty:
+            async def cleanup() -> None:
+                self._running = False
                 try:
-                    _dump_transcript_log(Path(self.status.workspace), dock.tree)
-                except Exception as exc:
-                    log_internal_error(exc, context="transcript_log_write")
-            self._restore_terminal()
-            if self._tty:
-                sys.stdout.write(self._move_to_frame_end_sequence())
-                sys.stdout.write(_EXIT_TERMINAL_SEQUENCE)
-                sys.stdout.flush()
-            dock.set_refresh_callback(None)
-            dock.set_width_provider(None)
-            consumer.cancel()
-            try:
-                await consumer
-            except asyncio.CancelledError:
-                pass
-            await self._stop_busy_activity_timer()
-            if restore_external_logging is not None:
-                restore_external_logging()
+                    self._close_stdin_reader()
+                except BaseException as exc:
+                    log_internal_error(exc, context="terminal_stdin_close")
+
+                if consumer is not None:
+                    consumer.cancel()
+                    try:
+                        await consumer
+                    except asyncio.CancelledError:
+                        pass
+                    except BaseException as exc:
+                        log_internal_error(exc, context="terminal_consumer_stop")
+                try:
+                    await self._stop_busy_activity_timer()
+                except BaseException as exc:
+                    log_internal_error(exc, context="terminal_busy_timer_stop")
+
+                writer_healthy = writer_started and not self._terminal_writer_failed
+                if self._tty and writer_healthy:
+                    try:
+                        commit = self._flush_committed(force=True)
+                        if commit is not None:
+                            await self._terminal_writer.wait(commit)
+                        await self._terminal_writer.drain_async()
+                    except BaseException as exc:
+                        writer_healthy = False
+                        record_terminal_cleanup_error(
+                            exc,
+                            context="terminal_commit_drain",
+                        )
+
+                if terminal_setup_attempted:
+                    try:
+                        self._restore_terminal()
+                    except BaseException as exc:
+                        record_terminal_cleanup_error(
+                            exc,
+                            context="terminal_restore",
+                        )
+
+                if (
+                    self._tty
+                    and writer_healthy
+                    and startup_completed
+                    and not self._terminal_writer_failed
+                ):
+                    try:
+                        restore = self._terminal_writer.submit_barrier(
+                            kind="restore",
+                            ansi=self._move_to_frame_end_sequence()
+                            + _EXIT_TERMINAL_SEQUENCE,
+                        )
+                        await self._terminal_writer.wait(restore)
+                    except BaseException as exc:
+                        writer_healthy = False
+                        record_terminal_cleanup_error(
+                            exc,
+                            context="terminal_exit_restore",
+                        )
+
+                writer_shutdown_succeeded = not writer_started
+                if writer_started:
+                    try:
+                        await self._terminal_writer.shutdown_async()
+                    except BaseException as exc:
+                        record_terminal_cleanup_error(
+                            exc,
+                            context="terminal_writer_shutdown",
+                        )
+                    else:
+                        writer_shutdown_succeeded = True
+
+                if self._tty and writer_shutdown_succeeded:
+                    try:
+                        await asyncio.to_thread(
+                            _dump_transcript_log,
+                            Path(self.status.workspace),
+                            dock.tree,
+                        )
+                    except BaseException as exc:
+                        log_internal_error(exc, context="transcript_log_write")
+
+                dock.set_refresh_callback(None)
+                dock.set_width_provider(None)
+                if restore_external_logging is not None:
+                    try:
+                        restore_external_logging()
+                    except BaseException as exc:
+                        log_internal_error(exc, context="external_log_restore")
+
+            _, cleanup_cancellation = await await_cancellation_safe(cleanup())
+
+        if primary_error is not None:
+            raise primary_error
+        if cleanup_cancellation is not None:
+            raise cleanup_cancellation
+        if cleanup_error is not None:
+            raise cleanup_error
 
     async def run_headless(self, on_submit: SubmitHandler) -> None:
         """Run without TUI — consume gateway input via the submit queue."""
@@ -420,162 +573,196 @@ class PureTui(
             self._invalidate_frame_cache()
         return restored_range
 
-    def _flush_committed(self, *, force: bool = False) -> None:
-        """Flush completed content to terminal scrollback.
-
-        During a busy turn, only the safe settled prefix is printed to
-        native scrollback.  When the agent transitions from busy → idle,
-        any remaining active frame content is flushed as the final fallback.
-
-        With ``force=True``, flush regardless of busy-state transition
-        (used for startup banner).
-        """
-        if dock.consume_force_flush_request():
+    def _flush_committed(self, *, force: bool = False) -> BatchToken | None:
+        """Flush completed content to terminal scrollback."""
+        force_requested = dock.consume_force_flush_request()
+        if force_requested:
             force = True
-        width = self._frame_width()
-        echo_lines = _guidance_echo_lines(dock.consume_guidance_echoes())
-        restored_range = self._sync_restored_render_state()
+        raw_echoes = dock.consume_guidance_echoes()
+        echo_lines = _guidance_echo_lines(raw_echoes)
+        worker_mode = self._tty and self._terminal_writer_worker_mode()
 
-        if restored_range is not None:
-            restored_start, restored_end = restored_range
-            prefix_lines: list[str] = []
-            if force and not self._restored_startup_flushed and restored_start:
-                prefix_lines = dock.tree.render_root_slice(width, 0, restored_start)
-                self._restored_startup_flushed = True
+        next_committed_line_count = self._committed_line_count
+        next_restored_committed_line_count = self._restored_committed_line_count
+        next_restored_startup_flushed = self._restored_startup_flushed
+        next_restored_history_retired = self._restored_history_retired
+        next_was_busy = self._was_busy
 
-            current_end = len(dock.tree.root.children)
-            added_lines = (
-                dock.tree.render_root_slice(width, restored_end, current_end)
-                if current_end > restored_end
-                else []
-            )
-            if (
-                self._tty
-                and not self._has_rendered_frame
-                and current_end > restored_end
-                and not echo_lines
-            ):
-                return
+        def apply_state() -> None:
+            self._committed_line_count = next_committed_line_count
+            self._restored_committed_line_count = next_restored_committed_line_count
+            self._restored_startup_flushed = next_restored_startup_flushed
+            self._restored_history_retired = next_restored_history_retired
+            self._was_busy = next_was_busy
 
-            committed_added = self._restored_committed_line_count
-            if committed_added > len(added_lines):
-                committed_added = len(added_lines)
-                self._restored_committed_line_count = committed_added
+        try:
+            width = self._frame_width()
+            restored_range = self._sync_restored_render_state()
+            next_committed_line_count = self._committed_line_count
+            next_restored_committed_line_count = self._restored_committed_line_count
+            next_restored_startup_flushed = self._restored_startup_flushed
+            next_restored_history_retired = self._restored_history_retired
 
-            if force:
-                flush_limit = len(added_lines)
-            else:
-                is_busy = self._busy
-                was_busy = self._was_busy
-                self._was_busy = is_busy
-                if was_busy and not is_busy:
+            if restored_range is not None:
+                restored_start, restored_end = restored_range
+                prefix_lines: list[str] = []
+                if force and not next_restored_startup_flushed and restored_start:
+                    prefix_lines = dock.tree.render_root_slice(width, 0, restored_start)
+                    next_restored_startup_flushed = True
+
+                current_end = len(dock.tree.root.children)
+                added_lines = (
+                    dock.tree.render_root_slice(width, restored_end, current_end)
+                    if current_end > restored_end
+                    else []
+                )
+                if (
+                    self._tty
+                    and not self._has_rendered_frame
+                    and current_end > restored_end
+                    and not echo_lines
+                ):
+                    if force_requested:
+                        dock.request_force_flush()
+                    return None
+
+                committed_added = min(
+                    next_restored_committed_line_count,
+                    len(added_lines),
+                )
+                next_restored_committed_line_count = committed_added
+                if force:
                     flush_limit = len(added_lines)
                 else:
-                    flush_limit = min(
-                        dock.safe_flush_root_slice_line_count(
-                            width,
-                            restored_end,
-                            current_end,
-                            committed_added,
-                        ),
-                        len(added_lines),
+                    is_busy = self._busy
+                    was_busy = next_was_busy
+                    next_was_busy = is_busy
+                    if was_busy and not is_busy:
+                        flush_limit = len(added_lines)
+                    else:
+                        flush_limit = min(
+                            dock.safe_flush_root_slice_line_count(
+                                width,
+                                restored_end,
+                                current_end,
+                                committed_added,
+                            ),
+                            len(added_lines),
+                        )
+
+                restored_lines: list[str] = []
+                if (
+                    self._tty
+                    and restored_start
+                    and flush_limit > committed_added
+                    and not next_restored_history_retired
+                ):
+                    restored_lines = dock.tree.render_root_slice(
+                        width,
+                        restored_start if next_restored_startup_flushed else 0,
+                        restored_end,
                     )
 
-            restored_lines: list[str] = []
-            if (
-                self._tty
-                and restored_start
-                and flush_limit > committed_added
-                and not self._restored_history_retired
-            ):
-                restored_lines = dock.tree.render_root_slice(
-                    width,
-                    restored_start if self._restored_startup_flushed else 0,
-                    restored_end,
-                )
-
-            flush_lines = [
-                *prefix_lines,
-                *restored_lines,
-                *added_lines[committed_added:flush_limit],
-            ]
-            self._restored_committed_line_count = flush_limit
-            if flush_limit > committed_added:
-                self._restored_history_retired = True
-        else:
-            tree_lines = dock.tree.render(width)
-            total = len(tree_lines)
-
-            # After a dock.reset() the tree shrinks below the old committed
-            # count.  If a transient node was removed, keep already-flushed
-            # history committed instead of replaying it from the top.
-            if self._committed_line_count > total:
-                self._committed_line_count = total
-
-            if force:
-                flush_limit = total
+                flush_lines = [
+                    *prefix_lines,
+                    *restored_lines,
+                    *added_lines[committed_added:flush_limit],
+                ]
+                next_restored_committed_line_count = flush_limit
+                if flush_limit > committed_added:
+                    next_restored_history_retired = True
             else:
-                is_busy = self._busy
-                was_busy = self._was_busy
-                self._was_busy = is_busy
-                if was_busy and not is_busy:
+                tree_lines = dock.tree.render(width)
+                total = len(tree_lines)
+                committed_count = min(next_committed_line_count, total)
+                if force:
                     flush_limit = total
                 else:
-                    flush_limit = min(
-                        dock.safe_flush_line_count(width, self._committed_line_count),
-                        total,
-                    )
+                    is_busy = self._busy
+                    was_busy = next_was_busy
+                    next_was_busy = is_busy
+                    if was_busy and not is_busy:
+                        flush_limit = total
+                    else:
+                        flush_limit = min(
+                            dock.safe_flush_line_count(width, committed_count),
+                            total,
+                        )
 
-            if flush_limit <= self._committed_line_count and not echo_lines:
-                return
+                if flush_limit <= committed_count and not echo_lines:
+                    next_committed_line_count = committed_count
+                    apply_state()
+                    return None
 
-            flush_lines = tree_lines[self._committed_line_count:flush_limit]
-            self._committed_line_count = flush_limit
+                flush_lines = tree_lines[committed_count:flush_limit]
+                next_committed_line_count = flush_limit
 
-        if not flush_lines and not echo_lines:
-            return
+            if not flush_lines and not echo_lines:
+                apply_state()
+                return None
 
-        if not self._tty:
-            for line in echo_lines:
-                sys.stdout.write(_plain_line(line).rstrip() + "\n")
-            for line in flush_lines:
-                sys.stdout.write(_plain_line(line).rstrip() + "\n")
-            sys.stdout.flush()
-            return
+            if not self._tty:
+                for line in echo_lines:
+                    self._terminal_writer.write(_plain_line(line).rstrip() + "\n")
+                for line in flush_lines:
+                    self._terminal_writer.write(_plain_line(line).rstrip() + "\n")
+                self._terminal_writer.flush()
+                apply_state()
+                return None
 
-        # Clear the current frame before flushing so that input box,
-        # status bar, and other UI chrome are NOT carried into scrollback.
-        if self._has_rendered_frame and self._last_frame_start_row > 0:
-            sys.stdout.write(f"\x1b[{self._last_frame_start_row};1H")
-            sys.stdout.write("\x1b[J")
-            sys.stdout.flush()
+            rendered_lines: list[Text] = []
+            for line in [*echo_lines, *flush_lines]:
+                try:
+                    rendered_lines.append(text_from_line(line))
+                except Exception:
+                    rendered_lines.append(Text(line))
 
-        rendered_lines: list[Text] = []
-        for line in [*echo_lines, *flush_lines]:
-            try:
-                rendered_lines.append(text_from_line(line))
-            except Exception:
-                rendered_lines.append(Text(line))
+            flush_ansi = self._capture_renderable(Group(*rendered_lines), width)
+            commit_ansi = flush_ansi + "\n"
+            flush_rows = max(
+                _rendered_row_count(flush_ansi),
+                len(echo_lines) + len(flush_lines),
+            )
+            clear_start_row = (
+                self._last_frame_start_row
+                if self._has_rendered_frame and self._last_frame_start_row > 0
+                else 0
+            )
 
-        flush_rows = max(
-            _rendered_row_count(self._capture_renderable(Group(*rendered_lines), width)),
-            len(echo_lines) + len(flush_lines),
-        )
+            if worker_mode:
+                token = self._terminal_writer.submit_commit(
+                    clear_start_row=clear_start_row,
+                    ansi=commit_ansi,
+                )
+                apply_state()
+                term_height = shutil.get_terminal_size().lines
+                self._visible_committed_rows = min(
+                    term_height,
+                    self._visible_committed_rows + flush_rows,
+                )
+                self._invalidate_frame_cache()
+                return token
 
-        for rendered in rendered_lines:
-            self._console.print(rendered)
-
-        term_height = shutil.get_terminal_size().lines
-        self._visible_committed_rows = min(
-            term_height,
-            self._visible_committed_rows + flush_rows,
-        )
-        self._invalidate_frame_cache()
-
-        sys.stdout.flush()
-
-        # The next _render_frame will reposition and draw only the
-        # (now empty) active frame + input box.
+            if clear_start_row > 0:
+                self._terminal_writer.write(f"\x1b[{clear_start_row};1H")
+                self._terminal_writer.write("\x1b[J")
+                self._terminal_writer.flush()
+            self._terminal_writer.write(commit_ansi)
+            self._terminal_writer.flush()
+            apply_state()
+            term_height = shutil.get_terminal_size().lines
+            self._visible_committed_rows = min(
+                term_height,
+                self._visible_committed_rows + flush_rows,
+            )
+            self._invalidate_frame_cache()
+            return None
+        except Exception:
+            if worker_mode:
+                if force_requested:
+                    dock.request_force_flush()
+                dock.restore_guidance_echoes(raw_echoes)
+            raise
 
     def _render_after_input(self) -> None:
         try:

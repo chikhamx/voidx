@@ -105,6 +105,8 @@ class RenderState:
     last_error: str = ""
     notice: str = ""
     pending_tb: str = ""
+    terminal_frame_generation: int = 0
+    terminal_writer_failed: bool = False
     has_rendered_frame: bool = False
     cursor_to_frame_top_lines: int = 0
     cursor_to_frame_end_lines: int = 0
@@ -143,6 +145,7 @@ class RenderState:
     prev_frame_start_row: int = 1
     prev_frame_width: int = 0
     prev_frame_term_height: int | None = None
+    last_render_plan: Any | None = None
     render_stats: RenderStats | None = None
 
 
@@ -227,6 +230,8 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_last_error": ("_render_state", "last_error"),
     "_notice": ("_render_state", "notice"),
     "_pending_tb": ("_render_state", "pending_tb"),
+    "_terminal_frame_generation": ("_render_state", "terminal_frame_generation"),
+    "_terminal_writer_failed": ("_render_state", "terminal_writer_failed"),
     "_has_rendered_frame": ("_render_state", "has_rendered_frame"),
     "_cursor_to_frame_top_lines": ("_render_state", "cursor_to_frame_top_lines"),
     "_cursor_to_frame_end_lines": ("_render_state", "cursor_to_frame_end_lines"),
@@ -263,6 +268,7 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_prev_frame_start_row": ("_render_state", "prev_frame_start_row"),
     "_prev_frame_width": ("_render_state", "prev_frame_width"),
     "_prev_frame_term_height": ("_render_state", "prev_frame_term_height"),
+    "_last_render_plan": ("_render_state", "last_render_plan"),
     "_render_stats": ("_render_state", "render_stats"),
     "_external_request_handler": ("_external_state", "request_handler"),
     "_external_command_handler": ("_external_state", "command_handler"),

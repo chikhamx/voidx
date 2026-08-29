@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import os
 import sys
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -11,6 +12,7 @@ from rich.console import Console
 
 from voidx.config import Settings
 from voidx.presentation.commands import COMMANDS
+from voidx.presentation.output.dock import dock
 from voidx_cli import PureTui
 
 
@@ -468,3 +470,620 @@ async def test_run_finally_does_not_mask_missing_workspace(monkeypatch):
         return True
 
     await tui.run(on_submit)
+
+
+@pytest.mark.asyncio
+async def test_run_restores_terminal_before_transcript_export(tmp_path, monkeypatch):
+    import voidx_cli.app as app_module
+
+    events: list[object] = []
+
+    async def fake_read_input_raw():
+        return b"\x04"
+
+    tui = _tui(tmp_path)
+    tui._stdin_fd = 99
+    monkeypatch.setattr(os, "isatty", lambda _fd: True)
+    monkeypatch.setattr(tui, "_setup_terminal", lambda: None)
+    monkeypatch.setattr(tui, "_restore_terminal", lambda: events.append("restore"))
+    monkeypatch.setattr(tui, "_render_frame", lambda: None)
+    monkeypatch.setattr(tui, "_move_to_frame_end_sequence", lambda: "")
+    monkeypatch.setattr(tui, "_read_input_raw", fake_read_input_raw)
+    monkeypatch.setattr(
+        tui,
+        "_flush_committed",
+        lambda *, force=False: events.append(("flush_committed", force)),
+    )
+    async def fake_drain_async():
+        events.append("writer_drain")
+
+    monkeypatch.setattr(tui._terminal_writer, "drain_async", fake_drain_async)
+    monkeypatch.setattr(
+        app_module,
+        "_dump_transcript_log",
+        lambda *args, **kwargs: events.append("dump"),
+    )
+
+    async def on_submit(_text: str) -> bool:
+        return True
+
+    await tui.run(on_submit)
+
+    force_flush = events.index(("flush_committed", True))
+    writer_drain = events.index("writer_drain")
+    restore = events.index("restore")
+    dump = events.index("dump")
+    assert force_flush < writer_drain < restore < dump
+
+
+@pytest.mark.asyncio
+async def test_pending_posix_read_cancel_removes_registered_reader(tmp_path, monkeypatch):
+    if sys.platform == "win32":
+        pytest.skip("add_reader cancellation coverage is POSIX-only")
+    read_fd, write_fd = os.pipe()
+    tui = _tui(tmp_path)
+    tui._stdin_fd = read_fd
+    loop = asyncio.get_running_loop()
+    original_add_reader = loop.add_reader
+    original_remove_reader = loop.remove_reader
+    added = []
+    removed = []
+
+    def tracked_add_reader(fd, callback, *args):
+        added.append(fd)
+        return original_add_reader(fd, callback, *args)
+
+    def tracked_remove_reader(fd):
+        removed.append(fd)
+        return original_remove_reader(fd)
+
+    monkeypatch.setattr(loop, "add_reader", tracked_add_reader)
+    monkeypatch.setattr(loop, "remove_reader", tracked_remove_reader)
+    task = asyncio.create_task(tui._read_input_raw())
+    try:
+        await asyncio.sleep(0)
+        assert added == [read_fd]
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert task.done()
+        assert removed == [read_fd]
+    finally:
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        os.close(write_fd)
+        os.close(read_fd)
+
+
+class _LifecycleWriter:
+    def __init__(
+        self,
+        events,
+        *,
+        start_error=None,
+        wait_error_kind=None,
+        wait_errors=None,
+        drain_error=None,
+        shutdown_error=None,
+    ) -> None:
+        self.events = events
+        self.start_error = start_error
+        self.wait_error_kind = wait_error_kind
+        self.wait_errors = dict(wait_errors or {})
+        self.drain_error = drain_error
+        self.shutdown_error = shutdown_error
+        self.started = False
+        self.on_error = None
+        self.on_frame_result = None
+        self._token_id = 0
+
+    @property
+    def worker_mode(self) -> bool:
+        return self.started
+
+    def start(self, *, loop, on_frame_result, on_error) -> None:
+        self.events.append("writer_start")
+        if self.start_error is not None:
+            raise self.start_error
+        self.started = True
+        self.on_frame_result = on_frame_result
+        self.on_error = on_error
+
+    def submit_barrier(self, *, kind, ansi="", invalidate_frame=False):
+        self._token_id += 1
+        token = (kind, self._token_id)
+        self.events.append(("barrier", kind, ansi))
+        return token
+
+    async def wait(self, token) -> None:
+        self.events.append(("wait", token[0]))
+        error = self.wait_errors.get(token[0])
+        if error is not None:
+            raise error
+        if token[0] == self.wait_error_kind:
+            raise RuntimeError(f"{token[0]} wait failed")
+
+    async def drain_async(self) -> None:
+        self.events.append("drain")
+        if self.drain_error is not None:
+            raise self.drain_error
+
+    async def shutdown_async(self) -> None:
+        self.events.append("shutdown")
+        self.started = False
+        if self.shutdown_error is not None:
+            raise self.shutdown_error
+
+    def write(self, value: str) -> int:
+        raise AssertionError(f"TTY lifecycle used synchronous write: {value!r}")
+
+    def flush(self) -> None:
+        raise AssertionError("TTY lifecycle used synchronous flush")
+
+
+def _prepare_lifecycle_tui(tmp_path, monkeypatch, writer):
+    import voidx_cli.app as app_module
+
+    events = writer.events
+    tui = _tui(tmp_path)
+    tui._stdin_fd = 99
+    tui._terminal_writer = writer
+    monkeypatch.setattr(os, "isatty", lambda _fd: True)
+    monkeypatch.setattr(tui, "_setup_terminal", lambda: events.append("setup"))
+    monkeypatch.setattr(tui, "_restore_terminal", lambda: events.append("restore_terminal"))
+    monkeypatch.setattr(tui, "_move_to_frame_end_sequence", lambda: "<move>")
+    monkeypatch.setattr(tui, "_render_frame", lambda: events.append("render"))
+    monkeypatch.setattr(
+        app_module,
+        "install_external_log_bridge",
+        lambda _name: (
+            events.append("external_install")
+            or (lambda: events.append("external_restore"))
+        ),
+    )
+    monkeypatch.setattr(
+        app_module,
+        "_dump_transcript_log",
+        lambda *args, **kwargs: events.append("dump"),
+    )
+    return tui
+
+
+@pytest.mark.asyncio
+async def test_tty_run_waits_for_startup_barrier_before_producers(tmp_path, monkeypatch):
+    events = []
+    writer = _LifecycleWriter(events)
+    tui = _prepare_lifecycle_tui(tmp_path, monkeypatch, writer)
+
+    async def consume(_on_submit):
+        events.append("consumer_start")
+        await asyncio.Event().wait()
+
+    async def read_input():
+        events.append("input_start")
+        return b"\x04"
+
+    monkeypatch.setattr(tui, "_consume", consume)
+    monkeypatch.setattr(tui, "_read_input_raw", read_input)
+    monkeypatch.setattr(
+        tui,
+        "_flush_committed",
+        lambda *, force=False: events.append(("flush_committed", force)),
+    )
+
+    async def on_submit(_text: str) -> bool:
+        return True
+
+    await tui.run(on_submit)
+
+    startup_barrier = next(
+        index
+        for index, event in enumerate(events)
+        if isinstance(event, tuple) and event[:2] == ("barrier", "startup")
+    )
+    startup_wait = events.index(("wait", "startup"))
+    assert events.index("setup") < events.index("writer_start") < startup_barrier
+    assert startup_barrier < startup_wait < events.index("consumer_start")
+    assert startup_wait < events.index(("flush_committed", True))
+    assert startup_wait < events.index("render") < events.index("input_start")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_phase", ["setup", "start", "startup_wait"])
+async def test_tty_startup_failures_restore_and_cleanup(
+    tmp_path, monkeypatch, failure_phase
+):
+    events = []
+    original = RuntimeError(f"{failure_phase} failed")
+    writer = _LifecycleWriter(
+        events,
+        start_error=original if failure_phase == "start" else None,
+        wait_error_kind="startup" if failure_phase == "startup_wait" else None,
+    )
+    tui = _prepare_lifecycle_tui(tmp_path, monkeypatch, writer)
+    if failure_phase == "setup":
+        def fail_setup():
+            events.append("setup")
+            raise original
+        monkeypatch.setattr(tui, "_setup_terminal", fail_setup)
+
+    async def on_submit(_text: str) -> bool:
+        return True
+
+    with pytest.raises(RuntimeError) as caught:
+        await tui.run(on_submit)
+
+    if failure_phase != "startup_wait":
+        assert caught.value is original
+    else:
+        assert str(caught.value) == "startup wait failed"
+    assert "restore_terminal" in events
+    assert dock._refresh_callback is None
+    assert dock._width_provider is None
+    if failure_phase == "startup_wait":
+        assert "shutdown" in events
+    else:
+        assert "shutdown" not in events
+
+
+@pytest.mark.asyncio
+async def test_writer_failure_wakes_and_cancels_pending_tty_input(tmp_path, monkeypatch):
+    events = []
+    writer = _LifecycleWriter(events)
+    tui = _prepare_lifecycle_tui(tmp_path, monkeypatch, writer)
+    input_started = asyncio.Event()
+    input_cancelled = asyncio.Event()
+
+    async def read_input():
+        input_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            input_cancelled.set()
+            raise
+
+    monkeypatch.setattr(tui, "_read_input_raw", read_input)
+    monkeypatch.setattr(tui, "_render_frame", lambda: None)
+    monkeypatch.setattr(tui, "_flush_committed", lambda *, force=False: None)
+    monkeypatch.setattr(
+        tui,
+        "_process_input",
+        lambda _data: (_ for _ in ()).throw(
+            AssertionError("input must not dispatch after writer failure")
+        ),
+    )
+
+    async def on_submit(_text: str) -> bool:
+        return True
+
+    run_task = asyncio.create_task(tui.run(on_submit))
+    await asyncio.wait_for(input_started.wait(), timeout=1)
+    failure = BrokenPipeError("stdout closed")
+    assert writer.on_error is not None
+    writer.on_error(failure)
+
+    with pytest.raises(BrokenPipeError) as caught:
+        await asyncio.wait_for(run_task, timeout=1)
+
+    assert caught.value is failure
+    assert input_cancelled.is_set()
+    assert tui._terminal_writer_failed is True
+    assert "restore_terminal" in events
+    assert "shutdown" in events
+
+
+@pytest.mark.asyncio
+async def test_tty_shutdown_orders_commit_drain_restore_stop_and_dump(
+    tmp_path, monkeypatch
+):
+    events = []
+    writer = _LifecycleWriter(events)
+    tui = _prepare_lifecycle_tui(tmp_path, monkeypatch, writer)
+    flush_count = 0
+
+    def flush_committed(*, force=False):
+        nonlocal flush_count
+        flush_count += 1
+        events.append(("flush_committed", flush_count, force))
+        return ("commit", flush_count) if flush_count == 2 else None
+
+    async def read_input():
+        return b"\x04"
+
+    monkeypatch.setattr(tui, "_flush_committed", flush_committed)
+    monkeypatch.setattr(tui, "_read_input_raw", read_input)
+
+    async def on_submit(_text: str) -> bool:
+        return True
+
+    await tui.run(on_submit)
+
+    cleanup_commit = events.index(("flush_committed", 2, True))
+    commit_wait = events.index(("wait", "commit"))
+    drain = events.index("drain")
+    termios_restore = events.index("restore_terminal")
+    restore_barrier = next(
+        index
+        for index, event in enumerate(events)
+        if isinstance(event, tuple) and event[:2] == ("barrier", "restore")
+    )
+    restore_wait = events.index(("wait", "restore"))
+    shutdown = events.index("shutdown")
+    dump = events.index("dump")
+    assert cleanup_commit < commit_wait < drain < termios_restore
+    assert termios_restore < restore_barrier < restore_wait < shutdown < dump
+
+
+@pytest.mark.asyncio
+async def test_non_tty_run_does_not_start_terminal_writer(tmp_path, monkeypatch):
+    events = []
+    writer = _LifecycleWriter(events)
+    tui = _tui(tmp_path)
+    tui._stdin_fd = None
+    tui._terminal_writer = writer
+
+    async def read_input_line():
+        return b"\x04"
+
+    monkeypatch.setattr(tui, "_read_input_line", read_input_line)
+    monkeypatch.setattr(tui, "_render_frame", lambda: events.append("render"))
+    monkeypatch.setattr(tui, "_flush_committed", lambda *, force=False: None)
+
+    async def on_submit(_text: str) -> bool:
+        return True
+
+    await tui.run(on_submit)
+
+    assert "writer_start" not in events
+    assert "shutdown" not in events
+    assert "render" in events
+
+
+@pytest.mark.asyncio
+async def test_writer_failure_wins_when_input_completes_simultaneously(
+    tmp_path, monkeypatch
+):
+    events = []
+    writer = _LifecycleWriter(events)
+    tui = _prepare_lifecycle_tui(tmp_path, monkeypatch, writer)
+    input_started = asyncio.Event()
+    release_input = asyncio.Event()
+
+    async def read_input():
+        input_started.set()
+        await release_input.wait()
+        return b"x"
+
+    monkeypatch.setattr(tui, "_read_input_raw", read_input)
+    monkeypatch.setattr(tui, "_render_frame", lambda: None)
+    monkeypatch.setattr(tui, "_flush_committed", lambda *, force=False: None)
+    monkeypatch.setattr(
+        tui,
+        "_process_input",
+        lambda _data: (_ for _ in ()).throw(
+            AssertionError("simultaneous input must not dispatch after writer failure")
+        ),
+    )
+
+    async def on_submit(_text: str) -> bool:
+        return True
+
+    run_task = asyncio.create_task(tui.run(on_submit))
+    await asyncio.wait_for(input_started.wait(), timeout=1)
+    first = OSError("first writer failure")
+    second = RuntimeError("later writer failure")
+    assert writer.on_error is not None
+    writer.on_error(first)
+    writer.on_error(second)
+    release_input.set()
+
+    with pytest.raises(OSError) as caught:
+        await asyncio.wait_for(run_task, timeout=1)
+
+    assert caught.value is first
+    assert tui._terminal_writer_failed is True
+    assert "restore_terminal" in events
+    assert "shutdown" in events
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure_phase",
+    ["final_commit", "termios_restore", "restore_barrier", "shutdown"],
+)
+async def test_normal_tty_exit_propagates_first_cleanup_error_and_continues_cleanup(
+    tmp_path, monkeypatch, failure_phase
+):
+    events = []
+    failure = OSError(f"{failure_phase} failed")
+    writer = _LifecycleWriter(
+        events,
+        wait_errors={
+            "commit": failure if failure_phase == "final_commit" else None,
+            "restore": failure if failure_phase == "restore_barrier" else None,
+        },
+        shutdown_error=failure if failure_phase == "shutdown" else None,
+    )
+    tui = _prepare_lifecycle_tui(tmp_path, monkeypatch, writer)
+    flush_count = 0
+
+    async def read_input():
+        return b"\x04"
+
+    def flush_committed(*, force=False):
+        nonlocal flush_count
+        flush_count += 1
+        events.append(("flush_committed", flush_count, force))
+        return ("commit", flush_count) if flush_count == 2 else None
+
+    if failure_phase == "termios_restore":
+        def fail_restore_terminal():
+            events.append("restore_terminal")
+            raise failure
+
+        monkeypatch.setattr(tui, "_restore_terminal", fail_restore_terminal)
+    monkeypatch.setattr(tui, "_read_input_raw", read_input)
+    monkeypatch.setattr(tui, "_flush_committed", flush_committed)
+
+    async def on_submit(_text: str) -> bool:
+        return True
+
+    with pytest.raises(OSError) as caught:
+        await tui.run(on_submit)
+
+    assert caught.value is failure
+    assert "restore_terminal" in events
+    assert "shutdown" in events
+    assert dock._refresh_callback is None
+    assert dock._width_provider is None
+    if failure_phase == "shutdown":
+        assert "dump" not in events
+    else:
+        assert events.index("shutdown") < events.index("dump")
+
+
+@pytest.mark.asyncio
+async def test_normal_tty_exit_preserves_first_cleanup_error(tmp_path, monkeypatch):
+    events = []
+    first = OSError("final commit failed first")
+    later = RuntimeError("termios restore failed later")
+    writer = _LifecycleWriter(events, wait_errors={"commit": first})
+    tui = _prepare_lifecycle_tui(tmp_path, monkeypatch, writer)
+    flush_count = 0
+
+    async def read_input():
+        return b"\x04"
+
+    def flush_committed(*, force=False):
+        nonlocal flush_count
+        flush_count += 1
+        return ("commit", flush_count) if flush_count == 2 else None
+
+    def fail_restore_terminal():
+        events.append("restore_terminal")
+        raise later
+
+    monkeypatch.setattr(tui, "_read_input_raw", read_input)
+    monkeypatch.setattr(tui, "_flush_committed", flush_committed)
+    monkeypatch.setattr(tui, "_restore_terminal", fail_restore_terminal)
+
+    async def on_submit(_text: str) -> bool:
+        return True
+
+    with pytest.raises(OSError) as caught:
+        await tui.run(on_submit)
+
+    assert caught.value is first
+    assert "shutdown" in events
+    assert "dump" in events
+
+
+@pytest.mark.asyncio
+async def test_run_cancellation_during_consumer_cleanup_is_deferred_and_propagated(
+    tmp_path, monkeypatch
+):
+    events = []
+    writer = _LifecycleWriter(events)
+    tui = _prepare_lifecycle_tui(tmp_path, monkeypatch, writer)
+    consumer_cleanup_started = asyncio.Event()
+    release_consumer = asyncio.Event()
+
+    async def consume(_on_submit):
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            consumer_cleanup_started.set()
+            await release_consumer.wait()
+
+    async def read_input():
+        tui._running = False
+        return b""
+
+    monkeypatch.setattr(tui, "_consume", consume)
+    monkeypatch.setattr(tui, "_read_input_raw", read_input)
+    monkeypatch.setattr(tui, "_flush_committed", lambda *, force=False: None)
+    monkeypatch.setattr(tui, "_render_frame", lambda: None)
+
+    async def on_submit(_text: str) -> bool:
+        return True
+
+    run_task = asyncio.create_task(tui.run(on_submit))
+    try:
+        await asyncio.wait_for(consumer_cleanup_started.wait(), timeout=1)
+        run_task.cancel()
+        done, _ = await asyncio.wait({run_task}, timeout=0.05)
+        assert done == set()
+
+        release_consumer.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(run_task, timeout=1)
+    finally:
+        release_consumer.set()
+        if not run_task.done():
+            run_task.cancel()
+            await asyncio.gather(run_task, return_exceptions=True)
+
+    assert "restore_terminal" in events
+    assert "shutdown" in events
+    assert dock._refresh_callback is None
+    assert dock._width_provider is None
+
+
+@pytest.mark.asyncio
+async def test_run_cancellation_during_transcript_waits_for_export_then_propagates(
+    tmp_path, monkeypatch
+):
+    import voidx_cli.app as app_module
+
+    events = []
+    writer = _LifecycleWriter(events)
+    tui = _prepare_lifecycle_tui(tmp_path, monkeypatch, writer)
+    export_started = threading.Event()
+    release_export = threading.Event()
+
+    def blocking_dump(*args, **kwargs):
+        del args, kwargs
+        events.append("dump_started")
+        export_started.set()
+        if not release_export.wait(timeout=2):
+            raise TimeoutError("transcript export was not released")
+        events.append("dump_finished")
+
+    async def read_input():
+        tui._running = False
+        return b""
+
+    monkeypatch.setattr(app_module, "_dump_transcript_log", blocking_dump)
+    monkeypatch.setattr(tui, "_read_input_raw", read_input)
+    monkeypatch.setattr(tui, "_flush_committed", lambda *, force=False: None)
+    monkeypatch.setattr(tui, "_render_frame", lambda: None)
+
+    async def on_submit(_text: str) -> bool:
+        return True
+
+    run_task = asyncio.create_task(tui.run(on_submit))
+    try:
+        assert await asyncio.wait_for(
+            asyncio.to_thread(export_started.wait, 1),
+            timeout=2,
+        )
+        run_task.cancel()
+        done, _ = await asyncio.wait({run_task}, timeout=0.05)
+        assert done == set()
+
+        release_export.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(run_task, timeout=1)
+    finally:
+        release_export.set()
+        if not run_task.done():
+            run_task.cancel()
+            await asyncio.gather(run_task, return_exceptions=True)
+
+    assert events.index("dump_started") < events.index("dump_finished")
+    assert dock._refresh_callback is None
+    assert dock._width_provider is None
