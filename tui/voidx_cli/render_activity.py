@@ -150,7 +150,7 @@ class _ActivityRendererMixin:
         token_text = self._turn_token_text()
         if token_text:
             details.append(token_text)
-        latest = self._latest_action_text()
+        latest = "→still running" if permission.startswith("Wait(") else self._latest_action_text()
         if latest:
             details.append(latest)
         if compacting and compaction_detail:

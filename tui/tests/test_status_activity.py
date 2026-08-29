@@ -351,6 +351,18 @@ def test_busy_activity_label_places_compacting_detail_last(tmp_path, monkeypatch
     assert tui._busy_activity_label() == "◐ Compacting (4s →reading summarizing 118 old messages)"
 
 
+def test_busy_activity_label_summarizes_wait_action_as_still_running(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 376.0)
+    tui = _tui(tmp_path)
+    tui.status.latest_action = lambda: "Kai running"
+    tui._busy = True
+    tui._busy_started_at = 120.0
+    tui._busy_activity_verb = "Pondering"
+    dock.record_status("permission:request", 'Wait("Kai")', stage="working")
+
+    assert tui._busy_activity_label() == '◐ Wait("Kai") (4m 16s →still running)'
+
+
 def test_busy_activity_label_omits_elapsed_without_start_time(tmp_path):
     tui = _tui(tmp_path)
     tui._busy = True
