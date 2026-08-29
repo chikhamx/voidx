@@ -4,7 +4,8 @@ display_name: TUI Long-session Performance Optimization
 description: 消除 TUI 长会话中全历史渲染、全量 transcript 快照和 UI 事件循环饥饿导致的输入延迟
 doc_type: tech-design
 audience: human+llm
-status: proposed
+status: in-progress
+implementation_status: partial
 ---
 
 # TUI 长会话性能优化方案
@@ -33,10 +34,32 @@ status: proposed
 
 ## 2. 状态
 
-- 状态：Proposed
+- 状态：In progress（本轮部分实施，整体未闭环）
 - 目标读者：维护者与后续实现 agent
 - 目标平台：TUI；共享的 `OutputTree`、UI event bus 和 transcript persistence 同时影响 Web/Desktop，但不得改变其可见语义
 - 实施方式：按 P0、P1、P2 独立提交；每阶段必须单独通过测试和性能验收
+
+### 2.1 本轮实施记录（2026-08-26）
+
+本轮只闭环两个可独立验证的性能缺口，本文档**不因此标记完成或归档**：
+
+- [x] **UiEventBus 协作式公平调度**：`_run()` 默认同时受 32 个 ready event 与 4 ms 时间预算约束，达到任一预算后 `await asyncio.sleep(0)`；支持注入 monotonic clock，保持 FIFO、request future、drain/stop、异常传播和事件语义不变。
+- [x] **TUI viewport-first 有界渲染**：活动 transcript 与 panel/choice 等底部渲染在 Rich 转换前从尾部按逻辑行取 viewport + 默认 overscan（8..32）候选；保留最终可见尾部、异常 markup 的 `Text(line)` 回退和输入原文状态。
+- 验证：`./test.py --backend -- tui/tests/test_frame_advanced.py -v`（20 passed）；`./test.py --backend -- src/tests/test_presentation/gateway/test_ui_events_dock_bus.py -v`（18 passed）；相关集合 `./test.py --backend -- src/tests/test_presentation/gateway src/tests/test_presentation/output tui/tests`（754 passed，含 `tui/tests/test_output_tree.py` 17 passed）。
+
+仍未完成的高价值项包括：OutputTree root-tail/subtree-tail 全量缓存优化、thinking/flush 全链路范围化、transcript 每轮增量持久化与压实、stream snapshot contract/coalescing、队列指标/benchmark，以及其他跨端和终端 I/O 设计。
+
+### 2.2 本轮实施记录（2026-08-28）
+
+本轮闭环 TUI stream canonical commit 的异步调度与安全退出顺序，但不改变本文档整体 `in-progress/partial` 状态：
+
+- [x] **异步 canonical commit**：`BottomInputDock.prepare_stream_commit()` 先将 stream 标记为 `render_pending`，`DockEventConsumer` 立即调度后台任务；canonical projection 在线程中构建，安装时通过 node、revision、generation 校验丢弃 stale 结果，worker 失败时回退 escaped plain projection。
+- [x] **安全 scrollback barrier**：pending commit 不进入不可修改的 native scrollback；`TerminalRunLoop.cleanup_run_loop()` 在停止事件总线前 drain commit tasks，reset/discard 后的旧结果不会回写。
+- [x] **安全退出顺序**：`PureTui.run()` finally 先 force flush/writer flush，再恢复 terminal，写退出序列并 flush，最后通过 `asyncio.to_thread()` 导出兼容 `transcript.log`。
+- 验证：目标测试 `./test.py --backend -- src/tests/test_presentation/gateway/test_ui_events_streaming.py src/tests/test_presentation/gateway/test_ui_events_dock_bus.py tui/tests/test_input_advanced.py tui/tests/test_terminal_writer.py`（75 passed）；相关 presentation + TUI 集合（779 passed）；`./test.py --frontend`（677 passed）。
+- 完整 backend `./test.py --backend`：5163 passed、2 failed、30 skipped；失败为 `test_run_turn_persists_and_restores_transcript_snapshot` 与 `test_run_turn_commits_event_todo_at_turn_end`。当前没有独立基线可证明这两项是既有问题；它们不属于本轮目标路径，未在本轮解决，因此整体不能标记完成。
+
+仍未完成：OutputTree root/subtree 增量缓存、transcript 每轮增量持久化与压实、stream snapshot contract/coalescing、Desktop canonical worker 与协议窗口化、慢 PTY/backpressure、RenderPlan、输入/paste/candidate 优化、队列指标和 benchmark。
 
 ## 3. 问题与已验证证据
 
@@ -579,8 +602,9 @@ loader 调整：
   - 在 RED 未解决前不得实现丢帧/coalescing。
   - 验证：`./test.py --backend -- src/tests/test_presentation/gateway/test_ui_events_streaming.py -v`
 
-- [ ] **P2.2 实现事件 batch budget 和公平让出**。
-  - 测试：预填充大量同步事件，同时运行 heartbeat/input task；heartbeat 必须在队列 drain 前获得执行。
+- [x] **P2.2 实现事件 batch budget 和公平让出**。
+  - 实现：默认最多 32 个 ready event 或 4 ms；测试可注入 clock，预算后协作式让出，不改变 FIFO/future/drain/stop/异常语义。
+  - 测试：预填充大量同步事件，同时运行 probe；probe 在队列 drain 前获得执行，数量预算与时间预算均有确定性覆盖。
   - 验证：`./test.py --backend -- src/tests/test_presentation/gateway/test_ui_events_dock_bus.py -v`
 
 - [ ] **P2.3 实现连续同 stream update 合并**。
@@ -589,6 +613,16 @@ loader 调整：
 
 - [ ] **P2.4 增加 queue/render/transcript 慢路径指标**。
   - 验证：相关单测 + benchmark 无日志风暴。
+
+### 9.4 本轮补充任务（2026-08-28）
+
+- [x] **TUI 异步 canonical commit**：提交事件立即返回；canonical projection 在线程中构建，安装前校验 node、revision、generation，stale 结果丢弃，worker 异常使用 escaped plain projection 回退。
+  - 文件：`src/voidx/presentation/output/dock/stream.py`、`src/voidx/presentation/output/events/consumers.py`、`src/tests/test_presentation/gateway/test_ui_events_streaming.py`
+  - 验证：目标 backend 测试 75 passed；相关 presentation + TUI 集合 779 passed。
+
+- [x] **TUI scrollback barrier 与退出顺序（不包含慢 PTY/backpressure）**：`render_pending` stream 不得进入 native scrollback；shutdown 先 drain commit、force flush 和 writer flush，再 restore terminal，最后在线程中导出 `transcript.log`。
+  - 文件：`src/voidx/presentation/terminal/run_loop.py`、`tui/voidx_cli/app.py`、`tui/tests/test_input_advanced.py`
+  - 验证：退出顺序测试通过；目标 backend 测试 75 passed。
 
 ## 10. 性能验收标准
 

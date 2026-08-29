@@ -4,7 +4,8 @@ display_name: Cross-UI Performance Addendum
 description: 补充 TUI 长会话方案未覆盖的活动流增长、桌面端全量 snapshot/DOM 重建、终端背压和端侧内存问题
 doc_type: tech-design
 audience: human+llm
-status: proposed
+status: in-progress
+implementation_status: partial
 related_docs:
   - docs/design/tui-long-session-performance.md
 ---
@@ -69,8 +70,40 @@ related_docs:
 - 不重新设计 transcript JSONL transaction；
 - 不重新设计 `UiEventBus` barrier/coalescing；
 - 不把 WebView 问题误归因于 Tauri Rust shell；当前证据显示桌面热路径主要位于共享 Gateway 和 `frontend/`。
+### 2.4 本轮实施记录（2026-08-26）
+
+本轮只实施并验证 TUI viewport-first 有界 Rich 转换，本文档**仍为部分实施，未整体闭环，不归档**：
+
+- [x] 活动 transcript 与 prompt/panel 热路径在最终 viewport 裁剪前使用尾部 bounded helper；默认 overscan 为 `min(max(row_limit, 8), 32)`，保留可见尾部、markup 异常安全回退和输入原文状态。
+- [x] 复杂度回归覆盖 10,000 条活动逻辑行/1-row viewport，以及 panel 调用链；`text_from_line()` 调用量受 viewport + overscan 约束。
+- 验证：`./test.py --backend -- tui/tests/test_frame_advanced.py -v`（20 passed）；相关集合 `./test.py --backend -- src/tests/test_presentation/gateway src/tests/test_presentation/output tui/tests`（754 passed，含 `tui/tests/test_output_tree.py` 17 passed）。
+
+仍未完成：活动 Markdown bounded projection/canonical worker、Desktop rAF/Markdown worker/keyed reconciliation/DOM window、capability/workspace patch/transcript window、terminal writer/backpressure、输入/paste/candidate 优化及 durable live-history eviction。
+
+### 2.5 本轮实施记录（2026-08-28）
+
+本轮只闭环 TUI canonical commit 的异步本地路径和退出顺序；Desktop Worker、协议窗口化和慢 terminal writer 仍未实现，本文档保持 `in-progress/partial`：
+
+- [x] **TUI 异步 canonical commit**：`DockEventConsumer` 对 `AssistantStreamCommitted` 立即创建任务，canonical projection 使用 `asyncio.to_thread()`；`BottomInputDock` 以 node/revision/generation 三重校验安装结果，stale 结果丢弃，worker 异常回退 escaped plain projection。
+- [x] **TUI scrollback/shutdown 安全路径（不包含慢 PTY/backpressure）**：`render_pending` 阻止 provisional stream 进入 native scrollback；commit drain 位于 event bus stop 之前；退出时先 force flush 和 writer flush，再 restore terminal、写退出序列，最后在线程中导出 `transcript.log`。
+- 验证：目标 backend 测试（75 passed）；presentation + TUI 集合（779 passed）；`./test.py --frontend`（677 passed）。完整 backend 为 5163 passed、2 failed、30 skipped，失败为两个 runtime session/todo 测试；当前没有独立基线可证明它们是既有问题，且未在本轮目标路径中解决。
+
+仍未完成：bounded StreamingMarkdownProjection、Desktop Markdown Worker/rAF/keyed reconciliation/DOM window、capability/workspace patch/transcript window、TerminalWriter 慢 PTY/backpressure、输入/paste/candidate 优化及 durable live-history eviction。
+
+### 2.6 本轮实施记录（2026-08-29）
+
+本轮闭环 **P0.6 TerminalWriter 慢 PTY/backpressure**；本文档其他 P0/P1/P2 项仍未整体完成，因此继续保持 `in-progress/partial`：
+
+- [x] 单独 worker thread 成为 TTY stdout frame/scrollback 单一 owner；frame 只合并连续 pending generation，commit/barrier 保序且不可丢弃。
+- [x] worker 以最后实际写入 frame 为 diff baseline；commit aggregate 超过 4 MiB 时显式 rollover 到 `SpooledTemporaryFile`，成功、失败和 shutdown 均回收 payload。
+- [x] frame/render/state/app/parser 完成 worker 集成；Windows input 改为可取消的 `kbhit()` 10 ms polling。
+- [x] startup、writer failure、final commit、termios restore、restore barrier、shutdown 与 transcript export 按统一生命周期清理；外部取消在 cleanup/reap 完成后重新传播。
+- 验证：慢 PTY heartbeat（1 passed）；规格聚焦集合（238 passed）；完整 TUI（397 passed）；完整 backend（5235 passed、30 skipped）；`py_compile`、目标 `git diff --check`、相关 LSP diagnostics 与直接终审均通过。
+
+仍未完成：bounded StreamingMarkdownProjection、Desktop Markdown Worker/rAF/keyed reconciliation/DOM window、capability/workspace patch/transcript window、输入/paste/candidate 其余优化及 durable live-history eviction。
 
 ## 3. 已验证证据
+
 
 ### 3.1 审计范围
 
@@ -742,10 +775,10 @@ Native `desktop/tauri/` 当前不在计划改动范围。
 
 ### 9.1 P0：端侧止血
 
-- [ ] **P0.1 TUI viewport-first RED**：10k active lines、`row_limit=1`，断言当前 `text_from_line()` 被调用 10k 次。
+- [x] **P0.1 TUI viewport-first bounded render**：10k active lines、`row_limit=1`，断言 Rich 转换量受 viewport + overscan 约束而不是历史总行数线性增长。
   - 文件：`tui/tests/test_frame_advanced.py`
-  - GREEN：调用数不超过 `row_limit + overscan` 对应逻辑行上界，最终 ANSI 与旧实现尾部一致。
-  - 命令：`./test.py --backend -- tui/tests/test_frame_advanced.py -v`
+  - GREEN：最终可见尾部保持一致，panel/choice 等底部路径同样在 Rich 转换前有界裁剪；markup 异常回退为原文 `Text`。
+  - 命令：`./test.py --backend -- tui/tests/test_frame_advanced.py -v`（20 passed）
 
 - [ ] **P0.2 bounded stream projection**：覆盖普通 append、50k 单段 paragraph、50k 未闭合 fence、list continuation、phase switch 和 non-prefix replace。
   - 文件：`src/tests/test_presentation/output/test_stream_projection.py`（新建）、`frontend/test/utils/stream.test.ts`
@@ -755,13 +788,12 @@ Native `desktop/tauri/` 当前不在计划改动范围。
     - `./test.py --backend -- src/tests/test_presentation/output/test_stream_projection.py -v`
     - `./test.py --frontend -- test/utils/stream.test.ts`
 
-- [ ] **P0.3 异步 canonical commit**：覆盖 TUI task scheduling、Desktop Worker、stale revision、失败 fallback、safe flush 和最终等价。
-  - 文件：`src/tests/test_presentation/gateway/test_ui_events_streaming.py`、`src/tests/test_presentation/output/test_scrollback_flush.py`、`frontend/test/utils/markdown-worker.test.ts`
-  - RED：当前 TUI/Frontend commit 在调用路径同步 full render。
-  - GREEN：被 gate 的 worker 未完成时后续 UI event 仍被处理；`render_pending` 节点不进入 native scrollback；过期结果不安装；完成结果与一次性 canonical render 等价；所有 HTML 仍经 DOMPurify。
-  - 命令：
-    - `./test.py --backend -- src/tests/test_presentation/gateway/test_ui_events_streaming.py src/tests/test_presentation/output/test_scrollback_flush.py -v`
-    - `./test.py --frontend -- test/utils/markdown-worker.test.ts test/utils/stream.test.ts`
+- [ ] **P0.3 异步 canonical commit（跨端整体）**：覆盖 TUI task scheduling、Desktop Worker、stale revision、失败 fallback、safe flush 和最终等价。
+  - [x] **TUI 子项**：`DockEventConsumer` 立即调度 `asyncio.to_thread()` canonical projection；node/revision/generation stale guard、plain fallback、`render_pending` scrollback barrier 和 commit drain 已实现。
+  - [ ] **Desktop 子项**：Markdown Worker、主线程 canonical install、DOMPurify 边界和最终等价测试仍待实现。
+  - 文件：TUI `src/voidx/presentation/output/dock/stream.py`、`src/voidx/presentation/output/events/consumers.py`、`src/tests/test_presentation/gateway/test_ui_events_streaming.py`；Desktop 计划文件保持不变。
+  - TUI 验证：`./test.py --backend -- src/tests/test_presentation/gateway/test_ui_events_streaming.py src/tests/test_presentation/gateway/test_ui_events_dock_bus.py tui/tests/test_input_advanced.py tui/tests/test_terminal_writer.py`（75 passed）。
+  - Desktop 验证：`./test.py --frontend -- test/utils/markdown-worker.test.ts test/utils/stream.test.ts`（Worker 子项待实现）。
 
 - [ ] **P0.4 Desktop rAF/layout test**：同一 frame 输入 100 个 update，render/scroll layout 各最多一次；用户离底时 scrollTop 不变。
   - 文件：`frontend/test/utils/stream.test.ts`
@@ -771,7 +803,7 @@ Native `desktop/tauri/` 当前不在计划改动范围。
   - 文件：`tui/tests/test_frame_advanced.py`
   - 命令：`./test.py --backend -- tui/tests/test_frame_advanced.py -v`
 
-- [ ] **P0.6 Terminal writer RED/GREEN**：慢 PTY reader 下连续 frame + commit + restore。
+- [x] **P0.6 Terminal writer RED/GREEN**：慢 PTY reader 下连续 frame + commit + restore。
   - RED：当前事件循环 heartbeat 被同步 flush 阻塞。
   - GREEN：跳过中间 generation 后终态画面正确；commit 不丢；restore 最后；heartbeat gap 达标。
   - 文件：`tui/tests/test_terminal_writer.py`
@@ -825,9 +857,11 @@ Native `desktop/tauri/` 当前不在计划改动范围。
   - 文件：`tui/tests/test_terminal_panels.py`
   - 命令：`./test.py --backend -- tui/tests/test_terminal_panels.py -v`
 
-- [ ] **P2.4 exit order**：50k 合成行下 terminal restore 先于 transcript.log 导出；导出超时仍恢复 terminal。
-  - 文件：`tui/tests/test_output_paste.py` 或独立 shutdown test。
-  - 命令：`./test.py --backend -- tui/tests/test_output_paste.py -v`
+- [ ] **P2.4 exit order（整体）**：50k 合成行下 terminal restore 先于 transcript.log 导出；导出超时仍恢复 terminal。
+  - [x] **TUI 顺序子项**：force flush/writer flush 后 restore terminal，再写退出序列并在线程中导出 transcript；顺序回归已覆盖。
+  - [ ] **超时子项**：导出超时后的恢复行为和 50k 合成行压力测试仍待补充。
+  - 文件：`tui/voidx_cli/app.py`、`tui/tests/test_input_advanced.py`
+  - 命令：`./test.py --backend -- tui/tests/test_input_advanced.py -k "run_restores_terminal_before_transcript_export" -v`
 
 - [ ] **P2.5 durable eviction**：只有 durable + committed + unreferenced turn 被驱逐；page restore 与原 tree snapshot 等价。
   - 文件：新增 OutputTree retention tests + transcript adapter tests。
