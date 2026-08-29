@@ -453,6 +453,9 @@ async def test_run_finally_does_not_mask_missing_workspace(monkeypatch):
         def flush(self) -> None:
             pass
 
+        def isatty(self) -> bool:
+            return True
+
     async def fake_read_input_raw():
         return b"\x04"
 
@@ -484,6 +487,7 @@ async def test_run_restores_terminal_before_transcript_export(tmp_path, monkeypa
     tui = _tui(tmp_path)
     tui._stdin_fd = 99
     monkeypatch.setattr(os, "isatty", lambda _fd: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(tui, "_setup_terminal", lambda: None)
     monkeypatch.setattr(tui, "_restore_terminal", lambda: events.append("restore"))
     monkeypatch.setattr(tui, "_render_frame", lambda: None)
@@ -636,6 +640,7 @@ def _prepare_lifecycle_tui(tmp_path, monkeypatch, writer):
     monkeypatch.setattr(tui, "_setup_terminal", lambda: events.append("setup"))
     monkeypatch.setattr(tui, "_restore_terminal", lambda: events.append("restore_terminal"))
     monkeypatch.setattr(tui, "_move_to_frame_end_sequence", lambda: "<move>")
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(tui, "_render_frame", lambda: events.append("render"))
     monkeypatch.setattr(
         app_module,
@@ -816,6 +821,48 @@ async def test_tty_shutdown_orders_commit_drain_restore_stop_and_dump(
     dump = events.index("dump")
     assert cleanup_commit < commit_wait < drain < termios_restore
     assert termios_restore < restore_barrier < restore_wait < shutdown < dump
+
+
+@pytest.mark.asyncio
+async def test_redirected_stdout_does_not_start_terminal_writer(tmp_path, monkeypatch):
+    class RedirectedStdout:
+        def write(self, value: str) -> int:
+            return len(value)
+
+        def flush(self) -> None:
+            pass
+
+        def isatty(self) -> bool:
+            return False
+
+    events = []
+    writer = _LifecycleWriter(events)
+    tui = _prepare_lifecycle_tui(tmp_path, monkeypatch, writer)
+    monkeypatch.setattr(sys, "stdout", RedirectedStdout())
+    monkeypatch.setattr(tui, "_flush_committed", lambda *, force=False: None)
+
+    async def read_input_raw():
+        events.append("raw_input")
+        return b"\x04"
+
+    async def read_input_line():
+        events.append("line_input")
+        return b"\x04"
+
+    monkeypatch.setattr(tui, "_read_input_raw", read_input_raw)
+    monkeypatch.setattr(tui, "_read_input_line", read_input_line)
+
+    async def on_submit(_text: str) -> bool:
+        return True
+
+    await tui.run(on_submit)
+
+    assert tui._tty is False
+    assert "setup" not in events
+    assert "writer_start" not in events
+    assert "shutdown" not in events
+    assert "raw_input" not in events
+    assert "line_input" in events
 
 
 @pytest.mark.asyncio

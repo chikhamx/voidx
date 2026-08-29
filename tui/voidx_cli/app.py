@@ -58,6 +58,13 @@ from .terminal_writer import BatchToken, TerminalWriter
 from .text_prompt_mixin import _TextPromptMixin
 
 
+def _stream_is_tty(stream: Any) -> bool:
+    try:
+        return bool(stream.isatty())
+    except Exception:
+        return False
+
+
 def _guidance_echo_lines(echoes: list[str]) -> list[str]:
     lines: list[str] = []
     for echo in echoes:
@@ -215,7 +222,11 @@ class PureTui(
         try:
             dock.set_refresh_callback(self._on_dock_refresh)
             dock.set_width_provider(lambda: self._console.width or 80)
-            self._tty = self._stdin_fd is not None and os.isatty(self._stdin_fd)
+            self._tty = (
+                self._stdin_fd is not None
+                and os.isatty(self._stdin_fd)
+                and _stream_is_tty(sys.stdout)
+            )
             if self._tty:
                 terminal_setup_attempted = True
                 self._setup_terminal()
