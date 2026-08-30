@@ -426,6 +426,9 @@ canonicalOwners.size === 0
 export interface HistoricalFileChangeCardState {
   card: HTMLElement;
   files: Map<string, FileChange>;
+  legacyFiles: Map<string, FileChange>;
+  sources: Map<string, string>;
+  expanded: boolean;
 }
 
 export interface TranscriptRenderContext {
@@ -448,7 +451,7 @@ export function renderHistoricalTranscriptPage(
 2. accepted request只捕获既有thread/context/stale token与`paginationInteractionGeneration = controller.getInteractionGeneration()`；请求前不得读取或保存`scrollHeight`/anchor `scrollTop`；
 3. response先通过既有thread/context/stale guards并按现有merge/dedupe得到本页待新增nodes；此时不得推进page cursor/state；
 4. 用新的`DocumentFragment`与新的context-local maps调用`renderHistoricalTranscriptPage()`。所有查询、相邻merge、tool grouping和file-card复用只允许发生在`context.root`及其maps内；`existingPageItemIds`中的节点直接跳过，不查询live transcript。该纯构造阶段不得调用`getTranscriptElement()`、`appendStreamText()`、`commitStream()`、任何clear/invalidate API、模块级live `cards` map或follow/force helper，也不得修改DOM、controller、pending-local/page state；异常只丢弃fragment并保持response可重试；
-5. historical renderer按现有snapshot视觉语义直接构造assistant Markdown与可选thought DOM，但不得创建`StreamState`、projection、timer、canonical work/owner或incremental revision。thought renderer接收context root并只与fragment内前一thought合并；tool renderer接收context root/map并只在fragment内按turn/tool ID分组和更新；file renderer接收context-local map，不能读取或写入production模块级`cards`。notice/diff/message/compaction同样只append到context root。historical构造全程不发follow请求；
+5. historical renderer按现有snapshot视觉语义直接构造assistant Markdown与可选thought DOM，但不得创建`StreamState`、projection、timer、canonical work/owner或incremental revision。thought renderer接收context root并只与fragment内前一thought合并；tool renderer接收context root/map并只在fragment内按turn/tool ID分组和更新；historical file helper固定接收`context.fileCards`与root，按生产现有`mergeSourceText()`和`rebuildFiles()`语义更新完整的context-local `HistoricalFileChangeCardState`（包括`legacyFiles`、`sources`与`expanded`），不能读取或写入production模块级`cards`。notice/diff/message/compaction同样只append到context root。historical构造全程不发follow请求；
 6. fragment构造成功后调用`prepareTranscriptForSynchronousPrepend(paginationInteractionGeneration)`；若interaction generation不匹配则response视为viewport-stale：丢弃fragment，不安装、不清flag、不改following/按钮/已排frame、不写anchor且不推进page cursor/state；
 7. prepare返回true时，不读写`scrollTop`、不执行或丢弃keyed mutation，也不递增owner或interaction generation；它同步清除请求接受前遗留且尚未消费的`scrollGeometryDirty`、force与external-follow三类flags，将`following = false`并显示按钮；若没有pending keyed mutation，cancel仅为旧flags排定的空frame；否则保留原handle并在下一transaction以`following = false`执行；
 8. prepare成功后立即在同一同步调用栈读取`previousHeight = scrollHeight`与`previousTop = scrollTop`，保存当时的首个child为insertion point，把fragment一次性`insertBefore`到该child前，重读一次`scrollHeight`并直接写`previousTop + (scrollHeight - previousHeight)`；这段baseline到anchor write之间不得`await`、排microtask、调用renderer或执行无关业务回调，不得写`Number.MAX_SAFE_INTEGER`；RPC等待期间与detached构造期间完成的后台mutation因此都不进入prepend高度差；
