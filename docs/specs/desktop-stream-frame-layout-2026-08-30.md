@@ -420,18 +420,42 @@ canonicalOwners.size === 0
 
 ### 5.6 Earlier-page preserve-live 同步例外
 
-分页协议、`scrollTop <= 24` 触发阈值、page merge/dedupe 与 anchor 公式不变，但 earlier-page DOM 安装必须使用独立的 preserve-live prepend 模式，不能调用 full-snapshot `renderTranscript()` 语义：
+分页协议、`scrollTop <= 24`触发阈值、page merge/dedupe与anchor公式不变，但 earlier-page 必须通过显式隔离的 historical render context 构造 detached 节点，再用单次同步 prepend 安装：
 
-1. pagination `scroll` listener 可以同步读取一次 `transcriptEl.scrollTop`，仅用于 `<= 24` 判断；它不得写 scroll 或替代 controller listener；
-2. accepted request 只捕获既有 thread/context/stale token 与 `paginationInteractionGeneration = controller.getInteractionGeneration()`；请求前不得读取或保存 `scrollHeight`/anchor `scrollTop`；
-3. response 先通过既有 thread/context/stale guards，再调用 `prepareTranscriptForSynchronousPrepend(paginationInteractionGeneration)`；若 interaction generation 不匹配则 response 视为 viewport-stale：不 render、不 prepare、不写 anchor，保留用户的新 force、manual scroll、follow状态和已排frame；page cursor/state也不得推进，使后续 near-top事件可重新请求该页；
-4. prepare返回true时，不读写`scrollTop`、不执行或丢弃keyed mutation，也不递增owner或interaction generation；它同步清除请求接受前遗留且尚未消费的`scrollGeometryDirty`、force与external-follow三类flags，将`following = false`并显示按钮；若清除flags后没有pending keyed mutation，立即cancel仅为旧flags排定的空frame；若仍有keyed mutation，保留原handle并在下一transaction以`following = false`执行；
-5. prepare成功后立即在同一同步调用栈读取`previousHeight = scrollHeight`与`previousTop = scrollTop`；从该baseline read到步骤7 anchor write之间不得`await`、排microtask或执行无关业务回调；因此RPC等待期间已经完成的stream/tool/message mutation不进入prepend高度差；
-6. 同步调用`renderTranscript(pageItems, { mode: "prepend-preserve-live" })`并完成pending-local restore和empty-state mutation。该模式只可在现有第一个transcript子节点前插入本页历史节点：不得调用`clearActiveStreams()`/`clearCommittedStreams()`，不得删除、重排或替换现有DOM，不得修改active stream的state、pending projection、timer、`renderQueued`、incremental revision/cursor或canonical owner；thought/tool/file renderer不得把历史项合并、复用或挂接到现有live节点/card。历史页内部仍按既有dedupe顺序构造，已存在item ID保持现有节点且不重复插入；
-7. mutation后只允许此路径重读一次`scrollHeight`，并直接写`previousTop + (scrollHeight - previousHeight)`；不得写`Number.MAX_SAFE_INTEGER`；
-8. anchor write产生的后续scroll event重新进入controller正常geometry frame；用户主动点击按钮或滚回near-bottom后才恢复follow。
+```ts
+export interface HistoricalFileChangeCardState {
+  card: HTMLElement;
+  files: Map<string, FileChange>;
+}
 
-这组 response-time baseline/post-read 是第 3.2 节 frame read-before-write规则的唯一例外。分页失败、thread/context stale或viewport-stale response不调用render、不修改controller或page state。本批不改变RPC时序、page merge/dedupe算法或anchor数学，只为`renderTranscript`增加严格隔离的prepend render mode；full snapshot继续使用原有replace模式。
+export interface TranscriptRenderContext {
+  readonly root: DocumentFragment;
+  readonly mode: "prepend-preserve-live";
+  readonly existingPageItemIds: ReadonlySet<string>;
+  readonly toolElements: Map<string, HTMLElement>;
+  readonly fileCards: Map<string, HistoricalFileChangeCardState>;
+}
+
+export function renderHistoricalTranscriptPage(
+  snapshot: TranscriptSnapshot,
+  context: TranscriptRenderContext,
+): DocumentFragment;
+```
+
+固定流程：
+
+1. pagination `scroll` listener可以同步读取一次`transcriptEl.scrollTop`，仅用于`<= 24`判断；它不得写scroll或替代controller listener；
+2. accepted request只捕获既有thread/context/stale token与`paginationInteractionGeneration = controller.getInteractionGeneration()`；请求前不得读取或保存`scrollHeight`/anchor `scrollTop`；
+3. response先通过既有thread/context/stale guards并按现有merge/dedupe得到本页待新增nodes；此时不得推进page cursor/state；
+4. 用新的`DocumentFragment`与新的context-local maps调用`renderHistoricalTranscriptPage()`。所有查询、相邻merge、tool grouping和file-card复用只允许发生在`context.root`及其maps内；`existingPageItemIds`中的节点直接跳过，不查询live transcript。该纯构造阶段不得调用`getTranscriptElement()`、`appendStreamText()`、`commitStream()`、任何clear/invalidate API、模块级live `cards` map或follow/force helper，也不得修改DOM、controller、pending-local/page state；异常只丢弃fragment并保持response可重试；
+5. historical renderer按现有snapshot视觉语义直接构造assistant Markdown与可选thought DOM，但不得创建`StreamState`、projection、timer、canonical work/owner或incremental revision。thought renderer接收context root并只与fragment内前一thought合并；tool renderer接收context root/map并只在fragment内按turn/tool ID分组和更新；file renderer接收context-local map，不能读取或写入production模块级`cards`。notice/diff/message/compaction同样只append到context root。historical构造全程不发follow请求；
+6. fragment构造成功后调用`prepareTranscriptForSynchronousPrepend(paginationInteractionGeneration)`；若interaction generation不匹配则response视为viewport-stale：丢弃fragment，不安装、不清flag、不改following/按钮/已排frame、不写anchor且不推进page cursor/state；
+7. prepare返回true时，不读写`scrollTop`、不执行或丢弃keyed mutation，也不递增owner或interaction generation；它同步清除请求接受前遗留且尚未消费的`scrollGeometryDirty`、force与external-follow三类flags，将`following = false`并显示按钮；若没有pending keyed mutation，cancel仅为旧flags排定的空frame；否则保留原handle并在下一transaction以`following = false`执行；
+8. prepare成功后立即在同一同步调用栈读取`previousHeight = scrollHeight`与`previousTop = scrollTop`，保存当时的首个child为insertion point，把fragment一次性`insertBefore`到该child前，重读一次`scrollHeight`并直接写`previousTop + (scrollHeight - previousHeight)`；这段baseline到anchor write之间不得`await`、排microtask、调用renderer或执行无关业务回调，不得写`Number.MAX_SAFE_INTEGER`；RPC等待期间与detached构造期间完成的后台mutation因此都不进入prepend高度差；
+9. 安装成功后才原子提交page cursor/window state并调用只更新empty-state class的同步逻辑。earlier-page路径不得调用`removePendingLocalMessageElements()`或`restorePendingLocalMessages()`，不得以历史页同文本用户消息确认pending-local；pending-local queue、DOM identity与顺序在prepend前后完全不变；
+10. anchor write产生的后续scroll event重新进入controller正常geometry frame；用户主动点击按钮或滚回near-bottom后才恢复follow。
+
+这组response-time baseline/post-read是第3.2节frame read-before-write规则的唯一例外。分页失败、构造异常、thread/context stale或viewport-stale response不安装fragment、不修改controller/pending-local/page state。本批不改变RPC时序、page merge/dedupe算法或anchor数学；full snapshot继续使用原有`renderTranscript()` replace语义。
 
 ### 5.7 后台 transcript mutation 的统一 follow API
 
@@ -561,9 +585,10 @@ canonicalOwners.size === 0
 - 离底后，带 thinking内容的 assistant `item.completed` 同步推进业务完成、保留thinking UI并启动canonical工作，但 thought insertion与canonical settle都不改变 scroll position；
 - incremental notification业务状态不等待 frame/Worker；用户离底时普通 `item.delta`、tool delta、file diff、prompt和message不改变 scroll position；
 - full snapshot、非 guidance用户主动提交、prompt answer和显式错误使用force path；普通后台notification不force；
-- earlier-page测试断言 request只捕获interaction token，response guards/prepare通过后才读取baseline，preserve-live prepend后写精确anchor；RPC等待期间先完成stream frame/tool/message mutation时高度不计入prepend差值；
-- page pending期间text与thinking stream继续delta并completion，分页安装前后active state、revision、timer、projection与canonical raw text完整，历史thought/tool/file不与live DOM合并或复用；
-- pending force、已执行force、请求期间manual scroll分别递增interaction generation，使旧page response不render、不推进page state、不清flags且不覆盖用户位置；未交互response仍隔离旧follow flags/frame，stale/failed page不改变follow；
+- earlier-page测试断言request只捕获interaction token；response guard后先在detached fragment构造historical page，prepare通过后才读取baseline、单次insert、精确anchor并提交page state；RPC等待与detached构造期间的stream frame/tool/message mutation不计入prepend差值；
+- historical renderer隔离测试使用与live节点相同的item ID、相邻thought、相同`tool_call_id`、相同turnId/file source：只在fragment内dedupe/merge/group/cache，不读取或改变live DOM、production file `cards`、active/canonical owner，也不发follow；assistant直接构造snapshot Markdown且不登记stream/canonical work；
+- page pending期间text与thinking stream继续delta并completion，分页安装前后active state、revision、timer、projection与canonical raw text完整；pending-local DOM identity、顺序和queue不变，历史同文本用户消息不能确认当前pending-local；
+- pending force、已执行force、请求期间manual scroll分别递增interaction generation，使旧page response丢弃fragment、不推进page state、不清flags且不覆盖用户位置；render异常、thread/context stale与failed page同样不安装且可重试；未交互response仍隔离旧follow flags/frame；
 - thread/workspace/full snapshot reset顺序与旧frame隔离；按钮结构、可访问名称和hidden切换正确；
 - 静态守卫枚举 `stream.ts`、`render.ts`、`render-thought-items.ts`、`render-tool-items.ts`、`render-file-changes.ts`、`render-notice-status.ts`、`ui/prompt.ts`，断言不存在直接 `scrollTop =`；`main.ts`只允许earlier-page精确anchor赋值，`transcript-viewport.ts`只允许adapter默认writer；terminal独立滚动保持允许；
 - CSS design-system测试验证wrapper/button selector、现有token、smooth-scroll移除且不引入raw color/token违规。
@@ -582,11 +607,11 @@ canonicalOwners.size === 0
 - `frontend/src/utils/stream.ts`：100 ms throttle、folded pending update、keyed frame mutation、flush barrier、统一follow/force/prepend接线、replacement barrier与canonical viewport owner；
 - `frontend/src/utils/types.ts`：单pending update、timer/queued/attached字段；
 - `frontend/src/utils/index.ts`：按现有公共出口导出需要的viewport类型/工厂；
-- `frontend/src/utils/render.ts`：stats/普通message删除直接跳底，改为统一follow helper；
-- `frontend/src/utils/render-thought-items.ts`：thought merge/new item改为follow helper；
-- `frontend/src/utils/render-tool-items.ts`：tool start/delta/completion改为follow helper；
-- `frontend/src/utils/render-file-changes.ts`：summary/diff card改为follow helper；
-- `frontend/src/utils/render-notice-status.ts`：`appendDiffItem()`改为follow helper；
+- `frontend/src/utils/render.ts`：stats/普通message删除直接跳底，改为统一follow helper；新增`TranscriptRenderContext`、`renderHistoricalTranscriptPage()`与snapshot-only assistant/message/diff/notice/compaction构造，不调用stream lifecycle；
+- `frontend/src/utils/render-thought-items.ts`：production thought merge/new item改为follow helper；新增接收显式fragment root的historical构造入口，只在该root内查找merge target且不follow；
+- `frontend/src/utils/render-tool-items.ts`：production tool start/delta/completion改为follow helper；新增接收显式fragment root与context-local tool map的historical入口，不查询global transcript；
+- `frontend/src/utils/render-file-changes.ts`：production summary/diff card改为follow helper；新增接收context-local card map/root的historical入口，禁止访问模块级production `cards`；
+- `frontend/src/utils/render-notice-status.ts`：production `appendDiffItem()`改为follow helper；historical notice/diff/compaction构造接收显式fragment root，不创建toast/timer且不follow；
 - `frontend/src/ui/prompt.ts`：conversation prompt insertion改为follow helper；
 - `frontend/src/main.ts`：controller初始化、force调用点、earlier-page受控同步例外、thread/snapshot/test reset接线；
 - `frontend/src/services/state.ts`：缓存`transcriptReturnBottomEl`；
@@ -652,11 +677,12 @@ canonicalOwners.size === 0
 
 ### Task 5 — Main pagination / lifecycle RED → GREEN
 
-- RED：扩展`frontend/test/main/runtime-profile.test.ts`，覆盖request只捕获interaction token、response-time baseline、等待期后台mutation不计入anchor、pending/已执行force与manual scroll使response viewport-stale且page state不推进；
-- RED：扩展`frontend/test/main/incremental-protocol.test.ts`，覆盖page pending时text/thinking delta继续到completion，prepend前后active/canonical内容完整且历史thought/tool/file不与live DOM合并；扩展`frontend/test/ui/workbench.test.ts`覆盖thread/workspace/snapshot和旧canonical owner；
-- GREEN：修改`frontend/src/main.ts`、`frontend/src/utils/render.ts`和`frontend/src/services/connection.ts`；为`renderTranscript`增加严格`prepend-preserve-live` mode，workspace switch在`transcriptEl.replaceChildren()`前依次调用`clearCommittedStreams()`、`clearActiveStreams()`和`resetTranscriptViewport()`；
+- RED：扩展`frontend/test/main/runtime-profile.test.ts`，覆盖request只捕获interaction token、detached构造后response-time baseline、等待/构造期后台mutation不计入anchor、安装后才提交page state、pending/已执行force与manual scroll使response viewport-stale且可重试；
+- RED：扩展`frontend/test/utils/render.test.ts`与`frontend/test/utils/render-file-changes.test.ts`，用同item ID、相邻thought、同`tool_call_id`、同turnId/file source覆盖fragment-local dedupe/merge/group/cache、snapshot-only assistant、no-follow与live DOM/cache/owner零修改；
+- RED：扩展`frontend/test/main/incremental-protocol.test.ts`，覆盖page pending时text/thinking delta继续到completion、active/canonical完整、pending-local DOM identity/顺序/queue不变且历史同文本不确认pending；扩展`frontend/test/ui/workbench.test.ts`覆盖thread/workspace/snapshot和旧canonical owner；
+- GREEN：修改`frontend/src/main.ts`、`frontend/src/utils/render.ts`、`render-thought-items.ts`、`render-tool-items.ts`、`render-file-changes.ts`、`render-notice-status.ts`和`frontend/src/services/connection.ts`；新增第5.6节显式historical context/renderer，禁止临时替换global transcript；workspace switch在`transcriptEl.replaceChildren()`前依次调用`clearCommittedStreams()`、`clearActiveStreams()`和`resetTranscriptViewport()`；
 - 命令：`./test.py --frontend -- test/utils/transcript-viewport.test.ts test/utils/markdown-worker.test.ts test/utils/markdown.test.ts test/utils/stream.test.ts test/utils/render.test.ts test/utils/render-file-changes.test.ts test/main/main.test.ts test/main/incremental-protocol.test.ts test/main/runtime-profile.test.ts test/ui/design-system.test.ts test/ui/workbench.test.ts`；
-- 期望：P0.2/P0.3/P0.4聚焦回归全绿，分页anchor稳定、live stream/canonical完整、用户新交互优先，业务状态不等待frame/Worker。
+- 期望：P0.2/P0.3/P0.4聚焦回归全绿，historical构造与live状态严格隔离，分页anchor稳定、pending-local与canonical完整、用户新交互优先，业务状态不等待frame/Worker。
 
 ### Task 6 — 最终验证与文档
 
@@ -690,7 +716,8 @@ canonicalOwners.size === 0
 - [ ] canonical installed/fallback仅在owner/controller/generation/containment仍匹配且following时滚动，stale或旧target settle不滚动；
 - [ ] active stream、retained committed stream或canonical owner存在时replacement固定抛错且不改变旧owner；quiescent replacement后旧listener/frame/settle不回写；
 - [ ] discard、clear、thread/workspace switch、同ID新stream和reset拒绝旧timer/frame，普通reset不误杀同controller的有效canonical settle；
-- [ ] earlier-page仅按第5.6节执行受控post-mutation geometry例外，精确保持prepend anchor且旧flags/frame不覆盖anchor；
+- [ ] earlier-page先以显式context在detached fragment内构造historical DOM，thought/tool/file cache与live状态严格隔离且不发follow；仅token匹配时同步prepend并精确保持anchor；
+- [ ] historical assistant不创建stream/projection/canonical owner；pending-local DOM identity、顺序与queue不变；viewport-stale/构造异常不推进page state且可重试；
 - [ ] production与`frontend/test/setup.ts`都包含可访问的wrapper/按钮结构；scheduler/canceler配对、帧内重入、thinking completion和replacement矩阵有确定性测试；
 - [ ] P0.2 bounded projection与P0.3 Worker安全/等价/stale/fallback契约不回退；snapshot replay和notification业务时序不回退；
 - [ ] 聚焦Frontend测试通过；完整Frontend在最终阶段fresh运行一次并通过；
@@ -710,6 +737,8 @@ canonicalOwners.size === 0
 - commit若只cancel timer而不drain folded update，或flush把调用前flags泄漏给其他key，会造成visible preview/滚动时序错误；barrier必须按第4.4节同步消费；
 - controller reset/replacement若不能退休旧frame、listener和canonical滚动owner，旧work可能修改新thread；replacement必须先验证quiescent且旧settle不能回退到当前全局controller；
 - prepend前若不清除旧force/external/dirty flags，或清除flags后留下空frame，anchor写入会被迟到到底写覆盖；必须使用第5.6节prepare顺序；
+- historical构造若临时替换global transcript、复用production file cache或调用stream API，会污染live owner并破坏P0.2/P0.3；只能使用显式detached context与context-local maps，且不得发follow；
+- earlier-page若删除/恢复pending-local DOM或在安装前提交page state，会改变节点身份并让失败response不可重试；该路径必须保持pending-local no-op并在成功anchor后提交page state；
 - 为追求“一个DOM API”而重写P0.2 projection会扩大风险；验收单位是一个render transaction，不是一个MutationRecord。
 
 ### 11.2 回滚
@@ -722,7 +751,7 @@ canonicalOwners.size === 0
 - 当前与目标调用链、全量直接transcript滚动路径和layout风险有具体文件；terminal/toast排除边界明确；
 - controller接口、scheduler pair、geometry算法、frame重入、flush flags和pending fold规则明确；
 - append、phase、commit、canonical owner、clear/reset、attach/replacement、thread/workspace/snapshot生命周期明确；
-- earlier-page同步baseline/prepare/post-read/anchor是唯一受控frame例外，普通renderer只能表达follow或由`main.ts`表达force；
+- earlier-page以显式detached historical context隔离thought/tool/file cache、assistant stream lifecycle与follow；构造后执行interaction-token prepare、同步baseline/insert/post-read/anchor，并在成功后才提交page state；pending-local保持no-op；
 - UI结构、按钮语义、共享测试DOM、CSS token与smooth-scroll处理明确；
 - 新增/修改/禁止文件列明，所有任务有RED/GREEN文件、精确命令和预期结果；
 - scheduler/canceler配对、帧内重入、flush三类flags、replacement三种拒绝、旧canonical settle、thinking completion与分页竞态均有必测落点；
