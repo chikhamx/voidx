@@ -752,7 +752,7 @@ body.is-desktop.is-mac .vx-sidebar {
 }
 
 
-.vx-main .transcript { flex: 1; }
+.vx-main .vx-transcript-viewport { flex: 1; }
 
 .vx-main-canvas {
   display: flex;
@@ -767,7 +767,7 @@ body.is-desktop.is-mac .vx-sidebar {
   padding-bottom: clamp(48px, 8vh, 120px);
 }
 
-.vx-main-canvas.empty .transcript { display: none; }
+.vx-main-canvas.empty .vx-transcript-viewport { display: none; }
 
 /* 空状态 — Kimi 式问候 + 建议 chips */
 .vx-empty-state {

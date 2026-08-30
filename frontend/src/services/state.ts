@@ -113,6 +113,7 @@ export let contextPermissionEl: HTMLElement | null;
 export let contextProviderModelEl: HTMLElement;
 export let emptyStateEl: HTMLElement;
 export let transcriptEl: HTMLElement;
+export let transcriptReturnBottomEl: HTMLButtonElement;
 export let mainCanvasEl: HTMLElement;
 export let composerEl: HTMLFormElement;
 export let inputEl: HTMLTextAreaElement;
@@ -147,6 +148,7 @@ export function initStateDom(): void {
   contextProviderModelEl = document.querySelector<HTMLElement>("#context-provider-model")!;
   emptyStateEl = document.querySelector<HTMLElement>("#empty-state")!;
   transcriptEl = document.querySelector<HTMLElement>("#transcript")!;
+  transcriptReturnBottomEl = document.querySelector<HTMLButtonElement>("#transcript-return-bottom")!;
   mainCanvasEl = document.querySelector<HTMLElement>(".vx-main-canvas")!;
   composerEl = document.querySelector<HTMLFormElement>("#composer")!;
   inputEl = document.querySelector<HTMLTextAreaElement>("#input")!;
@@ -289,9 +291,9 @@ export function setRunning(running: boolean): void {
   updateStatusBar();
 }
 
-export function syncEmptyState(): void {
+export function syncEmptyState(hasPendingContent = false): void {
   if (!emptyStateEl || !transcriptEl) return;
-  const isEmpty = transcriptEl.children.length === 0;
+  const isEmpty = transcriptEl.children.length === 0 && !hasPendingContent;
   emptyStateEl.hidden = !isEmpty;
   mainCanvasEl?.classList.toggle("empty", isEmpty);
 }

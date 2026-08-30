@@ -116,7 +116,10 @@
                 <button type="button" class="vx-suggestion-chip" data-prompt="帮我重构这部分逻辑，让它更清晰">重构代码</button>
               </div>
             </section>
-            <div class="transcript" id="transcript" aria-live="polite"></div>
+            <div class="vx-transcript-viewport">
+              <div class="transcript" id="transcript" aria-live="polite"></div>
+              <button type="button" class="vx-return-bottom" id="transcript-return-bottom" aria-label="回到底部" hidden>回到底部</button>
+            </div>
             <section class="vx-agent-studio" id="agent-studio" aria-label="自定义 Agent 配置" hidden></section>
           <form class="composer" id="composer">
             <div class="attachment-strip" id="attachment-strip" hidden></div>

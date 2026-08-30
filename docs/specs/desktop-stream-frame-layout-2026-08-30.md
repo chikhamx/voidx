@@ -1,6 +1,6 @@
 # Desktop Stream Frame/Layout — P0.4 技术规格
 
-> **Status: Revision required** — Independent re-review pending.
+> **Status: Implemented and verified** — Independent specification review passed; implementation verification completed.
 > **Date: 2026-08-30**
 > **Audience: Human + LLM**
 
@@ -706,27 +706,27 @@ export function renderHistoricalTranscriptPage(
 
 ## 10. 验收标准
 
-实施完成前保持未勾选：
+实施与 fresh 验证已完成：
 
-- [ ] 连续delta使用非重置100 ms trailing throttle，持续更新不会饿死；
-- [ ] 同一stream每个transcript frame最多一个render transaction，一帧内append/replace/phase变更折叠为至多一个projection operation；
-- [ ] delta handler不再同步读取`scrollHeight`或写attached stream DOM/scroll position；
-- [ ] 每个controller content transaction只读取一份geometry，所有read在write前，scroll最多写一次；
-- [ ] `flushMutationNow()`同步drain目标最新projection，确定消费调用前dirty/force/external flags，保留其他key和重入work，并立即返回而不等待Worker；
-- [ ] near-bottom用户继续跟随；离底用户不被stream、message、thought、tool、file diff、prompt或canonical settle抢回且看到“回到底部”按钮；
-- [ ] 所有后台transcript renderer通过统一follow helper表达滚动；除controller和earlier-page anchor外无直接transcript `scrollTop`赋值；
-- [ ] 点击按钮、full snapshot、非guidance用户提交、prompt answer和显式错误可force恢复跟随；
-- [ ] canonical installed/fallback仅在owner/controller/generation/containment仍匹配且following时滚动，stale或旧target settle不滚动；
-- [ ] active stream、retained committed stream或canonical owner存在时replacement固定抛错且不改变旧owner；quiescent replacement后旧listener/frame/settle不回写；
-- [ ] discard、clear、thread/workspace switch、同ID新stream和reset拒绝旧timer/frame，普通reset不误杀同controller的有效canonical settle；
-- [ ] earlier-page先以显式context在detached fragment内构造historical DOM，thought/tool/file cache与live状态严格隔离且不发follow；仅token匹配时同步prepend并精确保持anchor；
-- [ ] historical assistant不创建stream/projection/canonical owner；pending-local DOM identity、顺序与queue不变；viewport-stale/构造异常不推进page state且可重试；
-- [ ] production与`frontend/test/setup.ts`都包含可访问的wrapper/按钮结构；scheduler/canceler配对、帧内重入、thinking completion和replacement矩阵有确定性测试；
-- [ ] P0.2 bounded projection与P0.3 Worker安全/等价/stale/fallback契约不回退；snapshot replay和notification业务时序不回退；
-- [ ] 聚焦Frontend测试通过；完整Frontend在最终阶段fresh运行一次并通过；
-- [ ] production build通过并保留独立Worker chunk；
-- [ ] `git diff --check`通过，P0.4文件无新增TypeScript诊断；
-- [ ] P0.5、P1/P2、Gateway、TUI和范围外用户改动未混入或回退。
+- [x] 连续delta使用非重置100 ms trailing throttle，持续更新不会饿死；
+- [x] 同一stream每个transcript frame最多一个render transaction，一帧内append/replace/phase变更折叠为至多一个projection operation；
+- [x] delta handler不再同步读取`scrollHeight`或写attached stream DOM/scroll position；
+- [x] 每个controller content transaction只读取一份geometry，所有read在write前，scroll最多写一次；
+- [x] `flushMutationNow()`同步drain目标最新projection，确定消费调用前dirty/force/external flags，保留其他key和重入work，并立即返回而不等待Worker；
+- [x] near-bottom用户继续跟随；离底用户不被stream、message、thought、tool、file diff、prompt或canonical settle抢回且看到“回到底部”按钮；
+- [x] 所有后台transcript renderer通过统一follow helper表达滚动；除controller和earlier-page anchor外无直接transcript `scrollTop`赋值；
+- [x] 点击按钮、full snapshot、非guidance用户提交、prompt answer和显式错误可force恢复跟随；
+- [x] canonical installed/fallback仅在owner/controller/generation/containment仍匹配且following时滚动，stale或旧target settle不滚动；
+- [x] active stream、retained committed stream或canonical owner存在时replacement固定抛错且不改变旧owner；quiescent replacement后旧listener/frame/settle不回写；
+- [x] discard、clear、thread/workspace switch、同ID新stream和reset拒绝旧timer/frame，普通reset不误杀同controller的有效canonical settle；
+- [x] earlier-page先以显式context在detached fragment内构造historical DOM，thought/tool/file cache与live状态严格隔离且不发follow；仅token匹配时同步prepend并精确保持anchor；
+- [x] historical assistant不创建stream/projection/canonical owner；pending-local DOM identity、顺序与queue不变；viewport-stale/构造异常不推进page state且可重试；
+- [x] production与`frontend/test/setup.ts`都包含可访问的wrapper/按钮结构；scheduler/canceler配对、帧内重入、thinking completion和replacement矩阵有确定性测试；
+- [x] P0.2 bounded projection与P0.3 Worker安全/等价/stale/fallback契约不回退；snapshot replay和notification业务时序不回退；
+- [x] 聚焦Frontend测试通过；完整Frontend在最终阶段fresh运行一次并通过；
+- [x] production build通过并保留独立Worker chunk；
+- [x] `git diff --check`通过，P0.4文件无新增TypeScript诊断；
+- [x] P0.5、P1/P2、Gateway、TUI和范围外用户改动未混入或回退。
 
 ## 11. 风险与回滚
 

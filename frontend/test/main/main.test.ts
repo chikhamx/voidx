@@ -742,13 +742,16 @@ describe("handleItem routing", () => {
     expect(transcript.querySelector(".tool-item")).not.toBeNull();
   });
 
-  it("routes assistant_stream kind to stream buffer", () => {
+  it("routes assistant_stream kind to the next stream transaction", async () => {
     handleItem("item.started", {
       kind: "assistant_stream",
       item_id: "s1",
       data: { phase: "text" },
     });
     const transcript = document.querySelector("#transcript");
+    expect(transcript.querySelector(".stream-buffer")).toBeNull();
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
     expect(transcript.querySelector(".stream-buffer")).not.toBeNull();
   });
 

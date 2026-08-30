@@ -91,7 +91,10 @@ document.body.innerHTML = `
         <section class="vx-empty-state" id="empty-state" aria-live="polite">
           <h1>一起让世界变得更加美好！</h1>
         </section>
-        <div class="transcript" id="transcript" aria-live="polite"></div>
+        <div class="vx-transcript-viewport">
+          <div class="transcript" id="transcript" aria-live="polite"></div>
+          <button type="button" class="vx-return-bottom" id="transcript-return-bottom" aria-label="回到底部" hidden>回到底部</button>
+        </div>
         <form class="composer" id="composer">
           <div class="attachment-strip" id="attachment-strip" hidden></div>
           <div class="slash-menu" id="slash-menu"></div>

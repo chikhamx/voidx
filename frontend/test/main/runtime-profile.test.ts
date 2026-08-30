@@ -7,6 +7,7 @@ import {
   appendStreamText,
   commitStream,
   setTranscriptElement,
+  forceTranscriptScrollToBottom,
 } from "../../src/utils/stream";
 
 function fakeSocket() {
@@ -1008,6 +1009,7 @@ describe("cross-thread activation boundaries", () => {
     const { appendStreamText } = await import("../../src/utils/stream");
     setTranscriptElement(document.querySelector("#transcript"));
     appendStreamText("leaked-stream", "不应泄漏", "text");
+    await new Promise((resolve) => setTimeout(resolve, 150));
     expect(document.querySelector("#transcript .stream-buffer")).not.toBeNull();
 
     _resetWorkbenchForTest();
@@ -1251,10 +1253,16 @@ describe("strict metadata boundaries and complete reset", () => {
       },
     });
 
-    Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 100 });
+    let backgroundHeight = 100;
+    Object.defineProperty(transcript, "scrollHeight", {
+      configurable: true,
+      get: () => backgroundHeight
+        + (transcript.textContent?.includes("earlier page") ? 30 : 0),
+    });
     Object.defineProperty(transcript, "clientHeight", { configurable: true, value: 50 });
     transcript.scrollTop = 0;
     transcript.dispatchEvent(new Event("scroll"));
+    await Promise.resolve();
 
     const request = socket.send.mock.calls
       .map(([data]) => JSON.parse(data))
@@ -1265,6 +1273,7 @@ describe("strict metadata boundaries and complete reset", () => {
       turn_limit: 20,
     });
 
+    backgroundHeight = 150;
     const client = await import("../../src/rpc/client");
     client._resolvePendingForTest(request.id, {
       thread_id: "thread-windowed",
@@ -1281,6 +1290,7 @@ describe("strict metadata boundaries and complete reset", () => {
     expect(transcript.textContent).toContain("earlier page");
     expect(transcript.textContent).toContain("later page");
     expect(transcript.querySelectorAll(".message-item")).toHaveLength(2);
+    expect(transcript.scrollTop).toBe(30);
   });
 
   it("drops an earlier page response after the active thread changes", async () => {
@@ -1304,6 +1314,7 @@ describe("strict metadata boundaries and complete reset", () => {
     Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 100 });
     transcript.scrollTop = 0;
     transcript.dispatchEvent(new Event("scroll"));
+    await Promise.resolve();
     const pageRequest = socket.send.mock.calls
       .map(([data]) => JSON.parse(data))
       .find((entry) => entry.method === "transcript.page");
@@ -1383,6 +1394,7 @@ it("drops a page response after a newer snapshot for the same thread", async () 
   Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 100 });
   transcript.scrollTop = 0;
   transcript.dispatchEvent(new Event("scroll"));
+  await Promise.resolve();
   const pageRequest = socket.send.mock.calls
     .map(([data]) => JSON.parse(data))
     .find((entry) => entry.method === "transcript.page");
@@ -1413,6 +1425,57 @@ it("drops a page response after a newer snapshot for the same thread", async () 
 
   expect(transcript.textContent).toContain("fresh window");
   expect(transcript.textContent).not.toContain("stale page");
+});
+
+it("drops a page response after force and retries the same cursor", async () => {
+  const { handleNotification, _resetWorkbenchForTest } = await import("../../src/main");
+  _resetWorkbenchForTest();
+  const socket = fakeSocket();
+  _setSocket(socket);
+  const transcript = document.querySelector("#transcript");
+
+  handleNotification("workspace.snapshot", {
+    active_thread_id: "thread-force-page",
+    threads: [{ thread_id: "thread-force-page", runtime_profile: "coding" }],
+    active_snapshot: {
+      thread_id: "thread-force-page",
+      revision: 1,
+      windowed: true,
+      before_turn_id: 2,
+      has_earlier: true,
+      nodes: [{ node_type: "turn", id: "turn-current", header: "current page" }],
+    },
+  });
+  Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 100 });
+  transcript.scrollTop = 0;
+  transcript.dispatchEvent(new Event("scroll"));
+  await Promise.resolve();
+  const firstRequest = socket.send.mock.calls
+    .map(([data]) => JSON.parse(data))
+    .find((entry) => entry.method === "transcript.page");
+
+  forceTranscriptScrollToBottom();
+  const client = await import("../../src/rpc/client");
+  client._resolvePendingForTest(firstRequest.id, {
+    thread_id: "thread-force-page",
+    revision: 2,
+    windowed: true,
+    before_turn_id: 0,
+    has_earlier: false,
+    nodes: [{ node_type: "turn", id: "turn-stale", header: "stale forced page" }],
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  expect(transcript.textContent).not.toContain("stale forced page");
+  transcript.scrollTop = 0;
+  transcript.dispatchEvent(new Event("scroll"));
+  await Promise.resolve();
+
+  const pageRequests = socket.send.mock.calls
+    .map(([data]) => JSON.parse(data))
+    .filter((entry) => entry.method === "transcript.page");
+  expect(pageRequests).toHaveLength(2);
+  expect(pageRequests[1].params.before_turn_id).toBe(2);
 });
 
 

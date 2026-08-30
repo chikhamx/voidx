@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   setTranscriptElement,
   getOrCreateStream,
@@ -116,9 +116,12 @@ describe("getOrCreateStream", () => {
     expect(s1).toBe(s2);
   });
 
-  it("appends stream element to transcript", () => {
-    getOrCreateStream("s1", "text");
+  it("attaches the stream element in the render transaction", async () => {
+    appendStreamText("s1", "text", "text");
     const transcript = document.querySelector("#transcript");
+    expect(transcript.querySelector(".stream-buffer")).toBeNull();
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
     expect(transcript.querySelector(".stream-buffer")).not.toBeNull();
   });
 });
@@ -162,12 +165,14 @@ describe("appendStreamText", () => {
     expect(stream.thinkingBody.textContent).toBe("two\nthree\nfour\nfive\nsix");
   });
 
-  it("hides thinking when answer text starts", async () => {
+  it("hides thinking when the answer transaction renders", async () => {
     appendStreamText("s1", "thinking line", "thinking");
-    await new Promise((r) => setTimeout(r, 150));
+    await new Promise((resolve) => setTimeout(resolve, 150));
     appendStreamText("s1", "final answer", "text");
     const stream = getOrCreateStream("s1", "text");
+    expect(stream.thinkingEl.hidden).toBe(false);
 
+    await new Promise((resolve) => setTimeout(resolve, 150));
     expect(stream.thinkingEl.hidden).toBe(true);
     expect(stream.thinkingBody.textContent).toBe("");
   });
@@ -247,10 +252,12 @@ describe("discardStream", () => {
     expect(() => discardStream("nonexistent")).not.toThrow();
   });
 
-  it("removes stream element from transcript", () => {
+  it("removes an attached stream element from transcript", async () => {
     appendStreamText("s1", "text", "text");
     const transcript = document.querySelector("#transcript");
+    await new Promise((resolve) => setTimeout(resolve, 150));
     expect(transcript.querySelector(".stream-buffer")).not.toBeNull();
+
     discardStream("s1");
     expect(transcript.querySelector(".stream-buffer")).toBeNull();
   });
@@ -356,12 +363,13 @@ describe("async canonical stream commit", () => {
     appendStreamText("async-1", source, "text", "append");
     await new Promise((resolve) => setTimeout(resolve, 30));
     const stream = getOrCreateStream("async-1", "text");
-    const preview = stream.textEl.firstChild;
 
     const result = commitStream("async-1");
+    const preview = stream.textEl.firstChild;
 
     expect(result?.text).toBe(source);
     expect(harness.worker.sent).toHaveLength(1);
+    expect(preview).not.toBeNull();
     expect(stream.textEl.firstChild).toBe(preview);
     expect(stream.textEl.dataset.renderPending).toBe("true");
 
@@ -381,8 +389,8 @@ describe("async canonical stream commit", () => {
     appendStreamText("reused", "old **answer**", "text", "append");
     await new Promise((resolve) => setTimeout(resolve, 30));
     const oldStream = getOrCreateStream("reused", "text");
-    const oldPreview = oldStream.textEl.firstChild;
     commitStream("reused");
+    const oldPreview = oldStream.textEl.firstChild;
 
     appendStreamText("reused", "new answer", "text", "replace");
     discardStream("reused");
@@ -435,5 +443,173 @@ describe("async canonical stream commit", () => {
     harness.worker.respond();
 
     expect(harness.pendingFrames()).toBe(0);
+  });
+});
+
+
+class ControlledViewportController {
+  transcript;
+  pending = new Map();
+  flushCalls = [];
+  disposed = false;
+  resetCalls = 0;
+  interactionGeneration = 0;
+  following = true;
+
+  constructor(transcript) {
+    this.transcript = transcript;
+  }
+
+  enqueueMutation(key, mutate) {
+    this.pending.set(key, mutate);
+  }
+
+  cancelMutation(key) {
+    this.pending.delete(key);
+  }
+
+  flushMutationNow(key, mutate) {
+    this.pending.delete(key);
+    this.flushCalls.push(key);
+    mutate();
+  }
+
+  flushFrame() {
+    const pending = [...this.pending.values()];
+    this.pending.clear();
+    for (const mutate of pending) mutate();
+  }
+
+  getInteractionGeneration() {
+    return this.interactionGeneration;
+  }
+
+  prepareForSynchronousPrepend(expected) {
+    if (expected !== this.interactionGeneration) return false;
+    this.following = false;
+    return true;
+  }
+
+  requestFollowAfterExternalMutation() {}
+
+  forceScrollToBottom() {
+    this.interactionGeneration += 1;
+    this.following = true;
+  }
+
+  isFollowing() {
+    return this.following;
+  }
+
+  reset() {
+    this.pending.clear();
+    this.resetCalls += 1;
+    this.interactionGeneration += 1;
+    this.following = true;
+  }
+
+  dispose() {
+    this.disposed = true;
+    this.reset();
+  }
+}
+
+describe("frame-owned stream scheduling", () => {
+  let controller;
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    const streamModule = await import("../../src/utils/stream");
+    _resetForTest();
+    _setCanonicalMarkdownCoordinatorForTest(immediateCanonicalCoordinator());
+    const transcript = document.querySelector("#transcript");
+    controller = new ControlledViewportController(transcript);
+    streamModule._setTranscriptViewportControllerForTest(controller);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("uses a non-resetting 100 ms trailing throttle and one frame transaction", async () => {
+    appendStreamText("throttle", "a", "text", "append");
+    const stream = getOrCreateStream("throttle", "text");
+    expect(stream.el.isConnected).toBe(false);
+    expect(controller.pending.size).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(99);
+    appendStreamText("throttle", "b", "text", "append");
+    expect(controller.pending.size).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(controller.pending.size).toBe(1);
+    expect(stream.el.isConnected).toBe(false);
+
+    controller.flushFrame();
+    expect(stream.el.isConnected).toBe(true);
+    expect(stream.textEl.textContent).toContain("ab");
+    expect(stream.textEl.querySelectorAll(".stream-cursor")).toHaveLength(1);
+  });
+
+  it("folds append and replace updates into one latest projection operation", () => {
+    appendStreamText("fold", "a", "text", "append");
+    appendStreamText("fold", "b", "text", "append");
+    let stream = getOrCreateStream("fold", "text");
+    expect(stream.pendingProjectionUpdate).toEqual({ text: "ab", operation: "append" });
+
+    appendStreamText("fold", "canonical", "text", "replace");
+    appendStreamText("fold", " tail", "text", "append");
+    stream = getOrCreateStream("fold", "text");
+    expect(stream.pendingProjectionUpdate).toEqual({
+      text: "canonical tail",
+      operation: "replace",
+    });
+    expect(stream.pendingProjectionUpdates).toBeUndefined();
+  });
+
+  it("commit synchronously drains the latest state and cancels queued frame work", async () => {
+    appendStreamText("commit-barrier", "first", "text", "append");
+    await vi.advanceTimersByTimeAsync(100);
+    appendStreamText("commit-barrier", " second", "text", "append");
+    const stream = getOrCreateStream("commit-barrier", "text");
+    expect(controller.pending.has(stream)).toBe(true);
+
+    const result = commitStream("commit-barrier");
+
+    expect(result.text).toBe("first second");
+    expect(controller.flushCalls).toEqual([stream]);
+    expect(controller.pending.has(stream)).toBe(false);
+    expect(result.el.isConnected).toBe(true);
+    expect(result.el.querySelector(".markdown-body").innerHTML)
+      .toBe(renderMarkdown("first second").innerHTML);
+    expect(result.el.querySelector(".stream-cursor")).toBeNull();
+  });
+
+  it("rejects controller replacement while active or retained work exists", async () => {
+    const streamModule = await import("../../src/utils/stream");
+    appendStreamText("active-owner", "text", "text", "append");
+    const candidate = new ControlledViewportController(document.createElement("div"));
+
+    expect(() => streamModule._setTranscriptViewportControllerForTest(candidate))
+      .toThrowError("cannot replace transcript viewport while stream or canonical work is active");
+    expect(candidate.disposed).toBe(false);
+
+    discardStream("active-owner");
+    streamModule._setTranscriptViewportControllerForTest(candidate);
+    expect(controller.disposed).toBe(true);
+    expect(streamModule.getTranscriptElement()).toBe(candidate.transcript);
+  });
+
+  it("exposes force, interaction generation, prepend prepare, and reset through stream ownership", async () => {
+    const streamModule = await import("../../src/utils/stream");
+    const token = streamModule.getTranscriptInteractionGeneration();
+    streamModule.forceTranscriptScrollToBottom();
+    expect(streamModule.getTranscriptInteractionGeneration()).toBe(token + 1);
+    expect(streamModule.prepareTranscriptForSynchronousPrepend(token)).toBe(false);
+
+    const current = streamModule.getTranscriptInteractionGeneration();
+    expect(streamModule.prepareTranscriptForSynchronousPrepend(current)).toBe(true);
+    streamModule.resetTranscriptViewport();
+    expect(controller.resetCalls).toBe(1);
   });
 });

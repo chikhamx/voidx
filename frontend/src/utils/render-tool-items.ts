@@ -1,4 +1,7 @@
-import { getTranscriptElement } from './stream';
+import {
+  getTranscriptElement,
+  requestTranscriptFollowAfterMutation,
+} from './stream';
 import { iconSvg } from './icons';
 import { TOOL_GROUP_PREVIEW_LIMIT, type ToolInfo, type ToolItemData } from './render-types';
 import { formatElapsed, truncateText, renderDiffBlock } from './render';
@@ -408,7 +411,7 @@ export function handleToolItem(
       group.querySelector(".tool-group-body")?.append(el);
       updateToolGroupSummary(group, data);
       renderToolGroupVisibility(group);
-      transcriptEl.scrollTop = transcriptEl.scrollHeight;
+      requestTranscriptFollowAfterMutation();
     }
   } else if (el) {
     const body = el.querySelector<HTMLElement>(".tool-body");
@@ -478,7 +481,7 @@ export function handleToolItem(
       }
     }
     if (transcriptEl) {
-      transcriptEl.scrollTop = transcriptEl.scrollHeight;
+      requestTranscriptFollowAfterMutation();
     }
   } else if (method === "item.delta") {
     console.warn(`voidx: tool delta for unknown tool_call_id: ${data.tool_call_id}`);

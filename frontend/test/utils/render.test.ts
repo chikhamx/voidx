@@ -8,6 +8,7 @@ import {
   formatElapsed,
   renderNodeElement,
   renderTranscript,
+  renderHistoricalTranscriptPage,
   renderTodoPanel,
   appendNoticeItem,
   appendThoughtItem,
@@ -18,6 +19,7 @@ import {
   _resetForTest as resetStreams,
   appendStreamText,
   commitStream,
+  getOrCreateStream,
 } from "../../src/utils/stream";
 
 describe("stripRichMarkup", () => {
@@ -855,5 +857,68 @@ describe("renderTodoPanel", () => {
     const panel = document.createElement("section");
     renderTodoPanel(panel, [{ content: "pending task", status: "pending" }], "");
     expect(panel.querySelector(".todo-icon").textContent).toBe("\u25CB");
+  });
+});
+
+
+describe("historical transcript page rendering", () => {
+  it("builds detached snapshot DOM without touching live stream state", () => {
+    const liveRoot = document.querySelector<HTMLElement>("#transcript")!;
+    resetStreams();
+    setTranscriptElement(liveRoot);
+    const live = document.createElement("div");
+    live.className = "thought-item";
+    live.dataset.itemId = "same-id";
+    live.textContent = "live thought";
+    liveRoot.append(live);
+    appendStreamText("assistant-old", "live answer", "text", "append");
+    const active = getOrCreateStream("assistant-old", "text");
+
+    const fragment = renderHistoricalTranscriptPage({
+      nodes: [
+        { node_type: "turn", id: "turn-old", header: "> old user" },
+        {
+          node_type: "message",
+          id: "same-id",
+          payload: { style: "thought", raw_text: "historical thought" },
+        },
+        {
+          node_type: "assistant",
+          id: "assistant-old",
+          payload: { raw_text: "historical answer", thinking_text: "old thinking" },
+        },
+      ],
+    }, new Set());
+
+    expect(fragment.querySelectorAll(".message-item")).toHaveLength(2);
+    expect(fragment.querySelectorAll(".thought-item")).toHaveLength(1);
+    expect(fragment.querySelector(".thought-item")?.textContent)
+      .toContain("historical thought");
+    expect(fragment.querySelector(".thought-item")?.textContent)
+      .toContain("old thinking");
+    expect(fragment.querySelector(".stream-buffer")).toBeNull();
+    expect(fragment.textContent).toContain("historical answer");
+    expect(live.textContent).toBe("live thought");
+    expect(active.text).toBe("live answer");
+    expect(active.el.isConnected).toBe(false);
+    expect(liveRoot.textContent).not.toContain("historical answer");
+  });
+
+  it("skips existing page item ids without querying the live transcript", () => {
+    const liveRoot = document.querySelector<HTMLElement>("#transcript")!;
+    const live = document.createElement("div");
+    live.dataset.itemId = "duplicate";
+    live.textContent = "live duplicate";
+    liveRoot.append(live);
+
+    const fragment = renderHistoricalTranscriptPage({
+      nodes: [
+        { node_type: "message", id: "duplicate", payload: { raw_text: "skip me" } },
+        { node_type: "message", id: "new", payload: { raw_text: "insert me" } },
+      ],
+    }, new Set(["duplicate"]));
+
+    expect(fragment.textContent?.trim()).toBe("insert me");
+    expect(live.textContent).toBe("live duplicate");
   });
 });

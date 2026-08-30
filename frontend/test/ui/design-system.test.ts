@@ -103,3 +103,81 @@ describe("request dialog overflow constraints", () => {
     expect(choice).toContain("white-space: normal");
   });
 });
+
+
+describe("transcript viewport shell", () => {
+  it("uses the same accessible wrapper and return-bottom button in production and tests", () => {
+    const html = readProjectFile("index.html");
+    const setup = readProjectFile("test/setup.ts");
+
+    for (const source of [html, setup]) {
+      expect(source).toContain('class="vx-transcript-viewport"');
+      expect(source).toContain('id="transcript-return-bottom"');
+      expect(source).toContain('class="vx-return-bottom"');
+      expect(source).toContain('aria-label="回到底部"');
+      expect(source).toMatch(/id="transcript-return-bottom"[^>]*hidden/);
+      expect(source.indexOf('class="vx-transcript-viewport"')).toBeLessThan(
+        source.indexOf('id="transcript"'),
+      );
+      expect(source.indexOf('id="transcript"')).toBeLessThan(
+        source.indexOf('id="transcript-return-bottom"'),
+      );
+    }
+  });
+
+  it("styles the viewport and button with existing tokens and no smooth transcript scroll", () => {
+    const chat = readProjectFile("css/chat.css");
+    const layout = readProjectFile("css/layout.css");
+    const viewport = themeBlock(chat, ".vx-transcript-viewport {");
+    const button = themeBlock(chat, ".vx-return-bottom {");
+    const hover = themeBlock(chat, ".vx-return-bottom:hover {");
+    const hidden = themeBlock(chat, ".vx-return-bottom[hidden] {");
+
+    expect(viewport).toContain("position: relative");
+    expect(viewport).toContain("display: flex");
+    expect(viewport).toContain("flex-direction: column");
+    expect(viewport).toContain("min-height: 0");
+    expect(button).toContain("background: var(--vx-bg-elevated)");
+    expect(button).toContain("border: 1px solid var(--vx-border-strong)");
+    expect(button).toContain("border-radius: var(--vx-radius-full)");
+    expect(button).toContain("box-shadow: var(--vx-shadow-sm)");
+    expect(button).toContain("color: var(--vx-text-primary)");
+    expect(hover).toContain("background: var(--vx-bg-hover)");
+    expect(hidden).toContain("display: none");
+    expect(chat).not.toContain("scroll-behavior: smooth");
+    expect(layout).toContain(".vx-main-canvas.empty .vx-transcript-viewport { display: none; }");
+  });
+
+  it("caches the return-bottom button in state", () => {
+    const state = readProjectFile("src/services/state.ts");
+    expect(state).toContain("export let transcriptReturnBottomEl: HTMLButtonElement;");
+    expect(state).toContain(
+      'transcriptReturnBottomEl = document.querySelector<HTMLButtonElement>("#transcript-return-bottom")!;',
+    );
+  });
+});
+
+
+describe("transcript scroll ownership", () => {
+  it("routes every background transcript renderer through the follow helper", () => {
+    const rendererFiles = [
+      "src/utils/render.ts",
+      "src/utils/render-thought-items.ts",
+      "src/utils/render-tool-items.ts",
+      "src/utils/render-file-changes.ts",
+      "src/utils/render-notice-status.ts",
+      "src/ui/prompt.ts",
+    ];
+
+    for (const file of rendererFiles) {
+      const source = readProjectFile(file);
+      expect(source, file).not.toMatch(/scrollTop\s*=/);
+      expect(source, file).toContain("requestTranscriptFollowAfterMutation");
+    }
+
+    const stream = readProjectFile("src/utils/stream.ts");
+    expect(stream).not.toMatch(/scrollTop\s*=/);
+    expect(stream).toContain("requestTranscriptFollowAfterMutation");
+    expect(readProjectFile("src/ui/terminal.ts")).toMatch(/scrollTop\s*=/);
+  });
+});

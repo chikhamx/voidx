@@ -1,4 +1,7 @@
-import { getTranscriptElement } from "./stream";
+import {
+  getTranscriptElement,
+  requestTranscriptFollowAfterMutation,
+} from "./stream";
 import { iconSvg } from "./icons";
 
 export const FILE_CHANGE_PREVIEW_LIMIT = 3;
@@ -13,12 +16,17 @@ export interface FileChange {
   diffText: string;
 }
 
-interface FileChangeCardState {
+export interface FileChangeCardState {
   card: HTMLElement;
   files: Map<string, FileChange>;
   legacyFiles: Map<string, FileChange>;
   sources: Map<string, string>;
   expanded: boolean;
+}
+
+export interface HistoricalFileChangeContext {
+  root: DocumentFragment;
+  cards: Map<string, FileChangeCardState>;
 }
 
 const cards = new Map<string, FileChangeCardState>();
@@ -73,7 +81,7 @@ export function renderFileChangeSummary(itemId: string, text: string): boolean {
     transcript.append(state.card);
   }
   renderCard(state);
-  if (transcript) transcript.scrollTop = transcript.scrollHeight;
+  if (transcript) requestTranscriptFollowAfterMutation();
   return true;
 }
 
@@ -135,8 +143,83 @@ export function parseUnifiedDiff(diffText: string): FileChange[] {
     }
   }
 
+
   finish();
   return files;
+}
+
+export function createHistoricalFileChangeContext(
+  root: DocumentFragment,
+): HistoricalFileChangeContext {
+  return { root, cards: new Map() };
+}
+
+export function renderHistoricalFileChanges(
+  context: HistoricalFileChangeContext,
+  turnId: string,
+  diffText: string,
+  sourceId = "",
+): boolean {
+  const key = turnId || "__unscoped__";
+  let state = context.cards.get(key);
+  if (!state) {
+    state = {
+      card: createCard(),
+      files: new Map(),
+      legacyFiles: new Map(),
+      sources: new Map(),
+      expanded: false,
+    };
+    context.cards.set(key, state);
+  }
+  if (turnId) state.card.dataset.turnId = turnId;
+
+  let currentFiles: FileChange[];
+  if (sourceId) {
+    const previous = state.sources.get(sourceId) || "";
+    const buffered = mergeSourceText(previous, String(diffText || ""));
+    state.sources.set(sourceId, buffered);
+    currentFiles = parseUnifiedDiff(buffered);
+  } else {
+    currentFiles = parseUnifiedDiff(diffText);
+    if (currentFiles.length === 0) return false;
+    mergeFiles(state.legacyFiles, currentFiles);
+  }
+
+  rebuildFiles(state);
+  if (currentFiles.length === 0) {
+    const buffered = sourceId ? state.sources.get(sourceId) || "" : "";
+    return Boolean(sourceId && looksLikeUnifiedDiff(buffered));
+  }
+  if (!state.card.parentNode) context.root.append(state.card);
+  renderCard(state);
+  return true;
+}
+
+export function renderHistoricalFileChangeSummary(
+  context: HistoricalFileChangeContext,
+  itemId: string,
+  text: string,
+): boolean {
+  const files = parseSessionChangeSummary(text);
+  if (files.length === 0) return false;
+  const key = itemId || `summary:${text}`;
+  let state = context.cards.get(key);
+  if (!state) {
+    state = {
+      card: createCard(),
+      files: new Map(),
+      legacyFiles: new Map(),
+      sources: new Map(),
+      expanded: false,
+    };
+    context.cards.set(key, state);
+  }
+  state.files = new Map(files.map((file) => [file.path, { ...file }]));
+  if (itemId) state.card.dataset.itemId = itemId;
+  if (!state.card.parentNode) context.root.append(state.card);
+  renderCard(state);
+  return true;
 }
 
 export function renderFileChanges(
@@ -184,7 +267,7 @@ export function renderFileChanges(
     transcript.append(state.card);
   }
   renderCard(state);
-  if (transcript) transcript.scrollTop = transcript.scrollHeight;
+  if (transcript) requestTranscriptFollowAfterMutation();
   return true;
 }
 

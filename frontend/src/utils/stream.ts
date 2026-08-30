@@ -1,29 +1,55 @@
 import {
   createStreamingMarkdownProjection,
   type StreamUpdateOperation,
-  type StreamingMarkdownProjection,
 } from "./markdown";
 import {
   createCanonicalMarkdownCoordinator,
   type CanonicalMarkdownCoordinator,
 } from "./markdown-worker-client";
 import type { StreamState } from "./types";
+import {
+  createTranscriptViewportController,
+  type TranscriptViewportController,
+} from "./transcript-viewport";
 
-const DEBOUNCE_MS = 100;
+export const STREAM_RENDER_THROTTLE_MS = 100;
 const THINKING_MAX_LINES = 5;
+const REPLACEMENT_ERROR = "cannot replace transcript viewport while stream or canonical work is active";
 
 const streams = new Map<string, StreamState>();
 const committedEls: HTMLElement[] = [];
 const committedCanonicalText = new WeakMap<HTMLElement, string>();
-const canonicalOwners = new Map<
-  string,
-  { revision: number; generation: number; target: HTMLElement }
->();
+const canonicalOwners = new Map<string, {
+  revision: number;
+  generation: number;
+  target: HTMLElement;
+  viewportController: TranscriptViewportController | null;
+  viewportGeneration: number;
+}>();
 let canonicalMarkdownCoordinator = createCanonicalMarkdownCoordinator();
 let nextStreamGeneration = 1;
 let transcriptEl: HTMLElement | null = null;
+let viewportController: TranscriptViewportController | null = null;
+let transcriptViewportGeneration = 0;
 
-export function setTranscriptElement(el: HTMLElement): void {
+function assertViewportReplacementAllowed(): void {
+  if (streams.size || committedEls.length || canonicalOwners.size) {
+    throw new Error(REPLACEMENT_ERROR);
+  }
+}
+
+export function setTranscriptElement(
+  el: HTMLElement,
+  returnToBottomButton?: HTMLButtonElement | null,
+): void {
+  assertViewportReplacementAllowed();
+  const candidate = createTranscriptViewportController({
+    transcript: el,
+    returnToBottomButton,
+  });
+  viewportController?.dispose();
+  transcriptViewportGeneration += 1;
+  viewportController = candidate;
   transcriptEl = el;
 }
 
@@ -31,11 +57,45 @@ export function getTranscriptElement(): HTMLElement | null {
   return transcriptEl;
 }
 
+export function requestTranscriptFollowAfterMutation(): void {
+  viewportController?.requestFollowAfterExternalMutation();
+}
+
+export function forceTranscriptScrollToBottom(): void {
+  viewportController?.forceScrollToBottom();
+}
+
+export function getTranscriptInteractionGeneration(): number {
+  return viewportController?.getInteractionGeneration() ?? 0;
+}
+
+export function prepareTranscriptForSynchronousPrepend(
+  expectedInteractionGeneration: number,
+): boolean {
+  return viewportController?.prepareForSynchronousPrepend(
+    expectedInteractionGeneration,
+  ) ?? false;
+}
+
+export function resetTranscriptViewport(): void {
+  viewportController?.reset();
+}
+
+export function _setTranscriptViewportControllerForTest(
+  controller: TranscriptViewportController,
+): void {
+  assertViewportReplacementAllowed();
+  if (controller === viewportController) return;
+  viewportController?.dispose();
+  transcriptViewportGeneration += 1;
+  viewportController = controller;
+  transcriptEl = controller.transcript;
+}
+
 export function getOrCreateStream(streamId: string, phase: string): StreamState {
   let stream = streams.get(streamId);
-  if (stream) {
-    return stream;
-  }
+  if (stream) return stream;
+
   invalidateCanonicalOwner(streamId);
   const el = document.createElement("div");
   el.className = "stream-buffer";
@@ -55,10 +115,7 @@ export function getOrCreateStream(streamId: string, phase: string): StreamState 
   const textEl = document.createElement("div");
   textEl.className = "markdown-body";
   el.append(thinkingEl, textEl);
-  if (transcriptEl) {
-    transcriptEl.append(el);
-    transcriptEl.scrollTop = transcriptEl.scrollHeight;
-  }
+
   stream = {
     text: "",
     thinking: "",
@@ -68,9 +125,11 @@ export function getOrCreateStream(streamId: string, phase: string): StreamState 
     thinkingLabel,
     thinkingBody,
     textEl,
-    debounceTimer: null,
+    renderTimer: null,
+    renderQueued: false,
+    attached: false,
     markdownProjection: createStreamingMarkdownProjection(textEl),
-    pendingProjectionUpdates: [],
+    pendingProjectionUpdate: null,
     canonicalRevision: 0,
     streamGeneration: nextStreamGeneration++,
   };
@@ -96,9 +155,7 @@ export function appendStreamText(
     stream.thinking = operation === "append" && previousPhase === phase
       ? stream.thinking + incoming
       : incoming;
-    scheduleRender(stream, "thinking");
   } else {
-    hideThinking(stream);
     const previousText = stream.text;
     const nextText = stripAssistantPrefixBullet(
       operation === "append" ? previousText + incoming : incoming,
@@ -106,32 +163,23 @@ export function appendStreamText(
     stream.text = nextText;
     stream.canonicalRevision += 1;
     if (operation === "append") {
-      const delta = nextText.startsWith(previousText)
-        ? nextText.slice(previousText.length)
-        : nextText;
+      const extendsPrevious = nextText.startsWith(previousText);
       queueProjectionUpdate(
         stream,
-        delta,
-        nextText.startsWith(previousText) ? "append" : "replace",
+        extendsPrevious ? nextText.slice(previousText.length) : nextText,
+        extendsPrevious ? "append" : "replace",
       );
     } else if (
       operation === undefined
       && previousPhase === phase
       && nextText.startsWith(previousText)
     ) {
-      queueProjectionUpdate(
-        stream,
-        nextText.slice(previousText.length),
-        "append",
-      );
+      queueProjectionUpdate(stream, nextText.slice(previousText.length), "append");
     } else {
       queueProjectionUpdate(stream, nextText, "replace");
     }
-    scheduleRender(stream);
   }
-  if (transcriptEl) {
-    transcriptEl.scrollTop = transcriptEl.scrollHeight;
-  }
+  scheduleRender(stream);
 }
 
 export function commitStream(streamId: string, retain = true): {
@@ -140,37 +188,27 @@ export function commitStream(streamId: string, retain = true): {
   el: HTMLElement;
 } | null {
   const stream = streams.get(streamId);
-  if (!stream) {
-    return null;
-  }
-  if (stream.debounceTimer) {
-    clearTimeout(stream.debounceTimer);
-    stream.debounceTimer = null;
-  }
-  pendingRenders.delete(stream);
-  applyPendingTextProjection(stream);
+  if (!stream) return null;
+
+  cancelStreamTimer(stream);
   stream.committed = true;
+  const render = () => renderLatestStreamState(stream, true);
+  if (viewportController) viewportController.flushMutationNow(stream, render);
+  else render();
+  stream.renderQueued = false;
   stream.canonicalRevision += 1;
-  stream.textEl.querySelector(".stream-cursor")?.remove();
-  hideThinking(stream);
-  if (!stream.text) {
-    stream.el.style.display = "none";
-  }
-  const result = {
-    text: stream.text,
-    thinking: stream.thinking,
-    el: stream.el,
-  };
+
+  const result = { text: stream.text, thinking: stream.thinking, el: stream.el };
   streams.delete(streamId);
   committedCanonicalText.set(stream.el, stream.text);
-  if (retain) {
-    committedEls.push(stream.el);
-  }
+  if (retain) committedEls.push(stream.el);
 
   const owner = {
     revision: stream.canonicalRevision,
     generation: stream.streamGeneration,
     target: stream.textEl,
+    viewportController,
+    viewportGeneration: transcriptViewportGeneration,
   };
   canonicalOwners.set(streamId, owner);
   canonicalMarkdownCoordinator.start({
@@ -180,10 +218,20 @@ export function commitStream(streamId: string, retain = true): {
     canonicalText: stream.text,
     target: stream.textEl,
     isCurrent: () => canonicalOwners.get(streamId) === owner,
-    onSettled: () => {
-      if (canonicalOwners.get(streamId) === owner) {
-        canonicalOwners.delete(streamId);
+    onSettled: (outcome) => {
+      const isOwner = canonicalOwners.get(streamId) === owner;
+      if (
+        isOwner
+        && (outcome.status === "installed" || outcome.status === "fallback")
+        && owner.viewportController !== null
+        && owner.viewportController === viewportController
+        && owner.viewportGeneration === transcriptViewportGeneration
+        && owner.target.isConnected
+        && owner.viewportController.transcript.contains(owner.target)
+      ) {
+        owner.viewportController.requestFollowAfterExternalMutation();
       }
+      if (isOwner) canonicalOwners.delete(streamId);
     },
   });
   return result;
@@ -193,9 +241,7 @@ export function takeCommittedStreams(): HTMLElement[] {
   return committedEls.splice(0);
 }
 
-export function getCommittedStreamCanonicalText(
-  element: HTMLElement,
-): string | null {
+export function getCommittedStreamCanonicalText(element: HTMLElement): string | null {
   return committedCanonicalText.get(element) ?? null;
 }
 
@@ -222,17 +268,12 @@ export function clearActiveStreams(
   options: { preserveCanonicalCommits?: boolean } = {},
 ): void {
   for (const [streamId, stream] of streams) {
-    if (stream.debounceTimer) {
-      clearTimeout(stream.debounceTimer);
-    }
-    pendingRenders.delete(stream);
+    cancelStreamWork(stream);
     stream.el.remove();
     canonicalMarkdownCoordinator.invalidate(streamId);
   }
   streams.clear();
-  if (!options.preserveCanonicalCommits) {
-    invalidateAllCanonicalOwners();
-  }
+  if (!options.preserveCanonicalCommits) invalidateAllCanonicalOwners();
 }
 
 export function discardStream(streamId: string): void {
@@ -241,37 +282,40 @@ export function discardStream(streamId: string): void {
     invalidateCanonicalOwner(streamId);
     return;
   }
-  if (stream.debounceTimer) {
-    clearTimeout(stream.debounceTimer);
-  }
-  pendingRenders.delete(stream);
+  cancelStreamWork(stream);
   stream.el.remove();
   streams.delete(streamId);
   invalidateCanonicalOwner(streamId);
 }
 
-const pendingRenders = new Map<StreamState, string | undefined>();
-let renderFrame: number | ReturnType<typeof setTimeout> | null = null;
-
-function scheduleRender(stream: StreamState, target?: string): void {
-  pendingRenders.set(stream, target);
-  if (renderFrame !== null) return;
-  const flush = () => {
-    renderFrame = null;
-    const pending = [...pendingRenders.entries()];
-    pendingRenders.clear();
-    for (const [queued, queuedTarget] of pending) {
-      if (!queued.committed) {
-        if (queuedTarget === "thinking") renderStreamThinking(queued);
-        else renderStreamText(queued);
-      }
+function scheduleRender(stream: StreamState): void {
+  if (stream.renderTimer !== null || stream.renderQueued || stream.committed) return;
+  stream.renderTimer = setTimeout(() => {
+    stream.renderTimer = null;
+    if (stream.committed || streams.get(stream.el.dataset.streamId ?? "") !== stream) {
+      return;
     }
-  };
-  if (typeof requestAnimationFrame === "function") {
-    renderFrame = requestAnimationFrame(flush);
-  } else {
-    renderFrame = setTimeout(flush, 16);
-  }
+    stream.renderQueued = true;
+    const render = () => {
+      stream.renderQueued = false;
+      if (stream.committed) return;
+      renderLatestStreamState(stream, false);
+    };
+    if (viewportController) viewportController.enqueueMutation(stream, render);
+    else render();
+  }, STREAM_RENDER_THROTTLE_MS);
+}
+
+function cancelStreamTimer(stream: StreamState): void {
+  if (stream.renderTimer === null) return;
+  clearTimeout(stream.renderTimer);
+  stream.renderTimer = null;
+}
+
+function cancelStreamWork(stream: StreamState): void {
+  cancelStreamTimer(stream);
+  viewportController?.cancelMutation(stream);
+  stream.renderQueued = false;
 }
 
 function queueProjectionUpdate(
@@ -279,66 +323,62 @@ function queueProjectionUpdate(
   text: string,
   operation: StreamUpdateOperation,
 ): void {
+  const pending = stream.pendingProjectionUpdate;
   if (operation === "replace") {
-    stream.pendingProjectionUpdates = [{ text, operation }];
+    stream.pendingProjectionUpdate = { text, operation };
+  } else if (!text) {
     return;
-  }
-  const last = stream.pendingProjectionUpdates[
-    stream.pendingProjectionUpdates.length - 1
-  ];
-  if (last?.operation === "append") {
-    last.text += text;
-  } else if (text) {
-    stream.pendingProjectionUpdates.push({ text, operation });
+  } else if (!pending) {
+    stream.pendingProjectionUpdate = { text, operation };
+  } else if (pending.operation === "append") {
+    pending.text += text;
+  } else {
+    pending.text += text;
   }
 }
 
 function resetTextProjection(stream: StreamState): void {
   stream.text = "";
   stream.canonicalRevision += 1;
-  stream.pendingProjectionUpdates = [];
-  stream.markdownProjection?.reset();
-  stream.textEl.querySelector(".stream-cursor")?.remove();
+  stream.pendingProjectionUpdate = { text: "", operation: "replace" };
 }
 
 function applyPendingTextProjection(stream: StreamState): void {
   stream.textEl.querySelector(".stream-cursor")?.remove();
-  if (stream.markdownProjection) {
-    const updates = stream.pendingProjectionUpdates.splice(0);
-    for (const update of updates) {
-      stream.markdownProjection.update(update.text, update.operation);
-    }
-  } else {
-    stream.pendingProjectionUpdates = [];
+  const update = stream.pendingProjectionUpdate;
+  stream.pendingProjectionUpdate = null;
+  if (stream.markdownProjection && update) {
+    stream.markdownProjection.update(update.text, update.operation);
+  } else if (!stream.markdownProjection) {
     stream.textEl.replaceChildren(document.createTextNode(stream.text));
   }
 }
 
-function renderStreamText(stream: StreamState): void {
+function renderLatestStreamState(stream: StreamState, committed: boolean): void {
+  if (!stream.attached && transcriptEl) {
+    transcriptEl.append(stream.el);
+    stream.attached = true;
+  }
   applyPendingTextProjection(stream);
-  if (!stream.committed && stream.phase === "text") {
+  const hasThinking = !committed && stream.phase === "thinking" && Boolean(stream.thinking);
+  stream.thinkingEl.hidden = !hasThinking;
+  stream.thinkingBody.textContent = hasThinking
+    ? visibleThinkingLines(stream.thinking)
+    : "";
+  if (!committed && stream.phase === "text") {
     const cursor = document.createElement("span");
     cursor.className = "stream-cursor";
     stream.textEl.append(cursor);
   }
-}
-
-function renderStreamThinking(stream: StreamState): void {
-  const hasThinking = Boolean(stream.thinking) || stream.phase === "thinking";
-  stream.thinkingEl.hidden = !hasThinking;
-  stream.thinkingBody.textContent = visibleThinkingLines(stream.thinking);
-}
-
-function hideThinking(stream: StreamState): void {
-  stream.thinkingEl.hidden = true;
-  stream.thinkingBody.textContent = "";
+  if (committed && !stream.text) stream.el.style.display = "none";
 }
 
 function visibleThinkingLines(text: string): string {
-  const lines = String(text || "")
+  return String(text || "")
     .split(/\r?\n/)
-    .filter((line) => line.trim().length > 0);
-  return lines.slice(-THINKING_MAX_LINES).join("\n");
+    .filter((line) => line.trim().length > 0)
+    .slice(-THINKING_MAX_LINES)
+    .join("\n");
 }
 
 function stripAssistantPrefixBullet(text: string): string {
@@ -364,14 +404,15 @@ export function _setCanonicalMarkdownCoordinatorForTest(
 }
 
 export function _resetForTest(): void {
-  for (const stream of streams.values()) {
-    if (stream.debounceTimer) clearTimeout(stream.debounceTimer);
-  }
+  for (const stream of streams.values()) cancelStreamWork(stream);
   streams.clear();
+  for (const el of committedEls) el.remove();
   committedEls.length = 0;
-  pendingRenders.clear();
   invalidateAllCanonicalOwners();
   canonicalMarkdownCoordinator = createCanonicalMarkdownCoordinator();
+  viewportController?.dispose();
+  viewportController = null;
+  transcriptViewportGeneration += 1;
   nextStreamGeneration += 1;
   transcriptEl = null;
 }

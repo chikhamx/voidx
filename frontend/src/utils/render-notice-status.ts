@@ -1,5 +1,8 @@
 import { iconSvg } from './icons';
-import { getTranscriptElement } from './stream';
+import {
+  getTranscriptElement,
+  requestTranscriptFollowAfterMutation,
+} from './stream';
 import type { NoticeItemData, DiffItemData, StatusItemData } from './render-types';
 import { stripRichMarkup, renderDiffBlock } from './render';
 
@@ -82,7 +85,7 @@ export function appendDiffItem(itemId: string, data: DiffItemData): void {
   const transcriptEl = getTranscriptElement();
   if (transcriptEl) {
     transcriptEl.append(el);
-    transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    requestTranscriptFollowAfterMutation();
   }
 }
 

@@ -1,6 +1,9 @@
 import { renderMarkdown } from './markdown';
 import { iconSvg } from './icons';
-import { getTranscriptElement } from './stream';
+import {
+  getTranscriptElement,
+  requestTranscriptFollowAfterMutation,
+} from './stream';
 import type { ThoughtItemData } from './render-types';
 
 function formatThoughtMeta(meta: string | null | undefined, elapsed?: number | null): string {
@@ -98,7 +101,7 @@ export function appendThoughtItem(
       md.className = "markdown-body";
       body.append(md);
     }
-    transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    requestTranscriptFollowAfterMutation();
     return;
   }
 
@@ -146,6 +149,6 @@ export function appendThoughtItem(
   } else {
     transcriptEl.append(el);
   }
-  transcriptEl.scrollTop = transcriptEl.scrollHeight;
+  requestTranscriptFollowAfterMutation();
 }
 

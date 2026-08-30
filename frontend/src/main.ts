@@ -7,6 +7,7 @@ import "../css/composer.css";
 import "../css/components.css";
 import {
   renderTranscript,
+  renderHistoricalTranscriptPage,
   appendMessageItem,
   handleToolItem,
   handleStatusItem,
@@ -20,6 +21,10 @@ import {
   clearActiveStreams,
   stripRichMarkup,
   snapshotTurnText,
+  forceTranscriptScrollToBottom,
+  getTranscriptInteractionGeneration,
+  prepareTranscriptForSynchronousPrepend,
+  resetTranscriptViewport,
 } from "./utils";
 import { resetFileChangeCards } from "./utils/render-file-changes";
 import type {
@@ -146,6 +151,7 @@ import {
   btnSendEl,
   requestDialogEl,
   transcriptEl,
+  transcriptReturnBottomEl,
   providerSelectEl,
   setRunning,
   setConnectionStatus,
@@ -170,7 +176,7 @@ if (typeof window !== "undefined" && ((window as any).__TAURI_INTERNALS__ || (wi
   }
 }
 initStateDom();
-setTranscriptElement(transcriptEl);
+setTranscriptElement(transcriptEl, transcriptReturnBottomEl);
 initTheme();
 initDock();
 initTerminal();
@@ -604,8 +610,7 @@ function loadEarlierTranscriptPage(): void {
 
   state.loading = true;
   const contextGeneration = threadContextGeneration;
-  const previousHeight = transcriptEl.scrollHeight;
-  const previousTop = transcriptEl.scrollTop;
+  const interactionGeneration = getTranscriptInteractionGeneration();
   void rpcCall("transcript.page", {
     thread_id: threadId,
     before_turn_id: state.snapshot.before_turn_id,
@@ -622,23 +627,30 @@ function loadEarlierTranscriptPage(): void {
       if (!Array.isArray(page.nodes) || (page.thread_id && page.thread_id !== threadId)) return;
       const current = transcriptWindows.get(threadId);
       if (!current || current !== state) return;
+
       const existingIds = new Set(current.snapshot.nodes.map((node) => node.id));
-      const mergedSnapshot: TranscriptSnapshot = {
+      const newNodes = page.nodes.filter((node) => !existingIds.has(node.id));
+      const fragment = renderHistoricalTranscriptPage(
+        { ...page, nodes: newNodes },
+        existingIds,
+      );
+      if (!prepareTranscriptForSynchronousPrepend(interactionGeneration)) return;
+
+      const previousHeight = transcriptEl.scrollHeight;
+      const previousTop = transcriptEl.scrollTop;
+      const insertionPoint = transcriptEl.firstChild;
+      transcriptEl.insertBefore(fragment, insertionPoint);
+      transcriptEl.scrollTop = previousTop
+        + (transcriptEl.scrollHeight - previousHeight);
+
+      current.snapshot = {
         ...current.snapshot,
-        nodes: [
-          ...page.nodes.filter((node) => !existingIds.has(node.id)),
-          ...current.snapshot.nodes,
-        ],
+        nodes: [...newNodes, ...current.snapshot.nodes],
         revision: page.revision ?? current.snapshot.revision,
         before_turn_id: page.before_turn_id ?? null,
         has_earlier: Boolean(page.has_earlier),
       };
-      current.snapshot = mergedSnapshot;
-      removePendingLocalMessageElements();
-      renderTranscript(transcriptEl, mergedSnapshot);
-      restorePendingLocalMessages(threadId, mergedSnapshot);
       syncEmptyState();
-      transcriptEl.scrollTop = previousTop + (transcriptEl.scrollHeight - previousHeight);
     })
     .catch((error: unknown) => {
       console.warn("voidx: transcript page failed", error);
@@ -649,7 +661,8 @@ function loadEarlierTranscriptPage(): void {
 }
 
 function handleTranscriptScroll(): void {
-  if (transcriptEl.scrollTop <= 24) loadEarlierTranscriptPage();
+  if (transcriptEl.scrollTop > 24) return;
+  queueMicrotask(loadEarlierTranscriptPage);
 }
 
 transcriptEl.addEventListener("scroll", handleTranscriptScroll);
@@ -1039,6 +1052,7 @@ function activateThread(threadId: string): void {
     threadContextGeneration += 1;
     clearCommittedStreams();
     clearActiveStreams();
+    resetTranscriptViewport();
     resetFileChangeCards();
     forgetPendingLocalMessages();
     resetConversationPrompts();
@@ -1359,6 +1373,7 @@ function renderWorkspaceSnapshot(params: Record<string, unknown>): void {
     uiState.workspace,
   );
   const typedSnapshot = snapshotForRendering(activeThreadId, snapshot as TranscriptSnapshot);
+  resetTranscriptViewport();
   removePendingLocalMessageElements();
   renderTranscript(transcriptEl, typedSnapshot);
   restorePendingLocalMessages(activeThreadId, typedSnapshot);
@@ -1449,7 +1464,9 @@ export function handleNotification(
     method === "item.completed"
   ) {
     handleItem(method, params);
-    syncEmptyState();
+    syncEmptyState(
+      method === "item.started" && params.kind === "assistant_stream",
+    );
   }
 }
 
@@ -1605,7 +1622,7 @@ export function handleItem(
 }
 
 function scrollToBottom(): void {
-  transcriptEl.scrollTop = transcriptEl.scrollHeight;
+  forceTranscriptScrollToBottom();
 }
 
 inputEl.addEventListener("paste", (event: ClipboardEvent) => {
@@ -1729,6 +1746,7 @@ export function _resetWorkbenchForTest(): void {
   transcriptWindows.clear();
   clearCommittedStreams();
   clearActiveStreams();
+  resetTranscriptViewport();
   resetFileChangeCards();
   localItemSequence = 0;
   forgetPendingLocalMessages();

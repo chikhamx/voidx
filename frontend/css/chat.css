@@ -3,6 +3,40 @@
    Kimi-grade: 助手消息无气泡宽松排版，用户消息柔和胶囊
    ============================================================ */
 
+.vx-transcript-viewport {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+}
+
+.vx-return-bottom {
+  background: var(--vx-bg-elevated);
+  border: 1px solid var(--vx-border-strong);
+  border-radius: var(--vx-radius-full);
+  bottom: var(--vx-space-3);
+  box-shadow: var(--vx-shadow-sm);
+  color: var(--vx-text-primary);
+  cursor: pointer;
+  font: inherit;
+  left: 50%;
+  padding: var(--vx-space-2) var(--vx-space-4);
+  position: absolute;
+  transform: translateX(-50%);
+  transition: background var(--vx-transition-fast);
+  z-index: 2;
+}
+
+.vx-return-bottom:hover {
+  background: var(--vx-bg-hover);
+}
+
+.vx-return-bottom[hidden] {
+  display: none;
+}
+
 /* === 消息列：760px 居中 === */
 .transcript {
   display: flex;
@@ -11,7 +45,6 @@
   gap: var(--vx-space-3);
   overflow-y: auto;
   padding: var(--vx-space-2) max(var(--vx-space-6), calc((100% - var(--vx-content-max)) / 2)) var(--vx-space-8);
-  scroll-behavior: smooth;
 }
 
 .transcript > * {

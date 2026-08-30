@@ -1,5 +1,8 @@
 import { renderMarkdown } from "../utils/markdown";
-import { getTranscriptElement } from "../utils/stream";
+import {
+  getTranscriptElement,
+  requestTranscriptFollowAfterMutation,
+} from "../utils/stream";
 
 export type ConversationPromptType = "clarify" | "checkpoint" | "goal_spec";
 
@@ -204,7 +207,7 @@ export function showConversationPrompt(
   const transcript = getTranscriptElement();
   if (transcript) {
     transcript.append(element);
-    transcript.scrollTop = transcript.scrollHeight;
+    requestTranscriptFollowAfterMutation();
   }
   return prompt;
 }

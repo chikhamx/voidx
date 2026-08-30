@@ -158,3 +158,31 @@ describe("renderFileChanges", () => {
     expect(expanded?.getAttribute("aria-expanded")).toBe("true");
   });
 });
+
+
+describe("historical file change isolation", () => {
+  it("merges cumulative source text only in the supplied local cache", async () => {
+    const {
+      createHistoricalFileChangeContext,
+      renderHistoricalFileChanges,
+    } = await import("../../src/utils/render-file-changes");
+    const root = document.createDocumentFragment();
+    const context = createHistoricalFileChangeContext(root);
+    const first = "--- a/src/app.ts\n+++ b/src/app.ts\n@@ -1,1 +1,1 @@\n-old\n+new";
+    const cumulative = `${first}\n@@ -3,1 +3,2 @@\n-old2\n+new2\n+new3`;
+
+    expect(renderHistoricalFileChanges(context, "turn-1", first, "source-1"))
+      .toBe(true);
+    expect(renderHistoricalFileChanges(context, "turn-1", cumulative, "source-1"))
+      .toBe(true);
+
+    expect(root.querySelectorAll(".file-change-card")).toHaveLength(1);
+    expect(root.querySelector(".file-change-added")?.textContent).toBe("+3");
+    expect(root.querySelector(".file-change-removed")?.textContent).toBe("-2");
+    expect(document.querySelector("#transcript .file-change-card")).toBeNull();
+
+    renderFileChanges("turn-1", first, "source-1");
+    expect(document.querySelectorAll("#transcript .file-change-card")).toHaveLength(1);
+    expect(context.cards.get("turn-1")?.card.isConnected).toBe(false);
+  });
+});

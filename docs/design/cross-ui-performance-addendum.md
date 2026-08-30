@@ -131,6 +131,18 @@ related_docs:
 
 截至本阶段仍未完成：P0.4 Desktop rAF/layout、P0.5 TUI RenderPlan、P1 剩余协议/window 项、P2 输入与 live-history 项，以及统一 benchmark 和完整慢路径观测。
 
+### 2.9 本轮实施记录（2026-08-31，Desktop P0.4）
+
+本轮闭环 **P0.4 Desktop rAF/layout**；P0.5/P1/P2、统一 benchmark 与完整慢路径观测仍未完成，因此本文档继续保持 `in-progress/partial`，不归档：
+
+- [x] **单帧 stream transaction**：live stream 使用非重置 100 ms trailing throttle，同一 stream 每帧最多一次 projection/thinking/cursor/attachment mutation；`commitStream()` 通过同步 barrier drain 最新状态且不等待 Worker。
+- [x] **viewport 所有权与 follow 语义**：新增 read-before-write controller、48 px near-bottom 判定和“回到底部”按钮；后台 message/thought/tool/file/prompt/canonical settle 统一使用 follow-preserving 请求，显式用户动作才 force。
+- [x] **生命周期隔离**：timer、keyed frame、controller replacement、thread/workspace/full snapshot reset 与 canonical owner 使用 identity/generation/containment guards 拒绝迟到 work。
+- [x] **preserve-live earlier-page**：历史页先在 detached context 中构造，thought/tool/file cache 与 live 状态隔离；response-time baseline 排除 RPC 等待期 mutation，interaction generation 使 pending/已执行 force 与 manual scroll 优先，pending-local identity/queue 保持不变。
+- 验证：规格聚焦 Frontend 集合（11 files、363 passed）；完整 Frontend（45 files、744 passed）；`npm run build` 通过并产出独立 `markdown.worker-cAlHaxNH.js`；`git diff --check` 与 transcript scroll 静态边界检查通过。`npx tsc --noEmit` 仍仅报告既有 7 项基线错误：`src/services/connection.ts` 1 项、`test/ui/design-system.test.ts` 5 项、`test/ui/theme.test.ts` 1 项；P0.4 文件无新增诊断。
+
+截至本阶段仍未完成：P0.5 TUI RenderPlan、P1 剩余协议/window 项、P2 输入与 live-history 项，以及统一 benchmark 和完整慢路径观测。
+
 ## 3. 已验证证据
 
 

@@ -27,9 +27,11 @@ export interface StreamState {
   thinkingLabel: HTMLElement;
   thinkingBody: HTMLElement;
   textEl: HTMLElement;
-  debounceTimer: ReturnType<typeof setTimeout> | number | null;
+  renderTimer: ReturnType<typeof setTimeout> | null;
+  renderQueued: boolean;
+  attached: boolean;
   markdownProjection?: import("./markdown").StreamingMarkdownProjection;
-  pendingProjectionUpdates: PendingStreamProjectionUpdate[];
+  pendingProjectionUpdate: PendingStreamProjectionUpdate | null;
   canonicalRevision: number;
   streamGeneration: number;
   committed?: boolean;

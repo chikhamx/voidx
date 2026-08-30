@@ -7,6 +7,7 @@ import {
   getTranscriptElement,
   getCommittedStreamCanonicalText,
   invalidateCommittedStreamElement,
+  requestTranscriptFollowAfterMutation,
 } from './stream';
 import type { TranscriptNode, Payload } from '../rpc/protocol';
 import { iconSvg } from './icons';
@@ -15,7 +16,12 @@ import type {
   TranscriptSnapshot,
 } from './render-types';
 import { handleToolItem } from './render-tool-items';
-import { renderFileChangeSummary } from './render-file-changes';
+import {
+  createHistoricalFileChangeContext,
+  renderFileChangeSummary,
+  renderHistoricalFileChangeSummary,
+  renderHistoricalFileChanges,
+} from './render-file-changes';
 import { appendThoughtItem } from './render-thought-items';
 import { appendNoticeItem, appendDiffItem, appendCompactionDivider } from './render-notice-status';
 
@@ -303,7 +309,7 @@ export function appendMessageItem(itemId: string, data: MessageItemData): void {
     const transcriptEl = getTranscriptElement();
     if (transcriptEl) {
       transcriptEl.append(el);
-      transcriptEl.scrollTop = transcriptEl.scrollHeight;
+      requestTranscriptFollowAfterMutation();
     }
     return;
   }
@@ -346,7 +352,7 @@ export function appendMessageItem(itemId: string, data: MessageItemData): void {
   const transcriptEl = getTranscriptElement();
   if (transcriptEl) {
     transcriptEl.append(el);
-    transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    requestTranscriptFollowAfterMutation();
   }
 }
 
@@ -497,6 +503,221 @@ function reorderTranscriptNodes(root: HTMLElement, nodes: TranscriptNode[]): voi
     }
   }
 }
+
+export interface HistoricalFileChangeCardState {
+  card: HTMLElement;
+  files: Map<string, {
+    path: string;
+    operation: string;
+    added: number;
+    removed: number;
+    diffText: string;
+  }>;
+  legacyFiles: Map<string, {
+    path: string;
+    operation: string;
+    added: number;
+    removed: number;
+    diffText: string;
+  }>;
+  sources: Map<string, string>;
+  expanded: boolean;
+}
+
+function appendHistoricalMessage(
+  root: DocumentFragment,
+  itemId: string,
+  style: string,
+  text: string,
+): HTMLElement {
+  const el = document.createElement("div");
+  el.className = `message-item message-${style}`;
+  el.dataset.itemId = itemId;
+  el.append(style === "text" || style === "user"
+    ? renderUserMessage(text)
+    : renderMarkdown(text));
+  root.append(el);
+  return el;
+}
+
+function appendHistoricalThought(
+  root: DocumentFragment,
+  itemId: string,
+  text: string,
+  elapsed?: number | null,
+): HTMLElement {
+  const previous = root.lastElementChild as HTMLElement | null;
+  if (previous?.classList.contains("thought-item")) {
+    const oldText = previous.dataset.text || "";
+    if (text && !oldText.includes(text)) {
+      previous.dataset.text = oldText ? `${oldText}\n\n${text}` : text;
+      previous.querySelector(".thought-body")?.append(renderMarkdown(text));
+    }
+    return previous;
+  }
+  const el = document.createElement("div");
+  el.className = "thought-item";
+  el.dataset.itemId = itemId;
+  el.dataset.text = text;
+  el.dataset.elapsed = String(elapsed || 0);
+  const label = document.createElement("div");
+  label.className = "thought-label";
+  label.textContent = "thought";
+  const body = document.createElement("div");
+  body.className = "thought-body";
+  body.append(renderMarkdown(text));
+  el.append(label, body);
+  root.append(el);
+  return el;
+}
+
+function historicalToolGroup(
+  root: DocumentFragment,
+  groups: Map<string, HTMLElement>,
+  turnId: string,
+): HTMLElement {
+  const key = turnId || "__unscoped__";
+  let group = groups.get(key);
+  if (group) return group;
+  group = document.createElement("div");
+  group.className = "tool-group";
+  group.dataset.turnId = turnId;
+  const body = document.createElement("div");
+  body.className = "tool-group-body";
+  group.append(body);
+  groups.set(key, group);
+  root.append(group);
+  return group;
+}
+
+function appendHistoricalTool(
+  root: DocumentFragment,
+  groups: Map<string, HTMLElement>,
+  tools: Map<string, HTMLElement>,
+  fileContext: ReturnType<typeof createHistoricalFileChangeContext>,
+  node: TranscriptNode,
+  turnId: string,
+): void {
+  const payload = node.payload as Record<string, unknown> | undefined;
+  const toolId = node.tool_call_id || node.id;
+  let el = tools.get(toolId);
+  if (!el) {
+    el = document.createElement("div");
+    el.className = "tool-item";
+    el.dataset.itemId = node.id;
+    el.dataset.toolId = toolId;
+    const name = document.createElement("span");
+    name.className = "tool-name";
+    name.textContent = String(payload?.tool_name || "tool");
+    const detail = document.createElement("div");
+    detail.className = "tool-body";
+    el.append(name, detail);
+    historicalToolGroup(root, groups, turnId)
+      .querySelector(".tool-group-body")
+      ?.append(el);
+    tools.set(toolId, el);
+  }
+  if (payload?.diff_text) {
+    renderHistoricalFileChanges(
+      fileContext,
+      turnId,
+      String(payload.diff_text),
+      toolId,
+    );
+  }
+  const detailText = String(payload?.raw_text || payload?.summary || "");
+  if (detailText) el.querySelector(".tool-body")?.append(renderMarkdown(detailText));
+}
+
+export function renderHistoricalTranscriptPage(
+  snapshot: TranscriptSnapshot,
+  existingPageItemIds: ReadonlySet<string>,
+): DocumentFragment {
+  const root = document.createDocumentFragment();
+  const tools = new Map<string, HTMLElement>();
+  const toolGroups = new Map<string, HTMLElement>();
+  const fileContext = createHistoricalFileChangeContext(root);
+  let currentTurnId = "";
+
+  for (const node of snapshot.nodes || []) {
+    if (existingPageItemIds.has(node.id)) continue;
+    const payload = node.payload as Record<string, unknown> | undefined;
+    if (node.node_type === "turn") currentTurnId = node.id;
+    switch (node.node_type) {
+      case "turn": {
+        const text = snapshotTurnText(node);
+        if (text) appendHistoricalMessage(root, node.id, "user", text);
+        break;
+      }
+      case "message": {
+        const text = String(payload?.raw_text
+          ?? stripRichMarkup([node.header, ...(node.body_lines ?? [])].join("\n")));
+        const style = String(payload?.style || "text");
+        if (renderHistoricalFileChangeSummary(fileContext, node.id, text)) break;
+        if (style === "thought") appendHistoricalThought(root, node.id, text, node.elapsed);
+        else appendHistoricalMessage(root, node.id, style, text);
+        break;
+      }
+      case "assistant": {
+        const thinking = String(payload?.thinking_text || "");
+        if (thinking) appendHistoricalThought(root, `${node.id}-thought`, thinking, node.elapsed);
+        const text = String(payload?.raw_text
+          ?? stripRichMarkup((node.body_lines ?? []).join("\n")));
+        appendHistoricalMessage(root, node.id, "markdown", text);
+        break;
+      }
+      case "thought": {
+        const text = String(payload?.raw_text
+          ?? stripRichMarkup((node.body_lines ?? []).join("\n")));
+        appendHistoricalThought(root, node.id, text, node.elapsed);
+        break;
+      }
+      case "tool_call":
+      case "tool_result":
+        appendHistoricalTool(
+          root,
+          toolGroups,
+          tools,
+          fileContext,
+          node,
+          currentTurnId,
+        );
+        break;
+      case "diff":
+        appendHistoricalMessage(
+          root,
+          node.id,
+          "diff",
+          (node.body_lines ?? []).join("\n"),
+        );
+        break;
+      case "error":
+      case "warn":
+        appendHistoricalMessage(
+          root,
+          node.id,
+          node.node_type === "warn" ? "warning" : "error",
+          String(payload?.raw_text ?? node.header ?? ""),
+        );
+        break;
+      case "checkpoint": {
+        const row = document.createElement("details");
+        row.className = "checkpoint-row";
+        row.dataset.itemId = node.id;
+        const summary = document.createElement("summary");
+        summary.textContent = stripRichMarkup(node.header || "voidx plan");
+        const body = document.createElement("div");
+        body.className = "checkpoint-row-body";
+        body.textContent = (node.body_lines ?? []).map(stripRichMarkup).join("\n");
+        row.append(summary, body);
+        root.append(row);
+        break;
+      }
+    }
+  }
+  return root;
+}
+
 
 export function renderTranscript(root: HTMLElement, snapshot: TranscriptSnapshot): void {
   const nodes = snapshot.nodes || [];

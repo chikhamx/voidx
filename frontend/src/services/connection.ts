@@ -1,6 +1,11 @@
 import { createWorkerSocket, rpcCall, _setSocket } from "../rpc";
 import { DESKTOP_GATEWAY_CAPABILITIES } from "../utils/types";
 import {
+  clearActiveStreams,
+  clearCommittedStreams,
+  resetTranscriptViewport,
+} from "../utils/stream";
+import {
   uiState,
   setConnectionStatus,
   setRunning,
@@ -182,6 +187,9 @@ export async function switchWorkspace(workspace: string): Promise<void> {
   uiState.sessionId = "";
   uiState.isRunning = false;
   resetFileChangeCards();
+  clearCommittedStreams();
+  clearActiveStreams();
+  resetTranscriptViewport();
   transcriptEl.replaceChildren();
   syncEmptyState();
   setConnectionStatus("connecting");
