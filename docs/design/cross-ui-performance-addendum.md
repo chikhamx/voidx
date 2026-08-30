@@ -143,6 +143,17 @@ related_docs:
 
 截至本阶段仍未完成：P0.5 TUI RenderPlan、P1 剩余协议/window 项、P2 输入与 live-history 项，以及统一 benchmark 和完整慢路径观测。
 
+### 2.10 本轮实施记录（2026-08-31，TUI P0.5）
+
+本轮闭环 **P0.5 TUI RenderPlan**；P1/P2、统一 benchmark 与完整慢路径观测仍未完成，因此本文档继续保持 `in-progress/partial`，不归档：
+
+- [x] **单帧单次区域采集**：既有 `_RenderPlan` 在 full frame 内一次采集并冻结 status、panel、busy activity、thinking stream、input rows/elements 与 bottom geometry；bottom row、busy/thinking 布局和 input cursor 后续计算复用同一 plan。
+- [x] **局部 repaint 生命周期**：同步 busy tick 复用最近一次完整 plan 的 geometry；input/choice repaint 在局部写入后失效 plan；TTY worker 路径继续回退为可合并的完整 `FrameBatch`，cursor 与 frame 原子提交。
+- [x] **错误 fallback 有界化**：任一区域采集失败后只构造错误 frame，不再重新采集 bottom、thinking、status 或 input cursor geometry；同步与 worker 模式均保持单次采集，worker 错误 frame 使用空 cursor ANSI。
+- 验证：P0.5 RED→GREEN 目标集（3 passed）；完整 frame 文件（43 passed）；frame/rendering/writer 相关集合（82 passed）；完整 TUI（401 passed）；以上均读取 `./test.py` JSON 内 `results[].status == "PASS"`。
+
+截至本阶段仍未完成：P1 剩余协议/window 项、P2 输入与 live-history 项，以及统一 benchmark 和完整慢路径观测。
+
 ## 3. 已验证证据
 
 

@@ -41,7 +41,15 @@ def test_render_frame_collects_each_region_once_per_frame(tmp_path, monkeypatch)
     tui._busy_activity_verb = "Thinking"
     tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
 
-    calls = {"status": 0, "panel": 0, "thinking": 0, "bottom": 0}
+    calls = {
+        "status": 0,
+        "panel": 0,
+        "busy": 0,
+        "thinking": 0,
+        "input_rows": 0,
+        "input_elements": 0,
+        "bottom": 0,
+    }
 
     def render_status():
         calls["status"] += 1
@@ -51,9 +59,25 @@ def test_render_frame_collects_each_region_once_per_frame(tmp_path, monkeypatch)
         calls["panel"] += 1
         return ["[bold]panel[/bold]"]
 
+    def render_busy(width):
+        calls["busy"] += 1
+        return [Text("busy")]
+
     def render_thinking(width):
         calls["thinking"] += 1
         return [Text("thinking")]
+
+    original_input_rows = tui._input_display_rows
+
+    def render_input_rows(width):
+        calls["input_rows"] += 1
+        return original_input_rows(width)
+
+    original_input_elements = tui._render_input_elements
+
+    def render_input_elements(width):
+        calls["input_elements"] += 1
+        return original_input_elements(width)
 
     original_bottom = tui._render_bottom_elements
 
@@ -63,12 +87,61 @@ def test_render_frame_collects_each_region_once_per_frame(tmp_path, monkeypatch)
 
     monkeypatch.setattr(tui, "_render_hint_lines", render_status)
     monkeypatch.setattr(tui, "_render_panel_lines", render_panel)
+    monkeypatch.setattr(tui, "_render_busy_activity_elements", render_busy)
     monkeypatch.setattr(tui, "_active_thinking_stream_elements", render_thinking)
+    monkeypatch.setattr(tui, "_input_display_rows", render_input_rows)
+    monkeypatch.setattr(tui, "_render_input_elements", render_input_elements)
     monkeypatch.setattr(tui, "_render_bottom_elements", render_bottom)
 
     tui._render_frame()
 
-    assert calls == {"status": 1, "panel": 1, "thinking": 1, "bottom": 1}
+    assert calls == {
+        "status": 1,
+        "panel": 1,
+        "busy": 1,
+        "thinking": 1,
+        "input_rows": 1,
+        "input_elements": 1,
+        "bottom": 1,
+    }
+
+
+def test_render_frame_failure_does_not_recollect_regions(tmp_path, monkeypatch):
+    class FakeStdout:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def write(self, value: str) -> int:
+            self.text += value
+            return len(value)
+
+        def flush(self) -> None:
+            pass
+
+    fake_stdout = FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    calls = 0
+
+    def fail_status():
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("status failed")
+
+    monkeypatch.setattr(tui, "_render_hint_lines", fail_status)
+
+    tui._render_frame()
+
+    assert calls == 1
+    assert "Render error: status failed" in fake_stdout.text
 
 def test_render_frame_pins_to_bottom_after_history_fills_terminal(tmp_path, monkeypatch):
     class FakeStdout:
@@ -820,6 +893,34 @@ class _WorkerFrameWriter:
 
     def flush(self) -> None:
         raise AssertionError("worker render used synchronous flush")
+
+
+def test_worker_render_failure_does_not_recollect_regions(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _WorkerFrameWriter()
+    tui._terminal_writer = writer
+    calls = 0
+
+    def fail_status():
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("status failed")
+
+    monkeypatch.setattr(tui, "_render_hint_lines", fail_status)
+
+    tui._render_frame()
+
+    assert calls == 1
+    assert len(writer.frames) == 1
+    assert "Render error: status failed" in "\n".join(writer.frames[0].target_lines)
+    assert writer.frames[0].cursor_ansi == ""
 
 
 def test_worker_render_enqueues_atomic_frame_and_accepts_only_latest_stats(

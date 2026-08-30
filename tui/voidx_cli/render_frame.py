@@ -103,26 +103,27 @@ class _FrameRendererMixin:
                 return
 
             frame_rows = _rendered_row_count(ansi)
-            if render_plan is None:
-                bottom_renderable = self._render_bottom_impl()
+            if render_failed:
+                bottom_rows = 0
+                busy_activity_rows = 0
+                thinking_stream_rows = 0
             else:
-                bottom_renderable = Group(*render_plan.bottom_elements)
-            bottom_ansi = self._capture_renderable(bottom_renderable, width)
-            bottom_rows = _rendered_row_count(bottom_ansi)
-            busy_activity_rows = (
-                0
-                if render_failed
-                else (
+                if render_plan is None:
+                    bottom_renderable = self._render_bottom_impl()
+                else:
+                    bottom_renderable = Group(*render_plan.bottom_elements)
+                bottom_ansi = self._capture_renderable(bottom_renderable, width)
+                bottom_rows = _rendered_row_count(bottom_ansi)
+                busy_activity_rows = (
                     len(render_plan.busy_activity_elements)
                     if render_plan is not None
                     else self._busy_activity_row_count(width)
                 )
-            )
-            thinking_stream_rows = (
-                len(render_plan.thinking_stream_elements)
-                if render_plan is not None
-                else len(self._active_thinking_stream_elements(width))
-            )
+                thinking_stream_rows = (
+                    len(render_plan.thinking_stream_elements)
+                    if render_plan is not None
+                    else len(self._active_thinking_stream_elements(width))
+                )
             lines = ansi.splitlines()
 
             if worker_mode:
@@ -134,7 +135,10 @@ class _FrameRendererMixin:
                 )
                 force_full = force_full or bool(scroll_ansi)
                 start_row = max(visible_after + 1, 1)
-                cursor_ansi, lines_up = self._input_cursor_target(plan=render_plan)
+                if render_failed:
+                    cursor_ansi, lines_up = "", 0
+                else:
+                    cursor_ansi, lines_up = self._input_cursor_target(plan=render_plan)
                 generation = self._terminal_frame_generation + 1
                 render_ms = (time.perf_counter() - started_at) * 1000
                 batch = FrameBatch(
@@ -240,7 +244,10 @@ class _FrameRendererMixin:
                     )
                 else:
                     self._invalidate_busy_activity_layout()
-                self._position_input_cursor(frame_rows, plan=render_plan)
+                if render_failed:
+                    self._record_input_cursor_geometry(frame_rows, 0)
+                else:
+                    self._position_input_cursor(frame_rows, plan=render_plan)
                 self._has_rendered_frame = True
                 self._prev_frame_lines = lines
                 self._prev_frame_start_row = start_row
