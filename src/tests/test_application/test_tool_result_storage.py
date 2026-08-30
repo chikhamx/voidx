@@ -85,12 +85,12 @@ class TestMaybePersistToolResult:
         assert "Preview:" in result
         assert "Saved to:" in result
 
-    def test_5000_char_content_persisted(self, tmp_path, monkeypatch):
+    def test_content_above_threshold_persisted(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        content = "x" * 5_000
-        result = maybe_persist_tool_result(content, "call_5000", "bash", session_id="test")
+        content = "x" * (TOOL_RESULT_PERSIST_THRESHOLD + 1)
+        result = maybe_persist_tool_result(content, "call_large", "bash", session_id="test")
         assert "<persisted-output>" in result
-        path = tmp_path / ".voidx" / "tool-results" / "test" / "call_5000.txt"
+        path = tmp_path / ".voidx" / "tool-results" / "test" / "call_large.txt"
         assert path.read_text(encoding="utf-8") == content
 
     def test_threshold_boundary(self, tmp_path, monkeypatch):

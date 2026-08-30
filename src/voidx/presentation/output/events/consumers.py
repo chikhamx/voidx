@@ -326,6 +326,7 @@ class DockEventConsumer:
                     e.text,
                     parent=self._stream_parent(e.agent_id),
                     phase=e.phase,
+                    snapshot_contract=e.snapshot_contract,
                 )
             case AssistantStreamCommitted():
                 if not self._dock.active:

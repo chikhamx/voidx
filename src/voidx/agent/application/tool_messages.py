@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-DEFAULT_TOOL_MESSAGE_MAX_CHARS = 4_000
+DEFAULT_TOOL_MESSAGE_MAX_CHARS = 8_192
 _KEY_VALUE_SECRET_RE = re.compile(
     r"(?i)\b(api[_-]?key|token|secret|password)\b(\s*[:=]\s*)([^\s,;]+)"
 )

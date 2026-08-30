@@ -124,6 +124,7 @@ def _guidance_entry_from_snapshot(
         session_id=str(value("target_session_id", "") or context.session_id or ""),
         created_at=str(created_at) if created_at else GuidanceEntry(text=text).created_at,
         guidance_id=str(value("guidance_id", "") or ""),
+        delivery_id=str(value("delivery_id", "") or ""),
     )
 
 
@@ -139,10 +140,21 @@ def _project_guidance_snapshots(
     ]
     if not entries:
         return []
+    guidance_ids = {entry.guidance_id for entry in entries if entry.guidance_id}
     state = current_thread_execution_state()
-    pending = getattr(state, "pending_guidance", None) if state is not None else None
-    if pending is None:
-        pending = getattr(host, "_pending_guidance", None)
+    pending_lists = [
+        getattr(state, "pending_guidance", None) if state is not None else None,
+        getattr(host, "_pending_guidance", None),
+    ]
+    if guidance_ids:
+        for pending in pending_lists:
+            if isinstance(pending, list):
+                pending[:] = [
+                    entry
+                    for entry in pending
+                    if getattr(entry, "guidance_id", "") not in guidance_ids
+                ]
+    pending = pending_lists[0] if state is not None else pending_lists[1]
     if isinstance(pending, list):
         pending.extend(entries)
     return entries
@@ -207,27 +219,44 @@ class TurnRunner:
             session_id=context_session_id,
             thread_id=context_thread_id,
             turn_context=context,
-        ):
+        ) as execution_state:
             guidance_service = getattr(host, "_guidance_service", None)
             guidance_delivery_id = ""
             guidance_bound = False
             projected_guidance: list[GuidanceEntry] = []
             turn_succeeded = False
+            execution_state.guidance_delivery_id = ""
+            execution_state.guidance_delivery_entry_ids.clear()
+            execution_state.guidance_drained_ids.clear()
             if guidance is None and guidance_service is not None:
                 guidance_delivery_id = (
                     f"turn:{context_thread_id or context_session_id}:{time.time_ns()}"
                 )
-                bound_guidance = await guidance_service.bind_delivery(
-                    guidance_delivery_id,
-                    session_id=context_session_id,
-                    thread_id=context_thread_id,
-                    phase=_guidance_phase(context),
-                )
-                guidance_bound = bool(bound_guidance)
+                execution_state.guidance_delivery_id = guidance_delivery_id
+                try:
+                    bound_guidance = await guidance_service.bind_delivery(
+                        guidance_delivery_id,
+                        session_id=context_session_id,
+                        thread_id=context_thread_id,
+                        phase=_guidance_phase(context),
+                    )
+                except BaseException:
+                    execution_state.guidance_delivery_id = ""
+                    try:
+                        await guidance_service.release_delivery(guidance_delivery_id)
+                    except BaseException:
+                        pass
+                    raise
+                guidance_bound = True
                 projected_guidance = _project_guidance_snapshots(
                     host,
                     bound_guidance,
                     context,
+                )
+                execution_state.guidance_delivery_entry_ids.update(
+                    entry.guidance_id
+                    for entry in projected_guidance
+                    if entry.guidance_id
                 )
             elif guidance:
                 _project_guidance_snapshots(host, guidance, context)
@@ -565,16 +594,54 @@ class TurnRunner:
                 raise
             finally:
                 turn_calls = host._usage_stats.turn_calls
-                guidance_consumed = (
-                    guidance_bound
-                    and turn_succeeded
-                    and not _guidance_pending(host, projected_guidance)
+                state = current_thread_execution_state()
+                delivery_entry_ids = set(
+                    getattr(state, "guidance_delivery_entry_ids", set())
+                    if state is not None
+                    else set()
                 )
+                delivery_entry_ids.update(
+                    entry.guidance_id
+                    for entry in projected_guidance
+                    if entry.guidance_id
+                )
+                drained_ids = set(
+                    getattr(state, "guidance_drained_ids", set())
+                    if state is not None
+                    else set()
+                )
+                drained_ids.intersection_update(delivery_entry_ids)
                 if guidance_bound and guidance_service is not None:
-                    if guidance_consumed:
-                        await guidance_service.commit_delivery(guidance_delivery_id)
-                    else:
-                        await guidance_service.release_delivery(guidance_delivery_id)
+                    if state is not None:
+                        state.guidance_delivery_id = ""
+                    try:
+                        commit_by_ids = getattr(
+                            guidance_service, "commit_guidance_ids", None
+                        )
+                        release_by_ids = getattr(
+                            guidance_service, "release_guidance_ids", None
+                        )
+                        if callable(commit_by_ids) and callable(release_by_ids):
+                            committed_ids = drained_ids if turn_succeeded else set()
+                            released_ids = delivery_entry_ids - committed_ids
+                            if committed_ids:
+                                await commit_by_ids(committed_ids)
+                            if released_ids:
+                                await release_by_ids(released_ids)
+                        elif turn_succeeded and not _guidance_pending(
+                            host, projected_guidance
+                        ):
+                            await guidance_service.commit_delivery(
+                                guidance_delivery_id
+                            )
+                        else:
+                            await guidance_service.release_delivery(
+                                guidance_delivery_id
+                            )
+                    finally:
+                        if state is not None:
+                            state.guidance_delivery_entry_ids.clear()
+                            state.guidance_drained_ids.clear()
                     guidance_bound = False
                 host._usage_stats.end_turn()
                 host._pending_turn_stop_commit = None

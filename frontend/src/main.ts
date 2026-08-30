@@ -863,7 +863,7 @@ function startIncrementalStream(
     text,
   };
   incrementalStreamStates.set(identity.key, state);
-  appendStreamText(itemId, text, phase);
+  appendStreamText(itemId, text, phase, "replace");
   return true;
 }
 
@@ -912,7 +912,7 @@ function consumeIncrementalStreamDelta(
   state.revision = revision;
   state.phase = phase;
   state.text = nextText;
-  appendStreamText(itemId, nextText, phase);
+  appendStreamText(itemId, text, phase, op);
   return true;
 }
 

@@ -1,6 +1,13 @@
 // @ts-nocheck
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { marked } from "marked";
 import { renderMarkdown, highlightCode, stripPastedTags, renderUserMessage, createStreamingMarkdownProjection } from "../../src/utils/markdown";
+
+const STREAMING_PARSER_HARD_LIMIT = 16 * 1024;
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("renderMarkdown", () => {
   it("renders bold text", () => {
@@ -185,5 +192,144 @@ describe("createStreamingMarkdownProjection", () => {
     const canonical = renderMarkdown(source);
     expect(target.innerHTML).toBe(canonical.innerHTML);
     expect(target.querySelector("pre code").innerHTML).toContain("hljs");
+  });
+});
+
+
+describe("bounded streaming Markdown projection", () => {
+  function observeStreamingParserInputs(): number[] {
+    const inputLengths: number[] = [];
+    const originalLexer = marked.lexer.bind(marked);
+    const originalParse = marked.parse.bind(marked);
+    vi.spyOn(marked, "lexer").mockImplementation((source, options) => {
+      inputLengths.push(String(source).length);
+      return originalLexer(source, options);
+    });
+    vi.spyOn(marked, "parse").mockImplementation((source, options) => {
+      inputLengths.push(String(source).length);
+      return originalParse(source, options);
+    });
+    return inputLengths;
+  }
+
+  it("bounds parser and mutable-tail input for a 50k single paragraph", () => {
+    const target = document.createElement("div");
+    const projection = createStreamingMarkdownProjection(target);
+    const parserInputs = observeStreamingParserInputs();
+    const source = "paragraph ".repeat(5_000);
+
+    projection.update(source, "append");
+
+    const debug = projection._debugSnapshotForTest?.();
+    expect(target.textContent).toBe(source);
+    expect(debug).toBeDefined();
+    expect(debug.rawTextLength).toBe(source.length);
+    expect(debug.mutableTailLength).toBeLessThanOrEqual(STREAMING_PARSER_HARD_LIMIT);
+    expect(Math.max(0, ...parserInputs)).toBeLessThanOrEqual(STREAMING_PARSER_HARD_LIMIT);
+  });
+
+  it("bounds and escapes a 50k unclosed fence", () => {
+    const target = document.createElement("div");
+    const projection = createStreamingMarkdownProjection(target);
+    const parserInputs = observeStreamingParserInputs();
+    const source = "```html\n" + "<script>alert('x')</script>\n".repeat(1_800);
+
+    projection.update(source, "append");
+
+    const debug = projection._debugSnapshotForTest?.();
+    expect(source.length).toBeGreaterThan(50_000);
+    expect(target.textContent).toBe(source);
+    expect(target.querySelector("script")).toBeNull();
+    expect(debug.mutableTailLength).toBeLessThanOrEqual(STREAMING_PARSER_HARD_LIMIT);
+    expect(Math.max(0, ...parserInputs)).toBeLessThanOrEqual(STREAMING_PARSER_HARD_LIMIT);
+  });
+
+  it("only appends stable DOM and preserves its identity for delta updates", () => {
+    const target = document.createElement("div");
+    const projection = createStreamingMarkdownProjection(target);
+
+    projection.update("# First\n\n", "append");
+    const firstHeading = target.querySelector("h1");
+    projection.update("# Second\n\n", "append");
+
+    expect(firstHeading).not.toBeNull();
+    expect(target.querySelector("h1")).toBe(firstHeading);
+    expect(target.textContent).toContain("First");
+    expect(target.textContent).toContain("Second");
+  });
+
+  it("does not rebuild previously frozen provisional nodes", () => {
+    const target = document.createElement("div");
+    const projection = createStreamingMarkdownProjection(target);
+
+    projection.update("a".repeat(24_000), "append");
+    const firstProvisional = target.firstChild;
+    projection.update("b".repeat(24_000), "append");
+
+    expect(firstProvisional).not.toBeNull();
+    expect(target.firstChild).toBe(firstProvisional);
+    expect(target.textContent).toBe("a".repeat(24_000) + "b".repeat(24_000));
+    expect(projection._debugSnapshotForTest?.().provisionalNodeCount).toBeGreaterThan(1);
+  });
+
+  it("keeps HTML and incomplete markup escaped in the mutable preview", () => {
+    const target = document.createElement("div");
+    const projection = createStreamingMarkdownProjection(target);
+    const source = "<section onclick=alert(1)>**unfinished";
+
+    projection.update(source, "append");
+
+    expect(target.querySelector("section")).toBeNull();
+    expect(target.textContent).toBe(source);
+  });
+
+  it("clears the old projection on an explicit non-prefix replace", () => {
+    const target = document.createElement("div");
+    const projection = createStreamingMarkdownProjection(target);
+
+    projection.update("old **content**", "append");
+    const oldNode = target.firstChild;
+    projection.update("new content", "replace");
+
+    expect(target.textContent).toBe("new content");
+    expect(target.textContent).not.toContain("old");
+    expect(target.firstChild).not.toBe(oldNode);
+  });
+
+  it("commits the complete canonical raw text through renderMarkdown", () => {
+    const target = document.createElement("div");
+    const projection = createStreamingMarkdownProjection(target);
+    const first = "# Answer\n\n" + "a".repeat(25_000);
+    const second = "\n\n```js\nconst value = '<safe>';\n```";
+    const source = first + second;
+
+    projection.update(first, "append");
+    projection.update(second, "append");
+    projection.commit();
+
+    expect(target.innerHTML).toBe(renderMarkdown(source).innerHTML);
+  });
+});
+
+
+describe("streaming Unicode boundaries", () => {
+  it("never splits a surrogate pair across provisional nodes", () => {
+    const target = document.createElement("div");
+    const projection = createStreamingMarkdownProjection(target);
+    const source = "a".repeat(8_191) + "🙂" + "b".repeat(16_500);
+
+    projection.update(source, "append");
+
+    const textNodes = Array.from(target.childNodes)
+      .filter((node) => node.nodeType === Node.TEXT_NODE);
+    expect(textNodes.length).toBeGreaterThan(1);
+    expect(target.textContent).toBe(source);
+    for (const node of textNodes) {
+      const value = node.textContent ?? "";
+      const first = value.charCodeAt(0);
+      const last = value.charCodeAt(value.length - 1);
+      expect(first >= 0xdc00 && first <= 0xdfff).toBe(false);
+      expect(last >= 0xd800 && last <= 0xdbff).toBe(false);
+    }
   });
 });

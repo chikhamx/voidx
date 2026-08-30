@@ -11,6 +11,7 @@ from voidx.presentation.output.dock import dock
 from voidx.presentation.output.dock.formatting import text_from_line
 from voidx.presentation.output.events import (
     AssistantStreamCommitted,
+    AssistantStreamDiscarded,
     AssistantStreamUpdated,
     ui_events,
 )
@@ -199,13 +200,14 @@ def test_thinking_stream_updates_are_throttled(monkeypatch):
         renderer.feed_thinking("three")
 
         updates = [event for event in events if isinstance(event, AssistantStreamUpdated)]
-        assert [event.text for event in updates] == ["one", "onetwothree"]
+        assert [event.text for event in updates] == ["one", "twothree"]
+        assert all(event.snapshot_contract == "delta" for event in updates)
     finally:
         test_dock.deactivate()
         test_dock.reset()
 
 
-def test_thinking_to_text_flushes_first_text_immediately(monkeypatch):
+def test_thinking_to_text_flushes_throttled_tail_before_first_text(monkeypatch):
     now = {"value": 100.0}
     events = []
     test_dock = dock
@@ -222,13 +224,18 @@ def test_thinking_to_text_flushes_first_text_immediately(monkeypatch):
 
     try:
         renderer = StreamingRenderer(Console(), stream_to_dock=True)
-        renderer.feed_thinking("reasoning")
+        renderer.feed_thinking("head")
         now["value"] += 0.01
+        renderer.feed_thinking("tail")
         renderer.feed_text("answer")
 
         updates = [event for event in events if isinstance(event, AssistantStreamUpdated)]
-        assert updates[-1].phase == "text"
-        assert updates[-1].text == "● answer"
+        assert [(event.phase, event.text) for event in updates] == [
+            ("thinking", "head"),
+            ("thinking", "tail"),
+            ("text", "● answer"),
+        ]
+        assert all(event.snapshot_contract == "delta" for event in updates)
     finally:
         test_dock.deactivate()
         test_dock.reset()
@@ -257,8 +264,36 @@ def test_thinking_stream_done_commits_throttled_tail(monkeypatch):
         renderer.done()
 
         updates = [event for event in events if isinstance(event, AssistantStreamUpdated)]
-        assert updates[-1].text == "headtail"
+        assert [event.text for event in updates] == ["head", "tail"]
+        assert all(event.snapshot_contract == "delta" for event in updates)
         assert isinstance(events[-1], AssistantStreamCommitted)
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_streaming_renderer_reuse_resets_discard_state(monkeypatch):
+    events = []
+    test_dock = dock
+    test_dock.begin_capture()
+    monkeypatch.setattr(
+        ui_events,
+        "emitnowait",
+        lambda event: events.append(event) or True,
+    )
+
+    try:
+        renderer = StreamingRenderer(Console(), stream_to_dock=True)
+        renderer.feed_text("discarded")
+        renderer.discard()
+        renderer.done()
+        events.clear()
+
+        renderer.feed_text("committed")
+        assert renderer.done() == "committed"
+
+        assert any(isinstance(event, AssistantStreamCommitted) for event in events)
+        assert not any(isinstance(event, AssistantStreamDiscarded) for event in events)
     finally:
         test_dock.deactivate()
         test_dock.reset()

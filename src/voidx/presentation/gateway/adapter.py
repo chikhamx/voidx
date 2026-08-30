@@ -83,8 +83,8 @@ class UiEventItemAdapter:
         self._turn_active = False
         # tool_call_id → item_id (for correlating tool started/finished/result)
         self._tool_items: dict[str, str] = {}
-        # stream_id → (item_id, accumulated_text)
-        self._stream_items: dict[str, tuple[str, str]] = {}
+        # stream_id → (item_id, accumulated_text, phase)
+        self._stream_items: dict[str, tuple[str, str, str]] = {}
         # subagent_id → item_id
         self._subagent_items: dict[str, str] = {}
         # status_id → item_id
@@ -208,35 +208,39 @@ class UiEventItemAdapter:
 
     def _on_stream_started(self, event: AssistantStreamStarted) -> JsonRpcNotification:
         item_id = _uid()
-        self._stream_items[event.stream_id] = (item_id, "")
+        self._stream_items[event.stream_id] = (item_id, "", "text")
         return self._item_notification(
             item_id, "assistant_stream", "started", {"text": "", "phase": "text"}
         )
 
     def _on_stream_updated(self, event: AssistantStreamUpdated) -> JsonRpcNotification:
         existing = self._stream_items.get(event.stream_id)
-        if existing is not None:
-            item_id, _ = existing
-            # full-replace: data.text is the current complete text
-            self._stream_items[event.stream_id] = (item_id, event.text)
-        else:
+        if existing is None:
             item_id = _uid()
-            self._stream_items[event.stream_id] = (item_id, event.text)
+            accumulated_text = ""
+            previous_phase = event.phase
+        else:
+            item_id, accumulated_text, previous_phase = existing
+        if event.snapshot_contract == "delta" and previous_phase == event.phase:
+            current_text = accumulated_text + event.text
+        else:
+            current_text = event.text
+        self._stream_items[event.stream_id] = (item_id, current_text, event.phase)
         return self._item_notification(
             item_id,
             "assistant_stream",
             "delta",
-            {"text": event.text, "phase": event.phase},
+            {"text": current_text, "phase": event.phase},
         )
 
     def _on_stream_committed(self, event: AssistantStreamCommitted) -> JsonRpcNotification:
-        item_id = self._stream_items.get(event.stream_id, (_uid(), ""))[0]
+        item_id = self._stream_items.get(event.stream_id, (_uid(), "", "text"))[0]
         return self._item_notification(
             item_id, "assistant_stream", "completed", {}
         )
 
     def _on_stream_discarded(self, event: AssistantStreamDiscarded) -> JsonRpcNotification:
-        item_id = self._stream_items.get(event.stream_id, (_uid(), ""))[0]
+        item_id = self._stream_items.get(event.stream_id, (_uid(), "", "text"))[0]
         return self._item_notification(
             item_id, "assistant_stream", "completed", {"discarded": True}
         )

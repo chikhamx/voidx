@@ -1,5 +1,13 @@
 import { renderMarkdown, renderUserMessage, highlightCode } from './markdown';
-import { takeCommittedStreams, clearActiveStreams, appendStreamText, commitStream, getTranscriptElement } from './stream';
+import {
+  takeCommittedStreams,
+  clearActiveStreams,
+  appendStreamText,
+  commitStream,
+  getTranscriptElement,
+  getCommittedStreamCanonicalText,
+  invalidateCommittedStreamElement,
+} from './stream';
 import type { TranscriptNode, Payload } from '../rpc/protocol';
 import { iconSvg } from './icons';
 import type {
@@ -379,6 +387,10 @@ function snapshotAssistantText(node: TranscriptNode): string {
 }
 
 function committedStreamText(element: HTMLElement): string {
+  const canonicalText = getCommittedStreamCanonicalText(element);
+  if (canonicalText !== null) {
+    return assistantComparisonText(canonicalText);
+  }
   return (element.querySelector<HTMLElement>(".markdown-body")?.textContent || "").trim();
 }
 
@@ -410,6 +422,7 @@ function takeCommittedStreamsForSnapshot(snapshot: TranscriptSnapshot): HTMLElem
     }
     if (count === 1) coveredTexts.delete(text);
     else coveredTexts.set(text, count - 1);
+    invalidateCommittedStreamElement(el);
     el.remove();
   }
   return kept;
@@ -493,7 +506,7 @@ export function renderTranscript(root: HTMLElement, snapshot: TranscriptSnapshot
   const committed = takeCommittedStreamsForSnapshot(snapshot);
   const keep = new Set<HTMLElement>(committed);
 
-  clearActiveStreams();
+  clearActiveStreams({ preserveCanonicalCommits: true });
 
   const existingById = collectTranscriptIds(root);
   const toolById = new Map<string, HTMLElement>();
@@ -675,6 +688,7 @@ export function renderTranscript(root: HTMLElement, snapshot: TranscriptSnapshot
     const id = el.dataset.itemId || el.dataset.streamId || el.dataset.compactionItemId;
     const baseId = id && id.endsWith("-thought") ? id.slice(0, -"-thought".length) : id;
     if (baseId && !nodeIds.has(baseId) && !keep.has(el)) {
+      invalidateCommittedStreamElement(el);
       el.remove();
     }
   }

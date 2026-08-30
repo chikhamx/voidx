@@ -7,11 +7,93 @@ import {
   commitStream,
   discardStream,
   takeCommittedStreams,
+  clearCommittedStreams,
+  clearActiveStreams,
+  _setCanonicalMarkdownCoordinatorForTest,
   _resetForTest,
 } from "../../src/utils/stream";
+import { renderMarkdown } from "../../src/utils/markdown";
+import {
+  createCanonicalMarkdownCoordinator,
+} from "../../src/utils/markdown-worker-client";
+import { handleCanonicalRenderRequest } from "../../src/utils/markdown.worker";
+
+
+type WorkerMessageListener = (event: { data: unknown }) => void;
+
+class ControlledCanonicalWorker {
+  sent = [];
+  messageListeners = [];
+  errorListeners = [];
+
+  postMessage(message) {
+    this.sent.push(message);
+  }
+
+  addEventListener(type, listener) {
+    if (type === "message") this.messageListeners.push(listener);
+    else this.errorListeners.push(listener);
+  }
+
+  respond(index = 0) {
+    const response = handleCanonicalRenderRequest(this.sent[index]);
+    for (const listener of this.messageListeners) {
+      listener({ data: response });
+    }
+  }
+
+  fail() {
+    for (const listener of this.errorListeners) listener(new Event("error"));
+  }
+}
+
+function immediateCanonicalCoordinator() {
+  const worker = new ControlledCanonicalWorker();
+  const coordinator = createCanonicalMarkdownCoordinator({
+    workerFactory: () => ({
+      postMessage(message) {
+        worker.postMessage(message);
+        worker.respond(worker.sent.length - 1);
+      },
+      addEventListener(type, listener) {
+        worker.addEventListener(type, listener);
+      },
+    }),
+    scheduleFrame(callback) {
+      callback(0);
+      return 1;
+    },
+    now: () => 0,
+  });
+  return coordinator;
+}
+
+function controlledCanonicalCoordinator() {
+  const worker = new ControlledCanonicalWorker();
+  const frames = [];
+  const coordinator = createCanonicalMarkdownCoordinator({
+    workerFactory: () => worker,
+    scheduleFrame(callback) {
+      frames.push(callback);
+      return frames.length;
+    },
+    now: () => 0,
+  });
+  return {
+    worker,
+    coordinator,
+    flushFrame() {
+      const callback = frames.shift();
+      if (!callback) throw new Error("no canonical frame pending");
+      callback(0);
+    },
+    pendingFrames: () => frames.length,
+  };
+}
 
 beforeEach(() => {
   _resetForTest();
+  _setCanonicalMarkdownCoordinatorForTest(immediateCanonicalCoordinator());
   const transcript = document.querySelector("#transcript");
   setTranscriptElement(transcript);
 });
@@ -188,5 +270,170 @@ describe("stream cursor", () => {
     commitStream("s1");
     const cursor = document.querySelector(".stream-cursor");
     expect(cursor).toBeNull();
+  });
+});
+
+
+describe("explicit stream update operations", () => {
+  it("accumulates append deltas without requiring cumulative snapshots", () => {
+    appendStreamText("s1", "hello", "text", "append");
+    appendStreamText("s1", " world", "text", "append");
+
+    expect(getOrCreateStream("s1", "text").text).toBe("hello world");
+  });
+
+  it("replaces canonical text and clears the old projection", async () => {
+    appendStreamText("s1", "# old\n\n", "text", "append");
+    await new Promise((r) => setTimeout(r, 150));
+    const stream = getOrCreateStream("s1", "text");
+    const oldHeading = stream.textEl.querySelector("h1");
+
+    appendStreamText("s1", "new answer", "text", "replace");
+    await new Promise((r) => setTimeout(r, 150));
+
+    expect(stream.text).toBe("new answer");
+    expect(stream.textEl.textContent).toContain("new answer");
+    expect(stream.textEl.textContent).not.toContain("old");
+    expect(oldHeading?.isConnected).toBe(false);
+  });
+
+  it("resets the Markdown projection when the stream phase changes", async () => {
+    appendStreamText("s1", "old answer", "text", "append");
+    await new Promise((r) => setTimeout(r, 150));
+    const stream = getOrCreateStream("s1", "text");
+    expect(stream.textEl.textContent).toContain("old answer");
+
+    appendStreamText("s1", "internal thought", "thinking", "replace");
+    await new Promise((r) => setTimeout(r, 150));
+
+    expect(stream.phase).toBe("thinking");
+    expect(stream.text).toBe("");
+    expect(stream.textEl.textContent).not.toContain("old answer");
+  });
+
+
+  it("resets prior thinking when an explicit append switches back to thinking", () => {
+    appendStreamText("s1", "old thought", "thinking", "append");
+    appendStreamText("s1", "answer", "text", "append");
+    appendStreamText("s1", "new thought", "thinking", "append");
+
+    const stream = getOrCreateStream("s1", "thinking");
+    expect(stream.text).toBe("");
+    expect(stream.thinking).toBe("new thought");
+  });
+
+
+  it("uses the canonical renderer when the streaming projection is unavailable", () => {
+    const stream = getOrCreateStream("s1", "text");
+    stream.markdownProjection = null;
+    appendStreamText("s1", "safe **bold**", "text", "replace");
+
+    const result = commitStream("s1");
+
+    expect(result.el.querySelector("strong")?.textContent).toBe("bold");
+  });
+
+  it("commits appended deltas as the canonical full Markdown render", () => {
+    const first = "safe **bold** ";
+    const second = "<script>window.pwned = true</script>";
+    appendStreamText("s1", first, "text", "append");
+    appendStreamText("s1", second, "text", "append");
+
+    const result = commitStream("s1");
+
+    expect(result.text).toBe(first + second);
+    expect(result.el.querySelector(".markdown-body").innerHTML)
+      .toBe(renderMarkdown(first + second).innerHTML);
+  });
+});
+
+
+describe("async canonical stream commit", () => {
+  it("returns immediately and keeps the live preview until canonical install", async () => {
+    const harness = controlledCanonicalCoordinator();
+    _setCanonicalMarkdownCoordinatorForTest(harness.coordinator);
+    const source = "safe **bold** answer";
+    appendStreamText("async-1", source, "text", "append");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const stream = getOrCreateStream("async-1", "text");
+    const preview = stream.textEl.firstChild;
+
+    const result = commitStream("async-1");
+
+    expect(result?.text).toBe(source);
+    expect(harness.worker.sent).toHaveLength(1);
+    expect(stream.textEl.firstChild).toBe(preview);
+    expect(stream.textEl.dataset.renderPending).toBe("true");
+
+    harness.worker.respond();
+    expect(harness.pendingFrames()).toBe(1);
+    expect(stream.textEl.firstChild).toBe(preview);
+
+    harness.flushFrame();
+    expect(stream.textEl.firstChild).not.toBe(preview);
+    expect(stream.textEl.innerHTML).toBe(renderMarkdown(source).innerHTML);
+    expect(stream.textEl.dataset.renderPending).toBeUndefined();
+  });
+
+  it("drops an old result when the same stream id is reused and discarded", async () => {
+    const harness = controlledCanonicalCoordinator();
+    _setCanonicalMarkdownCoordinatorForTest(harness.coordinator);
+    appendStreamText("reused", "old **answer**", "text", "append");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const oldStream = getOrCreateStream("reused", "text");
+    const oldPreview = oldStream.textEl.firstChild;
+    commitStream("reused");
+
+    appendStreamText("reused", "new answer", "text", "replace");
+    discardStream("reused");
+    harness.worker.respond(0);
+
+    expect(harness.pendingFrames()).toBe(0);
+    expect(oldStream.textEl.firstChild).toBe(oldPreview);
+    expect(oldStream.textEl.textContent).toContain("old answer");
+  });
+
+  it("does not install a pending result after committed streams are cleared", async () => {
+    const harness = controlledCanonicalCoordinator();
+    _setCanonicalMarkdownCoordinatorForTest(harness.coordinator);
+    appendStreamText("cleared", "old **answer**", "text", "append");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const stream = getOrCreateStream("cleared", "text");
+    commitStream("cleared");
+
+    clearCommittedStreams();
+    harness.worker.respond();
+
+    expect(stream.el.isConnected).toBe(false);
+    expect(harness.pendingFrames()).toBe(0);
+  });
+
+  it("uses the complete escaped canonical source when the Worker fails", () => {
+    const harness = controlledCanonicalCoordinator();
+    _setCanonicalMarkdownCoordinatorForTest(harness.coordinator);
+    const source = "safe **bold** <script>window.pwned=true</script>";
+    appendStreamText("failed", source, "text", "append");
+
+    const result = commitStream("failed");
+    harness.worker.fail();
+
+    const target = result?.el.querySelector<HTMLElement>(".markdown-body");
+    expect(target?.textContent).toBe(source);
+    expect(target?.querySelector("script")).toBeNull();
+    expect(target?.dataset.canonicalFallback).toBe("worker_error");
+    expect(target?.dataset.renderPending).toBeUndefined();
+  });
+
+  it("invalidates pending commits when active stream state is cleared", async () => {
+    const harness = controlledCanonicalCoordinator();
+    _setCanonicalMarkdownCoordinatorForTest(harness.coordinator);
+    appendStreamText("generation", "canonical", "text", "append");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    commitStream("generation");
+
+    clearActiveStreams();
+    harness.worker.respond();
+
+    expect(harness.pendingFrames()).toBe(0);
   });
 });

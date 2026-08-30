@@ -10,10 +10,15 @@ from rich.text import Text
 
 from voidx.presentation.output.dock.agent_placeholder import is_agent_placeholder_header
 from voidx.presentation.output.dock.formatting import (
+    ANSI_LINE_PREFIX,
     _ansi_line,
     _ansi_rgb,
     _clean,
     _markdown_lines,
+)
+from voidx.presentation.output.dock.stream_projection import (
+    StreamProjectionUpdate,
+    StreamingMarkdownProjection,
 )
 from voidx.presentation.output.tree import OutputNode
 
@@ -98,6 +103,56 @@ def build_plain_stream_projection(
     )
 
 
+def _clean_stream_text(text: str) -> str:
+    source = str(text or "")
+    trailing_newlines = len(source) - len(source.rstrip("\n"))
+    return _clean(source) + "\n" * trailing_newlines
+
+
+def _strip_assistant_bullet(text: str) -> str:
+    return text[2:] if text.startswith("● ") else text
+
+
+def _prefixed_projection_line(prefix: str, line: str) -> str:
+    if line.startswith(ANSI_LINE_PREFIX):
+        return _ansi_line(prefix + line[len(ANSI_LINE_PREFIX):])
+    return prefix + line
+
+
+def _install_projection_update(
+    node: OutputNode,
+    update: StreamProjectionUpdate,
+) -> tuple[int, int, list[str], str | None, list[str]] | None:
+    replace_from = update.replace_from
+    lines = list(update.replacement_lines)
+    if replace_from <= 0:
+        if not lines:
+            node.header = ""
+            node.body_lines = []
+            return None
+        bullet = _ansi_rgb("●", (163, 190, 140))
+        node.header = _prefixed_projection_line(f"{bullet} ", lines[0])
+        node.body_lines = [
+            _prefixed_projection_line("  ", line) for line in lines[1:]
+        ]
+        return None
+    body_start = max(replace_from - 1, 0)
+    old_body_line_count = len(node.body_lines)
+    old_suffix = list(node.body_lines[body_start:])
+    old_anchor = node.body_lines[body_start - 1] if body_start > 0 else None
+    replacement_body_lines = [
+        _prefixed_projection_line("  ", line) for line in lines
+    ]
+    node.body_lines[body_start:] = replacement_body_lines
+    return (
+        body_start,
+        old_body_line_count,
+        old_suffix,
+        old_anchor,
+        replacement_body_lines,
+    )
+
+
 class DockStreamMixin:
     def set_stream(
         self,
@@ -106,15 +161,19 @@ class DockStreamMixin:
         parent: OutputNode | None = None,
         phase: str = "text",
         refresh: bool = True,
+        snapshot_contract: str = "cumulative",
     ) -> bool:
         if not self._active:
             return False
+        if snapshot_contract not in {"cumulative", "delta"}:
+            raise ValueError("stream snapshot contract must be cumulative or delta")
         self._stream_revision += 1
-        if phase == "thinking":
-            self._stream_thinking_text = text
-        else:
-            self._stream_text = text
-        self._update_stream_node(parent=parent, phase=phase)
+        self._update_stream_node(
+            text,
+            parent=parent,
+            phase=phase,
+            snapshot_contract=snapshot_contract,
+        )
         if self._stream_node is not None:
             self._stream_node.payload["stream_revision"] = self._stream_revision
         self._mark_unsettled(self._stream_node)
@@ -145,8 +204,7 @@ class DockStreamMixin:
             return None
         if self._ignored_duplicate_stream_commit:
             self._ignored_duplicate_stream_commit = False
-            self._stream_text = ""
-            self._stream_thinking_text = ""
+            self._clear_stream_projection_state()
             if refresh:
                 self.refresh()
             return None
@@ -154,8 +212,7 @@ class DockStreamMixin:
         stream_node = self._stream_node
         if stream_node is None or stream_node is self._current_agent:
             self._stream_node = None
-            self._stream_text = ""
-            self._stream_thinking_text = ""
+            self._clear_stream_projection_state()
             if refresh:
                 self.refresh()
             return None
@@ -164,8 +221,7 @@ class DockStreamMixin:
         if phase == "thinking":
             self._remove_node(stream_node)
             self._stream_node = None
-            self._stream_text = ""
-            self._stream_thinking_text = ""
+            self._clear_stream_projection_state()
             if refresh:
                 self.refresh()
             return None
@@ -185,8 +241,7 @@ class DockStreamMixin:
         self._pending_stream_commits[stream_node.id] = work_item
         self._mark_unsettled(stream_node)
         self._stream_node = None
-        self._stream_text = ""
-        self._stream_thinking_text = ""
+        self._clear_stream_projection_state()
         if refresh:
             self.refresh()
         return work_item
@@ -241,8 +296,7 @@ class DockStreamMixin:
             if node is not None:
                 self._remove_node(node)
         self._stream_node = None
-        self._stream_text = ""
-        self._stream_thinking_text = ""
+        self._clear_stream_projection_state()
         self._last_committed_stream_text = ""
         self._last_committed_stream_parent_id = None
         self._last_committed_stream_node_id = None
@@ -251,26 +305,48 @@ class DockStreamMixin:
             self.refresh()
         return True
 
+    def _clear_stream_projection_state(self) -> None:
+        self._stream_text = ""
+        self._stream_thinking_text = ""
+        self._stream_projection = None
+        self._stream_projection_phase = None
+
+
     def _update_stream_node(
         self,
+        text: str,
         *,
         parent: OutputNode | None = None,
         phase: str = "text",
+        snapshot_contract: str = "cumulative",
     ) -> None:
-        source_text = self._stream_thinking_text if phase == "thinking" else self._stream_text
-        clean = _clean(source_text).strip("\n")
-        if not clean:
-            return
-        target = parent or self.ensure_agent()
-        if phase != "thinking" and self._is_duplicate_committed_stream(clean, target):
-            self._ignored_duplicate_stream_commit = True
-            return
+        incoming = _clean_stream_text(text)
         stream_existed = self._stream_node is not None
-        if self._stream_node is None or (
-            parent is not None and self._stream_node.parent is not parent
-        ):
-            self._stream_node = self._new_stream_node(parent=parent)
+        parent_changed = (
+            self._stream_node is not None
+            and parent is not None
+            and self._stream_node.parent is not parent
+        )
+        phase_changed = self._stream_projection_phase not in {None, phase}
+        if parent_changed or phase_changed:
+            self._stream_projection = None
+            self._stream_projection_phase = None
+            if phase == "thinking":
+                self._stream_thinking_text = ""
+            else:
+                self._stream_text = ""
+
         if phase == "thinking":
+            self._stream_thinking_text = (
+                self._stream_thinking_text + incoming
+                if snapshot_contract == "delta"
+                else incoming
+            )
+            clean = self._stream_thinking_text.strip("\n")
+            if not clean:
+                return
+            if self._stream_node is None or parent_changed:
+                self._stream_node = self._new_stream_node(parent=parent)
             lines = _thinking_visual_lines(clean, self._markdown_width())
             visible = lines[-5:]
             self._stream_node.header = ""
@@ -279,29 +355,78 @@ class DockStreamMixin:
             ]
             self._stream_node.payload["phase"] = "thinking"
             self._stream_node.payload["raw_text"] = clean
-            if stream_existed and self._stream_node is not None:
+            self._stream_projection = None
+            self._stream_projection_phase = "thinking"
+            if stream_existed and not parent_changed:
                 self._tree.mark_dirty(self._stream_node.id)
             else:
                 self._tree.mark_dirty()
             return
-        was_thinking_stream = self._stream_node.payload.get("phase") == "thinking"
-        if clean.startswith("● "):
-            clean = clean[2:]
-        lines = _markdown_lines(clean, self._markdown_width())
-        if not lines:
-            return
 
-        bullet = _ansi_rgb("●", (163, 190, 140))
-        self._stream_node.header = _ansi_line(f"{bullet} {lines[0]}")
-        self._stream_node.body_lines = [_ansi_line(f"  {line}") for line in lines[1:]]
+        previous = self._stream_text
+        if snapshot_contract == "cumulative" or not previous:
+            incoming = _strip_assistant_bullet(incoming)
+        if snapshot_contract == "delta":
+            canonical = previous + incoming
+            operation = "append" if previous else "replace"
+            projection_input = incoming if previous else canonical
+        else:
+            canonical = incoming
+            if previous and canonical.startswith(previous) and not phase_changed:
+                operation = "append"
+                projection_input = canonical[len(previous):]
+            else:
+                operation = "replace"
+                projection_input = canonical
+        clean = canonical.strip("\n")
+        if not clean:
+            return
+        target = parent or self.ensure_agent()
+        if self._is_duplicate_committed_stream(clean, target):
+            self._ignored_duplicate_stream_commit = True
+            self._stream_text = canonical
+            return
+        if self._stream_node is None or parent_changed:
+            self._stream_node = self._new_stream_node(parent=parent)
+            operation = "replace"
+            projection_input = canonical
+        self._stream_text = canonical
+
+        width = self._markdown_width()
+        projection = self._stream_projection
+        if not isinstance(projection, StreamingMarkdownProjection):
+            projection = StreamingMarkdownProjection(width=width)
+            self._stream_projection = projection
+            operation = "replace"
+            projection_input = canonical
+        elif projection.width != width:
+            projection = StreamingMarkdownProjection(width=width)
+            self._stream_projection = projection
+            operation = "replace"
+            projection_input = canonical
+        update = projection.update(projection_input, operation=operation)
+        suffix_update = _install_projection_update(self._stream_node, update)
+        cache_spliced = False
+        if (
+            suffix_update is not None
+            and stream_existed
+            and not parent_changed
+            and not phase_changed
+        ):
+            cache_spliced = self._tree.splice_cached_node_body_suffix(
+                self._stream_node.id,
+                *suffix_update,
+            )
+        self._stream_projection_phase = "text"
         self._stream_node.payload.pop("phase", None)
         self._stream_node.payload["raw_text"] = clean
         if self._stream_thinking_text.strip():
-            self._stream_node.payload["thinking_text"] = _clean(
-                self._stream_thinking_text
-            ).strip("\n")
-        if stream_existed and self._stream_node is not None and not was_thinking_stream:
-            self._tree.mark_dirty(self._stream_node.id)
+            self._stream_node.payload["thinking_text"] = self._stream_thinking_text.strip(
+                "\n"
+            )
+        if stream_existed and not parent_changed and not phase_changed:
+            if not cache_spliced:
+                self._tree.mark_dirty(self._stream_node.id)
         else:
             self._tree.mark_dirty()
 

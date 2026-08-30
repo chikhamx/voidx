@@ -22,6 +22,7 @@ class GuidanceService:
         on_submitted: Callable[[Guidance], None] | None = None,
         id_factory: Callable[[], str] | None = None,
         max_chars: int = 2_000,
+        delivery_id_resolver: Callable[..., str | None] | None = None,
     ) -> None:
         if max_chars < 1:
             raise ValueError("max_chars must be positive")
@@ -31,6 +32,13 @@ class GuidanceService:
             self._on_submitted_callbacks.append(on_submitted)
         self._id_factory = id_factory or (lambda: f"guidance-{uuid.uuid4().hex[:20]}")
         self._max_chars = max_chars
+        self._delivery_id_resolver = delivery_id_resolver
+
+    def bind_delivery_resolver(
+        self,
+        resolver: Callable[..., str | None] | None,
+    ) -> None:
+        self._delivery_id_resolver = resolver
 
     def can_submit_guidance(self) -> bool:
         return True
@@ -48,6 +56,7 @@ class GuidanceService:
         session_id: str = "",
         run_id: str = "",
         phase: str | None = None,
+        delivery_id: str = "",
     ) -> Guidance | None:
         normalized = " ".join(str(text).strip().split())
         if not normalized:
@@ -55,6 +64,12 @@ class GuidanceService:
         truncated = len(normalized) > self._max_chars
         if truncated:
             normalized = normalized[: self._max_chars].rstrip()
+        resolved_delivery_id = str(delivery_id or "").strip() or self._resolve_delivery_id(
+            thread_id=thread_id,
+            session_id=session_id,
+            run_id=run_id,
+            phase=phase,
+        )
         guidance = Guidance(
             guidance_id=self._id_factory(),
             text=normalized,
@@ -64,11 +79,31 @@ class GuidanceService:
             target_session_id=session_id or None,
             target_run_id=run_id or None,
             target_phase=phase or None,
+            delivery_id=resolved_delivery_id or None,
         )
         persisted = self._submit_sync(guidance)
         for callback in tuple(self._on_submitted_callbacks):
             callback(persisted)
         return persisted
+
+    def _resolve_delivery_id(
+        self,
+        *,
+        thread_id: str,
+        session_id: str,
+        run_id: str,
+        phase: str | None,
+    ) -> str:
+        resolver = self._delivery_id_resolver
+        if not callable(resolver):
+            return ""
+        resolved = resolver(
+            thread_id=thread_id,
+            session_id=session_id,
+            run_id=run_id,
+            phase=phase,
+        )
+        return str(resolved or "").strip()
 
     async def bind_delivery(
         self,
@@ -94,8 +129,28 @@ class GuidanceService:
     async def release_delivery(self, delivery_id: str) -> None:
         await self._store.release_guidance(delivery_id)
 
+    async def release_guidance_ids(self, guidance_ids: set[str]) -> None:
+        release = getattr(self._store, "release_guidance_ids", None)
+        if callable(release):
+            await release(sorted(guidance_ids))
+            return
+        for guidance_id in guidance_ids:
+            guidance = await self._store.get_guidance(guidance_id)
+            if guidance is not None and guidance.delivery_id:
+                await self._store.release_guidance(guidance.delivery_id)
+
     async def commit_delivery(self, delivery_id: str) -> None:
         await self._store.consume_guidance(delivery_id)
+
+    async def commit_guidance_ids(self, guidance_ids: set[str]) -> None:
+        consume = getattr(self._store, "consume_guidance_ids", None)
+        if callable(consume):
+            await consume(sorted(guidance_ids))
+            return
+        for guidance_id in guidance_ids:
+            guidance = await self._store.get_guidance(guidance_id)
+            if guidance is not None and guidance.delivery_id:
+                await self._store.consume_guidance(guidance.delivery_id)
 
     def _submit_sync(self, guidance: Guidance) -> Guidance:
         submit_sync = getattr(self._store, "submit_guidance_sync", None)

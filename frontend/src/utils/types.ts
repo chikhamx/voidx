@@ -11,6 +11,12 @@ export interface ProfileSummary {
 /** RPC-layer transcript node (alias for protocol.d.ts Item). */
 export type TranscriptNode = Record<string, unknown>;
 
+/** One pending live Markdown projection update. */
+export interface PendingStreamProjectionUpdate {
+  text: string;
+  operation: import("./markdown").StreamUpdateOperation;
+}
+
 /** Internal stream state during live streaming. */
 export interface StreamState {
   text: string;
@@ -23,6 +29,9 @@ export interface StreamState {
   textEl: HTMLElement;
   debounceTimer: ReturnType<typeof setTimeout> | number | null;
   markdownProjection?: import("./markdown").StreamingMarkdownProjection;
+  pendingProjectionUpdates: PendingStreamProjectionUpdate[];
+  canonicalRevision: number;
+  streamGeneration: number;
   committed?: boolean;
 }
 

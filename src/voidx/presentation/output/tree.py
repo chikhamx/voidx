@@ -163,6 +163,94 @@ class OutputTree:
         else:
             self._dirty_nodes.add(node_id)
 
+
+    def splice_cached_node_body_suffix(
+        self,
+        node_id: str,
+        body_start: int,
+        old_body_line_count: int,
+        old_suffix: list[str],
+        old_anchor: str | None,
+        replacement_body_lines: list[str],
+    ) -> bool:
+        """Replace a cached tail node's changed body suffix without re-walking it."""
+        node = self._all.get(node_id)
+        node_range = self._node_ranges.get(node_id)
+        if (
+            node is None
+            or node.node_type != "assistant"
+            or node_range is None
+            or node.children
+            or body_start < 0
+            or body_start > old_body_line_count
+            or len(old_suffix) != old_body_line_count - body_start
+            or self._dirty
+            or self._dirty_nodes
+            or self._pending_root_append_start is not None
+            or self._cached_width != self._render_width
+        ):
+            return False
+
+        node_start, node_end = node_range
+        suffix_start = node_end - old_body_line_count + body_start
+        if (
+            node_end != len(self._cached_lines)
+            or suffix_start < node_start
+            or suffix_start + len(old_suffix) != node_end
+            or any(
+                self._line_map.get(row) != node_id
+                for row in range(suffix_start, node_end)
+            )
+        ):
+            return False
+
+        prefix: str | None = None
+        if old_suffix:
+            prefixes: set[str] = set()
+            for cached_line, body_line in zip(
+                self._cached_lines[suffix_start:node_end],
+                old_suffix,
+                strict=True,
+            ):
+                if not body_line or not cached_line.endswith(body_line):
+                    return False
+                prefixes.add(cached_line[:-len(body_line)])
+            if len(prefixes) != 1:
+                return False
+            prefix = prefixes.pop()
+        elif old_anchor and suffix_start > node_start:
+            cached_anchor = self._cached_lines[suffix_start - 1]
+            if not cached_anchor.endswith(old_anchor):
+                return False
+            prefix = cached_anchor[:-len(old_anchor)]
+        if prefix is None:
+            return False
+
+        replacement = [prefix + line for line in replacement_body_lines]
+        delta = len(replacement) - len(old_suffix)
+        self._cached_lines = self._cached_lines[:suffix_start] + replacement
+        for row in range(suffix_start, node_end):
+            self._line_map.pop(row, None)
+            self._click_map.pop(row, None)
+        self._line_map.update(
+            {suffix_start + index: node_id for index in range(len(replacement))}
+        )
+
+        next_end = node_end + delta
+        self._node_ranges[node_id] = (node_start, next_end)
+        ancestor = node.parent
+        while ancestor is not None and ancestor is not self.root:
+            ancestor_range = self._node_ranges.get(ancestor.id)
+            if ancestor_range is not None and ancestor_range[1] == node_end:
+                self._node_ranges[ancestor.id] = (
+                    ancestor_range[0],
+                    ancestor_range[1] + delta,
+                )
+            ancestor = ancestor.parent
+
+        self._revision += 1
+        self._last_render_strategy = "node-tail-suffix"
+        return True
     def new_node(self, parent: OutputNode, *, node_id: str | None = None, **kwargs) -> OutputNode:
         """Create a new node under parent. Auto-assigns id."""
         if node_id is None:

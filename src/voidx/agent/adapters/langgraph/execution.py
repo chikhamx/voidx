@@ -829,7 +829,19 @@ class LangGraphExecution:
 
     def _drain_pending_guidance(self) -> list[tuple[HumanMessage, bool, Literal["user", "guard"]]]:
         messages: list[tuple[HumanMessage, bool, Literal["user", "guard"]]] = []
+        current_state = self._current_thread_state()
+        active_delivery_id = str(
+            getattr(current_state, "guidance_delivery_id", "") or ""
+        ).strip()
         for entry in self._pop_pending_guidance():
+            if (
+                current_state is not None
+                and active_delivery_id
+                and entry.guidance_id
+                and entry.delivery_id == active_delivery_id
+            ):
+                current_state.guidance_delivery_entry_ids.add(entry.guidance_id)
+                current_state.guidance_drained_ids.add(entry.guidance_id)
             messages.append((
                 HumanMessage(
                     content=entry.text,
@@ -857,9 +869,53 @@ class LangGraphExecution:
 
     def bind_guidance_service(self, guidance_service: Any) -> None:
         self._guidance_service = guidance_service
+        bind_resolver = getattr(guidance_service, "bind_delivery_resolver", None)
+        if callable(bind_resolver):
+            bind_resolver(self._guidance_delivery_id_for)
         add_callback = getattr(guidance_service, "add_submitted_callback", None)
         if callable(add_callback):
             add_callback(self._project_submitted_guidance)
+
+    def _guidance_delivery_id_for(
+        self,
+        *,
+        thread_id: str = "",
+        session_id: str = "",
+        run_id: str = "",
+        phase: str | None = None,
+    ) -> str:
+        current_state = self._current_thread_state()
+        states = getattr(self, "_thread_execution_states", {})
+        candidates = [current_state, *states.values()]
+        seen: set[int] = set()
+        for state in candidates:
+            if state is None or id(state) in seen:
+                continue
+            seen.add(id(state))
+            if getattr(state, "host_id", None) not in (None, id(self)):
+                continue
+            delivery_id = str(getattr(state, "guidance_delivery_id", "") or "").strip()
+            if not delivery_id:
+                continue
+            if thread_id and getattr(state, "thread_id", "") != thread_id:
+                continue
+            target_session = getattr(state, "session", None)
+            target_session_id = getattr(target_session, "id", "") if target_session is not None else ""
+            if session_id and target_session_id != session_id:
+                continue
+            context = getattr(state, "turn_context", None)
+            context_run_id = str(getattr(context, "goal_generation", "") or "")
+            if run_id and context_run_id != run_id:
+                continue
+            context_phase = str(
+                getattr(context, "goal_phase", "")
+                or getattr(context, "loop_phase", "")
+                or "work"
+            )
+            if phase and phase not in {"any", context_phase}:
+                continue
+            return delivery_id
+        return ""
 
     def bind_automation_services(self, loop_service, goal_service) -> None:
         self.loop_service = loop_service
@@ -878,10 +934,16 @@ class LangGraphExecution:
             thread_id=guidance.target_thread_id or "",
             session_id=guidance.target_session_id or "",
             guidance_id=guidance.guidance_id,
+            delivery_id=guidance.delivery_id or "",
         )
         target_state = self._guidance_target_state(entry)
         if target_state is not None:
             target_state.pending_guidance.append(entry)
+            if (
+                entry.delivery_id
+                and entry.delivery_id == getattr(target_state, "guidance_delivery_id", "")
+            ):
+                target_state.guidance_delivery_entry_ids.add(entry.guidance_id)
         else:
             self._pending_guidance.append(entry)
 

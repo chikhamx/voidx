@@ -77,6 +77,51 @@ async def test_stream_capability_falls_back_per_client_and_preserves_text() -> N
     assert "op" not in legacy_updates[-1]["params"]["data"]
 
 
+
+@pytest.mark.asyncio
+async def test_delta_stream_contract_preserves_legacy_full_replace_fallback() -> None:
+    session = GatewaySession(lambda: BottomInputDock().tree, thread_id="t1")
+    modern = FakeClient()
+    legacy = FakeClient()
+    await session.connect(modern, capabilities=[CAPABILITY_STREAM_APPEND])
+    await session.connect(legacy)
+
+    await session.broadcast_event(AssistantStreamStarted(stream_id="s1"))
+    for text, phase in (
+        ("reason", "thinking"),
+        ("ing", "thinking"),
+        ("answer", "text"),
+        ("!", "text"),
+    ):
+        await session.broadcast_event(
+            AssistantStreamUpdated(
+                stream_id="s1",
+                text=text,
+                phase=phase,
+                snapshot_contract="delta",
+            )
+        )
+
+    modern_updates = [
+        message
+        for message in _messages(modern, "item.delta")
+        if message["params"]["kind"] == "assistant_stream"
+    ]
+    legacy_updates = [
+        message
+        for message in _messages(legacy, "item.delta")
+        if message["params"]["kind"] == "assistant_stream"
+    ]
+    assert modern_updates[-1]["params"]["data"]["op"] == "append"
+    assert modern_updates[-1]["params"]["data"]["text"] == "!"
+    assert [update["params"]["data"]["text"] for update in legacy_updates] == [
+        "reason",
+        "reasoning",
+        "answer",
+        "answer!",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_stream_replace_and_phase_switch_advance_revision_without_suffix() -> None:
     session = GatewaySession(lambda: BottomInputDock().tree, thread_id="t1")

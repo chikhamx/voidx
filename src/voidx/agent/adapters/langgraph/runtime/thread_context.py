@@ -40,6 +40,7 @@ class GuidanceEntry:
     session_id: str = ""
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     guidance_id: str = ""
+    delivery_id: str = ""
 
 @dataclass
 class ThreadExecutionState:
@@ -54,6 +55,9 @@ class ThreadExecutionState:
     compaction_summary: str = ""
     pending_summary: str | None = None
     pending_guidance: list[GuidanceEntry] = field(default_factory=list)
+    guidance_delivery_id: str = ""
+    guidance_delivery_entry_ids: set[str] = field(default_factory=set)
+    guidance_drained_ids: set[str] = field(default_factory=set)
     session_date: str = ""
     runtime_guards: RuntimeGuardState = field(default_factory=RuntimeGuardState)
     turn_context: TurnExecutionContext | None = None

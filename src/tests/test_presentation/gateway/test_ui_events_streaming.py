@@ -47,6 +47,30 @@ from voidx.presentation.output.tree import OutputTree
 from tests.test_presentation.gateway.conftest import _plain, _rich_plain, _tree_nodes, isolated_dock
 
 
+
+
+def test_dock_event_consumer_forwards_delta_stream_contract(isolated_dock):
+    isolated_dock.begin_capture()
+    consumer = DockEventConsumer(isolated_dock)
+
+    consumer.handle(
+        AssistantStreamUpdated(
+            text="● hello",
+            phase="text",
+            snapshot_contract="delta",
+        )
+    )
+    consumer.handle(
+        AssistantStreamUpdated(
+            text=" **world**",
+            phase="text",
+            snapshot_contract="delta",
+        )
+    )
+
+    work_item = isolated_dock.prepare_stream_commit(refresh=False)
+    assert work_item is not None
+    assert work_item.raw_text == "hello **world**"
 async def test_streaming_renderer_uses_ui_event_bus(isolated_dock):
     isolated_dock.begin_capture()
     ui_events.start(DockEventConsumer(isolated_dock))
@@ -545,7 +569,7 @@ async def test_stream_commit_worker_result_cannot_repopulate_reset_tree(
 
 
 
-def test_streaming_renderer_emits_cumulative_snapshots_before_commit(
+def test_streaming_renderer_emits_only_pending_deltas_before_commit(
     isolated_dock,
     monkeypatch,
 ):
@@ -571,15 +595,13 @@ def test_streaming_renderer_emits_cumulative_snapshots_before_commit(
 
     assert [(event.phase, event.text) for event in updates] == [
         ("thinking", "inspect "),
-        ("thinking", "inspect auth"),
+        ("thinking", "auth"),
         ("text", "● ans"),
-        ("text", "● answer"),
-        ("text", "● answer"),
+        ("text", "wer"),
     ]
-    assert all(event.snapshot_contract == "cumulative" for event in updates)
+    assert all(event.snapshot_contract == "delta" for event in updates)
     assert [type(event) for event in emitted] == [
         AssistantStreamStarted,
-        AssistantStreamUpdated,
         AssistantStreamUpdated,
         AssistantStreamUpdated,
         AssistantStreamUpdated,

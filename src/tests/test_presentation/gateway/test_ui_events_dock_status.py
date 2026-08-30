@@ -58,11 +58,13 @@ from tests.test_presentation.gateway.conftest import _plain, _rich_plain, _tree_
 async def test_ui_event_bus_commits_stream_text(isolated_dock):
     isolated_dock.begin_capture()
     bus = UiEventBus()
-    bus.start(DockEventConsumer(isolated_dock))
+    consumer = DockEventConsumer(isolated_dock)
+    bus.start(consumer)
     try:
         await bus.emit(AssistantStreamUpdated(text="● 这是 **voidx**\n\n- 支持 Markdown"))
         await bus.emit(AssistantStreamCommitted())
         await bus.drain()
+        await consumer.drain_stream_commits()
 
         rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
         assert "这是 voidx" in rendered

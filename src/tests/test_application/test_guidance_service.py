@@ -97,3 +97,19 @@ async def test_delivery_lifecycle_delegates_to_the_same_store() -> None:
         ("release", ("delivery-1",), {}),
         ("consume", ("delivery-1",), {}),
     ]
+
+
+def test_submit_can_attach_guidance_to_active_delivery(store: RecordingStore) -> None:
+    service = GuidanceService(store, id_factory=lambda: "guidance-fixed")
+
+    submitted = service.submit_guidance(
+        "keep the API compatible",
+        source="user",
+        thread_id="thread-1",
+        session_id="session-1",
+        delivery_id="turn-1",
+    )
+
+    assert submitted is not None
+    assert submitted.delivery_id == "turn-1"
+    assert store.persisted == [submitted]

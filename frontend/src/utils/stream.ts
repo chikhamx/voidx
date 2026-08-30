@@ -1,4 +1,12 @@
-import { createStreamingMarkdownProjection, type StreamingMarkdownProjection } from "./markdown";
+import {
+  createStreamingMarkdownProjection,
+  type StreamUpdateOperation,
+  type StreamingMarkdownProjection,
+} from "./markdown";
+import {
+  createCanonicalMarkdownCoordinator,
+  type CanonicalMarkdownCoordinator,
+} from "./markdown-worker-client";
 import type { StreamState } from "./types";
 
 const DEBOUNCE_MS = 100;
@@ -6,6 +14,13 @@ const THINKING_MAX_LINES = 5;
 
 const streams = new Map<string, StreamState>();
 const committedEls: HTMLElement[] = [];
+const committedCanonicalText = new WeakMap<HTMLElement, string>();
+const canonicalOwners = new Map<
+  string,
+  { revision: number; generation: number; target: HTMLElement }
+>();
+let canonicalMarkdownCoordinator = createCanonicalMarkdownCoordinator();
+let nextStreamGeneration = 1;
 let transcriptEl: HTMLElement | null = null;
 
 export function setTranscriptElement(el: HTMLElement): void {
@@ -21,6 +36,7 @@ export function getOrCreateStream(streamId: string, phase: string): StreamState 
   if (stream) {
     return stream;
   }
+  invalidateCanonicalOwner(streamId);
   const el = document.createElement("div");
   el.className = "stream-buffer";
   el.dataset.streamId = streamId;
@@ -54,6 +70,9 @@ export function getOrCreateStream(streamId: string, phase: string): StreamState 
     textEl,
     debounceTimer: null,
     markdownProjection: createStreamingMarkdownProjection(textEl),
+    pendingProjectionUpdates: [],
+    canonicalRevision: 0,
+    streamGeneration: nextStreamGeneration++,
   };
   streams.set(streamId, stream);
   return stream;
@@ -63,15 +82,51 @@ export function appendStreamText(
   streamId: string,
   text: string,
   phase: string,
+  operation?: StreamUpdateOperation,
 ): void {
   const stream = getOrCreateStream(streamId, phase);
+  const incoming = String(text ?? "");
+  const previousPhase = stream.phase;
+  if (previousPhase !== phase && operation !== undefined) {
+    resetTextProjection(stream);
+  }
   stream.phase = phase;
+
   if (phase === "thinking") {
-    stream.thinking = text;
+    stream.thinking = operation === "append" && previousPhase === phase
+      ? stream.thinking + incoming
+      : incoming;
     scheduleRender(stream, "thinking");
   } else {
     hideThinking(stream);
-    stream.text = stripAssistantPrefixBullet(text);
+    const previousText = stream.text;
+    const nextText = stripAssistantPrefixBullet(
+      operation === "append" ? previousText + incoming : incoming,
+    );
+    stream.text = nextText;
+    stream.canonicalRevision += 1;
+    if (operation === "append") {
+      const delta = nextText.startsWith(previousText)
+        ? nextText.slice(previousText.length)
+        : nextText;
+      queueProjectionUpdate(
+        stream,
+        delta,
+        nextText.startsWith(previousText) ? "append" : "replace",
+      );
+    } else if (
+      operation === undefined
+      && previousPhase === phase
+      && nextText.startsWith(previousText)
+    ) {
+      queueProjectionUpdate(
+        stream,
+        nextText.slice(previousText.length),
+        "append",
+      );
+    } else {
+      queueProjectionUpdate(stream, nextText, "replace");
+    }
     scheduleRender(stream);
   }
   if (transcriptEl) {
@@ -92,8 +147,11 @@ export function commitStream(streamId: string, retain = true): {
     clearTimeout(stream.debounceTimer);
     stream.debounceTimer = null;
   }
+  pendingRenders.delete(stream);
+  applyPendingTextProjection(stream);
   stream.committed = true;
-  renderStreamText(stream);
+  stream.canonicalRevision += 1;
+  stream.textEl.querySelector(".stream-cursor")?.remove();
   hideThinking(stream);
   if (!stream.text) {
     stream.el.style.display = "none";
@@ -104,44 +162,92 @@ export function commitStream(streamId: string, retain = true): {
     el: stream.el,
   };
   streams.delete(streamId);
+  committedCanonicalText.set(stream.el, stream.text);
   if (retain) {
     committedEls.push(stream.el);
   }
+
+  const owner = {
+    revision: stream.canonicalRevision,
+    generation: stream.streamGeneration,
+    target: stream.textEl,
+  };
+  canonicalOwners.set(streamId, owner);
+  canonicalMarkdownCoordinator.start({
+    itemId: streamId,
+    revision: owner.revision,
+    generation: owner.generation,
+    canonicalText: stream.text,
+    target: stream.textEl,
+    isCurrent: () => canonicalOwners.get(streamId) === owner,
+    onSettled: () => {
+      if (canonicalOwners.get(streamId) === owner) {
+        canonicalOwners.delete(streamId);
+      }
+    },
+  });
   return result;
 }
 
 export function takeCommittedStreams(): HTMLElement[] {
-  const els = committedEls.splice(0);
-  return els;
+  return committedEls.splice(0);
+}
+
+export function getCommittedStreamCanonicalText(
+  element: HTMLElement,
+): string | null {
+  return committedCanonicalText.get(element) ?? null;
+}
+
+export function invalidateCommittedStreamElement(element: HTMLElement): void {
+  const streamId = element.dataset.streamId;
+  if (streamId) {
+    const owner = canonicalOwners.get(streamId);
+    if (owner?.target.closest(".stream-buffer") === element) {
+      invalidateCanonicalOwner(streamId);
+    }
+  }
+  committedCanonicalText.delete(element);
 }
 
 export function clearCommittedStreams(): void {
   for (const el of committedEls) {
+    invalidateCommittedStreamElement(el);
     el.remove();
   }
   committedEls.length = 0;
 }
 
-export function clearActiveStreams(): void {
-  for (const [, stream] of streams) {
+export function clearActiveStreams(
+  options: { preserveCanonicalCommits?: boolean } = {},
+): void {
+  for (const [streamId, stream] of streams) {
     if (stream.debounceTimer) {
       clearTimeout(stream.debounceTimer);
     }
+    pendingRenders.delete(stream);
     stream.el.remove();
+    canonicalMarkdownCoordinator.invalidate(streamId);
   }
   streams.clear();
+  if (!options.preserveCanonicalCommits) {
+    invalidateAllCanonicalOwners();
+  }
 }
 
 export function discardStream(streamId: string): void {
   const stream = streams.get(streamId);
   if (!stream) {
+    invalidateCanonicalOwner(streamId);
     return;
   }
   if (stream.debounceTimer) {
     clearTimeout(stream.debounceTimer);
   }
+  pendingRenders.delete(stream);
   stream.el.remove();
   streams.delete(streamId);
+  invalidateCanonicalOwner(streamId);
 }
 
 const pendingRenders = new Map<StreamState, string | undefined>();
@@ -168,18 +274,48 @@ function scheduleRender(stream: StreamState, target?: string): void {
   }
 }
 
-function renderStreamText(stream: StreamState): void {
+function queueProjectionUpdate(
+  stream: StreamState,
+  text: string,
+  operation: StreamUpdateOperation,
+): void {
+  if (operation === "replace") {
+    stream.pendingProjectionUpdates = [{ text, operation }];
+    return;
+  }
+  const last = stream.pendingProjectionUpdates[
+    stream.pendingProjectionUpdates.length - 1
+  ];
+  if (last?.operation === "append") {
+    last.text += text;
+  } else if (text) {
+    stream.pendingProjectionUpdates.push({ text, operation });
+  }
+}
+
+function resetTextProjection(stream: StreamState): void {
+  stream.text = "";
+  stream.canonicalRevision += 1;
+  stream.pendingProjectionUpdates = [];
+  stream.markdownProjection?.reset();
+  stream.textEl.querySelector(".stream-cursor")?.remove();
+}
+
+function applyPendingTextProjection(stream: StreamState): void {
   stream.textEl.querySelector(".stream-cursor")?.remove();
   if (stream.markdownProjection) {
-    if (stream.committed) {
-      stream.markdownProjection.update(stream.text);
-      stream.markdownProjection.commit();
-    } else {
-      stream.markdownProjection.update(stream.text);
+    const updates = stream.pendingProjectionUpdates.splice(0);
+    for (const update of updates) {
+      stream.markdownProjection.update(update.text, update.operation);
     }
   } else {
-    stream.textEl.replaceChildren(renderMarkdown(stream.text));
+    stream.pendingProjectionUpdates = [];
+    stream.textEl.replaceChildren(document.createTextNode(stream.text));
   }
+}
+
+function renderStreamText(stream: StreamState): void {
+  applyPendingTextProjection(stream);
   if (!stream.committed && stream.phase === "text") {
     const cursor = document.createElement("span");
     cursor.className = "stream-cursor";
@@ -209,8 +345,33 @@ function stripAssistantPrefixBullet(text: string): string {
   return String(text || "").replace(/^\s*●\s+/, "");
 }
 
+function invalidateCanonicalOwner(streamId: string): void {
+  if (!canonicalOwners.has(streamId)) return;
+  canonicalOwners.delete(streamId);
+  canonicalMarkdownCoordinator.invalidate(streamId);
+}
+
+function invalidateAllCanonicalOwners(): void {
+  canonicalOwners.clear();
+  canonicalMarkdownCoordinator.invalidateAll();
+}
+
+export function _setCanonicalMarkdownCoordinatorForTest(
+  coordinator: CanonicalMarkdownCoordinator,
+): void {
+  invalidateAllCanonicalOwners();
+  canonicalMarkdownCoordinator = coordinator;
+}
+
 export function _resetForTest(): void {
+  for (const stream of streams.values()) {
+    if (stream.debounceTimer) clearTimeout(stream.debounceTimer);
+  }
   streams.clear();
   committedEls.length = 0;
+  pendingRenders.clear();
+  invalidateAllCanonicalOwners();
+  canonicalMarkdownCoordinator = createCanonicalMarkdownCoordinator();
+  nextStreamGeneration += 1;
   transcriptEl = null;
 }

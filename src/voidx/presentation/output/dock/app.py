@@ -65,6 +65,8 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._stream_node: OutputNode | None = None
         self._stream_text = ""
         self._stream_thinking_text = ""
+        self._stream_projection: Any | None = None
+        self._stream_projection_phase: str | None = None
         self._stream_revision = 0
         self._stream_generation = 0
         self._pending_stream_commits: dict[str, Any] = {}
@@ -186,6 +188,8 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._stopping = False
         self._stream_text = ""
         self._stream_thinking_text = ""
+        self._stream_projection = None
+        self._stream_projection_phase = None
         self._live = Live(
             console=self._console,
             auto_refresh=False,
@@ -203,6 +207,8 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._active = True
         self._stream_text = ""
         self._stream_thinking_text = ""
+        self._stream_projection = None
+        self._stream_projection_phase = None
 
     def deactivate(self) -> None:
         if not self._active:
@@ -210,6 +216,8 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._stream_node = None
         self._stream_text = ""
         self._stream_thinking_text = ""
+        self._stream_projection = None
+        self._stream_projection_phase = None
         self._stream_generation += 1
         self._pending_stream_commits.clear()
         self._last_committed_stream_text = ""
@@ -272,6 +280,8 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._stream_node = None
         self._stream_text = ""
         self._stream_thinking_text = ""
+        self._stream_projection = None
+        self._stream_projection_phase = None
         self._status_nodes = {}
         self._status_ticks = {}
         self._status_records = {}

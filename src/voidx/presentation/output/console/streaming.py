@@ -49,6 +49,8 @@ class StreamingRenderer:
         self._first_text: bool = True
         self._discard: bool = False
         self._stream_started = False
+        self._published_thinking_length = 0
+        self._published_text_length = 0
 
     async def __aenter__(self):
         self.start()
@@ -80,12 +82,7 @@ class StreamingRenderer:
         if dock_state.dock.active and self._stream_to_dock and self._phase == "thinking":
             now = time.monotonic()
             if now - self._last_flush >= self.FLUSH_INTERVAL:
-                if not ui_events.emitnowait(AssistantStreamUpdated(
-                    agent_id=self._agent_id,
-                    text=self.get_thinking_text(),
-                    phase="thinking",
-                )):
-                    dock_state.dock.set_stream(self.get_thinking_text(), phase="thinking")
+                self._publish_dock_delta("thinking")
                 self._last_flush = now
 
     def feed_text(self, text: str) -> None:
@@ -93,6 +90,12 @@ class StreamingRenderer:
             self.start()
         switched_from_thinking = bool(self._thinking and self._phase == "thinking")
         if switched_from_thinking:
+            if (
+                not self._headless
+                and dock_state.dock.active
+                and self._stream_to_dock
+            ):
+                self._publish_dock_delta("thinking")
             self._flush_thinking()
 
         self._phase = "text"
@@ -110,12 +113,7 @@ class StreamingRenderer:
         if dock_state.dock.active and self._stream_to_dock:
             now = time.monotonic()
             if now - self._last_flush >= self.FLUSH_INTERVAL:
-                if not ui_events.emitnowait(AssistantStreamUpdated(
-                    agent_id=self._agent_id,
-                    text=self._accumulated,
-                    phase="text",
-                )):
-                    dock_state.dock.set_stream(self._accumulated, phase="text")
+                self._publish_dock_delta("text")
                 self._last_flush = now
             return
 
@@ -132,6 +130,36 @@ class StreamingRenderer:
             dock_state.dock.after_output()
             self._last_flush = now
 
+
+    def _publish_dock_delta(self, phase: str, *, refresh: bool = True) -> None:
+        if phase == "thinking":
+            full_text = self.get_thinking_text()
+            published_length = self._published_thinking_length
+        else:
+            full_text = self._accumulated
+            published_length = self._published_text_length
+        delta = full_text[published_length:]
+        if not delta:
+            return
+        accepted = ui_events.emitnowait(AssistantStreamUpdated(
+            agent_id=self._agent_id,
+            text=delta,
+            phase=phase,
+            snapshot_contract="delta",
+        ))
+        if not accepted:
+            accepted = dock_state.dock.set_stream(
+                delta,
+                phase=phase,
+                refresh=refresh,
+                snapshot_contract="delta",
+            )
+        if not accepted:
+            return
+        if phase == "thinking":
+            self._published_thinking_length = len(full_text)
+        else:
+            self._published_text_length = len(full_text)
     def elapsed(self) -> float:
         return time.monotonic() - self._start_time
 
@@ -154,26 +182,11 @@ class StreamingRenderer:
                     dock_state.dock.discard_stream()
             else:
                 if self._accumulated:
-                    if not ui_events.emitnowait(AssistantStreamUpdated(
-                        agent_id=self._agent_id,
-                        text=self._accumulated,
-                        phase="text",
-                    )):
-                        dock_state.dock.set_stream(
-                            self._accumulated,
-                            phase="text",
-                            refresh=False,
-                        )
+                    self._publish_dock_delta("text", refresh=False)
                     if not ui_events.emitnowait(AssistantStreamCommitted(agent_id=self._agent_id)):
                         dock_state.dock.commit_stream()
                 elif self._thinking_full:
-                    thinking_text = self.get_thinking_text()
-                    if not ui_events.emitnowait(AssistantStreamUpdated(
-                        agent_id=self._agent_id,
-                        text=thinking_text,
-                        phase="thinking",
-                    )):
-                        dock_state.dock.set_stream(thinking_text, phase="thinking", refresh=False)
+                    self._publish_dock_delta("thinking", refresh=False)
                     if not ui_events.emitnowait(AssistantStreamCommitted(agent_id=self._agent_id)):
                         dock_state.dock.commit_stream()
                 elif self._stream_started:
@@ -188,6 +201,9 @@ class StreamingRenderer:
         self._thinking_full = []
         self._first_text = True
         self._stream_started = False
+        self._published_thinking_length = 0
+        self._published_text_length = 0
+        self._discard = False
         self._phase = "thinking"
         return full
 

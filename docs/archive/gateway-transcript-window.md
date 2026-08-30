@@ -7,7 +7,7 @@ audience: human+llm
 status: implemented
 related_docs:
   - docs/design/cross-ui-performance-addendum.md
-  - docs/design/tui-long-session-performance.md
+  - docs/archive/tui-long-session-performance.md
 ---
 
 # Gateway Transcript Window MVP
@@ -21,7 +21,7 @@ related_docs:
 1. Gateway 在 thread 切换或分页请求时，可以只返回最近一段 turn；
 2. 已建立索引的 transcript page 读取只访问目标 turn 的 JSONL 字节范围，不从目标 turn 扫描到文件尾。
 
-当前实现保持旧客户端兼容：未声明 `turn_limit` 的 `session.switch` 和没有窗口偏好的客户端继续收到完整 `workspace.snapshot`。
+2026-08-16 MVP 的兼容路径是：未传 `turn_limit` 的 `session.switch`，以及未建立窗口偏好的 legacy client，继续收到完整 `workspace.snapshot`。截至 2026-08-30，声明 `workspace_patch_v1` 且没有窗口偏好的 client 在普通广播中改收 `workspace.patch`；窗口偏好、显式 recovery 和首次连接仍按各自 snapshot 路径处理。
 
 权威实现路径：
 
@@ -117,23 +117,24 @@ related_docs:
 
 行为：
 
-- 不传或显式传 `null`：切换 thread 并发送完整 snapshot；这是旧客户端兼容路径；
-- 传 `turn_limit=1..50`：切换 thread 并发送 windowed snapshot；
-- RPC result 仍返回 `active_thread_id` 和 `runtime_profile`；实际 transcript window 在后续 `workspace.snapshot` notification 的 `active_snapshot` 中；
+- 对 legacy client，不传或显式传 `null`：切换 thread 并发送完整 snapshot；
+- 对声明 `workspace_patch_v1` 且没有窗口偏好的 client，不传或显式传 `null`：普通 switch 广播发送 metadata patch，不构造完整 transcript snapshot；
+- 传 `turn_limit=1..50`：无论是否支持 patch，切换 thread 并发送 windowed snapshot；
+- RPC result 仍返回 `active_thread_id` 和 `runtime_profile`；snapshot 路径中的 transcript window 位于后续 `workspace.snapshot` notification 的 `active_snapshot`；
 - thread 不存在时返回 `-32000`；非法参数返回 `-32602`。
 
-### 2.4 `workspace.snapshot` 广播
+### 2.4 `workspace.snapshot` / `workspace.patch` 广播
 
-Gateway 按 `ProtocolClient` 保存窗口偏好：
+Gateway 按 `ProtocolClient` 保存窗口偏好和 capability：
 
-- 新客户端通过 `session.switch.turn_limit` 或 `transcript.page.turn_limit` 建立偏好；
-- 该客户端后续 `workspace.snapshot` 广播继续使用同一窗口大小；
-- 未建立偏好的客户端继续收到完整 snapshot；
-- 多客户端的窗口偏好相互隔离；
-- 客户端断开时清理偏好；
-- `session.switch` 不传 `turn_limit` 会清除该客户端偏好并回到完整 snapshot。
+- client 通过 `session.switch.turn_limit` 或 `transcript.page.turn_limit` 建立窗口偏好；
+- 有窗口偏好时，后续 snapshot 广播继续使用同一窗口大小；
+- 没有窗口偏好且声明 `workspace_patch_v1` 时，普通状态广播发送 metadata-only `workspace.patch`；
+- 没有窗口偏好的 legacy client 继续收到完整 snapshot；
+- 多客户端的窗口偏好和 capability 相互隔离，断开时清理；
+- `session.switch` 不传 `turn_limit` 会清除该客户端窗口偏好；后续编码由该 client 的 `workspace_patch_v1` capability 决定。
 
-该机制不是 capability negotiation：服务端不会根据 URL 或 capability 声明改变协议版本，也不会把 session 全局窗口状态应用到所有客户端。
+窗口偏好机制本身不是 capability negotiation，也不会把 session 全局窗口状态应用到所有客户端；2026-08-30 的 capability 分支是在该 MVP 之后新增的正交编码选择。
 
 ## 3. 参数错误与兼容约束
 
@@ -143,8 +144,9 @@ Gateway 按 `ProtocolClient` 保存窗口偏好：
 | `turn_limit` 不是整数、是 `bool` 或不在 `1..50` | `-32602` |
 | `before_turn_id` 不是整数、是 `bool`，且不为 `null` | `-32602` |
 | 合法但不存在的 thread | `-32000` |
-| 未传 `session.switch.turn_limit` | 完整 snapshot，保持旧客户端行为 |
-| legacy client 未建立窗口偏好 | 完整 snapshot |
+| legacy client 未传 `session.switch.turn_limit` | 完整 snapshot，保持 2026-08-16 MVP 兼容行为 |
+| `workspace_patch_v1` client 未建立窗口偏好 | 普通广播发送 `workspace.patch`；显式 snapshot/recovery 路径除外 |
+| 任意 client 传合法 `turn_limit` | windowed `workspace.snapshot` |
 
 客户端不得：
 
@@ -220,43 +222,56 @@ canonical `replace_transcript()` snapshot 和 index rebuild 会写入 v2 index�
 
 这些是当前 page consumer 的行为约束，不等同于未来完整的 DOM virtualization 或 keyed reconciliation 方案。
 
-## 6. 明确未实现的能力
+## 6. MVP 边界与后续状态
 
-本文档不声明以下能力已实现：
+### 6.1 2026-08-16 MVP 已实现并延续
 
-- capability negotiation 或 `transcript_window_v1` URL 声明；
-- `workspace.patch`；
-- `stream_append_v1`、append/replace delta 或 workspace revision gap recovery；
-- opaque cursor；
-- 默认 40-turn window；
-- 正常 terminal event 以 metadata patch 替代 snapshot；
-- TUI viewport-first Rich render、terminal writer/backpressure、RenderPlan；
+以下能力就是本 MVP 的完成范围，不是后续补做：
+
+- numeric-turn window/page：`before_turn_id`、默认 20-turn、`has_earlier` / `has_later`；
+- `session.switch.turn_limit`、`transcript.page` RPC 与 per-client window preference；
+- index v2 bounded range read 及损坏/旧 index 的安全 full-scan fallback；
+- Frontend 请求更早页面、按 node id 去重 prepend 并保持 scroll anchor。
+
+### 6.2 2026-08-30 前后续已实现
+
+- `stream_append_v1` / `workspace_patch_v1` capability negotiation、per-client legacy fallback、append/replace delta、workspace revision gap recovery；
+- 支持 patch 的 client 在正常 submit/turn terminal 路径接收 metadata patch，而非完整 transcript snapshot；
+- TUI viewport-first Rich render 与 TerminalWriter 慢 PTY/backpressure；
+- 旧重复 transcript 的 canonical compaction。
+
+### 6.3 仍未实现或未完整闭环
+
+- `transcript_window_v1` 的端到端 capability 宣告、opaque cursor 和默认 40-turn window；
+- P1 stream commit integrity hash；
+- transcript canonical load+replace 的跨调用串行化与受生命周期管理的后台压实；
+- TUI 完整 RenderPlan、活动 Markdown bounded projection；
 - Desktop rAF batching、Markdown worker、完整 keyed reconciliation、DOM virtualization；
-- live history eviction 和旧 transcript legacy compaction。
+- durable live-history eviction。
 
-这些路线仍属于：
+后续能力不属于本 MVP 的完成声明；其权威状态分别记录于：
 
-- `docs/design/cross-ui-performance-addendum.md`；
-- `docs/design/tui-long-session-performance.md`。
+- `docs/design/cross-ui-performance-addendum.md`：仍为 `in-progress/partial`，继续负责跨端剩余项；
+- `docs/archive/tui-long-session-performance.md`：TUI 运行时基线已完成并归档。
 
-两份 design 文档继续保持 `proposed`，不能因本 MVP 完成而归档。
+本 MVP 的归档状态不替代上述文档各自的验收边界。
 
 ## 7. 源码与验证
 
 主要测试：
 
 ```bash
-python3 test.py --backend -- \
+./test.py --backend -- \
   src/tests/test_agent/adapters/langgraph/runtime/test_session_transcript.py
 
-python3 test.py --backend -- \
+./test.py --backend -- \
   src/tests/test_presentation/gateway/test_gateway_v2_routing.py
 ```
 
 完整 backend 回归：
 
 ```bash
-python3 test.py --backend
+./test.py --backend
 ```
 
 本次实现验证结果：
@@ -268,10 +283,10 @@ python3 test.py --backend
 - `git diff --check`：通过；
 - 2000-turn 合成 page：20-turn 页面读取约 8,980 bytes，避免读取约 224,500 bytes 尾部。
 
-如果 `./test.py` 可执行，也可以使用项目标准入口替代 `python3 test.py`。当前开发环境使用后者是因为入口脚本没有执行权限。
 
-## 8. 变更归属与归档条件
+## 8. 变更归属与归档边界
 
-本文档属于已实现 MVP 的契约记录，适合在当前实现稳定后作为 spec 保留。不要因为该 spec 已完成而归档两份上游设计文档。
+本文档是 2026-08-16 已实现并归档的 Gateway numeric-turn window MVP 契约记录，其完成状态不替代上游文档各自的验收：
 
-只有当上游设计文档各自的完成定义全部满足，并且最终 verify 已确认实现文件存在、功能可用、focused tests 和全量回归通过时，才按项目规则归档对应 design/spec 文档。
+- TUI 运行时基线已按自身边界完成并归档；
+- 跨端增补仍为 `in-progress/partial`，只有其剩余 P0/P1/P2、统一 benchmark、慢路径观测和最终 verify 全部闭环后才可归档。

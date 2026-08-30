@@ -7,14 +7,14 @@ audience: human+llm
 status: in-progress
 implementation_status: partial
 related_docs:
-  - docs/design/tui-long-session-performance.md
+  - docs/archive/tui-long-session-performance.md
 ---
 
 # 跨端长会话性能优化增补方案
 
 ## 1. 决策摘要
 
-`docs/design/tui-long-session-performance.md` 已处理三条基础主线：
+`docs/archive/tui-long-session-performance.md` 已归档三条运行时基础主线：
 
 1. `OutputTree` 的全历史渲染与尾部增量；
 2. transcript 的全量持久化与周期 checkpoint；
@@ -45,24 +45,27 @@ related_docs:
 
 ## 2. 与原方案的关系
 
-### 2.1 原方案保持不变
+### 2.1 已归档基线
 
-本增补不替代、不复制、不修改 `docs/design/tui-long-session-performance.md`。原方案中的以下工作仍需按原顺序实施：
+`docs/archive/tui-long-session-performance.md` 已完成并归档以下运行时基线：
 
-- OutputTree root tail append、subtree tail splice 和 node range；
-- transcript 每 turn 增量追加、幂等事务和旧会话压实；
-- UI event bus batch yield，以及在累计快照契约成立后的安全 coalescing。
+- OutputTree root-tail append、subtree-tail splice、node range 与安全 full-render fallback；
+- transcript 每 turn 增量追加、幂等事务、异常 tail 恢复与旧重复 snapshot 压实；
+- UI event bus batch yield、累计快照契约、安全 coalescing 与 barrier 保序。
 
-### 2.2 依赖关系
+本增补以这些能力为既有不变量，不重新设计或回退它们；第一份设计未单独交付的统一绝对 benchmark 和完整慢路径观测由本文正式接管。
 
-| 本增补任务 | 对原方案的依赖 |
+### 2.2 依赖与接管关系
+
+| 本增补任务 | 与已归档基线的关系 |
 |---|---|
-| TUI viewport-first Rich render | 可独立实施；完成原方案 OutputTree range API 后更简单 |
-| TUI 活动 stream 增量 Markdown | 可独立实施；必须保持原方案增量 tree cache 等价性 |
-| Desktop rAF 批处理和增量 Markdown | 可独立实施 |
-| `workspace.patch` 和 stream append delta | 与原方案 event contract/coalescing 协同实施 |
-| transcript 分页、live tree eviction | 依赖原方案 transcript delta 已 durable |
-| 旧会话压实 | 完全沿用原方案，不在本文重复设计 |
+| TUI viewport-first Rich render | 使用 OutputTree range/cache 基线；当前子项已实现 |
+| TUI 活动 stream 增量 Markdown | 必须保持增量 tree cache 与 canonical 结果等价 |
+| Desktop rAF 批处理和增量 Markdown | 独立端侧增强，共享累计快照与 canonical contract |
+| `workspace.patch` 和 stream append delta | 复用 event contract/coalescing，不改变其 barrier 语义 |
+| transcript 分页、live tree eviction | 以 transcript delta 已 durable 为前置条件 |
+| 旧会话压实 | canonical 压实基线已实现；本文接管 load+replace 跨调用串行化、后台生命周期与 retention 协同 |
+| 统一 benchmark 与慢路径观测 | 从已归档设计转交到本文，必须在本文归档前闭环 |
 
 ### 2.3 本增补明确不重复的内容
 
@@ -78,7 +81,7 @@ related_docs:
 - [x] 复杂度回归覆盖 10,000 条活动逻辑行/1-row viewport，以及 panel 调用链；`text_from_line()` 调用量受 viewport + overscan 约束。
 - 验证：`./test.py --backend -- tui/tests/test_frame_advanced.py -v`（20 passed）；相关集合 `./test.py --backend -- src/tests/test_presentation/gateway src/tests/test_presentation/output tui/tests`（754 passed，含 `tui/tests/test_output_tree.py` 17 passed）。
 
-仍未完成：活动 Markdown bounded projection/canonical worker、Desktop rAF/Markdown worker/keyed reconciliation/DOM window、capability/workspace patch/transcript window、terminal writer/backpressure、输入/paste/candidate 优化及 durable live-history eviction。
+截至该阶段仍未完成：活动 Markdown bounded projection/canonical worker、Desktop rAF/Markdown worker/keyed reconciliation/DOM window、capability/workspace patch/transcript window、terminal writer/backpressure、输入/paste/candidate 优化及 durable live-history eviction。
 
 ### 2.5 本轮实施记录（2026-08-28）
 
@@ -88,7 +91,7 @@ related_docs:
 - [x] **TUI scrollback/shutdown 安全路径（不包含慢 PTY/backpressure）**：`render_pending` 阻止 provisional stream 进入 native scrollback；commit drain 位于 event bus stop 之前；退出时先 force flush 和 writer flush，再 restore terminal、写退出序列，最后在线程中导出 `transcript.log`。
 - 验证：目标 backend 测试（75 passed）；presentation + TUI 集合（779 passed）；`./test.py --frontend`（677 passed）。完整 backend 为 5163 passed、2 failed、30 skipped，失败为两个 runtime session/todo 测试；当前没有独立基线可证明它们是既有问题，且未在本轮目标路径中解决。
 
-仍未完成：bounded StreamingMarkdownProjection、Desktop Markdown Worker/rAF/keyed reconciliation/DOM window、capability/workspace patch/transcript window、TerminalWriter 慢 PTY/backpressure、输入/paste/candidate 优化及 durable live-history eviction。
+截至该阶段仍未完成：bounded StreamingMarkdownProjection、Desktop Markdown Worker/rAF/keyed reconciliation/DOM window、capability/workspace patch/transcript window、TerminalWriter 慢 PTY/backpressure、输入/paste/candidate 优化及 durable live-history eviction。
 
 ### 2.6 本轮实施记录（2026-08-29）
 
@@ -100,7 +103,33 @@ related_docs:
 - [x] startup、writer failure、final commit、termios restore、restore barrier、shutdown 与 transcript export 按统一生命周期清理；外部取消在 cleanup/reap 完成后重新传播。
 - 验证：慢 PTY heartbeat（1 passed）；规格聚焦集合（238 passed）；完整 TUI（397 passed）；完整 backend（5235 passed、30 skipped）；`py_compile`、目标 `git diff --check`、相关 LSP diagnostics 与直接终审均通过。
 
-仍未完成：bounded StreamingMarkdownProjection、Desktop Markdown Worker/rAF/keyed reconciliation/DOM window、capability/workspace patch/transcript window、输入/paste/candidate 其余优化及 durable live-history eviction。
+截至该阶段仍未完成：bounded StreamingMarkdownProjection、Desktop Markdown Worker/rAF/keyed reconciliation/DOM window、capability/workspace patch/transcript window、输入/paste/candidate 其余优化及 durable live-history eviction。
+
+
+### 2.7 本轮实施记录（2026-08-30）
+
+本轮闭环 **P0.2 bounded stream projection**；Desktop Worker、rAF/layout、TUI RenderPlan 及后续 P1/P2 项仍未整体完成，因此文档继续保持 `in-progress/partial`：
+
+- [x] **TUI 有界投影**：新增 `StreamingMarkdownProjection`，完整保留 canonical `raw_text`，mutable tail 使用 8 KiB soft limit / 16 KiB hard limit；超限与截断上下文后的内容按宽度感知的 escaped plain visual rows 投影，append parser 输入保持有界，replace、phase 和 width 变化显式重建。
+- [x] **TUI delta 与缓存尾部接线**：正常 `StreamingRenderer` 只发送尚未发布的 delta，legacy cumulative event 继续兼容；已缓存的尾部 stream 只 splice 变化 body suffix，无法证明安全时回退既有 dirty-subtree render。
+- [x] **Desktop 有界投影**：`marked.lexer()` 只处理有界 mutable tail，stable DOM 与 escaped provisional node 保持 identity；协议 append/replace payload 直接下传，legacy cumulative API 保留，commit 仍同步执行 canonical full render，异步 Worker 留给 P0.3。
+- [x] **跨端语义回归**：覆盖普通 append、50k+ 单段、50k+ 未闭合 fence、list continuation、HTML/markup escaping、phase switch、non-prefix replace、width rebuild、canonical commit、旧 cumulative producer/client 兼容，以及 delta producer 对 legacy full-replace client 的累计 fallback。
+- 验证：TUI projection（12 passed）；Desktop 聚焦（69 passed）；presentation/output/gateway/TUI 相关集合（860 passed）；完整 Frontend（692 passed）；完整 Backend（5251 passed、30 skipped）。
+
+截至本阶段仍未完成：P0.3 Desktop Markdown Worker、P0.4 Desktop rAF/layout、P0.5 TUI RenderPlan、P1 剩余协议/window 项、P2 输入与 live-history 项，以及统一 benchmark 和完整慢路径观测。
+
+
+### 2.8 本轮实施记录（2026-08-30，Desktop P0.3）
+
+本轮闭环 **P0.3 Desktop 异步 canonical Markdown Worker**；P0.4/P0.5/P1/P2 与统一 benchmark、完整慢路径观测仍未完成，因此本文档继续保持 `in-progress/partial`，不归档：
+
+- [x] **Worker-safe canonical render**：完整 canonical 文本在专用 module Worker 中只 lex 一次，复用全局 reference links 与共享 highlight.js renderer；单个 raw HTML block 超过 16 KiB 时降级为 escaped text，并记录 `html_block_budget`。
+- [x] **主线程安全安装**：Worker block descriptor 一律视为不可信输入；descriptor 覆盖长度必须恰好等于 canonical 原文，缺块、重复块或非法字段统一进入 `worker_protocol` fallback；主线程逐块 DOMPurify，在 detached staging DOM 中按每帧 8 ms 协作预算构建，全部完成后原子替换 provisional preview。
+- [x] **异步生命周期与失败路径**：`commitStream()` 与 `item.completed` 不等待 Worker；`itemId + revision + jobId + generation`、clear/discard/thread switch/reset 拒绝 stale 结果；Worker、协议、净化或安装失败均显示完整 escaped canonical 原文。
+- [x] **snapshot/通知兼容**：pending commit 的 canonical 去重使用保存的原文而非 provisional DOM；测试验证 turn 状态先结束、canonical DOM 后 settle，正常结果与同步 `renderMarkdown()` 的 sanitized/highlighted DOM 等价。
+- 验证：六文件聚焦 Frontend 集合（201 passed）；完整 Frontend（44 files、719 passed）；`npm run build` 通过并产出独立 `markdown.worker-*.js`；`git diff --check` 通过。`npx tsc --noEmit` 仅报告既有的 `connection.ts` 与 UI 测试类型基线错误，本批文件无新增诊断。
+
+截至本阶段仍未完成：P0.4 Desktop rAF/layout、P0.5 TUI RenderPlan、P1 剩余协议/window 项、P2 输入与 live-history 项，以及统一 benchmark 和完整慢路径观测。
 
 ## 3. 已验证证据
 
@@ -114,7 +143,7 @@ related_docs:
 - Gateway/protocol：`src/voidx/presentation/gateway/`、`src/voidx/presentation/protocol/`；
 - Native shell：`desktop/tauri/src/main.rs`。
 
-基准环境为 2026-08-14、macOS arm64、当前工作区源码。全部使用合成文本/节点，不读取真实用户 session。
+基准环境为 2026-08-14、macOS arm64、当时的工作区源码。全部使用合成文本/节点，不读取真实用户 session。
 
 ### 3.2 单个活动 stream 形成累计全文 O(n²)
 
@@ -504,36 +533,15 @@ BarrierBatch(kind=clear|restore)                 # 不可丢弃、不可越过
 
 第一版 soft limit 建议 4 MB，frame batch 不计入 committed spool。该值是配置常量并记录指标，不暴露用户设置。
 
-### 7.6 P1-A：Capability negotiation
+### 7.6 P1-A：Capability negotiation（部分实现）
 
-当前 `GatewaySession.connect()` 会在 WebSocket 建立后立即发送第一个 snapshot；如果等到 snapshot 之后才声明能力，首屏仍会传输完整历史。因此能力协商分两步：
+当前已实现两条增量能力的首帧前协商：
 
-1. Frontend 在建立 WebSocket 前，用 `URL.searchParams` 把能力预声明追加到现有 gateway URL，保留原有鉴权参数：
+1. `frontend/src/services/connection.ts` 在建立 WebSocket 前，将 `stream_append_v1`、`workspace_patch_v1` 合并进 gateway URL 的 `cap` 参数，并保留已有参数；
+2. `GatewayServer._handle()` 在 `GatewaySession.connect()` 前解析 `cap`，服务端只接受 allowlist 中的已知能力；
+3. `GatewaySession` 按 `ProtocolClient` 保存能力，对支持者编码 append/patch，对 legacy client 安全降级为 full-text delta/full snapshot。
 
-   ```ts
-   const url = new URL(gatewayUrl);
-   url.searchParams.set(
-     "cap",
-     "stream_append_v1,workspace_patch_v1,transcript_window_v1",
-   );
-   ```
-
-2. `GatewayServer._handle()` 在调用 `GatewaySession.connect(client)` 前解析 `cap`，写入该 `_WebSocketClient`；首个 snapshot 已可按 `transcript_window_v1` 返回 recent window。
-3. socket open 后，Frontend 再调用 `client.capabilities` RPC 确认同一集合并取得 server 接受的交集：
-
-   ```json
-   {
-     "capabilities": {
-       "stream_append_v1": true,
-       "workspace_patch_v1": true,
-       "transcript_window_v1": true
-     }
-   }
-   ```
-
-URL 中的 capability 只是格式/性能协商，不是授权信息；服务端只接受 allowlist 中的已知值。未预声明、RPC method-not-found、未知字段或 URL/RPC 不一致时，均取安全交集并降级 legacy 行为。
-
-Gateway 为每个 `ProtocolClient` 保存 capability，不使用 session 全局布尔值。`connect()`、`_broadcast()` 和 snapshot encoder 按 capability 分组；同一事件最多生成 legacy 与新协议两种编码，不按客户端重复遍历 OutputTree 或重复构造相同 JSON。
+服务端也接受连接后的 `client.capabilities` 通知，但当前 Desktop 不发送该确认；Desktop 的 capability 列表也尚未包含 `transcript_window_v1`。因此 stream/patch 的 per-client fallback 已实现，首个 windowed snapshot 的端到端 capability 协商仍未完成。
 
 ### 7.7 P1-B：Stream append delta
 
@@ -567,67 +575,40 @@ Gateway adapter 已缓存上一次 full text。对支持 `stream_append_v1` 的 
 }
 ```
 
-commit 必须携带最终 revision、字符数和可选 hash。客户端 revision 不匹配时不猜测拼接，调用 `session.snapshot` 获取当前 thread 的 canonical recent window。
+当前 incremental commit 携带最终 `revision`、`text_length` 和 `stream_id`，尚无 integrity hash。客户端遇到 base/revision gap 时不应用 delta，而是发送 `snapshot.requested` 请求 canonical recovery；补充 commit hash 及其校验仍是未完成项。
 
 旧 client 继续收到当前 `data.text = complete text` 的 `item.delta`。
 
-### 7.8 P1-C：Workspace metadata patch
+### 7.8 P1-C：Workspace metadata patch（已实现基线）
 
-新增 `workspace.patch`，只承载：
+`workspace.patch` 当前只承载 workspace revision、active thread、thread/runtime/provider/model/permission/write-lock 等 metadata，不含 transcript。
 
-- workspace revision；
-- active thread id；
-- thread upsert/remove；
-- runtime/provider/model/permission/write-lock patch。
+正常 submit staging 和 turn completed/failed/cancelled 最终都会进入 `broadcast_snapshot()`；对声明 `workspace_patch_v1`、没有显式 window limit 且未强制 snapshot 的 client，该方法只构建并发送 patch，不调用 `tree_to_snapshot()`。legacy client 仍收到完整 snapshot。
 
-正常 submit staging、turn started/completed/failed/cancelled、title/status/message_count 更新只发送 patch。以下场景继续发送 snapshot：
+首次连接和显式 client recovery 继续发送 canonical snapshot。thread switch 按 client 状态分流：legacy client 未传 `turn_limit` 时发送完整 snapshot；`workspace_patch_v1` client 没有窗口偏好且未传 `turn_limit` 时发送 metadata patch；显式 `turn_limit` 时发送 windowed snapshot。`transcript.page` 继续返回 windowed `ThreadSnapshot`。`refresh.requested` 当前复用同一 patch/snapshot capability 分支；基于独立 transcript revision 或 metadata checksum 的更细粒度抑制尚未实现。
 
-- 首次连接；
-- thread switch；
-- client 主动请求 recovery；
-- revision gap；
-- reset/clear 等 canonical replacement。
+### 7.9 P1-D：Transcript window 与 Desktop reconciliation（numeric-turn MVP 已实现）
 
-`refresh.requested` 不再无条件导致 full transcript snapshot：
-
-- 只变更 metadata 时发送 patch；
-- transcript revision 未变时不发送 transcript；
-- 明确要求 canonical refresh 时发送 recent window snapshot。
-
-### 7.9 P1-D：Transcript window 与 Desktop reconciliation
-
-`ThreadSnapshot` 增加兼容可选字段：
+当前 `ThreadSnapshot` 已包含：
 
 ```text
-window_revision
-before_cursor
-has_more_before
-complete
+revision
+windowed
+before_turn_id
+after_turn_id
+has_earlier
+has_later
 ```
 
-新增 `session.transcriptPage(thread_id, before_cursor, turn_limit)` RPC。默认：
+Gateway 已注册 `transcript.page(thread_id, before_turn_id, turn_limit)`；默认 `turn_limit=20`。Frontend 在 `session.switch` 时请求最近 20 个 turn，并在接近窗口顶部时用 `before_turn_id` 请求更早 20 个 turn；响应按 node id 去重 prepend，并用加载前后的 `scrollHeight` 差保持 scroll anchor。Gateway 的 index range read 避免每页扫描完整 transcript。
 
-- 初始/切换 snapshot 返回最近 40 个 root turns；
-- 向上滚动接近顶部时加载前 40 turns；
-- cursor 是服务端不透明字符串，client 不解析；
-- recovery 可请求 `complete=false` recent canonical window，不需要传输全部历史。
+该 MVP 尚未实现原设计的 `transcript_window_v1` Desktop 宣告、opaque cursor、默认 40-turn 窗口、完整 keyed reconciliation 与 DOM virtualization。后续目标仍是：
 
-Frontend 将 root turn 渲染为 keyed section：
-
-```text
-thread transcript
-  -> turn section[data-turn-id]
-     -> item[data-item-id]
-```
-
-规则：
-
-- snapshot window 与现有 DOM 按 id reconcile；
-- unchanged committed turn 不重建；
-- prepend older page 时用 scroll anchor 保持视口；
-- 默认只挂载 viewport 附近 turn + 10 turn overscan；
-- 被卸载 section 只保留轻量 height placeholder 和 canonical node model；
-- 搜索命中、diff review 或用户展开节点时 pin 对应 turn，避免虚拟化卸载。
+- 初始连接即可按已协商 capability 返回 recent window；
+- cursor 由服务端生成且 client 不解析；
+- unchanged committed turn 保持 DOM identity；
+- DOM 只挂载 viewport 附近 turn + overscan，搜索/diff/展开节点可 pin；
+- prepend、revision recovery、clear/reset 后 canonical state 与服务端一致。
 
 ### 7.10 P2-A：TUI 输入与候选查询
 
@@ -780,13 +761,14 @@ Native `desktop/tauri/` 当前不在计划改动范围。
   - GREEN：最终可见尾部保持一致，panel/choice 等底部路径同样在 Rich 转换前有界裁剪；markup 异常回退为原文 `Text`。
   - 命令：`./test.py --backend -- tui/tests/test_frame_advanced.py -v`（20 passed）
 
-- [ ] **P0.2 bounded stream projection**：覆盖普通 append、50k 单段 paragraph、50k 未闭合 fence、list continuation、phase switch 和 non-prefix replace。
-  - 文件：`src/tests/test_presentation/output/test_stream_projection.py`（新建）、`frontend/test/utils/stream.test.ts`
-  - RED：当前实现随累计全文重复 parse；单段文本没有 tail 上界。
-  - GREEN：mutable tail 始终 ≤ 16 KiB；provisional chunk 全部 escaped；canonical raw text 逐字符不变；replace 清空旧 projection。
+- [x] **P0.2 bounded stream projection**：覆盖普通 append、50k+ 单段 paragraph、50k+ 未闭合 fence、list continuation、phase switch、width rebuild 和 non-prefix replace。
+  - 实现：TUI `src/voidx/presentation/output/dock/stream_projection.py`、`src/voidx/presentation/output/dock/stream.py`、`src/voidx/presentation/output/console/streaming.py`、`src/voidx/presentation/output/tree.py`；Desktop `frontend/src/utils/markdown.ts`、`frontend/src/utils/stream.ts`、`frontend/src/main.ts`。
+  - GREEN：mutable tail 始终 ≤ 16 KiB；provisional chunk 全部 escaped；canonical raw text 完整保留；正常 producer/协议路径发送 delta；legacy cumulative 路径兼容；replace、phase 和 width 变化清空或重建旧 projection；commit 与一次性 canonical full render 等价。
   - 命令：
-    - `./test.py --backend -- src/tests/test_presentation/output/test_stream_projection.py -v`
-    - `./test.py --frontend -- test/utils/stream.test.ts`
+    - `./test.py --backend -- src/tests/test_presentation/output/test_stream_projection.py -v`（11 passed）
+    - `./test.py --frontend -- test/utils/markdown.test.ts test/utils/stream.test.ts test/main/incremental-protocol.test.ts`（66 passed）
+    - `./test.py --backend -- src/tests/test_presentation/output src/tests/test_presentation/gateway tui/tests`（857 passed）
+    - `./test.py --frontend`（689 passed）
 
 - [ ] **P0.3 异步 canonical commit（跨端整体）**：覆盖 TUI task scheduling、Desktop Worker、stale revision、失败 fallback、safe flush 和最终等价。
   - [x] **TUI 子项**：`DockEventConsumer` 立即调度 `asyncio.to_thread()` canonical projection；node/revision/generation stale guard、plain fallback、`render_pending` scrollback barrier 和 commit drain 已实现。
@@ -811,23 +793,28 @@ Native `desktop/tauri/` 当前不在计划改动范围。
 
 ### 9.2 P1：协议与 Desktop window
 
-- [ ] **P1.1 capability fallback**：一个新 client、一个 legacy client 同时连接；分别收到 append 和 full-replace，最终文本一致。
-  - 文件：`src/tests/test_presentation/gateway/test_gateway_v2_session.py`
-  - 命令：`./test.py --backend -- src/tests/test_presentation/gateway/test_gateway_v2_session.py -v`
+- [x] **P1.1 stream/patch capability fallback**：新 client 与 legacy client 可同时连接；前者收到 append/patch，后者保持 full-text/full-snapshot 路径。
+  - 实现：`src/voidx/presentation/gateway/server.py`、`src/voidx/presentation/gateway/session/core.py`、`frontend/src/services/connection.ts`。
+  - 回归：`src/tests/test_presentation/gateway/test_gateway_v2_incremental.py`。
+  - 命令：`./test.py --backend -- src/tests/test_presentation/gateway/test_gateway_v2_incremental.py -v`
 
-- [ ] **P1.2 stream revision**：append prefix、replace、gap、duplicate revision、commit hash。
-  - GREEN：gap 不应用 delta，触发一次 recovery；重复 revision 幂等。
-  - 命令：backend + `./test.py --frontend -- test/utils/stream.test.ts`
+- [ ] **P1.2 stream revision（部分实现）**。
+  - [x] append prefix、non-prefix/phase replace、`base_revision` / `revision`、gap recovery 和 duplicate revision 幂等已实现。
+  - [x] commit 已携带最终 revision 与 `text_length`。
+  - [ ] commit integrity hash 及校验尚未实现。
+  - 回归：`src/tests/test_presentation/gateway/test_gateway_v2_incremental.py`、`frontend/test/main/incremental-protocol.test.ts`。
+  - 命令：backend 同 P1.1；`./test.py --frontend -- test/main/incremental-protocol.test.ts`
 
-- [ ] **P1.3 workspace patch**：submit 和 turn terminal 只发送 metadata patch，不构造 `tree_to_snapshot()`。
-  - RED：spy 现有 turn completed 会构造完整 snapshot。
-  - GREEN：支持 patch 的 client 上调用数为 0；legacy client 保持旧行为。
-  - 文件：`src/tests/test_presentation/gateway/test_gateway_v2_session.py`
+- [x] **P1.3 workspace patch**：支持 patch 的 client 在 submit/turn terminal 路径只构建 metadata patch，不构造 transcript snapshot；legacy client 保持 snapshot fallback。
+  - 回归：`src/tests/test_presentation/gateway/test_gateway_v2_incremental.py`。
   - 命令：同 P1.1。
 
-- [ ] **P1.4 transcript page/window DTO**：最近 40 turns、opaque cursor、前页、revision gap 和 clear/reset。
-  - 文件：`src/tests/test_presentation/protocol/test_dto.py`、gateway routing tests。
-  - 命令：`./test.py --backend -- src/tests/test_presentation/protocol/test_dto.py src/tests/test_presentation/gateway/test_gateway_v2_routing.py -v`
+- [ ] **P1.4 transcript page/window DTO（部分实现）**。
+  - [x] Gateway numeric-turn MVP：`before_turn_id`、默认 20-turn、`has_earlier` / `has_later`、windowed switch 和 `transcript.page` RPC。
+  - [x] Frontend 请求并按 id prepend earlier page，保持 scroll anchor。
+  - [ ] `transcript_window_v1` 端到端宣告、opaque cursor、默认 40-turn、完整 revision/clear/reset 窗口恢复仍待完成。
+  - 回归：`src/tests/test_presentation/gateway/test_gateway_v2_routing.py`、`frontend/test/main/runtime-profile.test.ts`。
+  - 命令：`./test.py --backend -- src/tests/test_presentation/gateway/test_gateway_v2_routing.py -v`；`./test.py --frontend -- test/main/runtime-profile.test.ts`
 
 - [ ] **P1.5 Desktop keyed reconciliation**：相同 snapshot node 保持 DOM identity；append item 只新增目标 DOM；prepend page 保持 scroll anchor。
   - 文件：`frontend/test/utils/render.test.ts`、`frontend/test/main/main.test.ts`
@@ -1014,7 +1001,7 @@ Focused tests 通过后：
 
 全部满足后，本增补才可视为完成：
 
-1. 原方案文档未被修改，原方案三个阶段仍可独立实施；
+1. 已归档的 TUI 运行时基线及其不变量未被回退，本文接管的增强项不改写其完成边界；
 2. P0/P1/P2 focused tests 和 backend/frontend/desktop suites 全绿；
 3. TUI 与 Desktop 50k 字符 stream 达到第 10 节门槛；
 4. 支持 patch 的 client 正常 turn 完成不构造、不发送完整 transcript snapshot；

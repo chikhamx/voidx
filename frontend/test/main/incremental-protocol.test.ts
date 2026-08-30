@@ -7,8 +7,13 @@ import {
 } from "../../src/main";
 import { _setSocket } from "../../src/rpc/client";
 import { uiState } from "../../src/services/state";
-import { getOrCreateStream } from "../../src/utils/stream";
+import {
+  _setCanonicalMarkdownCoordinatorForTest,
+  getOrCreateStream,
+} from "../../src/utils/stream";
 import { renderMarkdown } from "../../src/utils/markdown";
+import { createCanonicalMarkdownCoordinator } from "../../src/utils/markdown-worker-client";
+import { handleCanonicalRenderRequest } from "../../src/utils/markdown.worker";
 
 function fakeSocket() {
   return {
@@ -38,6 +43,33 @@ function assistantItem(method, data, overrides = {}) {
   });
 }
 
+
+function controlledCanonicalCoordinator() {
+  const sent = [];
+  const messageListeners = [];
+  const worker = {
+    postMessage(message) {
+      sent.push(message);
+    },
+    addEventListener(type, listener) {
+      if (type === "message") messageListeners.push(listener);
+    },
+  };
+  return {
+    coordinator: createCanonicalMarkdownCoordinator({
+      workerFactory: () => worker,
+      scheduleFrame(callback) {
+        callback(0);
+        return 1;
+      },
+      now: () => 0,
+    }),
+    settle() {
+      const response = handleCanonicalRenderRequest(sent[0]);
+      for (const listener of messageListeners) listener({ data: response });
+    },
+  };
+}
 beforeEach(() => {
   _resetWorkbenchForTest();
   uiState.sessionId = "thread-1";
@@ -234,8 +266,11 @@ describe("assistant stream incremental consumer", () => {
   });
 
   it("commits through the canonical sanitized Markdown renderer", () => {
+    const harness = controlledCanonicalCoordinator();
+    _setCanonicalMarkdownCoordinatorForTest(harness.coordinator);
     const socket = fakeSocket();
     _setSocket(socket);
+    uiState.isRunning = true;
     const text = "safe **bold** <script>window.pwned = true</script>";
     assistantItem("item.started", { phase: "text", text: "" });
     assistantItem("item.delta", { phase: "text", text });
@@ -243,6 +278,12 @@ describe("assistant stream incremental consumer", () => {
 
     const body = document.querySelector("#transcript .stream-buffer .markdown-body");
     expect(body).not.toBeNull();
+    expect(uiState.isRunning).toBe(false);
+    expect(body.dataset.renderPending).toBe("true");
+
+    harness.settle();
+
+    expect(body.dataset.renderPending).toBeUndefined();
     expect(body.innerHTML).toBe(renderMarkdown(text).innerHTML);
     expect(body.querySelector("script")).toBeNull();
   });
@@ -322,5 +363,59 @@ describe("assistant stream incremental consumer", () => {
     });
 
     expect(getOrCreateStream("item-1", "text").text).toBe("after-recovery-delta");
+  });
+
+  it("forwards validated append and replace payloads to the projection without rebuilding cumulative input", async () => {
+    const socket = fakeSocket();
+    _setSocket(socket);
+    const initial = "a".repeat(20_000);
+    assistantItem("item.started", {
+      op: "replace",
+      revision: 0,
+      stream_id: "stream-1",
+      text: initial,
+      phase: "text",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    assistantItem("item.delta", {
+      op: "append",
+      base_revision: 0,
+      revision: 1,
+      stream_id: "stream-1",
+      text: "!",
+      phase: "text",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    const stream = getOrCreateStream("item-1", "text");
+    expect(stream.text).toBe(initial + "!");
+    expect(stream.markdownProjection?._debugSnapshotForTest?.()).toEqual(
+      expect.objectContaining({
+        rawTextLength: initial.length + 1,
+        lastUpdateOperation: "append",
+        lastUpdateInputLength: 1,
+      }),
+    );
+
+    assistantItem("item.delta", {
+      op: "replace",
+      base_revision: 1,
+      revision: 2,
+      stream_id: "stream-1",
+      text: "replacement",
+      phase: "text",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(stream.text).toBe("replacement");
+    expect(stream.markdownProjection?._debugSnapshotForTest?.()).toEqual(
+      expect.objectContaining({
+        rawTextLength: "replacement".length,
+        lastUpdateOperation: "replace",
+        lastUpdateInputLength: "replacement".length,
+      }),
+    );
+    expect(sent(socket, "snapshot.requested")).toHaveLength(0);
   });
 });
