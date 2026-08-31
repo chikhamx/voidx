@@ -5,6 +5,12 @@ import {
   renderFileChanges,
   renderFileChangeSummary,
   resetFileChangeCards,
+  peekFileChangeCard,
+  reserveFileChangeCard,
+  validateFileChangeCardReservations,
+  commitFileChangeCardReservationsNoFail,
+  releaseFileChangeCardReservations,
+  quiesceFileToolCachesForBlockedInstallNoDom,
 } from "../../src/utils/render-file-changes";
 import {
   _resetForTest as resetStreams,
@@ -184,5 +190,74 @@ describe("historical file change isolation", () => {
     renderFileChanges("turn-1", first, "source-1");
     expect(document.querySelectorAll("#transcript .file-change-card")).toHaveLength(1);
     expect(context.cards.get("turn-1")?.card.isConnected).toBe(false);
+  });
+});
+
+
+describe("file change card reservations", () => {
+  it("reserves without changing production state and commits a prebuilt next state", async () => {
+    const first = "--- a/src/app.ts\n+++ b/src/app.ts\n@@ -1 +1 @@\n-old\n+new";
+    renderFileChanges("turn-1", first, "source-1");
+    const expected = peekFileChangeCard("turn-1");
+    expect(expected?.card.isConnected).toBe(true);
+
+    const { createHistoricalFileChangeContext, renderHistoricalFileChanges } = await import(
+      "../../src/utils/render-file-changes"
+    );
+    const detachedRoot = document.createDocumentFragment();
+    const context = createHistoricalFileChangeContext(detachedRoot);
+    renderHistoricalFileChanges(
+      context,
+      "turn-1",
+      "--- a/src/new.ts\n+++ b/src/new.ts\n@@ -1 +1 @@\n-before\n+after",
+      "source-next",
+    );
+    const next = context.cards.get("turn-1")!;
+    const reservation = reserveFileChangeCard("turn-1", expected!, next);
+
+    expect(reservation).not.toBeNull();
+    expect(peekFileChangeCard("turn-1")).toEqual(expected);
+    expect(reserveFileChangeCard("turn-1", expected!, null)).toBeNull();
+    expect(validateFileChangeCardReservations([reservation!])).toBe(true);
+
+    commitFileChangeCardReservationsNoFail([reservation!]);
+
+    const committed = peekFileChangeCard("turn-1");
+    expect(committed?.card).toBe(next.card);
+    expect(committed?.generation).toBeGreaterThan(expected!.generation);
+  });
+
+  it("releases locks and invalidates old reservations on reset", () => {
+    const diff = "--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-a\n+b";
+    renderFileChanges("turn-1", diff);
+    const expected = peekFileChangeCard("turn-1")!;
+    const released = reserveFileChangeCard("turn-1", expected, null)!;
+    releaseFileChangeCardReservations([released]);
+    const reacquired = reserveFileChangeCard("turn-1", expected, null);
+    expect(reacquired).not.toBeNull();
+    releaseFileChangeCardReservations([reacquired!]);
+    releaseFileChangeCardReservations([
+      reserveFileChangeCard("missing", null, null)!,
+    ]);
+
+    const stale = reserveFileChangeCard("turn-1", expected, null)!;
+    resetFileChangeCards();
+
+    expect(validateFileChangeCardReservations([stale])).toBe(false);
+    expect(peekFileChangeCard("turn-1")).toBeNull();
+  });
+
+});
+
+describe("blocked file cache quiesce", () => {
+  it("invalidates production ownership without removing attached cards", () => {
+    const diff = "--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-a\n+b";
+    renderFileChanges("turn-blocked", diff);
+    const card = peekFileChangeCard("turn-blocked")!.card;
+
+    quiesceFileToolCachesForBlockedInstallNoDom();
+
+    expect(card.isConnected).toBe(true);
+    expect(peekFileChangeCard("turn-blocked")).toBeNull();
   });
 });

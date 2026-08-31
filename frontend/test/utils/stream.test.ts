@@ -7,10 +7,17 @@ import {
   commitStream,
   discardStream,
   takeCommittedStreams,
+  peekCommittedStreamsForSnapshot,
+  reserveCommittedStream,
+  validateCommittedStreamReservations,
+  commitCommittedStreamReservationsNoFail,
+  releaseCommittedStreamReservations,
   clearCommittedStreams,
   clearActiveStreams,
   _setCanonicalMarkdownCoordinatorForTest,
   _resetForTest,
+  flushTranscriptReconciliationNow,
+  quiesceStreamsForBlockedInstallNoCallback,
 } from "../../src/utils/stream";
 import { renderMarkdown } from "../../src/utils/markdown";
 import {
@@ -451,6 +458,7 @@ class ControlledViewportController {
   transcript;
   pending = new Map();
   flushCalls = [];
+  flushOptions = [];
   disposed = false;
   resetCalls = 0;
   interactionGeneration = 0;
@@ -468,9 +476,10 @@ class ControlledViewportController {
     this.pending.delete(key);
   }
 
-  flushMutationNow(key, mutate) {
+  flushMutationNow(key, mutate, options = {}) {
     this.pending.delete(key);
     this.flushCalls.push(key);
+    this.flushOptions.push(options);
     mutate();
   }
 
@@ -530,6 +539,16 @@ describe("frame-owned stream scheduling", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
+  it("flushes transcript reconciliation synchronously with follow intent", () => {
+    const calls = [];
+
+    flushTranscriptReconciliationNow(() => calls.push("mutate"));
+
+    expect(calls).toEqual(["mutate"]);
+    expect(controller.flushCalls).toHaveLength(1);
+    expect(controller.flushOptions).toEqual([{ followAfterMutation: true }]);
+  });
+
 
   it("uses a non-resetting 100 ms trailing throttle and one frame transaction", async () => {
     appendStreamText("throttle", "a", "text", "append");
@@ -611,5 +630,87 @@ describe("frame-owned stream scheduling", () => {
     expect(streamModule.prepareTranscriptForSynchronousPrepend(current)).toBe(true);
     streamModule.resetTranscriptViewport();
     expect(controller.resetCalls).toBe(1);
+  });
+});
+
+
+describe("blocked stream quiesce", () => {
+  it("invalidates stream production ownership without removing attached DOM", () => {
+    appendStreamText("blocked-active", "active", "text");
+    const active = getOrCreateStream("blocked-active", "text").el;
+    document.querySelector("#transcript")?.append(active);
+    appendStreamText("blocked-committed", "committed", "text");
+    const committed = commitStream("blocked-committed")!.el;
+    document.querySelector("#transcript")?.append(committed);
+
+    quiesceStreamsForBlockedInstallNoCallback();
+
+    expect(active.isConnected).toBe(true);
+    expect(committed.isConnected).toBe(true);
+    expect(peekCommittedStreamsForSnapshot()).toEqual([]);
+    expect(getOrCreateStream("blocked-active", "text").el).not.toBe(active);
+  });
+});
+
+
+describe("committed stream reservations", () => {
+  it("peeks and reserves without consuming or invalidating committed ownership", () => {
+    appendStreamText("reserved", "answer", "text");
+    const committed = commitStream("reserved")!;
+
+    const claims = peekCommittedStreamsForSnapshot();
+    expect(claims).toHaveLength(1);
+    expect(claims[0]).toMatchObject({
+      element: committed.el,
+      streamId: "reserved",
+    });
+
+    const reservation = reserveCommittedStream(claims[0]);
+    expect(reservation).not.toBeNull();
+    expect(reserveCommittedStream(claims[0])).toBeNull();
+    expect(peekCommittedStreamsForSnapshot()).toEqual(claims);
+    expect(validateCommittedStreamReservations([reservation])).toBe(true);
+
+    releaseCommittedStreamReservations([reservation]);
+    const again = reserveCommittedStream(claims[0]);
+    expect(again).not.toBeNull();
+    releaseCommittedStreamReservations([again]);
+    expect(takeCommittedStreams()).toEqual([committed.el]);
+  });
+
+  it("commits a validated batch without coordinator invalidation and rejects stale settle", () => {
+    const harness = controlledCanonicalCoordinator();
+    const invalidate = vi.spyOn(harness.coordinator, "invalidate");
+    _setCanonicalMarkdownCoordinatorForTest(harness.coordinator);
+    appendStreamText("async-reserved", "safe **answer**", "text");
+    const stream = getOrCreateStream("async-reserved", "text");
+    const committed = commitStream("async-reserved")!;
+    const preview = stream.textEl.firstChild;
+    const claim = peekCommittedStreamsForSnapshot()[0];
+    const reservation = reserveCommittedStream(claim)!;
+
+    expect(validateCommittedStreamReservations([reservation])).toBe(true);
+    commitCommittedStreamReservationsNoFail([reservation]);
+
+    expect(invalidate).not.toHaveBeenCalled();
+    expect(peekCommittedStreamsForSnapshot()).toEqual([]);
+    expect(takeCommittedStreams()).toEqual([]);
+    expect(committed.el.isConnected).toBe(true);
+
+    harness.worker.respond();
+    expect(harness.pendingFrames()).toBe(0);
+    expect(stream.textEl.firstChild).toBe(preview);
+  });
+
+  it("fails validation after committed collection ownership changes", () => {
+    appendStreamText("stale", "answer", "text");
+    commitStream("stale");
+    const claim = peekCommittedStreamsForSnapshot()[0];
+    const reservation = reserveCommittedStream(claim)!;
+
+    takeCommittedStreams();
+
+    expect(validateCommittedStreamReservations([reservation])).toBe(false);
+    releaseCommittedStreamReservations([reservation]);
   });
 });

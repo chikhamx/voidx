@@ -180,4 +180,29 @@ describe("transcript scroll ownership", () => {
     expect(stream).toContain("requestTranscriptFollowAfterMutation");
     expect(readProjectFile("src/ui/terminal.ts")).toMatch(/scrollTop\s*=/);
   });
+
+
+  it("keeps keyed snapshots out of viewport reset and transcript clear paths", () => {
+    const main = readProjectFile("src/main.ts");
+    const start = main.indexOf("function renderWorkspaceSnapshot(");
+    const end = main.indexOf("\nexport function handleNotification(", start);
+    const snapshotHandler = main.slice(start, end);
+
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    expect(snapshotHandler).not.toContain("resetTranscriptViewport()");
+    expect(snapshotHandler).not.toContain("replaceChildren(");
+    expect(snapshotHandler).toContain("renderTranscript(transcriptEl");
+  });
+
+  it("keeps the only direct main transcript scroll writer in synchronous pagination prepend", () => {
+    const main = readProjectFile("src/main.ts");
+    const directWrites = [...main.matchAll(/transcriptEl\.scrollTop\s*=/g)];
+    const prependStart = main.indexOf("function loadEarlierTranscriptPage(");
+    const prependEnd = main.indexOf("\nfunction handleTranscriptScroll(", prependStart);
+
+    expect(directWrites).toHaveLength(1);
+    expect(directWrites[0].index).toBeGreaterThan(prependStart);
+    expect(directWrites[0].index).toBeLessThan(prependEnd);
+  });
 });

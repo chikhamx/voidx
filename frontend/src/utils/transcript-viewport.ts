@@ -17,18 +17,44 @@ export interface TranscriptViewportOptions {
   writeScrollTop?: (value: number) => void;
 }
 
+export interface BlockedViewportQuiesceToken {
+  controller: TranscriptViewportController;
+  callbackGeneration: number;
+  interactionGeneration: number;
+  quiesceEpoch: number;
+  activityGeneration: number;
+}
+
+export interface TranscriptFlushOptions {
+  followAfterMutation?: boolean;
+}
+
 export interface TranscriptViewportController {
   readonly transcript: HTMLElement;
   enqueueMutation(key: object, mutate: () => void): void;
   cancelMutation(key: object): void;
-  flushMutationNow(key: object, mutate: () => void): void;
+  flushMutationNow(
+    key: object,
+    mutate: () => void,
+    options?: TranscriptFlushOptions,
+  ): void;
   getInteractionGeneration(): number;
   prepareForSynchronousPrepend(expectedInteractionGeneration: number): boolean;
   requestFollowAfterExternalMutation(): void;
   forceScrollToBottom(): void;
   isFollowing(): boolean;
+  quiesceForBlockedInstallNoDom(): BlockedViewportQuiesceToken | null;
   reset(): void;
   dispose(): void;
+}
+
+const blockedQuiesceValidators = new WeakMap<
+  TranscriptViewportController,
+  (proof: BlockedViewportQuiesceToken) => boolean
+>();
+
+export function validateBlockedQuiesceToken(proof: BlockedViewportQuiesceToken): boolean {
+  return blockedQuiesceValidators.get(proof.controller)?.(proof) ?? false;
 }
 
 interface TransactionFlags {
@@ -85,7 +111,10 @@ export function createTranscriptViewportController(
     transcript.scrollTop = value;
   });
 
-  let pendingMutations = new Map<object, () => void>();
+  let pendingMutations = new Map<object, {
+    mutate: () => void;
+    options: TranscriptFlushOptions;
+  }>();
   let frameHandle: TranscriptFrameHandle | null = null;
   let following = true;
   let scrollGeometryDirty = false;
@@ -93,6 +122,8 @@ export function createTranscriptViewportController(
   let externalFollowRequested = false;
   let interactionGeneration = 0;
   let callbackGeneration = 0;
+  let activityGeneration = 0;
+  let quiesceEpoch = 0;
   let transactionActive = false;
   let disposed = false;
 
@@ -178,16 +209,20 @@ export function createTranscriptViewportController(
     frameHandle = framePair.scheduleFrame(() => {
       if (disposed || scheduledGeneration !== callbackGeneration) return;
       frameHandle = null;
-      const mutations = [...pendingMutations.values()];
+      const pending = [...pendingMutations.values()];
       pendingMutations = new Map();
       const flags = takeFlags();
-      runTransaction(mutations, flags);
+      if (following && pending.some((entry) => entry.options.followAfterMutation === true)) {
+        flags.externalFollowRequested = true;
+      }
+      runTransaction(pending.map((entry) => entry.mutate), flags);
       scheduleIfNeeded();
     });
   };
 
   const onScroll = (): void => {
     if (disposed) return;
+    activityGeneration += 1;
     interactionGeneration += 1;
     scrollGeometryDirty = true;
     scheduleIfNeeded();
@@ -195,6 +230,7 @@ export function createTranscriptViewportController(
 
   const forceScrollToBottom = (): void => {
     if (disposed) return;
+    activityGeneration += 1;
     interactionGeneration += 1;
     forceFollowRequested = true;
     scheduleIfNeeded();
@@ -207,6 +243,8 @@ export function createTranscriptViewportController(
   updateButton();
 
   const reset = (): void => {
+    activityGeneration += 1;
+    quiesceEpoch += 1;
     cancelPendingFrame();
     pendingMutations.clear();
     scrollGeometryDirty = false;
@@ -219,11 +257,12 @@ export function createTranscriptViewportController(
     updateButton();
   };
 
-  return {
+  const controller: TranscriptViewportController = {
     transcript,
     enqueueMutation(key, mutate) {
       if (disposed) return;
-      pendingMutations.set(key, mutate);
+      activityGeneration += 1;
+      pendingMutations.set(key, { mutate, options: {} });
       scheduleIfNeeded();
     },
     cancelMutation(key) {
@@ -231,16 +270,26 @@ export function createTranscriptViewportController(
       pendingMutations.delete(key);
       if (!hasPendingWork()) cancelPendingFrame();
     },
-    flushMutationNow(key, mutate) {
+    flushMutationNow(key, mutate, options = {}) {
       if (disposed) return;
+      activityGeneration += 1;
       if (transactionActive) {
-        pendingMutations.set(key, mutate);
+        pendingMutations.set(key, { mutate, options });
         scheduleIfNeeded();
         return;
       }
       pendingMutations.delete(key);
       const flags = takeFlags();
-      runTransaction([mutate], flags);
+      if (options.followAfterMutation === true && following) {
+        flags.externalFollowRequested = true;
+      }
+      try {
+        runTransaction([mutate], flags);
+      } catch (error) {
+        if (hasPendingWork()) scheduleIfNeeded();
+        else cancelPendingFrame();
+        throw error;
+      }
       if (hasPendingWork()) scheduleIfNeeded();
       else cancelPendingFrame();
     },
@@ -249,6 +298,7 @@ export function createTranscriptViewportController(
       if (disposed || expectedInteractionGeneration !== interactionGeneration) {
         return false;
       }
+      activityGeneration += 1;
       scrollGeometryDirty = false;
       forceFollowRequested = false;
       externalFollowRequested = false;
@@ -259,11 +309,30 @@ export function createTranscriptViewportController(
     },
     requestFollowAfterExternalMutation() {
       if (disposed || !following) return;
+      activityGeneration += 1;
       externalFollowRequested = true;
       scheduleIfNeeded();
     },
     forceScrollToBottom,
     isFollowing: () => following,
+    quiesceForBlockedInstallNoDom() {
+      if (disposed || transactionActive) return null;
+      cancelPendingFrame();
+      pendingMutations.clear();
+      scrollGeometryDirty = false;
+      forceFollowRequested = false;
+      externalFollowRequested = false;
+      callbackGeneration += 1;
+      interactionGeneration += 1;
+      quiesceEpoch += 1;
+      return {
+        controller,
+        callbackGeneration,
+        interactionGeneration,
+        quiesceEpoch,
+        activityGeneration,
+      };
+    },
     reset,
     dispose() {
       if (disposed) return;
@@ -273,4 +342,20 @@ export function createTranscriptViewportController(
       disposed = true;
     },
   };
+
+  blockedQuiesceValidators.set(controller, (proof) => (
+    proof.controller === controller
+    && proof.callbackGeneration === callbackGeneration
+    && proof.interactionGeneration === interactionGeneration
+    && proof.quiesceEpoch === quiesceEpoch
+    && proof.activityGeneration === activityGeneration
+    && frameHandle === null
+    && pendingMutations.size === 0
+    && !scrollGeometryDirty
+    && !forceFollowRequested
+    && !externalFollowRequested
+    && !transactionActive
+    && !disposed
+  ));
+  return controller;
 }

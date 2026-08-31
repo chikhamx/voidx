@@ -10,6 +10,7 @@ import {
   renderTranscript,
   renderHistoricalTranscriptPage,
   renderTodoPanel,
+  renderTranscriptBlocksDetached,
   appendNoticeItem,
   appendThoughtItem,
   handleToolItem,
@@ -21,6 +22,11 @@ import {
   commitStream,
   getOrCreateStream,
 } from "../../src/utils/stream";
+import {
+  peekFileChangeCard,
+  reserveFileChangeCard,
+  releaseFileChangeCardReservations,
+} from "../../src/utils/render-file-changes";
 
 describe("stripRichMarkup", () => {
   it("strips [bold] tags", () => {
@@ -394,6 +400,65 @@ describe("renderTranscript", () => {
     expect(root.textContent).toContain("第一条回复");
   });
 
+
+  it("reports stale without mutating DOM when a windowed plan crosses retained boundaries", () => {
+    resetStreams();
+    const root = document.createElement("div");
+    setTranscriptElement(root);
+    const nodes = [
+      { node_type: "message", id: "segment-a", payload: { style: "text", raw_text: "A" } },
+      { node_type: "message", id: "segment-b", payload: { style: "text", raw_text: "B" } },
+    ];
+    renderTranscript(root, { nodes });
+    const first = root.children[0];
+    const second = root.children[1];
+    const boundary = document.createElement("div");
+    boundary.dataset.pendingItemId = "pending";
+    root.insertBefore(boundary, second);
+    const before = [...root.children];
+
+    const result = renderTranscript(root, {
+      windowed: true,
+      nodes: [nodes[1], nodes[0]],
+    });
+
+    expect(result).toEqual(expect.objectContaining({ status: "stale" }));
+    expect([...root.children]).toEqual(before);
+    expect(root.children[0]).toBe(first);
+    expect(root.children[1]).toBe(boundary);
+    expect(root.children[2]).toBe(second);
+  });
+
+  it("does not clear an active stream when snapshot planning is stale", () => {
+    resetStreams();
+    const root = document.createElement("div");
+    setTranscriptElement(root);
+    renderTranscript(root, {
+      nodes: [
+        { node_type: "message", id: "segment-a", payload: { style: "text", raw_text: "A" } },
+        { node_type: "message", id: "segment-b", payload: { style: "text", raw_text: "B" } },
+      ],
+    });
+    const boundary = document.createElement("div");
+    boundary.dataset.pendingItemId = "pending";
+    root.insertBefore(boundary, root.children[1]);
+    appendStreamText("active-after-stale", "still active", "text");
+    const activeState = getOrCreateStream("active-after-stale", "text");
+    root.append(activeState.el);
+    const active = activeState.el;
+
+    const result = renderTranscript(root, {
+      windowed: true,
+      nodes: [
+        { node_type: "message", id: "segment-b", payload: { style: "text", raw_text: "B" } },
+        { node_type: "message", id: "segment-a", payload: { style: "text", raw_text: "A" } },
+      ],
+    });
+
+    expect(result.status).toBe("stale");
+    expect(root.querySelector('[data-stream-id="active-after-stale"]')).toBe(active);
+    expect(getOrCreateStream("active-after-stale", "text").el).toBe(active);
+  });
   it("restores formatted tool arguments in a snapshot without an args body", () => {
     resetStreams();
     const root = document.createElement("div");
@@ -465,6 +530,44 @@ describe("renderTranscript", () => {
     expect(root.querySelectorAll(".file-change-card")).toHaveLength(1);
     expect(root.querySelectorAll(".file-change-row")).toHaveLength(2);
   });
+
+  it("invalidates file card ownership when a full snapshot removes its block", () => {
+    resetStreams();
+    const root = document.createElement("div");
+    setTranscriptElement(root);
+
+    handleToolItem("item.started", "tool-removed-files", {
+      tool_call_id: "call-removed-files",
+      tool_name: "replace",
+    }, "turn-removed-files");
+    handleToolItem("item.delta", "tool-removed-files", {
+      tool_call_id: "call-removed-files",
+      diff_text: "--- a/src/old.ts\n+++ b/src/old.ts\n@@ -1,1 +1,1 @@\n-old\n+new",
+    }, "turn-removed-files");
+    expect(peekFileChangeCard("turn-removed-files")).not.toBeNull();
+
+    renderTranscript(root, {
+      nodes: [
+        { node_type: "turn", id: "turn-removed-files", header: "request" },
+        {
+          node_type: "tool_call",
+          id: "tool-removed-files",
+          tool_call_id: "call-removed-files",
+          status: "done",
+          payload: { tool_name: "replace", summary: "done" },
+        },
+      ],
+    });
+    expect(root.querySelector('[data-reconcile-key="turn-with-tools:turn-removed-files"]')).not.toBeNull();
+
+    renderTranscript(root, {
+      nodes: [{ node_type: "message", id: "remaining", payload: { raw_text: "kept" } }],
+    });
+
+    expect(root.querySelector(".file-change-card")).toBeNull();
+    expect(peekFileChangeCard("turn-removed-files")).toBeNull();
+  });
+
   it("preserves a live file change card when the snapshot omits transient diff text", () => {
     resetStreams();
     const root = document.createElement("div");
@@ -496,6 +599,49 @@ describe("renderTranscript", () => {
     expect(root.querySelector(".file-change-card")).not.toBeNull();
   });
 
+
+  it("leaves DOM and file-card ownership unchanged when handoff reservation conflicts", () => {
+    resetStreams();
+    const root = document.createElement("div");
+    setTranscriptElement(root);
+
+    handleToolItem("item.started", "tool-file-conflict", {
+      tool_call_id: "call-file-conflict",
+      tool_name: "replace",
+    }, "turn-file-conflict");
+    handleToolItem("item.delta", "tool-file-conflict", {
+      tool_call_id: "call-file-conflict",
+      diff_text: "--- a/src/live.ts\n+++ b/src/live.ts\n@@ -1,1 +1,1 @@\n-old\n+new",
+    }, "turn-file-conflict");
+    const card = root.querySelector(".file-change-card");
+    const expected = peekFileChangeCard("turn-file-conflict");
+    const externalReservation = reserveFileChangeCard(
+      "turn-file-conflict",
+      expected,
+      null,
+    );
+    expect(externalReservation).not.toBeNull();
+    const before = [...root.children];
+
+    const result = renderTranscript(root, {
+      nodes: [
+        { node_type: "turn", id: "turn-file-conflict", header: "request" },
+        {
+          node_type: "tool_call",
+          id: "tool-file-conflict",
+          tool_call_id: "call-file-conflict",
+          status: "done",
+          payload: { tool_name: "replace", summary: "done" },
+        },
+      ],
+    });
+
+    expect(result.status).toBe("stale");
+    expect([...root.children]).toEqual(before);
+    expect(root.querySelector(".file-change-card")).toBe(card);
+    expect(peekFileChangeCard("turn-file-conflict")).toEqual(expected);
+    releaseFileChangeCardReservations([externalReservation]);
+  });
   it("keeps a live file change card after its tool group when re-rendering a snapshot", () => {
     resetStreams();
     const root = document.createElement("div");
@@ -789,6 +935,24 @@ describe("renderTranscript", () => {
     ));
     expect(order).toEqual(["turn-0", "turn-1", "tool-group", "msg-2"]);
   });
+
+  it("skips an entire historical compound when any member already exists", () => {
+    const fragment = renderHistoricalTranscriptPage({
+      nodes: [
+        { node_type: "turn", id: "page-turn", header: "page request" },
+        {
+          node_type: "tool_call",
+          id: "page-tool",
+          tool_call_id: "page-call",
+          status: "done",
+          payload: { tool_name: "read", summary: "done" },
+        },
+      ],
+    }, new Set(["page-tool"]));
+
+    expect(fragment.childNodes).toHaveLength(0);
+  });
+
 });
 
 describe("appendNoticeItem", () => {
@@ -920,5 +1084,89 @@ describe("historical transcript page rendering", () => {
 
     expect(fragment.textContent?.trim()).toBe("insert me");
     expect(live.textContent).toBe("live duplicate");
+  });
+});
+
+
+describe("renderTranscriptBlocksDetached", () => {
+  it("builds production blocks without touching the attached transcript or follow state", async () => {
+    resetStreams();
+    const attached = document.createElement("div");
+    const sentinel = document.createElement("div");
+    sentinel.dataset.itemId = "sentinel";
+    attached.append(sentinel);
+    setTranscriptElement(attached);
+    const { buildTranscriptDescriptors } = await import("../../src/utils/transcript-reconciliation");
+    const descriptors = buildTranscriptDescriptors([
+      {
+        node_type: "turn",
+        id: "turn-1",
+        payload: { raw_text: "request" },
+      },
+      {
+        node_type: "assistant",
+        id: "answer-1",
+        payload: { thinking_text: "thinking", raw_text: "answer" },
+      },
+    ]);
+
+    const detached = renderTranscriptBlocksDetached(descriptors);
+
+    expect(attached.children).toEqual(expect.objectContaining({ length: 1 }));
+    expect(attached.firstElementChild).toBe(sentinel);
+    expect(detached.context.follow).toBe("none");
+    expect(detached.blocks).toHaveLength(2);
+    expect(detached.blocks[1].roots.map((root) => root.className)).toEqual([
+      "thought-item",
+      "stream-buffer",
+    ]);
+    expect(detached.blocks[1].primary.dataset).toMatchObject({
+      reconcileKey: descriptors[1].key,
+      reconcileFingerprint: descriptors[1].fingerprint,
+      reconcileShape: "production-v1",
+      reconcileRootCount: "2",
+    });
+    expect(detached.blocks[1].memberNodeIds).toEqual(new Set(["answer-1"]));
+    expect(detached.fragment.isConnected).toBe(false);
+  });
+
+  it("renders a tool turn and its file changes as one contiguous compound", async () => {
+    resetStreams();
+    const attached = document.createElement("div");
+    setTranscriptElement(attached);
+    const { buildTranscriptDescriptors } = await import("../../src/utils/transcript-reconciliation");
+    const descriptors = buildTranscriptDescriptors([
+      { node_type: "turn", id: "turn-tool", payload: { raw_text: "edit" } },
+      {
+        node_type: "tool_call",
+        id: "call-node",
+        tool_call_id: "call-1",
+        payload: {
+          tool_name: "write",
+          diff_text: "--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-old\n+new",
+        },
+      },
+      {
+        node_type: "tool_result",
+        id: "result-node",
+        tool_call_id: "call-1",
+        payload: { raw_text: "done" },
+      },
+      { node_type: "assistant", id: "answer", payload: { raw_text: "finished" } },
+    ]);
+
+    const detached = renderTranscriptBlocksDetached(descriptors);
+    const block = detached.blocks[0];
+
+    expect(detached.blocks).toHaveLength(1);
+    expect(block.key).toBe("turn-with-tools:turn-tool");
+    expect(block.roots.every((root) => root.parentNode === detached.fragment)).toBe(true);
+    expect(block.roots).toEqual(Array.from(detached.fragment.children));
+    expect(block.ownedToolCallIds).toEqual(new Set(["call-1"]));
+    expect(block.ownedFileChangeKeys).toEqual(new Set(["turn-tool"]));
+    expect(detached.context.fileChanges.cards.get("turn-tool")?.card).toBe(
+      block.roots.find((root) => root.classList.contains("file-change-card")),
+    );
+    expect(attached.children).toHaveLength(0);
   });
 });

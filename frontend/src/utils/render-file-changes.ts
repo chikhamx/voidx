@@ -29,7 +29,23 @@ export interface HistoricalFileChangeContext {
   cards: Map<string, FileChangeCardState>;
 }
 
-const cards = new Map<string, FileChangeCardState>();
+let cards = new Map<string, FileChangeCardState>();
+let cardGenerations = new Map<string, number>();
+const cardReservations = new Map<string, FileChangeCardReservation>();
+let fileChangeModuleEpoch = 0;
+
+export interface FileChangeCardToken {
+  key: string;
+  card: HTMLElement;
+  generation: number;
+}
+
+export interface FileChangeCardReservation {
+  key: string;
+  expected: FileChangeCardToken | null;
+  next: FileChangeCardState | null;
+  moduleEpoch: number;
+}
 
 const RICH_TAG = /\[(\/)?(?:bold|dim|italic|underline|strike|red|green|yellow|blue|magenta|cyan|white|black|#[0-9A-Fa-f]{6})\]/g;
 const SESSION_CHANGE_LINE = /^\s*(Created|Modified|Deleted)\s+(.+?)\s+\+(\d+)\s+[−-](\d+)\s*$/i;
@@ -306,11 +322,117 @@ function looksLikeUnifiedDiff(value: string): boolean {
   return /^(?:--- |\+\+\+ |@@)/m.test(value);
 }
 
+export function peekFileChangeCard(key: string): FileChangeCardToken | null {
+  const state = cards.get(key);
+  if (!state) return null;
+  return {
+    key,
+    card: state.card,
+    generation: cardGenerations.get(key) ?? 0,
+  };
+}
+
+function tokenMatches(current: FileChangeCardToken | null, expected: FileChangeCardToken | null): boolean {
+  if (!current || !expected) return current === expected;
+  return current.key === expected.key
+    && current.card === expected.card
+    && current.generation === expected.generation;
+}
+
+export function reserveFileChangeCard(
+  key: string,
+  expected: FileChangeCardToken | null,
+  next: FileChangeCardState | null,
+): FileChangeCardReservation | null {
+  if (cardReservations.has(key) || !tokenMatches(peekFileChangeCard(key), expected)) return null;
+  const reservation = { key, expected, next, moduleEpoch: fileChangeModuleEpoch };
+  cardReservations.set(key, reservation);
+  return reservation;
+}
+
+
+export function reserveExistingFileChangeCard(
+  expected: FileChangeCardToken,
+): FileChangeCardReservation | null {
+  const current = cards.get(expected.key);
+  if (!current || current.card !== expected.card) return null;
+  return reserveFileChangeCard(expected.key, expected, current);
+}
+export function validateFileChangeCardReservations(
+  reservations: readonly FileChangeCardReservation[],
+): boolean {
+  const keys = new Set<string>();
+  return reservations.every((reservation) => {
+    if (keys.has(reservation.key)) return false;
+    keys.add(reservation.key);
+    return reservation.moduleEpoch === fileChangeModuleEpoch
+      && cardReservations.get(reservation.key) === reservation
+      && tokenMatches(peekFileChangeCard(reservation.key), reservation.expected);
+  });
+}
+
+export function commitFileChangeCardReservationsNoFail(
+  reservations: readonly FileChangeCardReservation[],
+): void {
+  for (const reservation of reservations) {
+    const generation = (cardGenerations.get(reservation.key) ?? 0) + 1;
+    if (reservation.next) {
+      cards.set(reservation.key, reservation.next);
+      cardGenerations.set(reservation.key, generation);
+    } else {
+      cards.delete(reservation.key);
+      cardGenerations.delete(reservation.key);
+    }
+    cardReservations.delete(reservation.key);
+  }
+}
+
+export function releaseFileChangeCardReservations(
+  reservations: readonly FileChangeCardReservation[],
+): void {
+  for (const reservation of reservations) {
+    if (cardReservations.get(reservation.key) === reservation) {
+      cardReservations.delete(reservation.key);
+    }
+  }
+}
+
+
+export interface BlockedFileToolCacheState {
+  cards: Map<string, FileChangeCardState>;
+  generations: Map<string, number>;
+}
+
+export function prepareBlockedFileToolCacheState(
+  nextCards: Map<string, FileChangeCardState>,
+): BlockedFileToolCacheState {
+  return {
+    cards: nextCards,
+    generations: new Map([...nextCards.keys()].map((key) => [key, 1])),
+  };
+}
+
+export function publishBlockedFileToolCachesNoFail(
+  next: BlockedFileToolCacheState,
+): void {
+  cards = next.cards;
+  cardGenerations = next.generations;
+}
+
+export function quiesceFileToolCachesForBlockedInstallNoDom(): void {
+  fileChangeModuleEpoch += 1;
+  cardReservations.clear();
+  cards = new Map();
+  cardGenerations = new Map();
+}
 export function resetFileChangeCards(): void {
+  fileChangeModuleEpoch += 1;
+  cardReservations.clear();
   for (const state of cards.values()) {
     state.card.remove();
   }
   cards.clear();
+  cardGenerations.clear();
 }
 
 function createCard(): HTMLElement {

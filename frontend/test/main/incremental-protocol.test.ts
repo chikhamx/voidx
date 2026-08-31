@@ -26,6 +26,24 @@ function fakeSocket() {
   };
 }
 
+
+function eventSocket(initialReadyState = WebSocket.CONNECTING) {
+  const listeners = new Map();
+  return {
+    readyState: initialReadyState,
+    send: vi.fn(),
+    onmessage: null,
+    addEventListener(type, handler) {
+      const handlers = listeners.get(type) || [];
+      handlers.push(handler);
+      listeners.set(type, handlers);
+    },
+    emit(type) {
+      this.readyState = type === "open" ? WebSocket.OPEN : WebSocket.CLOSED;
+      for (const handler of listeners.get(type) || []) handler(new Event(type));
+    },
+  };
+}
 function sent(socket, method) {
   return socket.send.mock.calls
     .map(([data]) => JSON.parse(data))
@@ -156,6 +174,54 @@ describe("workspace.patch consumer", () => {
     });
 
     expect(uiState.provider).toBe("recovered-provider");
+    expect(sent(socket, "snapshot.requested")).toHaveLength(1);
+  });
+
+  it("resends an ordinary gap recovery once when the replacement socket opens", () => {
+    const first = eventSocket(WebSocket.OPEN);
+    _setSocket(first);
+
+    handleNotification("workspace.patch", { revision: 1, active_thread_id: "thread-1" });
+    handleNotification("workspace.patch", { revision: 3, active_thread_id: "thread-1" });
+    expect(sent(first, "snapshot.requested")).toHaveLength(1);
+
+    first.emit("close");
+    const replacement = eventSocket(WebSocket.CONNECTING);
+    _setSocket(replacement);
+    expect(sent(replacement, "snapshot.requested")).toHaveLength(0);
+
+    replacement.emit("open");
+    expect(sent(replacement, "snapshot.requested")).toHaveLength(1);
+    replacement.emit("open");
+    expect(sent(replacement, "snapshot.requested")).toHaveLength(1);
+  });
+
+  it("keeps ordinary recovery open until an authoritative full snapshot arrives", () => {
+    const socket = eventSocket(WebSocket.OPEN);
+    _setSocket(socket);
+
+    handleNotification("workspace.patch", { revision: 1, active_thread_id: "thread-1" });
+    handleNotification("workspace.patch", { revision: 3, active_thread_id: "thread-1" });
+    expect(sent(socket, "snapshot.requested")).toHaveLength(1);
+
+    handleNotification("workspace.snapshot", {
+      revision: 3,
+      active_thread_id: "thread-1",
+      threads: [{ thread_id: "thread-1" }],
+      active_snapshot: {
+        thread_id: "thread-1",
+        revision: 3,
+        windowed: true,
+        nodes: [],
+      },
+    });
+    handleNotification("workspace.patch", {
+      revision: 4,
+      active_thread_id: "thread-1",
+      provider: "must-remain-blocked",
+    });
+
+    expect(uiState.provider).not.toBe("must-remain-blocked");
     expect(sent(socket, "snapshot.requested")).toHaveLength(1);
   });
 });
@@ -417,5 +483,289 @@ describe("assistant stream incremental consumer", () => {
       }),
     );
     expect(sent(socket, "snapshot.requested")).toHaveLength(0);
+  });
+});
+
+
+describe("workspace snapshot keyed reconciliation", () => {
+  function snapshot(revision, nodes, windowed = false, status = undefined) {
+    handleNotification("workspace.snapshot", {
+      revision,
+      active_thread_id: "thread-1",
+      threads: [{ thread_id: "thread-1", status }],
+      active_snapshot: {
+        thread_id: "thread-1",
+        revision,
+        windowed,
+        nodes,
+      },
+    });
+  }
+
+  it("keeps unchanged block identity and replaces only changed blocks", () => {
+    snapshot(1, [
+      { node_type: "message", id: "keep", payload: { style: "text", raw_text: "same" } },
+      { node_type: "message", id: "change", payload: { style: "text", raw_text: "before" } },
+    ]);
+    const transcript = document.querySelector("#transcript");
+    const keep = transcript.querySelector('[data-reconcile-key="node:keep"]');
+    const change = transcript.querySelector('[data-reconcile-key="node:change"]');
+
+    snapshot(2, [
+      { node_type: "message", id: "keep", payload: { style: "text", raw_text: "same" } },
+      { node_type: "message", id: "change", payload: { style: "text", raw_text: "after" } },
+    ]);
+
+    expect(transcript.querySelector('[data-reconcile-key="node:keep"]')).toBe(keep);
+    expect(transcript.querySelector('[data-reconcile-key="node:change"]')).not.toBe(change);
+    expect(transcript.textContent).toContain("after");
+    expect(transcript.textContent).not.toContain("before");
+  });
+
+  it("does not delete absent canonical blocks from a windowed snapshot", () => {
+    snapshot(1, [
+      { node_type: "message", id: "outside", payload: { style: "text", raw_text: "outside" } },
+      { node_type: "message", id: "page", payload: { style: "text", raw_text: "page" } },
+    ]);
+    const transcript = document.querySelector("#transcript");
+    const outside = transcript.querySelector('[data-reconcile-key="node:outside"]');
+
+    snapshot(2, [
+      { node_type: "message", id: "page", payload: { style: "text", raw_text: "page updated" } },
+    ], true);
+
+    expect(transcript.querySelector('[data-reconcile-key="node:outside"]')).toBe(outside);
+    expect(transcript.textContent).toContain("outside");
+    expect(transcript.textContent).toContain("page updated");
+  });
+
+  it("preserves an unconfirmed pending local message identity across a same-thread snapshot", () => {
+    const socket = eventSocket(WebSocket.OPEN);
+    _setSocket(socket);
+    const input = document.querySelector("#input");
+    const composer = document.querySelector("#composer");
+    input.value = "pending local";
+    composer.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+
+    const transcript = document.querySelector("#transcript");
+    const pending = transcript.querySelector('[data-item-id^="user-"]');
+    expect(pending).not.toBeNull();
+
+    snapshot(1, [
+      { node_type: "message", id: "history", payload: { style: "text", raw_text: "history" } },
+    ]);
+
+    expect(transcript.querySelector('[data-item-id^="user-"]')).toBe(pending);
+    expect(transcript.textContent).toContain("pending local");
+  });
+
+
+  it("hands off duplicate pending local messages to fresh snapshot entries in FIFO order", () => {
+    const socket = eventSocket(WebSocket.OPEN);
+    _setSocket(socket);
+    const input = document.querySelector("#input");
+    const composer = document.querySelector("#composer");
+    const transcript = document.querySelector("#transcript");
+
+    input.value = "same text";
+    composer.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    snapshot(1, [], false, "idle");
+    input.value = "same text";
+    composer.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    const pending = [...transcript.querySelectorAll('[data-item-id^="user-"]')];
+    expect(pending).toHaveLength(2);
+
+    snapshot(1, [
+      { node_type: "turn", id: "server-user-1", header: "same text" },
+    ]);
+
+    expect(pending[0].isConnected).toBe(true);
+    expect(pending[0].dataset.reconcileKey).toBe("node:server-user-1");
+    expect(pending[1].isConnected).toBe(true);
+    expect(transcript.querySelectorAll('[data-item-id^="user-"]:not([data-reconcile-key])')).toHaveLength(1);
+  });
+
+
+  it("does not consume a pending handoff when snapshot reconciliation is stale", () => {
+    const socket = eventSocket(WebSocket.OPEN);
+    _setSocket(socket);
+    snapshot(1, [
+      { node_type: "message", id: "segment-a", payload: { style: "text", raw_text: "A" } },
+      { node_type: "message", id: "segment-b", payload: { style: "text", raw_text: "B" } },
+    ], false, "idle");
+    const input = document.querySelector("#input");
+    const composer = document.querySelector("#composer");
+    input.value = "pending recovery";
+    composer.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    const transcript = document.querySelector("#transcript");
+    const pending = transcript.querySelector('[data-item-id^="user-"]:not([data-reconcile-key])');
+    const boundary = document.createElement("div");
+    boundary.dataset.pendingItemId = "unrelated-boundary";
+    transcript.insertBefore(boundary, transcript.querySelector('[data-reconcile-key="node:segment-b"]'));
+
+    snapshot(3, [
+      { node_type: "message", id: "segment-b", payload: { style: "text", raw_text: "B" } },
+      { node_type: "turn", id: "server-pending", header: "pending recovery" },
+      { node_type: "message", id: "segment-a", payload: { style: "text", raw_text: "A" } },
+    ], true);
+
+    expect(pending.isConnected).toBe(true);
+    expect(pending.dataset.reconcileKey).toBeUndefined();
+
+    boundary.remove();
+    snapshot(2, [
+      { node_type: "message", id: "segment-a", payload: { style: "text", raw_text: "A" } },
+      { node_type: "message", id: "segment-b", payload: { style: "text", raw_text: "B" } },
+      { node_type: "turn", id: "server-pending", header: "pending recovery" },
+    ]);
+
+    expect(pending.isConnected).toBe(false);
+    const recovered = transcript.querySelector('[data-reconcile-key="node:server-pending"]');
+    expect(recovered).not.toBeNull();
+    expect(recovered).not.toBe(pending);
+  });
+
+
+  it("retries blocked snapshot recovery after a failed reconciliation install", async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = eventSocket(WebSocket.OPEN);
+      _setSocket(socket);
+      snapshot(1, [
+        { node_type: "message", id: "segment-a", payload: { style: "text", raw_text: "A" } },
+        { node_type: "message", id: "segment-b", payload: { style: "text", raw_text: "B" } },
+      ]);
+      const transcript = document.querySelector("#transcript");
+      const boundary = document.createElement("div");
+      boundary.dataset.pendingItemId = "blocked-boundary";
+      transcript.insertBefore(boundary, transcript.querySelector('[data-reconcile-key="node:segment-b"]'));
+
+      snapshot(3, [
+        { node_type: "message", id: "segment-b", payload: { style: "text", raw_text: "B" } },
+        { node_type: "message", id: "segment-a", payload: { style: "text", raw_text: "A" } },
+      ], true);
+
+      expect(sent(socket, "snapshot.requested")).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(249);
+      expect(sent(socket, "snapshot.requested")).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(sent(socket, "snapshot.requested")).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("installs a blocked authoritative full snapshot through replacement and stops retry", async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = eventSocket(WebSocket.OPEN);
+      _setSocket(socket);
+      snapshot(1, [
+        { node_type: "message", id: "segment-a", payload: { style: "text", raw_text: "A" } },
+        { node_type: "message", id: "segment-b", payload: { style: "text", raw_text: "B" } },
+      ]);
+      const transcript = document.querySelector("#transcript");
+      const boundary = document.createElement("div");
+      boundary.dataset.pendingItemId = "damaged-boundary";
+      transcript.insertBefore(boundary, transcript.querySelector('[data-reconcile-key="node:segment-b"]'));
+      snapshot(3, [
+        { node_type: "message", id: "segment-b", payload: { style: "text", raw_text: "B" } },
+        { node_type: "message", id: "segment-a", payload: { style: "text", raw_text: "A" } },
+      ], true);
+      expect(sent(socket, "snapshot.requested")).toHaveLength(1);
+
+      snapshot(2, [
+        { node_type: "message", id: "recovered", payload: { style: "text", raw_text: "recovered" } },
+      ]);
+
+      expect(boundary.isConnected).toBe(false);
+      expect(transcript.querySelector('[data-reconcile-key="node:recovered"]')).not.toBeNull();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(sent(socket, "snapshot.requested")).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps blocked commit slots unchanged when replacement throws and retries the same revision", () => {
+    const socket = eventSocket(WebSocket.OPEN);
+    _setSocket(socket);
+    snapshot(1, [
+      { node_type: "message", id: "segment-a", payload: { style: "text", raw_text: "A" } },
+      { node_type: "message", id: "segment-b", payload: { style: "text", raw_text: "B" } },
+    ]);
+    const transcript = document.querySelector("#transcript");
+    const boundary = document.createElement("div");
+    boundary.dataset.pendingItemId = "damaged-boundary";
+    transcript.insertBefore(boundary, transcript.querySelector('[data-reconcile-key="node:segment-b"]'));
+    snapshot(3, [
+      { node_type: "message", id: "segment-b", payload: { style: "text", raw_text: "B" } },
+      { node_type: "message", id: "segment-a", payload: { style: "text", raw_text: "A" } },
+    ], true);
+
+    const replaceChildren = transcript.replaceChildren.bind(transcript);
+    transcript.replaceChildren = vi.fn(() => { throw new Error("replacement failed"); });
+    snapshot(2, [
+      { node_type: "message", id: "recovered", payload: { style: "text", raw_text: "recovered" } },
+    ]);
+
+    expect(boundary.isConnected).toBe(true);
+    expect(transcript.querySelector('[data-reconcile-key="node:recovered"]')).toBeNull();
+
+    transcript.replaceChildren = replaceChildren;
+    snapshot(2, [
+      { node_type: "message", id: "recovered", payload: { style: "text", raw_text: "recovered" } },
+    ]);
+
+    expect(boundary.isConnected).toBe(false);
+    expect(transcript.querySelector('[data-reconcile-key="node:recovered"]')).not.toBeNull();
+    expect(sent(socket, "snapshot.requested")).toHaveLength(1);
+  });
+
+
+  it("does not commit workspace revision when keyed snapshot reconciliation is stale", () => {
+    const socket = eventSocket(WebSocket.OPEN);
+    _setSocket(socket);
+    snapshot(1, [
+      { node_type: "message", id: "segment-a", payload: { style: "text", raw_text: "A" } },
+      { node_type: "message", id: "segment-b", payload: { style: "text", raw_text: "B" } },
+    ]);
+    const transcript = document.querySelector("#transcript");
+    const second = transcript.querySelector('[data-reconcile-key="node:segment-b"]');
+    const boundary = document.createElement("div");
+    boundary.dataset.pendingItemId = "pending-boundary";
+    transcript.insertBefore(boundary, second);
+
+    handleNotification("workspace.snapshot", {
+      revision: 3,
+      active_thread_id: "thread-1",
+      threads: [{ thread_id: "thread-1" }],
+      active_snapshot: {
+        thread_id: "thread-1",
+        revision: 2,
+        windowed: true,
+        nodes: [
+          { node_type: "message", id: "segment-b", payload: { style: "text", raw_text: "B" } },
+          { node_type: "message", id: "segment-a", payload: { style: "text", raw_text: "A" } },
+        ],
+      },
+    });
+    handleNotification("workspace.snapshot", {
+      revision: 2,
+      active_thread_id: "thread-1",
+      provider: "applied-after-stale-snapshot",
+      threads: [{ thread_id: "thread-1" }],
+      active_snapshot: {
+        thread_id: "thread-1",
+        revision: 2,
+        nodes: [
+          { node_type: "message", id: "segment-a", payload: { style: "text", raw_text: "A" } },
+          { node_type: "message", id: "segment-b", payload: { style: "text", raw_text: "B" } },
+        ],
+      },
+    });
+
+    expect(uiState.provider).toBe("applied-after-stale-snapshot");
+    expect(sent(socket, "snapshot.requested")).toHaveLength(1);
   });
 });

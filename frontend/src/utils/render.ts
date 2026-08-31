@@ -1,26 +1,49 @@
 import { renderMarkdown, renderUserMessage, highlightCode } from './markdown';
 import {
-  takeCommittedStreams,
-  clearActiveStreams,
   appendStreamText,
   commitStream,
   getTranscriptElement,
+  flushTranscriptReconciliationNow,
   getCommittedStreamCanonicalText,
-  invalidateCommittedStreamElement,
   requestTranscriptFollowAfterMutation,
+  peekCommittedStreamsForSnapshot,
+  reserveCommittedStream,
+  validateCommittedStreamReservations,
+  commitCommittedStreamReservationsNoFail,
+  releaseCommittedStreamReservations,
+  type CommittedStreamReservation,
 } from './stream';
 import type { TranscriptNode, Payload } from '../rpc/protocol';
+import {
+  applyTranscriptReconciliation,
+  buildTranscriptDescriptors,
+  classifyProductionMessage,
+  collectExistingTranscriptBlocks,
+  planTranscriptReconciliation,
+  type TranscriptNodeDescriptor,
+  type TranscriptLogicalBlock,
+} from './transcript-reconciliation';
+import type {
+  FileChangeCardReservation,
+  HistoricalFileChangeContext,
+} from './render-file-changes';
 import { iconSvg } from './icons';
 import type {
   MessageItemData, TodoItem, ByIdMap,
   TranscriptSnapshot,
 } from './render-types';
-import { handleToolItem } from './render-tool-items';
+import { handleToolItem, renderProductionToolItemDetached } from './render-tool-items';
 import {
   createHistoricalFileChangeContext,
   renderFileChangeSummary,
   renderHistoricalFileChangeSummary,
   renderHistoricalFileChanges,
+  peekFileChangeCard,
+  reserveFileChangeCard,
+  reserveExistingFileChangeCard,
+  validateFileChangeCardReservations,
+  commitFileChangeCardReservationsNoFail,
+  releaseFileChangeCardReservations,
 } from './render-file-changes';
 import { appendThoughtItem } from './render-thought-items';
 import { appendNoticeItem, appendDiffItem, appendCompactionDivider } from './render-notice-status';
@@ -400,39 +423,6 @@ function committedStreamText(element: HTMLElement): string {
   return (element.querySelector<HTMLElement>(".markdown-body")?.textContent || "").trim();
 }
 
-function takeCommittedStreamsForSnapshot(snapshot: TranscriptSnapshot): HTMLElement[] {
-  const nodeIds = new Set(snapshot.nodes.map((node) => node.id));
-  const committed = takeCommittedStreams();
-
-  // 快照中已有同 id 的 assistant 节点:元素保留在 DOM,由 diff 跳过重建。
-  const unmatched = committed.filter((el) => !nodeIds.has(el.dataset.streamId || ""));
-  if (unmatched.length === 0) {
-    return [];
-  }
-
-  // 仅对 id 不匹配的已提交流元素做文本去重(正常流程 id 一致,零额外开销)。
-  const coveredTexts = new Map<string, number>();
-  for (const node of snapshot.nodes) {
-    if (node.node_type !== "assistant") continue;
-    const text = snapshotAssistantText(node);
-    if (text) coveredTexts.set(text, (coveredTexts.get(text) || 0) + 1);
-  }
-
-  const kept: HTMLElement[] = [];
-  for (const el of unmatched) {
-    const text = committedStreamText(el);
-    const count = coveredTexts.get(text) || 0;
-    if (count === 0) {
-      kept.push(el);
-      continue;
-    }
-    if (count === 1) coveredTexts.delete(text);
-    else coveredTexts.set(text, count - 1);
-    invalidateCommittedStreamElement(el);
-    el.remove();
-  }
-  return kept;
-}
 
 function collectTranscriptIds(root: HTMLElement): Map<string, HTMLElement> {
   const byId = new Map<string, HTMLElement>();
@@ -629,18 +619,77 @@ function appendHistoricalTool(
   if (detailText) el.querySelector(".tool-body")?.append(renderMarkdown(detailText));
 }
 
+
+function transcriptRootItemId(element: HTMLElement): string {
+  return element.dataset.itemId
+    || element.dataset.streamId
+    || element.dataset.compactionItemId
+    || "";
+}
+
+function installHistoricalPageMetadata(
+  fragment: DocumentFragment,
+  descriptors: readonly TranscriptNodeDescriptor[],
+): void {
+  const roots = Array.from(fragment.children) as HTMLElement[];
+  const starts = descriptors.map((descriptor) => {
+    const memberIds = new Set(descriptor.memberNodeIds);
+    const index = roots.findIndex((root) => {
+      const itemId = transcriptRootItemId(root);
+      return memberIds.has(itemId)
+        || [...memberIds].some((memberId) => itemId === `${memberId}-thought`)
+        || (root.classList.contains("tool-group") && root.dataset.turnId === descriptor.turnId);
+    });
+    return { descriptor, index };
+  }).filter((entry) => entry.index >= 0);
+
+  for (let index = 0; index < starts.length; index += 1) {
+    const current = starts[index];
+    const nextIndex = starts[index + 1]?.index ?? roots.length;
+    const blockRoots = roots.slice(current.index, nextIndex);
+    const ownedToolCallIds = new Set(
+      current.descriptor.memberNodes
+        .map((member) => member.tool_call_id)
+        .filter((toolCallId): toolCallId is string => Boolean(toolCallId)),
+    );
+    const ownedFileChangeKeys = new Set(
+      blockRoots
+        .filter((root) => root.classList.contains("file-change-card"))
+        .map((root) => root.dataset.turnId || current.descriptor.key),
+    );
+    installDetachedBlockMetadata(
+      current.descriptor,
+      blockRoots,
+      ownedToolCallIds,
+      ownedFileChangeKeys,
+    );
+  }
+}
+export function historicalTranscriptPageNodes(
+  nodes: readonly TranscriptNode[],
+  existingPageItemIds: ReadonlySet<string>,
+): TranscriptNode[] {
+  const renderedDescriptors = buildTranscriptDescriptors(nodes).filter((descriptor) => (
+    !descriptor.memberNodeIds.some((id) => existingPageItemIds.has(id))
+  ));
+  const renderedNodeIds = new Set(
+    renderedDescriptors.flatMap((descriptor) => descriptor.memberNodeIds),
+  );
+  return nodes.filter((node) => renderedNodeIds.has(node.id));
+}
+
 export function renderHistoricalTranscriptPage(
   snapshot: TranscriptSnapshot,
   existingPageItemIds: ReadonlySet<string>,
 ): DocumentFragment {
   const root = document.createDocumentFragment();
+  const renderedNodes = historicalTranscriptPageNodes(snapshot.nodes || [], existingPageItemIds);
   const tools = new Map<string, HTMLElement>();
   const toolGroups = new Map<string, HTMLElement>();
   const fileContext = createHistoricalFileChangeContext(root);
   let currentTurnId = "";
 
-  for (const node of snapshot.nodes || []) {
-    if (existingPageItemIds.has(node.id)) continue;
+  for (const node of renderedNodes) {
     const payload = node.payload as Record<string, unknown> | undefined;
     if (node.node_type === "turn") currentTurnId = node.id;
     switch (node.node_type) {
@@ -715,214 +764,177 @@ export function renderHistoricalTranscriptPage(
       }
     }
   }
+  installHistoricalPageMetadata(root, buildTranscriptDescriptors(renderedNodes));
   return root;
 }
 
 
-export function renderTranscript(root: HTMLElement, snapshot: TranscriptSnapshot): void {
-  const nodes = snapshot.nodes || [];
-  const nodeIds = new Set(nodes.map((node) => node.id));
+export type RenderTranscriptResult =
+  | { status: "applied" }
+  | { status: "stale"; reason: string };
 
-  // 已提交流元素去重:重复文本移除(快照将重建),窗口外内容保留在 DOM。
-  const committed = takeCommittedStreamsForSnapshot(snapshot);
-  const keep = new Set<HTMLElement>(committed);
+export function renderTranscript(
+  root: HTMLElement,
+  snapshot: TranscriptSnapshot,
+  options: { pendingLocalHandoffs?: ReadonlyMap<string, HTMLElement> } = {},
+): RenderTranscriptResult {
+  const descriptors = buildTranscriptDescriptors(snapshot.nodes || []);
 
-  clearActiveStreams({ preserveCanonicalCommits: true });
-
-  const existingById = collectTranscriptIds(root);
-  const toolById = new Map<string, HTMLElement>();
-  for (const el of root.querySelectorAll<HTMLElement>("[data-tool-id]")) {
-    if (el.dataset.toolId && !toolById.has(el.dataset.toolId)) {
-      toolById.set(el.dataset.toolId, el);
-    }
+  const availableClaims = [...peekCommittedStreamsForSnapshot()];
+  const syntheticBlocks = new Map<HTMLElement, TranscriptLogicalBlock>();
+  const claimByKey = new Map<string, (typeof availableClaims)[number]>();
+  for (const descriptor of descriptors) {
+    if (descriptor.memberNodes.length !== 1 || descriptor.memberNodes[0].node_type !== "assistant") continue;
+    const payload = descriptor.memberNodes[0].payload as Record<string, unknown> | undefined;
+    if (String(payload?.thinking_text ?? "")) continue;
+    const expectedText = snapshotAssistantText(descriptor.memberNodes[0]);
+    const claimIndex = availableClaims.findIndex((claim) => committedStreamText(claim.element) === expectedText);
+    if (claimIndex < 0) continue;
+    const [claim] = availableClaims.splice(claimIndex, 1);
+    syntheticBlocks.set(claim.element, {
+      key: descriptor.key,
+      fingerprint: descriptor.fingerprint,
+      rendererShapeVersion: descriptor.rendererShapeVersion,
+      turnId: descriptor.turnId,
+      roots: [claim.element],
+      primary: claim.element,
+      memberNodeIds: new Set(descriptor.memberNodeIds),
+      ownedToolCallIds: new Set(),
+      ownedFileChangeKeys: new Set(),
+    });
+    claimByKey.set(descriptor.key, claim);
   }
 
-  let currentTurnId = "";
-
-  for (const node of nodes) {
-    if (node.node_type === "turn") {
-      currentTurnId = node.id;
-    }
-    const payload = node.payload as Record<string, unknown> | undefined;
-    const toolEl = node.tool_call_id ? toolById.get(node.tool_call_id) ?? null : null;
-    const existing = node.node_type === "tool_result"
-      ? toolEl
-      : toolEl || existingById.get(node.id);
-    if (existing) {
-      // 流式元素的 data-item-id 是适配器随机 id,与快照节点 id 不同步会被下方清理循环误删。
-      if (node.node_type === "tool_call" && existing.dataset.itemId !== node.id) {
-        existing.dataset.itemId = node.id;
-      }
-      if (node.node_type === "tool_call" && payload?.diff_text) {
-        handleToolItem("item.delta", node.id, {
-          tool_call_id: node.tool_call_id ?? null,
-          diff_text: String(payload.diff_text),
-        }, currentTurnId);
-      }
-      continue;
-    }
-    switch (node.node_type) {
-      case "message": {
-        const style = String(payload?.style || "text");
-        const rawText = String(payload?.raw_text
-          ?? stripRichMarkup([node.header, ...(node.body_lines ?? [])].join("\n")));
-        if (renderFileChangeSummary(node.id, rawText)) {
-          break;
-        }
-        if (style === "thought") {
-          appendThoughtItem(node.id, {
-            text: rawText,
-            meta: (node.meta ?? undefined) as string | null | undefined,
-            elapsed: node.elapsed ?? null,
-          });
-        } else if (style === "error" || style === "warning") {
-          appendNoticeItem(node.id, { style, text: rawText });
-        } else if (style === "diff") {
-          appendDiffItem(node.id, { text: rawText, title: String(payload?.title ?? "") });
-        } else {
-          appendMessageItem(node.id, { style, text: rawText });
-        }
-        break;
-      }
-      case "assistant": {
-        const rawText = String(payload?.raw_text
-          ?? stripRichMarkup((node.body_lines ?? []).join("\n")));
-        const thinkingText = String(payload?.thinking_text || "");
-        if (thinkingText) {
-          appendStreamText(node.id, thinkingText, "thinking");
-        }
-        appendStreamText(
-          node.id,
-          rawText,
-          payload?.phase === "thinking" ? "thinking" : "text",
-        );
-        const result = commitStream(node.id, false);
-        if (result?.thinking) {
-          appendThoughtItem(
-            `${node.id}-thought`,
-            {
-              text: result.thinking,
-              elapsed: node.elapsed ?? null,
-            },
-            result.el,
-          );
-        }
-        break;
-      }
-      case "tool_call":
-        handleToolItem("item.started", node.id, {
-          tool_call_id: node.tool_call_id ?? null,
-          tool_name: String(payload?.tool_name ?? ""),
-          args: payload?.args as string | Record<string, unknown> | undefined,
-          raw_args: payload?.raw_args as Record<string, unknown> | undefined,
-        }, currentTurnId);
-        if (payload?.diff_text) {
-          handleToolItem("item.delta", node.id, {
-            tool_call_id: node.tool_call_id ?? null,
-            diff_text: String(payload.diff_text),
-          }, currentTurnId);
-        }
-        handleToolItem("item.completed", node.id, {
-          tool_call_id: node.tool_call_id ?? null,
-          ok: node.status !== "error",
-          elapsed: node.elapsed ?? null,
-          detail: String(payload?.summary ?? ""),
-        }, currentTurnId);
-        break;
-      case "tool_result": {
-        const detailText = String(payload?.raw_text
-          ?? stripRichMarkup((node.body_lines ?? []).join("\n")));
-        handleToolItem("item.delta", node.id, {
-          tool_call_id: node.tool_call_id ?? null,
-          detail: detailText,
-        });
-        break;
-      }
-      case "thought": {
-        const thoughtText = String(payload?.raw_text
-          ?? stripRichMarkup((node.body_lines ?? []).join("\n")));
-        appendThoughtItem(node.id, {
-          text: thoughtText,
-          meta: (node.meta ?? undefined) as string | null | undefined,
-          elapsed: node.elapsed ?? null,
-        });
-        break;
-      }
-      case "error": {
-        const rawText = String(payload?.raw_text
-          ?? stripRichMarkup(node.header ?? "").replace(/^[✗!]\s*/, ""));
-        appendNoticeItem(node.id, { style: "error", text: rawText });
-        break;
-      }
-      case "warn": {
-        const rawText = String(payload?.raw_text
-          ?? stripRichMarkup(node.header ?? "").replace(/^[✗!]\s*/, ""));
-        appendNoticeItem(node.id, { style: "warning", text: rawText });
-        break;
-      }
-      case "diff":
-        appendDiffItem(node.id, {
-          text: (node.body_lines ?? []).join("\n"),
-          title: node.header ?? "",
-        });
-        break;
-      case "status":
-        if (payload?.outcome === "compacted") {
-          appendCompactionDivider(node.id, {
-            outcome: "compacted",
-            detail: String(payload.detail || ""),
-            ok: node.status !== "error",
-          });
-        }
-        break;
-      case "turn": {
-        currentTurnId = node.id;
-        const text = snapshotTurnText(node);
-        if (text) {
-          const style = String(payload?.style || "") === "guidance" ? "guidance" : "user";
-          appendMessageItem(node.id, { style, text });
-        }
-        break;
-      }
-      case "checkpoint": {
-        const row = document.createElement("details");
-        row.className = "checkpoint-row";
-        row.dataset.itemId = node.id;
-        const summary = document.createElement("summary");
-        summary.textContent = stripRichMarkup(node.header || "voidx plan");
-        row.append(summary);
-        const body = document.createElement("div");
-        body.className = "checkpoint-row-body";
-        body.textContent = (node.body_lines ?? []).map(stripRichMarkup).join("\n");
-        row.append(body);
-        root.append(row);
-        break;
-      }
-      // root / startup / todo / permission / subagent → skip
-    }
+  const pendingHandoffByKey = new Map<string, TranscriptLogicalBlock>();
+  for (const descriptor of descriptors) {
+    if (descriptor.memberNodes.length !== 1) continue;
+    const element = options.pendingLocalHandoffs?.get(descriptor.memberNodes[0].id);
+    if (!element || syntheticBlocks.has(element)) continue;
+    const block: TranscriptLogicalBlock = {
+      key: descriptor.key,
+      fingerprint: descriptor.fingerprint,
+      rendererShapeVersion: descriptor.rendererShapeVersion,
+      turnId: descriptor.turnId,
+      roots: [element],
+      primary: element,
+      memberNodeIds: new Set(descriptor.memberNodeIds),
+      ownedToolCallIds: new Set(),
+      ownedFileChangeKeys: new Set(),
+    };
+    syntheticBlocks.set(element, block);
+    pendingHandoffByKey.set(descriptor.key, block);
   }
 
-  // 删除快照中不存在的 DOM 元素(窗口外 committed 元素除外)。
-  for (const el of Array.from(
-    root.querySelectorAll<HTMLElement>("[data-item-id], [data-stream-id], [data-compaction-item-id]"),
-  )) {
-    const id = el.dataset.itemId || el.dataset.streamId || el.dataset.compactionItemId;
-    const baseId = id && id.endsWith("-thought") ? id.slice(0, -"-thought".length) : id;
-    if (baseId && !nodeIds.has(baseId) && !keep.has(el)) {
-      invalidateCommittedStreamElement(el);
-      el.remove();
+  const existing = collectExistingTranscriptBlocks(root, descriptors, syntheticBlocks);
+  const plan = planTranscriptReconciliation(existing, descriptors, {
+    windowed: snapshot.windowed === true,
+  });
+  if (plan.requiresFullRecovery) {
+    return { status: "stale", reason: plan.reason ?? "full recovery required" };
+  }
+  const neededKeys = new Set([
+    ...plan.replace.map((entry) => entry.descriptor.key),
+    ...plan.insert.map((descriptor) => descriptor.key),
+  ]);
+  const detached = renderTranscriptBlocksDetached(
+    descriptors.filter((descriptor) => neededKeys.has(descriptor.key)),
+  );
+
+  const reservations: CommittedStreamReservation[] = [];
+  const fileReservations: FileChangeCardReservation[] = [];
+  const releaseReservations = (): void => {
+    releaseCommittedStreamReservations(reservations);
+    releaseFileChangeCardReservations(fileReservations);
+  };
+  for (const block of plan.keep) {
+    const claim = claimByKey.get(block.key);
+    if (!claim) continue;
+    const reservation = reserveCommittedStream(claim);
+    if (!reservation) {
+      releaseReservations();
+      return { status: "stale", reason: `committed stream reservation conflict: ${block.key}` };
+    }
+    reservations.push(reservation);
+  }
+  const fileOwnershipChanges = [
+    ...plan.replace.map((entry) => ({ block: entry.current, remove: false })),
+    ...plan.remove.map((block) => ({ block, remove: true })),
+  ];
+  for (const change of fileOwnershipChanges) {
+    for (const key of change.block.ownedFileChangeKeys) {
+      const proof = peekFileChangeCard(key);
+      if (!proof) continue;
+      const reservation = change.remove
+        ? reserveFileChangeCard(key, proof, null)
+        : reserveExistingFileChangeCard(proof);
+      if (!reservation) {
+        releaseReservations();
+        return { status: "stale", reason: `file card reservation conflict: ${key}` };
+      }
+      fileReservations.push(reservation);
     }
   }
-
-  // 窗口外 committed 元素仍在 DOM 中,无需重新追加。
-  for (const el of keep) {
-    if (!el.isConnected) {
-      root.append(el);
-    }
+  if (
+    !validateCommittedStreamReservations(reservations)
+    || !validateFileChangeCardReservations(fileReservations)
+  ) {
+    releaseReservations();
+    return { status: "stale", reason: "owner reservation validation failed" };
   }
 
-  // 按快照顺序校正节点位置(分页前插等场景)。
-  reorderTranscriptNodes(root, nodes);
+  try {
+    let result: RenderTranscriptResult = {
+      status: "stale",
+      reason: "transcript reconciliation did not run",
+    };
+    flushTranscriptReconciliationNow(() => {
+      const applyResult = applyTranscriptReconciliation(root, plan, detached.blocks);
+      if (applyResult.status !== "applied") {
+        result = applyResult;
+        return;
+      }
+      if (
+        !validateCommittedStreamReservations(reservations)
+        || !validateFileChangeCardReservations(fileReservations)
+      ) {
+        for (const child of Array.from(root.childNodes)) child.remove();
+        root.append(...plan.sourceChildren);
+        result = { status: "stale", reason: "final owner reservation validation failed" };
+        return;
+      }
+      for (const block of plan.keep) {
+        if (!claimByKey.has(block.key) && !pendingHandoffByKey.has(block.key)) continue;
+        block.primary.dataset.reconcileKey = block.key;
+        block.primary.dataset.reconcileFingerprint = block.fingerprint;
+        block.primary.dataset.reconcileShape = block.rendererShapeVersion;
+        block.primary.dataset.reconcileRootCount = String(block.roots.length);
+        block.primary.dataset.reconcileMemberNodeIds = JSON.stringify([...block.memberNodeIds]);
+        block.primary.dataset.reconcileToolCallIds = "[]";
+        block.primary.dataset.reconcileFileChangeKeys = "[]";
+        if (block.turnId) block.primary.dataset.reconcileTurnId = block.turnId;
+        if (pendingHandoffByKey.has(block.key)) {
+          const descriptor = descriptors.find((candidate) => candidate.key === block.key);
+          const node = descriptor?.memberNodes[0];
+          const payload = node?.payload as Record<string, unknown> | undefined;
+          const style = node?.node_type === "turn"
+            ? "user"
+            : String(payload?.style ?? payload?.role ?? "user").toLowerCase();
+          block.primary.classList.remove("message-text", "message-user", "message-guidance");
+          block.primary.classList.add(style === "guidance" ? "message-guidance" : "message-user");
+        }
+      }
+      commitFileChangeCardReservationsNoFail(fileReservations);
+      commitCommittedStreamReservationsNoFail(reservations);
+      result = { status: "applied" };
+    });
+    if ((result as RenderTranscriptResult).status !== "applied") {
+      releaseReservations();
+    }
+    return result;
+  } catch (error) {
+    releaseReservations();
+    throw error;
+  }
 }
 
 export function renderTodoPanel(
@@ -953,4 +965,239 @@ export function renderTodoPanel(
     el.append(icon, text);
     panel.append(el);
   }
+}
+
+
+export interface TranscriptRenderContext {
+  root: DocumentFragment;
+  toolGroups: Map<string, HTMLElement>;
+  tools: Map<string, HTMLElement>;
+  fileChanges: HistoricalFileChangeContext;
+  follow: "none";
+}
+
+export interface DetachedTranscriptBlocks {
+  fragment: DocumentFragment;
+  blocks: TranscriptLogicalBlock[];
+  context: TranscriptRenderContext;
+}
+
+function renderDetachedMessage(context: TranscriptRenderContext, node: TranscriptNode): void {
+  const classification = classifyProductionMessage(node);
+  if (classification.suppressed) return;
+  const payload = node.payload as Record<string, unknown> | undefined;
+  switch (classification.shape) {
+    case "message-stats": {
+      const stats = parseTurnStats(classification.text);
+      if (!stats) return;
+      const element = document.createElement("div");
+      element.className = "message-item message-stats";
+      element.dataset.itemId = node.id;
+      element.append(renderTurnStats(stats.duration, stats.calls, stats.input, stats.output));
+      context.root.append(element);
+      return;
+    }
+    case "message-file-summary":
+      renderHistoricalFileChangeSummary(context.fileChanges, node.id, classification.text);
+      return;
+    case "message-thought":
+      appendHistoricalThought(context.root, node.id, classification.text, node.elapsed);
+      return;
+    case "message-diff":
+      appendHistoricalMessage(context.root, node.id, "diff", classification.text);
+      return;
+    default:
+      appendHistoricalMessage(
+        context.root,
+        node.id,
+        String(payload?.style ?? payload?.role ?? "text"),
+        classification.text,
+      );
+  }
+}
+
+function renderDetachedNode(
+  context: TranscriptRenderContext,
+  node: TranscriptNode,
+  turnId: string,
+): void {
+  const payload = node.payload as Record<string, unknown> | undefined;
+  switch (node.node_type) {
+    case "turn": {
+      const text = snapshotTurnText(node);
+      if (text) appendHistoricalMessage(context.root, node.id, "user", text);
+      return;
+    }
+    case "message":
+    case "error":
+    case "warn":
+      renderDetachedMessage(context, node);
+      return;
+    case "assistant": {
+      const thinking = String(payload?.thinking_text ?? "");
+      if (thinking) appendHistoricalThought(context.root, `${node.id}-thought`, thinking, node.elapsed);
+      const text = String(payload?.raw_text
+        ?? stripRichMarkup((node.body_lines ?? []).join("\n")));
+      const stream = document.createElement("div");
+      stream.className = "stream-buffer";
+      stream.dataset.streamId = node.id;
+      const body = document.createElement("div");
+      body.className = "markdown-body";
+      body.append(renderMarkdown(text));
+      stream.append(body);
+      context.root.append(stream);
+      return;
+    }
+    case "thought":
+      appendHistoricalThought(
+        context.root,
+        node.id,
+        String(payload?.raw_text ?? stripRichMarkup((node.body_lines ?? []).join("\n"))),
+        node.elapsed,
+      );
+      return;
+    case "tool_call":
+    case "tool_result": {
+      const toolData = {
+        tool_call_id: node.tool_call_id ?? node.id,
+        tool_name: String(payload?.tool_name ?? payload?.label ?? "tool"),
+        label: typeof payload?.label === "string" ? payload.label : undefined,
+        args: payload?.args as string | Record<string, unknown> | undefined,
+        raw_args: payload?.raw_args as Record<string, unknown> | undefined,
+        detail: String(payload?.raw_text ?? payload?.summary ?? payload?.detail ?? ""),
+        ok: payload?.success === undefined ? node.status !== "error" : Boolean(payload.success),
+        elapsed: node.elapsed,
+      };
+      const tool = renderProductionToolItemDetached(
+        context.root,
+        context.toolGroups,
+        context.tools,
+        node.id,
+        toolData,
+        turnId,
+      );
+      if (payload?.diff_text) {
+        const sourceId = node.tool_call_id || node.id;
+        if (renderHistoricalFileChanges(
+          context.fileChanges,
+          turnId,
+          String(payload.diff_text),
+          sourceId,
+        )) {
+          tool.dataset.fileCard = "true";
+        }
+      }
+      return;
+    }
+    case "diff":
+      appendHistoricalMessage(
+        context.root,
+        node.id,
+        "diff",
+        String(payload?.diff_text ?? (node.body_lines ?? []).join("\n")),
+      );
+      return;
+    case "status":
+      if (payload?.outcome === "compacted") {
+        const divider = document.createElement("div");
+        divider.className = "compaction-divider";
+        divider.dataset.compactionItemId = node.id;
+        divider.setAttribute("role", "note");
+        const label = document.createElement("span");
+        label.className = "compaction-divider-label";
+        label.textContent = "上下文已压缩";
+        divider.append(label);
+        const detailText = String(payload.detail ?? payload.label ?? "");
+        if (detailText) {
+          const detail = document.createElement("span");
+          detail.className = "compaction-divider-detail";
+          detail.textContent = detailText;
+          divider.append(detail);
+        }
+        context.root.append(divider);
+      }
+      return;
+    case "checkpoint": {
+      const row = document.createElement("details");
+      row.className = "checkpoint-row";
+      row.dataset.itemId = node.id;
+      const summary = document.createElement("summary");
+      summary.textContent = stripRichMarkup(node.header || "voidx plan");
+      const body = document.createElement("div");
+      body.className = "checkpoint-row-body";
+      body.textContent = (node.body_lines ?? []).map(stripRichMarkup).join("\n");
+      row.append(summary, body);
+      context.root.append(row);
+      return;
+    }
+  }
+}
+
+function installDetachedBlockMetadata(
+  descriptor: TranscriptNodeDescriptor,
+  roots: HTMLElement[],
+  ownedToolCallIds: Set<string>,
+  ownedFileChangeKeys: Set<string>,
+): TranscriptLogicalBlock {
+  if (roots.length === 0) throw new Error(`descriptor rendered no roots: ${descriptor.key}`);
+  const primary = roots[0];
+  primary.dataset.reconcileKey = descriptor.key;
+  primary.dataset.reconcileFingerprint = descriptor.fingerprint;
+  primary.dataset.reconcileShape = descriptor.rendererShapeVersion;
+  primary.dataset.reconcileRootCount = String(roots.length);
+  primary.dataset.reconcileMemberNodeIds = JSON.stringify(descriptor.memberNodeIds);
+  primary.dataset.reconcileToolCallIds = JSON.stringify([...ownedToolCallIds]);
+  primary.dataset.reconcileFileChangeKeys = JSON.stringify([...ownedFileChangeKeys]);
+  if (descriptor.turnId) primary.dataset.reconcileTurnId = descriptor.turnId;
+  return {
+    key: descriptor.key,
+    fingerprint: descriptor.fingerprint,
+    rendererShapeVersion: descriptor.rendererShapeVersion,
+    turnId: descriptor.turnId,
+    roots,
+    primary,
+    memberNodeIds: new Set(descriptor.memberNodeIds),
+    ownedToolCallIds,
+    ownedFileChangeKeys,
+  };
+}
+
+export function renderTranscriptBlocksDetached(
+  descriptors: TranscriptNodeDescriptor[],
+): DetachedTranscriptBlocks {
+  const fragment = document.createDocumentFragment();
+  const context: TranscriptRenderContext = {
+    root: fragment,
+    toolGroups: new Map(),
+    tools: new Map(),
+    fileChanges: createHistoricalFileChangeContext(fragment),
+    follow: "none",
+  };
+  const blocks: TranscriptLogicalBlock[] = [];
+
+  for (const descriptor of descriptors) {
+    const before = fragment.childElementCount;
+    const fileKeysBefore = new Set(context.fileChanges.cards.keys());
+    for (const member of descriptor.memberNodes) {
+      renderDetachedNode(context, member, descriptor.turnId ?? "");
+    }
+    const roots = Array.from(fragment.children).slice(before) as HTMLElement[];
+    const ownedToolCallIds = new Set(
+      descriptor.memberNodes
+        .filter((member) => member.node_type === "tool_call" || member.node_type === "tool_result")
+        .map((member) => member.tool_call_id)
+        .filter((toolCallId): toolCallId is string => Boolean(toolCallId)),
+    );
+    const ownedFileChangeKeys = new Set(
+      [...context.fileChanges.cards.keys()].filter((key) => !fileKeysBefore.has(key)),
+    );
+    blocks.push(installDetachedBlockMetadata(
+      descriptor,
+      roots,
+      ownedToolCallIds,
+      ownedFileChangeKeys,
+    ));
+  }
+
+  return { fragment, blocks, context };
 }

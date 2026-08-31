@@ -154,6 +154,19 @@ related_docs:
 
 截至本阶段仍未完成：P1 剩余协议/window 项、P2 输入与 live-history 项，以及统一 benchmark 和完整慢路径观测。
 
+
+### 2.11 本轮实施记录（2026-08-31，Desktop P1 keyed reconciliation）
+
+本轮闭环 **Desktop transcript keyed reconciliation**；DOM window/virtualization、P2、统一 benchmark 与真实浏览器慢路径观测仍未完成，因此本文档继续保持 `in-progress/partial`，不归档：
+
+- [x] **稳定 logical block reconciliation**：snapshot nodes 使用稳定 key、可见语义 fingerprint 与 compound roots执行 keep、replace、insert、remove、move；未变化 block保持 DOM identity，full 与 windowed snapshot采用不同 absence 语义。
+- [x] **owner 与事务安全**：committed stream、file-change card、viewport 与 prompt使用窄 reservation/quiesce 接口；detached production builder无 attached side effect，apply支持 stale 拒绝与同步 rollback。
+- [x] **Desktop integration**：ordinary revision-gap recovery跨 transport换代保留并在 open 后恰好重发；只有同线程 authoritative full snapshot关闭 recovery；pending-local按同文本 FIFO handoff并保持未确认 DOM identity；earlier-page prepend安装 reconciliation metadata且保持既有 scroll anchor。
+- [x] **静态守卫**：普通 keyed snapshot handler不再清空 transcript或重置 viewport；`main.ts` 唯一直接 transcript scroll writer继续限定在 synchronous pagination prepend。
+- 验证：Task 5 聚焦集合（129 passed）；静态守卫聚焦（2 passed）；最终完整验证结果见本次实施记录对应提交/会话证据。
+
+截至本阶段仍未完成：transcript DOM window/virtualization与overscan、P2 输入与 durable live-history、统一绝对 benchmark、真实浏览器滚动时序 smoke及完整慢路径观测。
+
 ## 3. 已验证证据
 
 

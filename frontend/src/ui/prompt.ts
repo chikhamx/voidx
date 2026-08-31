@@ -31,6 +31,28 @@ export type ConversationPromptReplyHandler = (
 ) => void;
 
 let activePrompt: ConversationPrompt | null = null;
+let promptGeneration = 0;
+let promptQuiesceEpoch = 0;
+
+export interface BlockedPromptQuiesceToken {
+  generation: number;
+  quiesceEpoch: number;
+  previousRequestId: string | null;
+}
+
+export function quiesceConversationPromptForBlockedInstallNoDom(): BlockedPromptQuiesceToken {
+  const previousRequestId = activePrompt?.requestId ?? null;
+  promptGeneration += 1;
+  promptQuiesceEpoch += 1;
+  activePrompt = null;
+  return { generation: promptGeneration, quiesceEpoch: promptQuiesceEpoch, previousRequestId };
+}
+
+export function validateBlockedPromptQuiesceToken(proof: BlockedPromptQuiesceToken): boolean {
+  return proof.generation === promptGeneration
+    && proof.quiesceEpoch === promptQuiesceEpoch
+    && activePrompt === null;
+}
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -201,6 +223,7 @@ export function showConversationPrompt(
     submitting: false,
     onReply,
   };
+  promptGeneration += 1;
   activePrompt = prompt;
   renderReplyControls(prompt);
 
@@ -237,6 +260,7 @@ export function failConversationPromptResponse(requestId: string): void {
 export function resolveConversationPrompt(requestId: string): void {
   if (!activePrompt || activePrompt.requestId !== requestId) return;
   removeReplyControls(activePrompt);
+  promptGeneration += 1;
   activePrompt = null;
 }
 
@@ -249,5 +273,6 @@ export function completeConversationPrompt(data: Record<string, unknown>): void 
 
 export function resetConversationPrompts(): void {
   if (activePrompt) removeReplyControls(activePrompt);
+  promptGeneration += 1;
   activePrompt = null;
 }

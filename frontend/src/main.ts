@@ -7,7 +7,12 @@ import "../css/composer.css";
 import "../css/components.css";
 import {
   renderTranscript,
+  renderTranscriptBlocksDetached,
+  quiesceStreamsForBlockedInstallNoCallback,
+  quiesceTranscriptViewportForBlockedInstallNoDom,
+  validateTranscriptViewportBlockedInstallReady,
   renderHistoricalTranscriptPage,
+  historicalTranscriptPageNodes,
   appendMessageItem,
   handleToolItem,
   handleStatusItem,
@@ -22,16 +27,23 @@ import {
   stripRichMarkup,
   snapshotTurnText,
   forceTranscriptScrollToBottom,
+  type BlockedViewportQuiesceToken,
   getTranscriptInteractionGeneration,
   prepareTranscriptForSynchronousPrepend,
   resetTranscriptViewport,
 } from "./utils";
-import { resetFileChangeCards } from "./utils/render-file-changes";
+import {
+  prepareBlockedFileToolCacheState,
+  publishBlockedFileToolCachesNoFail,
+  quiesceFileToolCachesForBlockedInstallNoDom,
+  resetFileChangeCards,
+} from "./utils/render-file-changes";
 import type {
   IncrementalStreamState,
   TranscriptSnapshot,
   SlashCommand,
 } from "./utils";
+import { buildTranscriptDescriptors } from "./utils/transcript-reconciliation";
 
 import {
   rpcCall,
@@ -115,6 +127,10 @@ import {
   type AgentProfileDiagnostic,
 } from "./ui";
 import {
+  quiesceConversationPromptForBlockedInstallNoDom,
+  validateBlockedPromptQuiesceToken,
+} from "./ui/prompt";
+import {
   pushHistory,
   historyPrev,
   historyNext,
@@ -195,7 +211,7 @@ interface SnapshotUserEntry {
 }
 
 let pendingLocalMessages: PendingLocalMessage[] = [];
-const knownSnapshotUserNodeIds = new Map<string, Set<string>>();
+let knownSnapshotUserNodeIds = new Map<string, Set<string>>();
 let localItemSequence = 0;
 
 function snapshotUserEntries(snapshot: TranscriptSnapshot): SnapshotUserEntry[] {
@@ -247,10 +263,44 @@ function rememberPendingLocalMessage(
   });
 }
 
+
+function pendingLocalMessageElement(itemId: string): HTMLElement | null {
+  return [...transcriptEl.querySelectorAll<HTMLElement>(`[data-item-id="${itemId}"]`)]
+    .find((element) => !element.dataset.reconcileKey) ?? null;
+}
 function appendPendingLocalMessage(pending: PendingLocalMessage): void {
   appendMessageItem(pending.itemId, { style: pending.style, text: pending.text });
 }
 
+
+function pendingLocalHandoffs(
+  threadId: string,
+  snapshot: TranscriptSnapshot,
+): ReadonlyMap<string, HTMLElement> {
+  const knownIds = knownSnapshotUserNodeIds.get(threadId) ?? new Set<string>();
+  const candidates = snapshotUserEntries(snapshot).filter((entry) => !knownIds.has(entry.id));
+  const handoffs = new Map<string, HTMLElement>();
+  const used = new Set<string>();
+  for (const pending of pendingLocalMessages) {
+    if (pending.threadId !== threadId) continue;
+    const expectedStyle = pending.style === "guidance" ? "guidance" : "user";
+    const candidate = candidates.find((entry) => (
+      !used.has(entry.id)
+      && entry.style === expectedStyle
+      && entry.text === pending.text
+    ));
+    if (!candidate) continue;
+    const element = pendingLocalMessageElement(pending.itemId);
+    if (!element) continue;
+    used.add(candidate.id);
+    const node = (snapshot.nodes || []).find((item) => item.id === candidate.id);
+    const hasStructuredTurnBody = node?.node_type === "turn"
+      && Array.isArray(node.body_lines)
+      && node.body_lines.length > 0;
+    if (!hasStructuredTurnBody) handoffs.set(candidate.id, element);
+  }
+  return handoffs;
+}
 function restorePendingLocalMessages(
   threadId: string,
   snapshot: TranscriptSnapshot,
@@ -291,9 +341,14 @@ function restorePendingLocalMessages(
       pending.text,
       (entry) => entry.rendered && entry.style === expectedStyle,
     );
-    if (renderedEntry) continue;
+    if (renderedEntry) {
+      pendingLocalMessageElement(pending.itemId)?.remove();
+      continue;
+    }
     retained.push(pending);
-    appendPendingLocalMessage(pending);
+    if (!pendingLocalMessageElement(pending.itemId)) {
+      appendPendingLocalMessage(pending);
+    }
   }
 
   pendingLocalMessages = retained;
@@ -305,14 +360,9 @@ function forgetPendingLocalMessage(itemId: string): void {
 
 function removePendingLocalMessage(itemId: string): void {
   forgetPendingLocalMessage(itemId);
-  transcriptEl.querySelector<HTMLElement>(`[data-item-id="${itemId}"]`)?.remove();
+  pendingLocalMessageElement(itemId)?.remove();
 }
 
-function removePendingLocalMessageElements(): void {
-  for (const pending of pendingLocalMessages) {
-    transcriptEl.querySelector<HTMLElement>(`[data-item-id="${pending.itemId}"]`)?.remove();
-  }
-}
 
 function forgetPendingLocalMessages(): void {
   pendingLocalMessages = [];
@@ -564,16 +614,55 @@ let pendingActivationSnapshot: Record<string, unknown> | null = null;
 const staleSnapshotThreadIds = new Set<string>();
 const lastSnapshotRevisionByThread = new Map<string, number>();
 let lastWorkspaceRevision = 0;
-const pendingSnapshotRequests = new Set<string>();
-const incrementalStreamStates = new Map<string, IncrementalStreamState>();
-const renderedItemIdsByThread = new Map<string, Set<string>>();
+interface SnapshotRecoveryState {
+  mode: "ordinary-gap" | "blocked";
+  requestedRevision: number | null;
+  inFlight: boolean;
+  retryAttempt: number;
+  timerGeneration: number;
+}
+const snapshotRecoveryStates = new Map<string, SnapshotRecoveryState>();
+let socketGeneration = 0;
+let incrementalStreamStates = new Map<string, IncrementalStreamState>();
+let renderedItemIdsByThread = new Map<string, Set<string>>();
 
-onSocketChange(() => {
+function sendPendingSnapshotRecoveries(): void {
+  if (!isRpcConnected()) return;
+  for (const [threadId, state] of snapshotRecoveryStates) {
+    if (state.inFlight) continue;
+    rpcNotify("snapshot.requested", { thread_id: threadId });
+    state.inFlight = true;
+  }
+}
+
+onSocketChange((ws) => {
+  socketGeneration += 1;
+  const generation = socketGeneration;
   lastWorkspaceRevision = 0;
-  pendingSnapshotRequests.clear();
   lastSnapshotRevisionByThread.clear();
   incrementalStreamStates.clear();
   renderedItemIdsByThread.clear();
+  for (const state of snapshotRecoveryStates.values()) {
+    state.inFlight = false;
+    state.timerGeneration += 1;
+  }
+  if (!ws) return;
+  const onOpen = (): void => {
+    if (generation !== socketGeneration) return;
+    sendPendingSnapshotRecoveries();
+  };
+  const onClose = (): void => {
+    if (generation !== socketGeneration) return;
+    for (const state of snapshotRecoveryStates.values()) {
+      state.inFlight = false;
+      state.timerGeneration += 1;
+    }
+  };
+  if (typeof ws.addEventListener === "function") {
+    ws.addEventListener("open", onOpen);
+    ws.addEventListener("close", onClose);
+  }
+  if (ws.readyState === WebSocket.OPEN) onOpen();
 });
 interface ThreadTurnContext {
   currentTurnId: string | null;
@@ -588,14 +677,6 @@ interface TranscriptWindowState {
 }
 const transcriptWindows = new Map<string, TranscriptWindowState>();
 
-function snapshotForRendering(threadId: string, snapshot: TranscriptSnapshot): TranscriptSnapshot {
-  if (!snapshot.windowed) {
-    transcriptWindows.delete(threadId);
-    return snapshot;
-  }
-  transcriptWindows.set(threadId, { snapshot, loading: false });
-  return snapshot;
-}
 
 function loadEarlierTranscriptPage(): void {
   const threadId = uiState.sessionId;
@@ -629,28 +710,33 @@ function loadEarlierTranscriptPage(): void {
       if (!current || current !== state) return;
 
       const existingIds = new Set(current.snapshot.nodes.map((node) => node.id));
-      const newNodes = page.nodes.filter((node) => !existingIds.has(node.id));
-      const fragment = renderHistoricalTranscriptPage(
-        { ...page, nodes: newNodes },
-        existingIds,
-      );
+      const newNodes = historicalTranscriptPageNodes(page.nodes, existingIds);
+      const fragment = renderHistoricalTranscriptPage(page, existingIds);
       if (!prepareTranscriptForSynchronousPrepend(interactionGeneration)) return;
 
       const previousHeight = transcriptEl.scrollHeight;
       const previousTop = transcriptEl.scrollTop;
+      const previousSnapshot = current.snapshot;
+      const insertedRoots = Array.from(fragment.childNodes);
       const insertionPoint = transcriptEl.firstChild;
-      transcriptEl.insertBefore(fragment, insertionPoint);
-      transcriptEl.scrollTop = previousTop
-        + (transcriptEl.scrollHeight - previousHeight);
-
-      current.snapshot = {
-        ...current.snapshot,
-        nodes: [...newNodes, ...current.snapshot.nodes],
-        revision: page.revision ?? current.snapshot.revision,
-        before_turn_id: page.before_turn_id ?? null,
-        has_earlier: Boolean(page.has_earlier),
-      };
-      syncEmptyState();
+      try {
+        transcriptEl.insertBefore(fragment, insertionPoint);
+        transcriptEl.scrollTop = previousTop
+          + (transcriptEl.scrollHeight - previousHeight);
+        current.snapshot = {
+          ...previousSnapshot,
+          nodes: [...newNodes, ...previousSnapshot.nodes],
+          revision: page.revision ?? previousSnapshot.revision,
+          before_turn_id: page.before_turn_id ?? null,
+          has_earlier: Boolean(page.has_earlier),
+        };
+        syncEmptyState();
+      } catch (error) {
+        for (const root of insertedRoots) root.parentNode?.removeChild(root);
+        current.snapshot = previousSnapshot;
+        Reflect.set(transcriptEl, "scrollTop", previousTop);
+        throw error;
+      }
     })
     .catch((error: unknown) => {
       console.warn("voidx: transcript page failed", error);
@@ -763,13 +849,63 @@ function workspaceRevision(params: Record<string, unknown>): number | null {
     : null;
 }
 
-function requestSnapshotRecovery(threadId?: unknown): void {
+function scheduleBlockedRecoveryRetry(
+  threadId: string,
+  state: SnapshotRecoveryState,
+): void {
+  state.retryAttempt += 1;
+  state.timerGeneration += 1;
+  const timerGeneration = state.timerGeneration;
+  const generation = socketGeneration;
+  const delay = Math.min(250 * 2 ** (state.retryAttempt - 1), 4000);
+  setTimeout(() => {
+    if (generation !== socketGeneration || uiState.sessionId !== threadId) return;
+    const current = snapshotRecoveryStates.get(threadId);
+    if (
+      current !== state
+      || current.mode !== "blocked"
+      || current.timerGeneration !== timerGeneration
+      || !isRpcConnected()
+    ) return;
+    current.inFlight = false;
+    rpcNotify("snapshot.requested", { thread_id: threadId });
+    current.inFlight = true;
+    scheduleBlockedRecoveryRetry(threadId, current);
+  }, delay);
+}
+
+function requestSnapshotRecovery(
+  threadId?: unknown,
+  options: { blocked?: boolean } = {},
+): void {
   const targetThreadId = typeof threadId === "string" && threadId
     ? threadId
     : uiState.sessionId;
-  if (!targetThreadId || pendingSnapshotRequests.has(targetThreadId)) return;
-  pendingSnapshotRequests.add(targetThreadId);
-  rpcNotify("snapshot.requested", { thread_id: targetThreadId });
+  if (!targetThreadId) return;
+  let state = snapshotRecoveryStates.get(targetThreadId);
+  if (!state) {
+    state = {
+      mode: options.blocked ? "blocked" : "ordinary-gap",
+      requestedRevision: lastSnapshotRevisionByThread.get(targetThreadId) ?? null,
+      inFlight: false,
+      retryAttempt: 0,
+      timerGeneration: 0,
+    };
+    snapshotRecoveryStates.set(targetThreadId, state);
+  } else if (options.blocked && state.mode !== "blocked") {
+    state.mode = "blocked";
+    state.retryAttempt = 0;
+    state.timerGeneration += 1;
+    state.inFlight = false;
+  }
+  if (options.blocked && state.mode === "blocked") state.inFlight = false;
+  if (!state.inFlight && isRpcConnected()) {
+    rpcNotify("snapshot.requested", { thread_id: targetThreadId });
+    state.inFlight = true;
+  }
+  if (options.blocked && state.mode === "blocked" && state.retryAttempt === 0) {
+    scheduleBlockedRecoveryRetry(targetThreadId, state);
+  }
 }
 
 function applyWorkspacePatch(params: Record<string, unknown>): void {
@@ -788,7 +924,7 @@ function applyWorkspacePatch(params: Record<string, unknown>): void {
     return;
   }
   if (
-    pendingSnapshotRequests.has(recoveryThreadId) ||
+    snapshotRecoveryStates.has(recoveryThreadId) ||
     (activeThreadId && uiState.sessionId && activeThreadId !== uiState.sessionId)
   ) {
     requestSnapshotRecovery(recoveryThreadId);
@@ -900,7 +1036,7 @@ function consumeIncrementalStreamDelta(
     requestSnapshotRecovery(params.thread_id);
     return false;
   }
-  if (pendingSnapshotRequests.has(identity.threadId)) return false;
+  if (snapshotRecoveryStates.has(identity.threadId)) return false;
 
   const state = incrementalStreamStates.get(identity.key);
   if (!state) {
@@ -1015,6 +1151,7 @@ function isDuplicateItemStart(method: string, params: Record<string, unknown>): 
   return false;
 }
 
+
 function applyThreadStatus(status: unknown): void {
   if (typeof status === "string") {
     setRunning(status === "running");
@@ -1047,7 +1184,7 @@ function activateThread(threadId: string): void {
     if (uiState.sessionId) {
       retireThreadTurn(uiState.sessionId);
       clearIncrementalStreamStatesForThread(uiState.sessionId);
-      pendingSnapshotRequests.delete(uiState.sessionId);
+      snapshotRecoveryStates.delete(uiState.sessionId);
     }
     threadContextGeneration += 1;
     clearCommittedStreams();
@@ -1314,6 +1451,108 @@ function registerNotificationHandlers(): void {
   }
 }
 
+interface BlockedSnapshotPrebuilt {
+  fragment: DocumentFragment;
+  fileCaches: ReturnType<typeof prepareBlockedFileToolCacheState>;
+  pendingMessages: PendingLocalMessage[];
+  knownUserIds: Map<string, Set<string>>;
+  renderedIds: Map<string, Set<string>>;
+  incrementalStates: Map<string, IncrementalStreamState>;
+  workspaceRevision: number;
+  snapshotRevision: number;
+  threadId: string;
+  recoveryState: SnapshotRecoveryState;
+}
+
+function publishBlockedFullSnapshotNoFail(prebuilt: BlockedSnapshotPrebuilt): void {
+  transcriptEl.replaceChildren(prebuilt.fragment);
+  publishBlockedFileToolCachesNoFail(prebuilt.fileCaches);
+  pendingLocalMessages = prebuilt.pendingMessages;
+  knownSnapshotUserNodeIds = prebuilt.knownUserIds;
+  renderedItemIdsByThread = prebuilt.renderedIds;
+  incrementalStreamStates = prebuilt.incrementalStates;
+  lastWorkspaceRevision = prebuilt.workspaceRevision;
+  lastSnapshotRevisionByThread.set(prebuilt.threadId, prebuilt.snapshotRevision);
+  transcriptWindows.delete(prebuilt.threadId);
+  prebuilt.recoveryState.timerGeneration += 1;
+  snapshotRecoveryStates.delete(prebuilt.threadId);
+}
+
+function installBlockedFullSnapshot(
+  threadId: string,
+  params: Record<string, unknown>,
+  snapshot: TranscriptSnapshot,
+): boolean {
+  const recoveryState = snapshotRecoveryStates.get(threadId);
+  const incomingWorkspaceRevision = workspaceRevision(params);
+  const incomingSnapshotRevision = snapshotRevision(params);
+  if (
+    !recoveryState
+    || recoveryState.mode !== "blocked"
+    || snapshot.windowed === true
+    || incomingWorkspaceRevision === null
+    || incomingSnapshotRevision === null
+    || (recoveryState.requestedRevision !== null
+      && incomingSnapshotRevision < recoveryState.requestedRevision)
+  ) return false;
+
+  const descriptors = buildTranscriptDescriptors(snapshot.nodes || []);
+  const detached = renderTranscriptBlocksDetached(descriptors);
+  const handoffs = pendingLocalHandoffs(threadId, snapshot);
+  const handedOffElements = new Set(handoffs.values());
+  const nextPending = pendingLocalMessages.filter((pending) => {
+    if (pending.threadId !== threadId) return true;
+    const element = pendingLocalMessageElement(pending.itemId);
+    return !element || !handedOffElements.has(element);
+  });
+  for (const pending of nextPending) {
+    if (pending.threadId !== threadId) continue;
+    const current = pendingLocalMessageElement(pending.itemId);
+    if (current) detached.fragment.append(current.cloneNode(true));
+  }
+  const nextKnown = new Map(knownSnapshotUserNodeIds);
+  nextKnown.set(threadId, new Set(snapshotUserEntries(snapshot).map((entry) => entry.id)));
+  const nextRendered = new Map(renderedItemIdsByThread);
+  nextRendered.set(threadId, new Set((snapshot.nodes || []).map((node) => node.id)));
+  const nextIncremental = new Map(
+    [...incrementalStreamStates].filter(([, state]) => state.threadId !== threadId),
+  );
+  const prebuilt: BlockedSnapshotPrebuilt = {
+    fragment: detached.fragment,
+    fileCaches: prepareBlockedFileToolCacheState(detached.context.fileChanges.cards),
+    pendingMessages: nextPending,
+    knownUserIds: nextKnown,
+    renderedIds: nextRendered,
+    incrementalStates: nextIncremental,
+    workspaceRevision: incomingWorkspaceRevision,
+    snapshotRevision: incomingSnapshotRevision,
+    threadId,
+    recoveryState,
+  };
+
+  quiesceStreamsForBlockedInstallNoCallback();
+  quiesceFileToolCachesForBlockedInstallNoDom();
+  const viewportProof: BlockedViewportQuiesceToken | null =
+    quiesceTranscriptViewportForBlockedInstallNoDom();
+  const promptProof = quiesceConversationPromptForBlockedInstallNoDom();
+  if (
+    !viewportProof
+    || !validateTranscriptViewportBlockedInstallReady(viewportProof)
+    || !validateBlockedPromptQuiesceToken(promptProof)
+    || uiState.sessionId !== threadId
+    || snapshotRecoveryStates.get(threadId) !== recoveryState
+  ) return false;
+
+  try {
+    publishBlockedFullSnapshotNoFail(prebuilt);
+    return true;
+  } catch {
+    recoveryState.inFlight = false;
+    if (recoveryState.retryAttempt === 0) scheduleBlockedRecoveryRetry(threadId, recoveryState);
+    return false;
+  }
+}
+
 function renderWorkspaceSnapshot(params: Record<string, unknown>): void {
   const activeThreadId = (params.active_thread_id as string) || "";
   if (!snapshotThreadMatchesActive(params, activeThreadId)) return;
@@ -1321,6 +1560,7 @@ function renderWorkspaceSnapshot(params: Record<string, unknown>): void {
   if (uiState.isSwitchingThread) {
     if (pendingActivationTarget !== null) {
       if (activeThreadId !== pendingActivationTarget) return;
+
       pendingActivationSnapshot = params;
       return;
     }
@@ -1333,21 +1573,18 @@ function renderWorkspaceSnapshot(params: Record<string, unknown>): void {
   const revision = workspaceRevision(params);
   const recoveryThreadId = activeThreadId || uiState.sessionId;
   const recovering = Boolean(
-    recoveryThreadId && pendingSnapshotRequests.has(recoveryThreadId),
+    recoveryThreadId && snapshotRecoveryStates.has(recoveryThreadId),
   );
-  if (recovering) {
-    clearIncrementalStreamStatesForThread(recoveryThreadId);
-    renderedItemIdsByThread.delete(recoveryThreadId);
-  }
   if (revision !== null && revision < lastWorkspaceRevision) return;
-  if (revision !== null) {
-    lastWorkspaceRevision = revision;
-    pendingSnapshotRequests.delete(activeThreadId);
-    pendingSnapshotRequests.delete(uiState.sessionId);
-  }
-
   const snapshot = params.active_snapshot || { nodes: [] };
-  if (activeThreadId) rememberSnapshotRevision(activeThreadId, params);
+  const snapshotData = snapshot && typeof snapshot === "object"
+    ? snapshot as Record<string, unknown>
+    : null;
+  const authoritativeRecoverySnapshot = Boolean(
+    snapshotData
+    && snapshotData.windowed !== true
+    && snapshotRevision(params) !== null,
+  );
   requestCommandCatalogIfNeeded();
   const activeThread = ((params.threads as Array<Record<string, unknown>> | undefined) || []).find(
     (thread) => thread.thread_id === activeThreadId,
@@ -1372,10 +1609,38 @@ function renderWorkspaceSnapshot(params: Record<string, unknown>): void {
     workspaceBasename(uiState.workspace),
     uiState.workspace,
   );
-  const typedSnapshot = snapshotForRendering(activeThreadId, snapshot as TranscriptSnapshot);
-  resetTranscriptViewport();
-  removePendingLocalMessageElements();
-  renderTranscript(transcriptEl, typedSnapshot);
+  const typedSnapshot = snapshot as TranscriptSnapshot;
+  const blockedRecovery = snapshotRecoveryStates.get(activeThreadId)?.mode === "blocked";
+  if (blockedRecovery && authoritativeRecoverySnapshot) {
+    if (installBlockedFullSnapshot(activeThreadId, params, typedSnapshot)) {
+      syncEmptyState();
+      scrollToBottom();
+    }
+    return;
+  }
+  const renderResult = renderTranscript(transcriptEl, typedSnapshot, {
+    pendingLocalHandoffs: pendingLocalHandoffs(activeThreadId, typedSnapshot),
+  });
+  if (renderResult.status !== "applied") {
+    requestSnapshotRecovery(activeThreadId, { blocked: true });
+    return;
+  }
+
+  if (revision !== null) lastWorkspaceRevision = revision;
+  if (activeThreadId) rememberSnapshotRevision(activeThreadId, params);
+  if (typedSnapshot.windowed) {
+    transcriptWindows.set(activeThreadId, { snapshot: typedSnapshot, loading: false });
+  } else {
+    transcriptWindows.delete(activeThreadId);
+  }
+  if (recovering) {
+    clearIncrementalStreamStatesForThread(recoveryThreadId);
+    renderedItemIdsByThread.delete(recoveryThreadId);
+  }
+  if (authoritativeRecoverySnapshot) {
+    snapshotRecoveryStates.delete(activeThreadId);
+    snapshotRecoveryStates.delete(uiState.sessionId);
+  }
   restorePendingLocalMessages(activeThreadId, typedSnapshot);
   syncEmptyState();
   scrollToBottom();
@@ -1739,7 +2004,7 @@ export function _resetWorkbenchForTest(): void {
   staleSnapshotThreadIds.clear();
   lastSnapshotRevisionByThread.clear();
   lastWorkspaceRevision = 0;
-  pendingSnapshotRequests.clear();
+  snapshotRecoveryStates.clear();
   incrementalStreamStates.clear();
   renderedItemIdsByThread.clear();
   threadTurnContexts.clear();

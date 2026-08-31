@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   TRANSCRIPT_NEAR_BOTTOM_PX,
   createTranscriptViewportController,
+  validateBlockedQuiesceToken,
   type TranscriptFrameHandle,
   type TranscriptViewportGeometry,
 } from "../../src/utils/transcript-viewport";
@@ -217,6 +218,35 @@ describe("createTranscriptViewportController", () => {
     expect(h.writes).toEqual([Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER]);
   });
 
+  it("merges synchronous follow intent into the same transaction", () => {
+    const h = createHarness({ scrollTop: 100, clientHeight: 100, scrollHeight: 1000 });
+    const calls: string[] = [];
+
+    h.controller.flushMutationNow(
+      {},
+      () => calls.push("mutate"),
+      { followAfterMutation: true },
+    );
+
+    expect(calls).toEqual(["mutate"]);
+    expect(h.writes).toEqual([Number.MAX_SAFE_INTEGER]);
+    expect(h.pendingFrames()).toBe(0);
+  });
+
+  it("does not follow or schedule another frame when a synchronous mutation throws", () => {
+    const h = createHarness();
+    const failure = new Error("mutation failed");
+
+    expect(() => h.controller.flushMutationNow(
+      {},
+      () => { throw failure; },
+      { followAfterMutation: true },
+    )).toThrow(failure);
+
+    expect(h.writes).toEqual([]);
+    expect(h.pendingFrames()).toBe(0);
+  });
+
   it("keeps flags created during flush for the next frame", () => {
     const h = createHarness();
     const key = {};
@@ -285,5 +315,70 @@ describe("createTranscriptViewportController", () => {
     h.button.click();
     expect(h.pendingFrames()).toBe(0);
     expect(calls).toEqual([]);
+  });
+});
+
+
+describe("blocked install quiesce", () => {
+  const quiet = (controller: unknown) => {
+    const method = "quiesceForBlocked" + "InstallNoDom";
+    return (controller as Record<string, () => unknown>)[method]();
+  };
+
+  it("cancels pending work without geometry or DOM writes and returns a valid proof", () => {
+    const h = createHarness();
+    h.controller.enqueueMutation({}, () => h.order.push("mutate"));
+    h.controller.requestFollowAfterExternalMutation();
+    const readsBefore = h.readCount();
+    const writesBefore = h.writes.length;
+
+    const proof = quiet(h.controller);
+
+    expect(proof).not.toBeNull();
+    expect(validateBlockedQuiesceToken(proof as never)).toBe(true);
+    expect(h.pendingFrames()).toBe(0);
+    expect(h.readCount()).toBe(readsBefore);
+    expect(h.writes).toHaveLength(writesBefore);
+    expect(h.order).not.toContain("mutate");
+  });
+
+  it("keeps old proofs invalid after accepted work is consumed and the controller is idle again", () => {
+    const h = createHarness();
+    const proof = quiet(h.controller);
+    expect(validateBlockedQuiesceToken(proof as never)).toBe(true);
+
+    h.controller.enqueueMutation({}, () => undefined);
+    h.flushFrame();
+
+    expect(h.pendingFrames()).toBe(0);
+    expect(validateBlockedQuiesceToken(proof as never)).toBe(false);
+    const next = quiet(h.controller);
+    expect(validateBlockedQuiesceToken(next as never)).toBe(true);
+    h.controller.forceScrollToBottom();
+    h.flushFrame();
+    expect(validateBlockedQuiesceToken(next as never)).toBe(false);
+  });
+
+  it("returns null inside an active transaction and succeeds only after it returns", () => {
+    const h = createHarness();
+    let insideProof: unknown;
+    let insideValid: boolean | undefined;
+
+    h.controller.flushMutationNow({}, () => {
+      insideProof = quiet(h.controller);
+      insideValid = insideProof === null
+        ? false
+        : validateBlockedQuiesceToken(insideProof as never);
+      h.controller.flushMutationNow({}, () => h.order.push("reentry"));
+    });
+
+    expect(insideProof).toBeNull();
+    expect(insideValid).toBe(false);
+    expect(h.pendingFrames()).toBe(1);
+    const after = quiet(h.controller);
+    expect(after).not.toBeNull();
+    expect(validateBlockedQuiesceToken(after as never)).toBe(true);
+    expect(h.pendingFrames()).toBe(0);
+    expect(h.order).not.toContain("reentry");
   });
 });

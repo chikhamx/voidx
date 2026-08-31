@@ -324,7 +324,7 @@ describe("desktop runtime profile switching", () => {
     handleNotification("workspace.snapshot", snapshot([
       { id: "system-1", node_type: "message", payload: { raw_text: "重复文本", style: "error" } },
     ]));
-    expect(document.querySelector(".notice-toast-region .notice-error")).not.toBeNull();
+    expect(document.querySelector(".notice-toast-region .notice-error")).toBeNull();
     expect(document.querySelectorAll("#transcript .message-text")).toHaveLength(1);
 
     const userSnapshot = snapshot([
@@ -1283,14 +1283,89 @@ describe("strict metadata boundaries and complete reset", () => {
       after_turn_id: 1,
       has_earlier: false,
       has_later: true,
-      nodes: [{ node_type: "turn", id: "turn-1", header: "earlier page" }],
+      nodes: [
+        { node_type: "turn", id: "turn-1", header: "earlier page" },
+        { node_type: "turn", id: "turn-2", header: "later page" },
+        {
+          node_type: "tool_call",
+          id: "tool-overlap",
+          tool_call_id: "call-overlap",
+          status: "done",
+          payload: { tool_name: "read", summary: "must not be orphaned" },
+        },
+      ],
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(transcript.textContent).toContain("earlier page");
     expect(transcript.textContent).toContain("later page");
     expect(transcript.querySelectorAll(".message-item")).toHaveLength(2);
+    expect(transcript.querySelector('[data-tool-id="call-overlap"]')).toBeNull();
+    const earlier = transcript.querySelector('[data-item-id="turn-1"]');
+    expect(earlier?.dataset).toMatchObject({
+      reconcileKey: "node:turn-1",
+      reconcileRootCount: "1",
+    });
+    expect(earlier?.dataset.reconcileFingerprint).toBeTruthy();
     expect(transcript.scrollTop).toBe(30);
+  });
+
+  it("rolls back an earlier page prepend when anchor restoration throws", async () => {
+    const socket = fakeSocket();
+    _setSocket(socket);
+    const { handleNotification } = await import("../../src/main");
+    const transcript = document.querySelector("#transcript");
+
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "thread-windowed",
+      threads: [{ thread_id: "thread-windowed", runtime_profile: "coding" }],
+      active_snapshot: {
+        thread_id: "thread-windowed",
+        revision: 1,
+        windowed: true,
+        before_turn_id: 2,
+        has_earlier: true,
+        nodes: [{ node_type: "turn", id: "turn-2", header: "current page" }],
+      },
+    });
+    let top = 0;
+    let failAnchorWrite = false;
+    Object.defineProperty(transcript, "scrollHeight", {
+      configurable: true,
+      get: () => transcript.textContent?.includes("failed earlier page") ? 130 : 100,
+    });
+    Object.defineProperty(transcript, "scrollTop", {
+      configurable: true,
+      get: () => top,
+      set: (value) => {
+        if (failAnchorWrite && value !== 0) {
+          failAnchorWrite = false;
+          throw new Error("anchor write failed");
+        }
+        top = value;
+      },
+    });
+    transcript.dispatchEvent(new Event("scroll"));
+    await Promise.resolve();
+    const request = socket.send.mock.calls
+      .map(([data]) => JSON.parse(data))
+      .find((entry) => entry.method === "transcript.page");
+    failAnchorWrite = true;
+
+    const client = await import("../../src/rpc/client");
+    client._resolvePendingForTest(request.id, {
+      thread_id: "thread-windowed",
+      revision: 2,
+      windowed: true,
+      before_turn_id: 0,
+      has_earlier: false,
+      nodes: [{ node_type: "turn", id: "turn-1", header: "failed earlier page" }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(transcript.textContent).not.toContain("failed earlier page");
+    expect(transcript.textContent).toContain("current page");
+    expect(transcript.scrollTop).toBe(0);
   });
 
   it("drops an earlier page response after the active thread changes", async () => {

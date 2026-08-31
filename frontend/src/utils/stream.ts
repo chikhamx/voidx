@@ -9,6 +9,8 @@ import {
 import type { StreamState } from "./types";
 import {
   createTranscriptViewportController,
+  validateBlockedQuiesceToken,
+  type BlockedViewportQuiesceToken,
   type TranscriptViewportController,
 } from "./transcript-viewport";
 
@@ -26,6 +28,21 @@ const canonicalOwners = new Map<string, {
   viewportController: TranscriptViewportController | null;
   viewportGeneration: number;
 }>();
+
+export interface CommittedStreamClaim {
+  element: HTMLElement;
+  streamId: string;
+  streamGeneration: number;
+  canonicalRevision: number;
+}
+
+export interface CommittedStreamReservation {
+  claim: CommittedStreamClaim;
+  originalIndex: number;
+}
+
+const committedClaims = new Map<HTMLElement, CommittedStreamClaim>();
+const committedReservations = new Map<HTMLElement, CommittedStreamReservation>();
 let canonicalMarkdownCoordinator = createCanonicalMarkdownCoordinator();
 let nextStreamGeneration = 1;
 let transcriptEl: HTMLElement | null = null;
@@ -57,6 +74,20 @@ export function getTranscriptElement(): HTMLElement | null {
   return transcriptEl;
 }
 
+const transcriptReconciliationMutationKey = {};
+
+export function flushTranscriptReconciliationNow(mutate: () => void): void {
+  if (!viewportController) {
+    mutate();
+    return;
+  }
+  viewportController.flushMutationNow(
+    transcriptReconciliationMutationKey,
+    mutate,
+    { followAfterMutation: true },
+  );
+}
+
 export function requestTranscriptFollowAfterMutation(): void {
   viewportController?.requestFollowAfterExternalMutation();
 }
@@ -77,6 +108,16 @@ export function prepareTranscriptForSynchronousPrepend(
   ) ?? false;
 }
 
+
+export function quiesceTranscriptViewportForBlockedInstallNoDom(): BlockedViewportQuiesceToken | null {
+  return viewportController?.quiesceForBlockedInstallNoDom() ?? null;
+}
+
+export function validateTranscriptViewportBlockedInstallReady(
+  proof: BlockedViewportQuiesceToken,
+): boolean {
+  return validateBlockedQuiesceToken(proof);
+}
 export function resetTranscriptViewport(): void {
   viewportController?.reset();
 }
@@ -211,6 +252,14 @@ export function commitStream(streamId: string, retain = true): {
     viewportGeneration: transcriptViewportGeneration,
   };
   canonicalOwners.set(streamId, owner);
+  if (retain) {
+    committedClaims.set(stream.el, {
+      element: stream.el,
+      streamId,
+      streamGeneration: owner.generation,
+      canonicalRevision: owner.revision,
+    });
+  }
   canonicalMarkdownCoordinator.start({
     itemId: streamId,
     revision: owner.revision,
@@ -241,6 +290,93 @@ export function takeCommittedStreams(): HTMLElement[] {
   return committedEls.splice(0);
 }
 
+export function peekCommittedStreamsForSnapshot(): readonly CommittedStreamClaim[] {
+  return committedEls.map((element) => committedClaims.get(element)).filter(
+    (claim): claim is CommittedStreamClaim => claim !== undefined,
+  );
+}
+
+function committedClaimMatches(
+  current: CommittedStreamClaim | undefined,
+  expected: CommittedStreamClaim,
+): boolean {
+  return current === expected
+    && current.element === expected.element
+    && current.streamId === expected.streamId
+    && current.streamGeneration === expected.streamGeneration
+    && current.canonicalRevision === expected.canonicalRevision;
+}
+
+export function reserveCommittedStream(
+  expected: CommittedStreamClaim,
+): CommittedStreamReservation | null {
+  if (committedReservations.has(expected.element)) return null;
+  const originalIndex = committedEls.indexOf(expected.element);
+  const owner = canonicalOwners.get(expected.streamId);
+  if (
+    originalIndex < 0
+    || !committedClaimMatches(committedClaims.get(expected.element), expected)
+    || (owner !== undefined && (
+      owner.generation !== expected.streamGeneration
+      || owner.revision !== expected.canonicalRevision
+    ))
+  ) {
+    return null;
+  }
+  const reservation = { claim: expected, originalIndex };
+  committedReservations.set(expected.element, reservation);
+  return reservation;
+}
+
+export function validateCommittedStreamReservations(
+  reservations: readonly CommittedStreamReservation[],
+): boolean {
+  const elements = new Set<HTMLElement>();
+  return reservations.every((reservation) => {
+    const expected = reservation.claim;
+    const owner = canonicalOwners.get(expected.streamId);
+    if (elements.has(expected.element)) return false;
+    elements.add(expected.element);
+    return committedReservations.get(expected.element) === reservation
+      && committedEls[reservation.originalIndex] === expected.element
+      && committedClaimMatches(committedClaims.get(expected.element), expected)
+      && (owner === undefined || (
+        owner.generation === expected.streamGeneration
+        && owner.revision === expected.canonicalRevision
+      ));
+  });
+}
+
+export function commitCommittedStreamReservationsNoFail(
+  reservations: readonly CommittedStreamReservation[],
+): void {
+  const ordered = [...reservations].sort((left, right) => right.originalIndex - left.originalIndex);
+  for (const reservation of ordered) {
+    const { claim, originalIndex } = reservation;
+    committedEls.splice(originalIndex, 1);
+    const owner = canonicalOwners.get(claim.streamId);
+    if (
+      owner?.generation === claim.streamGeneration
+      && owner.revision === claim.canonicalRevision
+    ) {
+      canonicalOwners.delete(claim.streamId);
+    }
+    committedCanonicalText.delete(claim.element);
+    committedClaims.delete(claim.element);
+    committedReservations.delete(claim.element);
+  }
+}
+
+export function releaseCommittedStreamReservations(
+  reservations: readonly CommittedStreamReservation[],
+): void {
+  for (const reservation of reservations) {
+    if (committedReservations.get(reservation.claim.element) === reservation) {
+      committedReservations.delete(reservation.claim.element);
+    }
+  }
+}
+
 export function getCommittedStreamCanonicalText(element: HTMLElement): string | null {
   return committedCanonicalText.get(element) ?? null;
 }
@@ -259,11 +395,28 @@ export function invalidateCommittedStreamElement(element: HTMLElement): void {
 export function clearCommittedStreams(): void {
   for (const el of committedEls) {
     invalidateCommittedStreamElement(el);
+    committedClaims.delete(el);
+    committedReservations.delete(el);
     el.remove();
   }
   committedEls.length = 0;
 }
 
+
+export function quiesceStreamsForBlockedInstallNoCallback(): void {
+  for (const stream of streams.values()) cancelStreamWork(stream);
+  streams.clear();
+  for (const element of committedEls) {
+    committedCanonicalText.delete(element);
+    committedClaims.delete(element);
+    committedReservations.delete(element);
+  }
+  committedEls.length = 0;
+  committedReservations.clear();
+  canonicalOwners.clear();
+  nextStreamGeneration += 1;
+  transcriptViewportGeneration += 1;
+}
 export function clearActiveStreams(
   options: { preserveCanonicalCommits?: boolean } = {},
 ): void {
@@ -408,6 +561,8 @@ export function _resetForTest(): void {
   streams.clear();
   for (const el of committedEls) el.remove();
   committedEls.length = 0;
+  committedClaims.clear();
+  committedReservations.clear();
   invalidateAllCanonicalOwners();
   canonicalMarkdownCoordinator = createCanonicalMarkdownCoordinator();
   viewportController?.dispose();

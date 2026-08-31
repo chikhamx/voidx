@@ -337,6 +337,100 @@ function updateToolStats(el: HTMLElement): void {
 }
 
 
+
+function createToolItemElement(itemId: string, data: ToolItemData): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "tool-item";
+  el.dataset.toolId = data.tool_call_id ?? "";
+  el.dataset.itemId = itemId;
+
+  const header = document.createElement("div");
+  header.className = "tool-header";
+  const chevron = document.createElement("span");
+  chevron.className = "tool-chevron";
+  chevron.innerHTML = iconSvg("dot", 12, 2);
+  const name = document.createElement("span");
+  name.className = "tool-name";
+  name.textContent = data.tool_name || data.label || "tool";
+  const summaryInfo = getToolItemHeaderInfo(data);
+  const summary = document.createElement("span");
+  summary.className = summaryInfo.command ? "tool-summary tool-summary-command" : "tool-summary";
+  summary.innerHTML = `<span class="tool-icon">${summaryInfo.icon}</span> `;
+  summary.append(document.createTextNode(summaryInfo.verb));
+  if (summaryInfo.target) {
+    summary.append(" ");
+    const target = document.createElement("span");
+    target.className = "tool-target";
+    target.textContent = summaryInfo.target;
+    target.title = summaryInfo.target;
+    summary.append(target);
+  }
+  const argsSummary = document.createElement("span");
+  argsSummary.className = "tool-args-summary";
+  argsSummary.textContent = summarizeArgs(data);
+  const spinner = document.createElement("span");
+  spinner.className = "tool-spinner";
+  spinner.textContent = "running";
+  header.addEventListener("click", () => {
+    const body = el.querySelector<HTMLElement>(".tool-body");
+    if (!body) return;
+    body.hidden = !body.hidden;
+    if (body.children.length > 0) {
+      chevron.innerHTML = iconSvg(body.hidden ? "chevron-right" : "chevron-down", 12, 2);
+    }
+    chevron.classList.toggle("open", !body.hidden);
+  });
+  header.append(chevron, name, summary, argsSummary, spinner);
+  const body = document.createElement("div");
+  body.className = "tool-body";
+  body.hidden = true;
+  el.append(header, body);
+  return el;
+}
+
+function appendToolDetail(el: HTMLElement, data: ToolItemData): void {
+  const detailText = data.detail || (data as ToolItemData & { summary?: string }).summary;
+  if (!detailText) return;
+  const detail = document.createElement("pre");
+  detail.className = "tool-detail";
+  detail.textContent = truncateText(detailText);
+  el.querySelector(".tool-body")?.append(detail);
+  const chevron = el.querySelector<HTMLElement>(".tool-chevron");
+  if (chevron) chevron.innerHTML = iconSvg("chevron-right", 12, 2);
+}
+
+export function renderProductionToolItemDetached(
+  root: DocumentFragment,
+  groups: Map<string, HTMLElement>,
+  tools: Map<string, HTMLElement>,
+  itemId: string,
+  data: ToolItemData,
+  turnId = "",
+): HTMLElement {
+  const toolId = data.tool_call_id || itemId;
+  let el = tools.get(toolId);
+  if (!el) {
+    el = createToolItemElement(itemId, data);
+    tools.set(toolId, el);
+    const key = turnId || "__unscoped__";
+    let group = groups.get(key);
+    if (!group) {
+      group = createToolGroup(turnId);
+      groups.set(key, group);
+      root.append(group);
+    }
+    group.querySelector(".tool-group-body")?.append(el);
+    updateToolGroupSummary(group, data);
+    renderToolGroupVisibility(group);
+  }
+  appendToolDetail(el, data);
+  const spinner = el.querySelector(".tool-spinner");
+  if (spinner && data.ok !== undefined) {
+    spinner.textContent = data.ok ? "done" : "failed";
+    spinner.className = `tool-status ${data.ok ? "ok" : "err"}`;
+  }
+  return el;
+}
 export function handleToolItem(
   method: string,
   itemId: string,
