@@ -884,9 +884,11 @@ Native `desktop/tauri/` 当前不在计划改动范围。
 
 ### 9.3 P2：输入、退出与 bounded history
 
-- [ ] **P2.1 printable run**：512/1024/2048/4096 字符单 read 只执行一次字符串插入和 panel update。
-  - 文件：`tui/tests/test_input_advanced.py`
-  - 命令：`./test.py --backend -- tui/tests/test_input_advanced.py -v`
+- [x] **P2.1 printable run**：`_process_input()` 聚合连续 ASCII printable bytes，`_insert_text_run()` 一次完成字符串插入、cursor 更新和 panel update；控制键、Escape/CSI、UTF-8、bracketed paste 与 active choice 保持原有逐键边界。
+  - RED：512/1024/2048/4096 字符单 read 分别触发 512/1024/2048/4096 次字符串插入和 panel update。
+  - GREEN：新增 `tui/voidx_cli/input.py:_insert_text_run()` 与 `tui/voidx_cli/parser.py` printable-run 聚合；四种尺寸均只触发 1 次字符串插入和 1 次 panel update。
+  - 文件：`tui/voidx_cli/parser.py`、`tui/voidx_cli/input.py`、`tui/tests/test_input_advanced.py`。
+  - 验证：`./test.py --backend -- tui/tests/test_input_advanced.py -v`（59 passed）；相关输入集合 `./test.py --backend -- tui/tests/test_input_advanced.py tui/tests/test_input_handling.py -v`（87 passed）；完整 TUI 集合 `./test.py --backend -- tui/tests -v`（409 passed）；`py_compile` 通过。
 
 - [ ] **P2.2 paste buffer**：按 4KiB 分片输入 1/2/4/8MB，copy 次数和峰值内存近线性；超过阈值进入 spool。
   - 文件：`tui/tests/test_paste_handling.py`

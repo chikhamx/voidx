@@ -4,7 +4,8 @@ from __future__ import annotations
 
 
 class _InputEditorMixin:
-    """Methods: _current_line, _set_current_line, _insert_text, _delete_backward,
+    """Methods: _current_line, _set_current_line, _insert_text, _insert_text_run,
+    _delete_backward,
     _delete_forward, _insert_newline, _cursor_left, _cursor_right, _cursor_home,
     _cursor_end, _history_prev, _history_next, _load_history_item, _record_history,
     _is_input_empty, _get_input_text, _clear_input, _input_cursor_position,
@@ -110,6 +111,20 @@ class _InputEditorMixin:
         self._attachment_panel_suppressed_text = ""
         self._skill_panel_suppressed_text = ""
 
+    def _insert_text_run(self, text: str) -> None:
+        if self._active_choice is not None:
+            return
+
+        self._reset_ctrl_c()
+        line = self._current_line()
+        col = min(self._cursor_col, len(line))
+        new_line = line[:col] + text + line[col:]
+        self._set_current_line(new_line)
+        self._cursor_col = col + len(text)
+        self._clear_attachment_suppression_on_edit()
+        self._update_input_panels()
+
+
     def _insert_text(self, text: str) -> None:
         if self._active_choice is not None:
             if len(text) != 1 or not text.isascii():
@@ -122,14 +137,7 @@ class _InputEditorMixin:
                     return
             return
 
-        self._reset_ctrl_c()
-        line = self._current_line()
-        col = min(self._cursor_col, len(line))
-        new_line = line[:col] + text + line[col:]
-        self._set_current_line(new_line)
-        self._cursor_col = col + len(text)
-        self._clear_attachment_suppression_on_edit()
-        self._update_input_panels()
+        self._insert_text_run(text)
 
     def _delete_backward(self) -> None:
         if self._active_choice is not None:

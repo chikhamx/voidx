@@ -184,6 +184,14 @@ class _InputParserMixin:
         needs_render = False
         input_region_only = True
         while i < len(data):
+            if self._active_choice is None and 0x20 <= data[i] <= 0x7E:
+                start = i
+                while i < len(data) and 0x20 <= data[i] <= 0x7E:
+                    i += 1
+                self._insert_text_run(data[start:i].decode("ascii"))
+                needs_render = True
+                continue
+
             consumed, action = self._dispatch_key(data, i)
             if action == "submit":
                 if self._do_submit():

@@ -1134,3 +1134,53 @@ async def test_run_cancellation_during_transcript_waits_for_export_then_propagat
     assert events.index("dump_started") < events.index("dump_finished")
     assert dock._refresh_callback is None
     assert dock._width_provider is None
+
+
+@pytest.mark.parametrize("size", [512, 1024, 2048, 4096])
+def test_printable_run_inserts_and_updates_panels_once(tmp_path, monkeypatch, size):
+    tui = _tui(tmp_path)
+    original_set_current_line = tui._set_current_line
+    original_update_input_panels = tui._update_input_panels
+    calls = {"insert": 0, "panels": 0}
+
+    def set_current_line(text):
+        calls["insert"] += 1
+        original_set_current_line(text)
+
+    def update_input_panels():
+        calls["panels"] += 1
+        original_update_input_panels()
+
+    monkeypatch.setattr(tui, "_set_current_line", set_current_line)
+    monkeypatch.setattr(tui, "_update_input_panels", update_input_panels)
+
+    text = "x" * size
+
+    assert tui._process_input(text.encode("ascii")) is True
+    assert tui._get_input_text() == text
+    assert calls == {"insert": 1, "panels": 1}
+
+
+def test_printable_run_stops_before_escape_sequence(tmp_path):
+    tui = _tui(tmp_path)
+    tui._record_history("history")
+
+    tui._process_input(b"abc\x1b[Adef")
+
+    assert tui._get_input_text() == "historydef"
+
+
+def test_printable_run_keeps_utf8_and_active_choice_boundaries(tmp_path):
+    tui = _tui(tmp_path)
+
+    tui._process_input(b"ab" + "é".encode("utf-8") + b"cd")
+
+    assert tui._get_input_text() == "abécd"
+
+    tui = _tui(tmp_path)
+    tui._active_choice = [("y", "yes", "")]
+
+    tui._process_input(b"abc")
+
+    assert tui._active_choice == [("y", "yes", "")]
+    assert tui._get_input_text() == ""
