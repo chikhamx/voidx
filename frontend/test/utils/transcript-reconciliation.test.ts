@@ -4,6 +4,7 @@ import {
   buildTranscriptDescriptors,
   classifyProductionMessage,
   collectExistingTranscriptBlocks,
+  collectExistingTranscriptBlocksSafely,
   deriveTurnOwners,
   planTranscriptReconciliation,
   applyTranscriptReconciliation,
@@ -436,8 +437,12 @@ describe("applyTranscriptReconciliation", () => {
       fixture.detached.blocks,
     );
 
-    expect(result.status).toBe("stale");
+    expect(result).toEqual({
+      status: "stale",
+      reason: "transcript children changed after plan",
+    });
     expect(Array.from(fixture.root.childNodes)).toEqual(before);
+    expect(before.every((child, index) => fixture.root.childNodes[index] === child)).toBe(true);
   });
 
   it.each(["after-remove", "after-replace", "after-insert", "after-order"])(
@@ -463,4 +468,123 @@ describe("applyTranscriptReconciliation", () => {
         .every((element) => element.parentNode !== fixture.root)).toBe(true);
     },
   );
+});
+
+
+describe("Task 2 spacer-aware DOM collection", () => {
+  function spacer(metadata: unknown): HTMLElement {
+    const element = document.createElement("div");
+    element.className = "transcript-window-spacer";
+    element.dataset.transcriptSpacer = JSON.stringify(metadata);
+    element.setAttribute("aria-hidden", "true");
+    element.style.height = "42px";
+    return element;
+  }
+
+  const validSpacer = {
+    startIndex: 0,
+    endIndex: 2,
+    omittedKeys: ["node:a", "node:b"],
+    canonicalStartPx: 0,
+    canonicalEndPx: 42,
+    cssHeightPx: 42,
+  };
+
+  it("collects a marked spacer explicitly without treating it as a logical block or retained root", () => {
+    const root = document.createElement("div");
+    const before = existingRoot("node:before", "before")[0];
+    const omitted = spacer(validSpacer);
+    const after = existingRoot("node:after", "after")[0];
+    root.append(before, omitted, after);
+
+    const index = collectExistingTranscriptBlocks(root) as ReturnType<typeof collectExistingTranscriptBlocks> & {
+      spacers: Array<{ element: HTMLElement; segment: typeof validSpacer }>;
+    };
+
+    expect(index.blocks.map((block) => block.key)).toEqual(["node:before", "node:after"]);
+    expect(index.entries).toEqual([
+      { kind: "block", key: "node:before" },
+      { kind: "block", key: "node:after" },
+    ]);
+    expect(index.spacers).toEqual([{ element: omitted, segment: validSpacer }]);
+    expect(index.entries.some((entry) => entry.kind === "retained" && entry.root === omitted)).toBe(false);
+  });
+
+  it.each([
+    ["invalid JSON", "{"],
+    ["missing omitted keys", JSON.stringify({ ...validSpacer, omittedKeys: undefined })],
+    ["non-contiguous bounds", JSON.stringify({ ...validSpacer, startIndex: 2, endIndex: 1 })],
+    ["non-finite height", JSON.stringify({ ...validSpacer, cssHeightPx: "NaN" })],
+  ])("returns deferred for malformed spacer metadata (%s) without changing DOM", async (_name, metadata) => {
+    const api = await import("../../src/utils/transcript-reconciliation") as unknown as {
+      collectExistingTranscriptBlocksSafely(root: HTMLElement):
+        | { status: "collected"; index: unknown }
+        | { status: "deferred"; reason: string };
+    };
+    const root = document.createElement("div");
+    const malformed = document.createElement("div");
+    malformed.dataset.transcriptSpacer = metadata;
+    const sentinel = existingRoot("node:sentinel", "sentinel")[0];
+    root.append(malformed, sentinel);
+    const before = Array.from(root.childNodes);
+
+    const result = api.collectExistingTranscriptBlocksSafely(root);
+
+    expect(result.status).toBe("deferred");
+    if (result.status === "deferred") expect(result.reason).toMatch(/malformed.*spacer/i);
+    expect(Array.from(root.childNodes)).toEqual(before);
+  });
+
+  it.each([
+    ["reconcile key", (element: HTMLElement) => { element.dataset.reconcileKey = "node:conflict"; }],
+    ["item id", (element: HTMLElement) => { element.dataset.itemId = "conflict"; }],
+    ["missing spacer class", (element: HTMLElement) => { element.classList.remove("transcript-window-spacer"); }],
+    ["missing aria-hidden", (element: HTMLElement) => { element.removeAttribute("aria-hidden"); }],
+  ])("defers for spacer identity conflict: %s", (_name, mutate) => {
+    const root = document.createElement("div");
+    const conflicted = spacer(validSpacer);
+    mutate(conflicted);
+    root.append(conflicted);
+    const before = Array.from(root.childNodes);
+
+    const result = collectExistingTranscriptBlocksSafely(root);
+
+    expect(result.status).toBe("deferred");
+    if (result.status === "deferred") expect(result.reason).toMatch(/malformed.*spacer/i);
+    expect(Array.from(root.childNodes)).toEqual(before);
+  });
+
+  it("defers when a multi-root block range would consume a spacer without changing DOM", () => {
+    const root = document.createElement("div");
+    const compound = existingRoot("turn-with-tools:t1", "fingerprint", { rootCount: 2 });
+    const omitted = spacer(validSpacer);
+    root.append(compound[0], omitted);
+    const before = Array.from(root.childNodes);
+
+    const result = collectExistingTranscriptBlocksSafely(root);
+
+    expect(result.status).toBe("deferred");
+    if (result.status === "deferred") expect(result.reason).toMatch(/spacer.*root range/i);
+    expect(Array.from(root.childNodes)).toEqual(before);
+  });
+
+  it("returns deferred for malformed reconciliation metadata without clearing the DOM", async () => {
+    const api = await import("../../src/utils/transcript-reconciliation") as unknown as {
+      collectExistingTranscriptBlocksSafely(root: HTMLElement):
+        | { status: "collected"; index: unknown }
+        | { status: "deferred"; reason: string };
+    };
+    const root = document.createElement("div");
+    const malformed = existingRoot("node:broken", "fingerprint")[0];
+    malformed.dataset.reconcileRootCount = "not-an-integer";
+    const retained = document.createElement("div");
+    root.append(malformed, retained);
+    const before = Array.from(root.childNodes);
+
+    const result = api.collectExistingTranscriptBlocksSafely(root);
+
+    expect(result.status).toBe("deferred");
+    if (result.status === "deferred") expect(result.reason).toMatch(/malformed.*reconciliation/i);
+    expect(Array.from(root.childNodes)).toEqual(before);
+  });
 });

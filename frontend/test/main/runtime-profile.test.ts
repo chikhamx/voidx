@@ -22,6 +22,70 @@ function fakeSocket() {
   return socket;
 }
 
+let restoreTranscriptGeometry: (() => void) | null = null;
+
+function installTranscriptGeometry(transcript, blockHeight = 30, clientHeight = 50) {
+  restoreTranscriptGeometry?.();
+  const prototype = Element.prototype;
+  const previousPrototype = Object.getOwnPropertyDescriptor(prototype, "getBoundingClientRect");
+  const fallback = prototype.getBoundingClientRect;
+  const previousGeometry = new Map(
+    ["clientHeight", "scrollHeight", "scrollTop"]
+      .map((name) => [name, Object.getOwnPropertyDescriptor(transcript, name)]),
+  );
+  Object.defineProperty(transcript, "clientHeight", {
+    configurable: true,
+    value: clientHeight,
+  });
+  const rect = (top, height) => ({
+    top,
+    bottom: top + height,
+    left: 0,
+    right: 0,
+    width: 0,
+    height,
+    x: 0,
+    y: top,
+    toJSON: () => ({}),
+  });
+  Object.defineProperty(prototype, "getBoundingClientRect", {
+    configurable: true,
+    value: function getTranscriptTestRect() {
+      const element = this;
+      if (element === transcript) {
+        return rect(0, Math.max(1, Number(transcript.clientHeight) || 0));
+      }
+      const directIndex = element.parentElement === transcript
+        ? Array.from(transcript.children).indexOf(element)
+        : -1;
+      const detachedBlock = element.dataset?.reconcileKey !== undefined && !element.isConnected;
+      if (directIndex < 0 && !detachedBlock) return fallback.call(this);
+      if (directIndex < 0) return rect(0, blockHeight);
+      let top = 0;
+      for (const child of Array.from(transcript.children).slice(0, directIndex)) {
+        const spacerHeight = child.dataset.transcriptSpacer !== undefined
+          ? Number.parseFloat(child.style.height)
+          : NaN;
+        top += Number.isFinite(spacerHeight) && spacerHeight > 0 ? spacerHeight : blockHeight;
+      }
+      return rect(top - (Number(transcript.scrollTop) || 0), blockHeight);
+    },
+  });
+  restoreTranscriptGeometry = () => {
+    if (previousPrototype) Object.defineProperty(prototype, "getBoundingClientRect", previousPrototype);
+    else delete prototype.getBoundingClientRect;
+    for (const [name, descriptor] of previousGeometry) {
+      if (descriptor) Object.defineProperty(transcript, name, descriptor);
+      else Reflect.deleteProperty(transcript, name);
+    }
+    restoreTranscriptGeometry = null;
+  };
+}
+afterEach(() => {
+  restoreTranscriptGeometry?.();
+});
+
+
 function sentCreateProfiles(socket) {
   return socket.send.mock.calls
     .map(([data]) => JSON.parse(data))
@@ -1210,6 +1274,551 @@ describe("strict metadata boundaries and complete reset", () => {
 });
 
 
+
+  it("installs an initial windowed snapshot with bounded attached DOM", async () => {
+    const { handleNotification } = await import("../../src/main");
+    const transcript = document.querySelector("#transcript");
+    const nodes = Array.from({ length: 241 }, (_, index) => ({
+      node_type: "turn",
+      id: `bounded-turn-${index}`,
+      header: `bounded message ${index}`,
+    }));
+
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "thread-bounded-initial",
+      threads: [{ thread_id: "thread-bounded-initial", runtime_profile: "coding" }],
+      active_snapshot: {
+        thread_id: "thread-bounded-initial",
+        revision: 1,
+        windowed: true,
+        before_turn_id: 0,
+        has_earlier: false,
+        nodes,
+      },
+    });
+
+    expect(transcript.querySelectorAll("[data-reconcile-key]").length).toBeLessThanOrEqual(240);
+    expect(transcript.querySelector("[data-transcript-spacer]")).not.toBeNull();
+    expect(transcript.textContent).toContain("bounded message 240");
+    expect(transcript.textContent).not.toContain("bounded message 0");
+  });
+
+
+  it("keeps a subsequent windowed snapshot within the attached DOM budget", async () => {
+    const { handleNotification, _peekTranscriptWindowSnapshotForTest } = await import("../../src/main");
+    const transcript = document.querySelector("#transcript");
+    const nodes = Array.from({ length: 241 }, (_, index) => ({
+      node_type: "turn",
+      id: `bounded-update-${index}`,
+      header: `bounded update ${index}`,
+    }));
+    const notify = (revision, snapshotNodes) => handleNotification("workspace.snapshot", {
+      revision,
+      active_thread_id: "thread-bounded-update",
+      threads: [{ thread_id: "thread-bounded-update", runtime_profile: "coding" }],
+      active_snapshot: {
+        thread_id: "thread-bounded-update",
+        revision,
+        windowed: true,
+        before_turn_id: 0,
+        has_earlier: false,
+        nodes: snapshotNodes,
+      },
+    });
+
+    notify(1, nodes);
+    notify(2, nodes.map((node, index) => index === 240
+      ? { ...node, header: "bounded update latest" }
+      : node));
+
+    expect(transcript.querySelectorAll("[data-reconcile-key]").length).toBeLessThanOrEqual(240);
+    expect(transcript.querySelector("[data-transcript-spacer]")).not.toBeNull();
+    expect(transcript.textContent).toContain("bounded update latest");
+    expect(_peekTranscriptWindowSnapshotForTest("thread-bounded-update")?.nodes).toHaveLength(241);
+  });
+
+
+  it("installs an ordinary full snapshot as a bounded replacement window", async () => {
+    const {
+      handleNotification,
+      _peekTranscriptWindowSnapshotForTest,
+      _resetWorkbenchForTest,
+    } = await import("../../src/main");
+    _resetWorkbenchForTest();
+    const transcript = document.querySelector("#transcript");
+    const notify = (revision, nodes, windowed) => handleNotification("workspace.snapshot", {
+      revision,
+      active_thread_id: "thread-bounded-full",
+      threads: [{ thread_id: "thread-bounded-full", runtime_profile: "coding" }],
+      active_snapshot: {
+        thread_id: "thread-bounded-full",
+        revision,
+        windowed,
+        before_turn_id: 0,
+        has_earlier: false,
+        nodes,
+      },
+    });
+    try {
+      notify(1, Array.from({ length: 241 }, (_, index) => ({
+        node_type: "turn",
+        id: `full-old-${index}`,
+        header: `full old ${index}`,
+      })), true);
+      expect(_peekTranscriptWindowSnapshotForTest("thread-bounded-full")?.nodes).toHaveLength(241);
+      expect(transcript.querySelectorAll("[data-reconcile-key]").length).toBeLessThanOrEqual(240);
+
+      notify(2, Array.from({ length: 241 }, (_, index) => ({
+        node_type: "turn",
+        id: `full-new-${index}`,
+        header: `full new ${index}`,
+      })), false);
+
+      expect(transcript.querySelectorAll("[data-reconcile-key]").length).toBeLessThanOrEqual(240);
+      expect(transcript.querySelector("[data-transcript-spacer]")).not.toBeNull();
+      expect(transcript.textContent).toContain("full new 240");
+      expect(transcript.textContent).not.toContain("full old 240");
+      const canonical = _peekTranscriptWindowSnapshotForTest("thread-bounded-full");
+      expect(canonical?.nodes).toHaveLength(241);
+      expect(canonical?.nodes[0].id).toBe("full-new-0");
+    } finally {
+      _resetWorkbenchForTest();
+    }
+  });
+
+
+  it("rematerializes an omitted loaded block on scroll without requesting another page", async () => {
+
+
+    const socket = fakeSocket();
+    _setSocket(socket);
+    const { handleNotification, _resetWorkbenchForTest } = await import("../../src/main");
+    const transcript = document.querySelector("#transcript");
+    const geometry = new Map([
+      ["clientHeight", Object.getOwnPropertyDescriptor(transcript, "clientHeight")],
+      ["scrollTop", Object.getOwnPropertyDescriptor(transcript, "scrollTop")],
+    ]);
+    try {
+      Object.defineProperty(transcript, "clientHeight", { configurable: true, value: 96 });
+      handleNotification("workspace.snapshot", {
+        active_thread_id: "thread-loaded-scroll",
+        threads: [{ thread_id: "thread-loaded-scroll", runtime_profile: "coding" }],
+        active_snapshot: {
+          thread_id: "thread-loaded-scroll",
+          revision: 1,
+          windowed: true,
+          before_turn_id: 0,
+          has_earlier: false,
+          nodes: Array.from({ length: 241 }, (_, index) => ({
+            node_type: "turn",
+            id: `loaded-scroll-${index}`,
+            header: `loaded scroll ${index}`,
+          })),
+        },
+      });
+      expect(transcript.querySelector('[data-reconcile-key="node:loaded-scroll-120"]')).toBeNull();
+      socket.send.mockClear();
+
+      transcript.scrollTop = 120 * 96;
+      transcript.dispatchEvent(new Event("scroll"));
+      await Promise.resolve();
+
+      expect(transcript.querySelector('[data-reconcile-key="node:loaded-scroll-120"]')).not.toBeNull();
+      expect(socket.send.mock.calls
+        .map(([data]) => JSON.parse(data))
+        .filter((entry) => entry.method === "transcript.page")).toHaveLength(0);
+    } finally {
+      for (const [name, descriptor] of geometry) {
+        if (descriptor) Object.defineProperty(transcript, name, descriptor);
+        else Reflect.deleteProperty(transcript, name);
+      }
+      _resetWorkbenchForTest();
+    }
+  });
+
+
+  it("releases the old transcript window and ignores queued scroll work after a thread switch", async () => {
+    const {
+      handleNotification,
+      _peekTranscriptWindowSnapshotForTest,
+      _resetWorkbenchForTest,
+    } = await import("../../src/main");
+    _resetWorkbenchForTest();
+    const transcript = document.querySelector("#transcript");
+    try {
+      handleNotification("workspace.snapshot", {
+        revision: 1,
+        active_thread_id: "thread-window-old",
+        threads: [{ thread_id: "thread-window-old", runtime_profile: "coding" }],
+        active_snapshot: {
+          thread_id: "thread-window-old",
+          revision: 1,
+          windowed: true,
+          before_turn_id: 0,
+          has_earlier: false,
+          nodes: Array.from({ length: 241 }, (_, index) => ({
+            node_type: "turn",
+            id: `switch-old-${index}`,
+            header: `switch old ${index}`,
+          })),
+        },
+      });
+      const oldSpacer = transcript.querySelector("[data-transcript-spacer]");
+      expect(oldSpacer).not.toBeNull();
+      transcript.dispatchEvent(new Event("scroll"));
+
+      handleNotification("workspace.snapshot", {
+        revision: 2,
+        active_thread_id: "thread-window-new",
+        threads: [{ thread_id: "thread-window-new", runtime_profile: "coding" }],
+        active_snapshot: {
+          thread_id: "thread-window-new",
+          revision: 1,
+          nodes: [{
+            node_type: "message",
+            id: "switch-new-message",
+            payload: { style: "text", raw_text: "new thread transcript" },
+          }],
+        },
+      });
+
+      expect(_peekTranscriptWindowSnapshotForTest("thread-window-old")).toBeNull();
+      expect(oldSpacer?.isConnected).toBe(false);
+      await Promise.resolve();
+      expect(transcript.textContent).toContain("new thread transcript");
+      expect(transcript.textContent).not.toContain("switch old");
+    } finally {
+      _resetWorkbenchForTest();
+    }
+  });
+
+
+  it("keeps a pending-local island during an initial bounded window install", async () => {
+    const socket = fakeSocket();
+    _setSocket(socket);
+    const { handleNotification, _resetWorkbenchForTest } = await import("../../src/main");
+    _resetWorkbenchForTest();
+    _setSocket(socket);
+    const transcript = document.querySelector("#transcript");
+    const input = document.querySelector("#input");
+    const composer = document.querySelector("#composer");
+    try {
+      uiState.sessionId = "thread-initial-pending";
+      input.value = "initial pending island";
+      composer.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      const pending = transcript.querySelector('[data-item-id^="user-"]:not([data-reconcile-key])');
+      expect(pending).not.toBeNull();
+
+      handleNotification("workspace.snapshot", {
+        revision: 1,
+        active_thread_id: "thread-initial-pending",
+        threads: [{ thread_id: "thread-initial-pending", runtime_profile: "coding" }],
+        active_snapshot: {
+          thread_id: "thread-initial-pending",
+          revision: 1,
+          windowed: true,
+          before_turn_id: 0,
+          has_earlier: false,
+          nodes: Array.from({ length: 241 }, (_, index) => ({
+            node_type: "turn",
+            id: `initial-pending-${index}`,
+            header: `initial pending ${index}`,
+          })),
+        },
+      });
+
+      expect(pending?.isConnected).toBe(true);
+      expect(transcript.querySelector('[data-item-id^="user-"]:not([data-reconcile-key])')).toBe(pending);
+      expect(transcript.querySelectorAll("[data-reconcile-key]").length).toBeLessThanOrEqual(240);
+      expect(transcript.querySelector("[data-transcript-spacer]")).not.toBeNull();
+    } finally {
+      _resetWorkbenchForTest();
+    }
+  });
+
+  it("takes over a retained committed stream when a windowed snapshot replan includes its message", async () => {
+    const socket = fakeSocket();
+    _setSocket(socket);
+    const { handleNotification, _resetWorkbenchForTest, _peekTranscriptWindowSnapshotForTest } = await import("../../src/main");
+    _resetWorkbenchForTest();
+    _setSocket(socket);
+    const transcript = document.querySelector("#transcript");
+    const clientHeightDescriptor = Object.getOwnPropertyDescriptor(transcript, "clientHeight");
+    const notify = (revision, nodes) => handleNotification("workspace.snapshot", {
+      revision,
+      active_thread_id: "thread-stream-replan",
+      threads: [{ thread_id: "thread-stream-replan", runtime_profile: "coding" }],
+      active_snapshot: {
+        thread_id: "thread-stream-replan",
+        revision,
+        windowed: true,
+        before_turn_id: 0,
+        has_earlier: false,
+        nodes,
+      },
+    });
+    try {
+      Object.defineProperty(transcript, "clientHeight", { configurable: true, value: 96 });
+      notify(1, [{ node_type: "turn", id: "stream-replan-turn", header: "问一句" }]);
+      appendStreamText("stream-replan", "接管这条回复", "text");
+      commitStream("stream-replan");
+      expect(transcript.textContent).toContain("接管这条回复");
+
+      transcript.scrollTop = 96;
+      notify(2, [
+        { node_type: "turn", id: "stream-replan-turn", header: "问一句" },
+        { node_type: "assistant", id: "stream-replan-assistant", payload: { raw_text: "接管这条回复" } },
+      ]);
+
+      const matches = [...transcript.children]
+        .filter((child) => child.textContent?.includes("接管这条回复"));
+      const canonical = _peekTranscriptWindowSnapshotForTest("thread-stream-replan");
+      expect(canonical?.nodes.map((node) => node.id)).toEqual([
+        "stream-replan-turn",
+        "stream-replan-assistant",
+      ]);
+      expect(matches).toHaveLength(1);
+      expect(matches[0].dataset.reconcileKey).toBe("node:stream-replan-assistant");
+    } finally {
+      if (clientHeightDescriptor) Object.defineProperty(transcript, "clientHeight", clientHeightDescriptor);
+      else Reflect.deleteProperty(transcript, "clientHeight");
+      _resetWorkbenchForTest();
+    }
+  });
+
+
+
+
+  it("rematerializes an omitted block with updated content after a windowed snapshot merge", async () => {
+    const { handleNotification, _resetWorkbenchForTest } = await import("../../src/main");
+    _resetWorkbenchForTest();
+    const transcript = document.querySelector("#transcript");
+    const geometry = new Map([
+      ["clientHeight", Object.getOwnPropertyDescriptor(transcript, "clientHeight")],
+      ["scrollTop", Object.getOwnPropertyDescriptor(transcript, "scrollTop")],
+    ]);
+    const notify = (revision, nodes) => handleNotification("workspace.snapshot", {
+      revision,
+      active_thread_id: "thread-omitted-update",
+      threads: [{ thread_id: "thread-omitted-update", runtime_profile: "coding" }],
+      active_snapshot: {
+        thread_id: "thread-omitted-update",
+        revision,
+        windowed: true,
+        before_turn_id: 0,
+        has_earlier: false,
+        nodes,
+      },
+    });
+    const nodes = Array.from({ length: 241 }, (_, index) => ({
+      node_type: "turn",
+      id: `omitted-update-${index}`,
+      header: `omitted update ${index}`,
+    }));
+    try {
+      Object.defineProperty(transcript, "clientHeight", { configurable: true, value: 96 });
+      notify(1, nodes);
+      expect(transcript.querySelector('[data-reconcile-key="node:omitted-update-120"]')).toBeNull();
+
+      notify(2, [{
+        node_type: "turn",
+        id: "omitted-update-120",
+        header: "omitted updated content",
+      }]);
+
+      transcript.scrollTop = 120 * 96;
+      transcript.dispatchEvent(new Event("scroll"));
+      await Promise.resolve();
+
+      const block = transcript.querySelector('[data-reconcile-key="node:omitted-update-120"]');
+      expect(block).not.toBeNull();
+      expect(block.textContent).toContain("omitted updated content");
+      expect(block.textContent).not.toContain("omitted update 120");
+    } finally {
+      for (const [name, descriptor] of geometry) {
+        if (descriptor) Object.defineProperty(transcript, name, descriptor);
+        else Reflect.deleteProperty(transcript, name);
+      }
+      _resetWorkbenchForTest();
+    }
+  });
+
+  it("keeps pending-local attached while scrolling through the loaded canonical window", async () => {
+    const socket = fakeSocket();
+    _setSocket(socket);
+    const { handleNotification, _resetWorkbenchForTest } = await import("../../src/main");
+    const transcript = document.querySelector("#transcript");
+    const input = document.querySelector("#input");
+    const composer = document.querySelector("#composer");
+    const geometry = new Map([
+      ["clientHeight", Object.getOwnPropertyDescriptor(transcript, "clientHeight")],
+      ["scrollTop", Object.getOwnPropertyDescriptor(transcript, "scrollTop")],
+    ]);
+    try {
+      Object.defineProperty(transcript, "clientHeight", { configurable: true, value: 96 });
+      handleNotification("workspace.snapshot", {
+        active_thread_id: "thread-pending-pin",
+        threads: [{ thread_id: "thread-pending-pin", runtime_profile: "coding" }],
+        active_snapshot: {
+          thread_id: "thread-pending-pin",
+          revision: 1,
+          windowed: true,
+          before_turn_id: 0,
+          has_earlier: false,
+          nodes: Array.from({ length: 241 }, (_, index) => ({
+            node_type: "turn",
+            id: `pending-pin-${index}`,
+            header: `pending pin ${index}`,
+          })),
+        },
+      });
+      input.value = "pending external pin";
+      composer.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      const pending = transcript.querySelector('[data-item-id^="user-"]:not([data-reconcile-key])');
+      expect(pending).not.toBeNull();
+      socket.send.mockClear();
+
+      transcript.scrollTop = 120 * 96;
+      transcript.dispatchEvent(new Event("scroll"));
+      await Promise.resolve();
+
+      expect(transcript.querySelector('[data-reconcile-key="node:pending-pin-120"]')).not.toBeNull();
+      expect(pending?.isConnected).toBe(true);
+      expect(transcript.querySelector('[data-item-id^="user-"]:not([data-reconcile-key])')).toBe(pending);
+      expect(socket.send.mock.calls
+        .map(([data]) => JSON.parse(data))
+        .filter((entry) => entry.method === "transcript.page")).toHaveLength(0);
+    } finally {
+      for (const [name, descriptor] of geometry) {
+        if (descriptor) Object.defineProperty(transcript, name, descriptor);
+        else Reflect.deleteProperty(transcript, name);
+      }
+      _resetWorkbenchForTest();
+    }
+  });
+
+
+  it("keeps a conversation prompt attached while scrolling through the loaded canonical window", async () => {
+    const socket = fakeSocket();
+    _setSocket(socket);
+    const { handleItem, handleNotification, _resetWorkbenchForTest } = await import("../../src/main");
+    const transcript = document.querySelector("#transcript");
+    const geometry = new Map([
+      ["clientHeight", Object.getOwnPropertyDescriptor(transcript, "clientHeight")],
+      ["scrollTop", Object.getOwnPropertyDescriptor(transcript, "scrollTop")],
+    ]);
+    try {
+      Object.defineProperty(transcript, "clientHeight", { configurable: true, value: 96 });
+      handleNotification("workspace.snapshot", {
+        active_thread_id: "thread-prompt-pin",
+        threads: [{ thread_id: "thread-prompt-pin", runtime_profile: "coding" }],
+        active_snapshot: {
+          thread_id: "thread-prompt-pin",
+          revision: 1,
+          windowed: true,
+          before_turn_id: 0,
+          has_earlier: false,
+          nodes: Array.from({ length: 241 }, (_, index) => ({
+            node_type: "turn",
+            id: `prompt-pin-${index}`,
+            header: `prompt pin ${index}`,
+          })),
+        },
+      });
+      handleNotification("turn.started", {
+        thread_id: "thread-prompt-pin",
+        turn_id: "prompt-pin-turn",
+      });
+      handleItem("item.started", {
+        thread_id: "thread-prompt-pin",
+        turn_id: "prompt-pin-turn",
+        kind: "prompt",
+        item_id: "prompt-pin-item",
+        data: {
+          prompt_type: "clarify",
+          clarify_id: "prompt-pin-request",
+          question: "Keep this prompt attached?",
+          options: ["Yes"],
+        },
+      });
+      const prompt = transcript.querySelector(".prompt-message");
+      expect(prompt).not.toBeNull();
+      socket.send.mockClear();
+
+      transcript.scrollTop = 120 * 96;
+      transcript.dispatchEvent(new Event("scroll"));
+      await Promise.resolve();
+
+      expect(transcript.querySelector('[data-reconcile-key="node:prompt-pin-120"]')).not.toBeNull();
+      expect(prompt?.isConnected).toBe(true);
+      expect(transcript.querySelector(".prompt-message")).toBe(prompt);
+      expect(socket.send.mock.calls
+        .map(([data]) => JSON.parse(data))
+        .filter((entry) => entry.method === "transcript.page")).toHaveLength(0);
+    } finally {
+      for (const [name, descriptor] of geometry) {
+        if (descriptor) Object.defineProperty(transcript, name, descriptor);
+        else Reflect.deleteProperty(transcript, name);
+      }
+      _resetWorkbenchForTest();
+    }
+  });
+
+  it("materializes a file-change card while scrolling through the loaded canonical window", async () => {
+    const socket = fakeSocket();
+    _setSocket(socket);
+    const { handleNotification, _resetWorkbenchForTest } = await import("../../src/main");
+    const transcript = document.querySelector("#transcript");
+    const geometry = new Map([
+      ["clientHeight", Object.getOwnPropertyDescriptor(transcript, "clientHeight")],
+      ["scrollTop", Object.getOwnPropertyDescriptor(transcript, "scrollTop")],
+    ]);
+    try {
+      Object.defineProperty(transcript, "clientHeight", { configurable: true, value: 96 });
+      handleNotification("workspace.snapshot", {
+        active_thread_id: "thread-file-card-window",
+        threads: [{ thread_id: "thread-file-card-window", runtime_profile: "coding" }],
+        active_snapshot: {
+          thread_id: "thread-file-card-window",
+          revision: 1,
+          windowed: true,
+          before_turn_id: 0,
+          has_earlier: false,
+          nodes: Array.from({ length: 241 }, (_, index) => index === 120
+            ? {
+                node_type: "message",
+                id: "window-file-summary",
+                payload: { style: "text", raw_text: "Created src/window.ts +3 -0" },
+              }
+            : {
+                node_type: "turn",
+                id: `file-window-${index}`,
+                header: `file window ${index}`,
+              }),
+        },
+      });
+      expect(transcript.querySelector('[data-reconcile-key="node:window-file-summary"]')).toBeNull();
+      socket.send.mockClear();
+
+      transcript.scrollTop = 120 * 96;
+      transcript.dispatchEvent(new Event("scroll"));
+      await Promise.resolve();
+
+      expect(transcript.querySelector('[data-reconcile-key="node:window-file-summary"]')).not.toBeNull();
+      expect(transcript.querySelector('[data-item-id="window-file-summary"].file-change-card')).not.toBeNull();
+      expect(socket.send.mock.calls
+        .map(([data]) => JSON.parse(data))
+        .filter((entry) => entry.method === "transcript.page")).toHaveLength(0);
+    } finally {
+      for (const [name, descriptor] of geometry) {
+        if (descriptor) Object.defineProperty(transcript, name, descriptor);
+        else Reflect.deleteProperty(transcript, name);
+      }
+      _resetWorkbenchForTest();
+    }
+  });
+
+
   it("requests a bounded transcript window when switching threads", async () => {
     const socket = fakeSocket();
     _setSocket(socket);
@@ -1234,9 +1843,11 @@ describe("strict metadata boundaries and complete reset", () => {
 
   it("loads and prepends an earlier transcript page at the top of a windowed snapshot", async () => {
     const socket = fakeSocket();
+    const { handleNotification, _resetWorkbenchForTest } = await import("../../src/main");
+    _resetWorkbenchForTest();
     _setSocket(socket);
-    const { handleNotification } = await import("../../src/main");
     const transcript = document.querySelector("#transcript");
+    installTranscriptGeometry(transcript);
 
     handleNotification("workspace.snapshot", {
       active_thread_id: "thread-windowed",
@@ -1310,11 +1921,210 @@ describe("strict metadata boundaries and complete reset", () => {
     expect(transcript.scrollTop).toBe(30);
   });
 
+  it("does not install an earlier page response after the thread switched", async () => {
+    const socket = fakeSocket();
+    _setSocket(socket);
+    const { handleNotification, _peekTranscriptWindowSnapshotForTest, _resetWorkbenchForTest } = await import("../../src/main");
+    _resetWorkbenchForTest();
+    _setSocket(socket);
+    const transcript = document.querySelector("#transcript");
+    const geometry = new Map([
+      ["clientHeight", Object.getOwnPropertyDescriptor(transcript, "clientHeight")],
+      ["scrollTop", Object.getOwnPropertyDescriptor(transcript, "scrollTop")],
+    ]);
+    try {
+      Object.defineProperty(transcript, "clientHeight", { configurable: true, value: 96 });
+      handleNotification("workspace.snapshot", {
+        revision: 1,
+        active_thread_id: "thread-stale-page",
+        threads: [{ thread_id: "thread-stale-page", runtime_profile: "coding" }],
+        active_snapshot: {
+          thread_id: "thread-stale-page",
+          revision: 1,
+          windowed: true,
+          before_turn_id: 100,
+          has_earlier: true,
+          nodes: [{ node_type: "turn", id: "stale-page-current", header: "current page" }],
+        },
+      });
+      transcript.scrollTop = 0;
+      transcript.dispatchEvent(new Event("scroll"));
+      await Promise.resolve();
+      const request = socket.send.mock.calls
+        .map(([data]) => JSON.parse(data))
+        .find((entry) => entry.method === "transcript.page");
+      expect(request?.params).toMatchObject({ thread_id: "thread-stale-page" });
+
+      handleNotification("workspace.snapshot", {
+        revision: 2,
+        active_thread_id: "thread-stale-page-next",
+        threads: [{ thread_id: "thread-stale-page-next", runtime_profile: "coding" }],
+        active_snapshot: {
+          thread_id: "thread-stale-page-next",
+          revision: 1,
+          nodes: [{
+            node_type: "message",
+            id: "next-thread-message",
+            payload: { style: "text", raw_text: "next thread only" },
+          }],
+        },
+      });
+
+      const client = await import("../../src/rpc/client");
+      client._resolvePendingForTest(request.id, {
+        thread_id: "thread-stale-page",
+        revision: 2,
+        windowed: true,
+        before_turn_id: 0,
+        has_earlier: false,
+        nodes: [{ node_type: "turn", id: "stale-earlier", header: "stale earlier page" }],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(transcript.textContent).toContain("next thread only");
+      expect(transcript.textContent).not.toContain("stale earlier page");
+      expect(_peekTranscriptWindowSnapshotForTest("thread-stale-page")).toBeNull();
+    } finally {
+      for (const [name, descriptor] of geometry) {
+        if (descriptor) Object.defineProperty(transcript, name, descriptor);
+        else Reflect.deleteProperty(transcript, name);
+      }
+      _resetWorkbenchForTest();
+    }
+  });
+
+  it("replans the transcript window after a viewport resize", async () => {
+    const socket = fakeSocket();
+    _setSocket(socket);
+    const {
+      handleNotification,
+      _notifyTranscriptResizeForTest,
+      _resetWorkbenchForTest,
+    } = await import("../../src/main");
+    _resetWorkbenchForTest();
+    _setSocket(socket);
+    const transcript = document.querySelector("#transcript");
+    const clientHeightDescriptor = Object.getOwnPropertyDescriptor(transcript, "clientHeight");
+    const scrollTopDescriptor = Object.getOwnPropertyDescriptor(transcript, "scrollTop");
+    try {
+      Object.defineProperty(transcript, "clientHeight", { configurable: true, value: 96 });
+      handleNotification("workspace.snapshot", {
+        revision: 1,
+        active_thread_id: "thread-resize-replan",
+        threads: [{ thread_id: "thread-resize-replan", runtime_profile: "coding" }],
+        active_snapshot: {
+          thread_id: "thread-resize-replan",
+          revision: 1,
+          windowed: true,
+          before_turn_id: 0,
+          has_earlier: false,
+          nodes: Array.from({ length: 500 }, (_, index) => ({
+            node_type: "turn",
+            id: `resize-replan-${index}`,
+            header: `resize replan ${index}`,
+          })),
+        },
+      });
+      transcript.scrollTop = 250 * 96;
+      transcript.dispatchEvent(new Event("scroll"));
+      await Promise.resolve();
+      expect(transcript.querySelector('[data-reconcile-key="node:resize-replan-220"]')).toBeNull();
+      socket.send.mockClear();
+
+      Object.defineProperty(transcript, "clientHeight", { configurable: true, value: 960 });
+      _notifyTranscriptResizeForTest();
+      await Promise.resolve();
+
+      expect(transcript.querySelector('[data-reconcile-key="node:resize-replan-220"]')).not.toBeNull();
+      expect(socket.send.mock.calls
+        .map(([data]) => JSON.parse(data))
+        .filter((entry) => entry.method === "transcript.page")).toHaveLength(0);
+    } finally {
+      if (clientHeightDescriptor) Object.defineProperty(transcript, "clientHeight", clientHeightDescriptor);
+      else Reflect.deleteProperty(transcript, "clientHeight");
+      if (scrollTopDescriptor) Object.defineProperty(transcript, "scrollTop", scrollTopDescriptor);
+      else Reflect.deleteProperty(transcript, "scrollTop");
+      _resetWorkbenchForTest();
+    }
+  });
+
+
+
+
+  it("keeps attached DOM bounded after merging an earlier page with overlap", async () => {
+    const socket = fakeSocket();
+    _setSocket(socket);
+    const { handleNotification, _resetWorkbenchForTest } = await import("../../src/main");
+    const transcript = document.querySelector("#transcript");
+
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "thread-bounded-page",
+      threads: [{ thread_id: "thread-bounded-page", runtime_profile: "coding" }],
+      active_snapshot: {
+        thread_id: "thread-bounded-page",
+        revision: 1,
+        windowed: true,
+        before_turn_id: 240,
+        has_earlier: true,
+        nodes: [{ node_type: "turn", id: "page-current", header: "current bounded page" }],
+      },
+    });
+    const geometry = new Map([
+      ["scrollHeight", Object.getOwnPropertyDescriptor(transcript, "scrollHeight")],
+      ["clientHeight", Object.getOwnPropertyDescriptor(transcript, "clientHeight")],
+      ["scrollTop", Object.getOwnPropertyDescriptor(transcript, "scrollTop")],
+    ]);
+    try {
+      Object.defineProperty(transcript, "scrollHeight", {
+        configurable: true,
+        get: () => transcript.querySelectorAll("[data-reconcile-key]").length * 40,
+      });
+      Object.defineProperty(transcript, "clientHeight", { configurable: true, value: 40 });
+      transcript.scrollTop = 0;
+      transcript.dispatchEvent(new Event("scroll"));
+      await Promise.resolve();
+
+      const request = socket.send.mock.calls
+        .map(([data]) => JSON.parse(data))
+        .find((entry) => entry.method === "transcript.page");
+      const client = await import("../../src/rpc/client");
+      client._resolvePendingForTest(request.id, {
+        thread_id: "thread-bounded-page",
+        revision: 2,
+        windowed: true,
+        before_turn_id: 0,
+        has_earlier: false,
+        nodes: [
+          ...Array.from({ length: 240 }, (_, index) => ({
+            node_type: "turn",
+            id: `page-earlier-${index}`,
+            header: `earlier bounded ${index}`,
+          })),
+          { node_type: "turn", id: "page-current", header: "current bounded page" },
+        ],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(transcript.querySelectorAll("[data-reconcile-key]").length).toBeLessThanOrEqual(240);
+      expect(transcript.querySelector("[data-transcript-spacer]")).not.toBeNull();
+      expect(transcript.querySelectorAll('[data-reconcile-key="node:page-current"]')).toHaveLength(1);
+    } finally {
+      for (const [name, descriptor] of geometry) {
+        if (descriptor) Object.defineProperty(transcript, name, descriptor);
+        else Reflect.deleteProperty(transcript, name);
+      }
+      _resetWorkbenchForTest();
+    }
+  });
+
   it("rolls back an earlier page prepend when anchor restoration throws", async () => {
     const socket = fakeSocket();
     _setSocket(socket);
-    const { handleNotification } = await import("../../src/main");
+    const { handleNotification, _resetWorkbenchForTest } = await import("../../src/main");
+    _resetWorkbenchForTest();
+    _setSocket(socket);
     const transcript = document.querySelector("#transcript");
+    installTranscriptGeometry(transcript);
 
     handleNotification("workspace.snapshot", {
       active_thread_id: "thread-windowed",
@@ -1368,11 +2178,13 @@ describe("strict metadata boundaries and complete reset", () => {
     expect(transcript.scrollTop).toBe(0);
   });
 
-  it("drops an earlier page response after the active thread changes", async () => {
+it("drops an earlier page response after the active thread changes", async () => {
+    const { handleNotification, switchThread, _resetWorkbenchForTest } = await import("../../src/main");
+    _resetWorkbenchForTest();
     const socket = fakeSocket();
     _setSocket(socket);
-    const { handleNotification, switchThread } = await import("../../src/main");
     const transcript = document.querySelector("#transcript");
+    installTranscriptGeometry(transcript);
 
     handleNotification("workspace.snapshot", {
       active_thread_id: "thread-windowed",
@@ -1453,53 +2265,60 @@ it("drops a page response after a newer snapshot for the same thread", async () 
   const socket = fakeSocket();
   _setSocket(socket);
   const transcript = document.querySelector("#transcript");
+  installTranscriptGeometry(transcript);
 
-  handleNotification("workspace.snapshot", {
-    active_thread_id: "thread-same",
-    threads: [{ thread_id: "thread-same", runtime_profile: "coding" }],
-    active_snapshot: {
+  try {
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "thread-same",
+      threads: [{ thread_id: "thread-same", runtime_profile: "coding" }],
+      active_snapshot: {
+        thread_id: "thread-same",
+        revision: 1,
+        windowed: true,
+        before_turn_id: 2,
+        after_turn_id: 3,
+        has_earlier: true,
+        nodes: [{ node_type: "turn", id: "turn-current", header: "current window" }],
+      },
+    });
+    Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 100 });
+    transcript.scrollTop = 0;
+    transcript.dispatchEvent(new Event("scroll"));
+    await Promise.resolve();
+    const pageRequest = socket.send.mock.calls
+      .map(([data]) => JSON.parse(data))
+      .find((entry) => entry.method === "transcript.page");
+
+    handleNotification("workspace.snapshot", {
+      active_thread_id: "thread-same",
+      threads: [{ thread_id: "thread-same", runtime_profile: "coding" }],
+      active_snapshot: {
+        thread_id: "thread-same",
+        revision: 2,
+        windowed: true,
+        before_turn_id: 4,
+        has_earlier: true,
+        nodes: [{ node_type: "turn", id: "turn-fresh", header: "fresh window" }],
+      },
+    });
+
+    const client = await import("../../src/rpc/client");
+    client._resolvePendingForTest(pageRequest.id, {
       thread_id: "thread-same",
-      revision: 1,
+      revision: 3,
       windowed: true,
-      before_turn_id: 2,
-      has_earlier: true,
-      nodes: [{ node_type: "turn", id: "turn-current", header: "current window" }],
-    },
-  });
-  Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 100 });
-  transcript.scrollTop = 0;
-  transcript.dispatchEvent(new Event("scroll"));
-  await Promise.resolve();
-  const pageRequest = socket.send.mock.calls
-    .map(([data]) => JSON.parse(data))
-    .find((entry) => entry.method === "transcript.page");
+      before_turn_id: 0,
+      has_earlier: false,
+      nodes: [{ node_type: "turn", id: "turn-stale", header: "stale page" }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-  handleNotification("workspace.snapshot", {
-    active_thread_id: "thread-same",
-    threads: [{ thread_id: "thread-same", runtime_profile: "coding" }],
-    active_snapshot: {
-      thread_id: "thread-same",
-      revision: 2,
-      windowed: true,
-      before_turn_id: 4,
-      has_earlier: true,
-      nodes: [{ node_type: "turn", id: "turn-fresh", header: "fresh window" }],
-    },
-  });
-
-  const client = await import("../../src/rpc/client");
-  client._resolvePendingForTest(pageRequest.id, {
-    thread_id: "thread-same",
-    revision: 3,
-    windowed: true,
-    before_turn_id: 0,
-    has_earlier: false,
-    nodes: [{ node_type: "turn", id: "turn-stale", header: "stale page" }],
-  });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-
-  expect(transcript.textContent).toContain("fresh window");
-  expect(transcript.textContent).not.toContain("stale page");
+    expect(transcript.textContent).toContain("fresh window");
+    expect(transcript.textContent).not.toContain("stale page");
+  } finally {
+    restoreTranscriptGeometry?.();
+    _resetWorkbenchForTest();
+  }
 });
 
 it("drops a page response after force and retries the same cursor", async () => {

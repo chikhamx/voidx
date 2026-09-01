@@ -116,6 +116,7 @@ class RenderState:
     last_bottom_start_row: int = 1
     input_region_render_pending: bool = False
     choice_selection_render_pending: bool = False
+    full_frame_repaint_pending: bool = False
     bottom_region_dirty: bool = False
     restored_range_key: tuple[int, int, int] | None = None
     restored_committed_line_count: int = 0
@@ -241,6 +242,7 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_last_bottom_start_row": ("_render_state", "last_bottom_start_row"),
     "_input_region_render_pending": ("_render_state", "input_region_render_pending"),
     "_choice_selection_render_pending": ("_render_state", "choice_selection_render_pending"),
+    "_full_frame_repaint_pending": ("_render_state", "full_frame_repaint_pending"),
     "_bottom_region_dirty": ("_render_state", "bottom_region_dirty"),
     "_restored_range_key": ("_render_state", "restored_range_key"),
     "_restored_committed_line_count": ("_render_state", "restored_committed_line_count"),

@@ -96,7 +96,7 @@ export function renderFileChangeSummary(itemId: string, text: string): boolean {
   if (transcript && !state.card.isConnected) {
     transcript.append(state.card);
   }
-  renderCard(state);
+  renderCard(state, () => advanceFileChangeCardGeneration(key));
   if (transcript) requestTranscriptFollowAfterMutation();
   return true;
 }
@@ -275,6 +275,7 @@ export function renderFileChanges(
   rebuildFiles(state);
   if (currentFiles.length === 0) {
     const buffered = sourceId ? state.sources.get(sourceId) || "" : "";
+    advanceFileChangeCardGeneration(key);
     return Boolean(sourceId && looksLikeUnifiedDiff(buffered));
   }
 
@@ -282,7 +283,7 @@ export function renderFileChanges(
   if (transcript && !state.card.isConnected) {
     transcript.append(state.card);
   }
-  renderCard(state);
+  renderCard(state, () => advanceFileChangeCardGeneration(key));
   if (transcript) requestTranscriptFollowAfterMutation();
   return true;
 }
@@ -330,6 +331,10 @@ export function peekFileChangeCard(key: string): FileChangeCardToken | null {
     card: state.card,
     generation: cardGenerations.get(key) ?? 0,
   };
+}
+
+function advanceFileChangeCardGeneration(key: string): void {
+  cardGenerations.set(key, (cardGenerations.get(key) ?? 0) + 1);
 }
 
 function tokenMatches(current: FileChangeCardToken | null, expected: FileChangeCardToken | null): boolean {
@@ -442,7 +447,10 @@ function createCard(): HTMLElement {
   return card;
 }
 
-function renderCard(state: FileChangeCardState): void {
+function renderCard(
+  state: FileChangeCardState,
+  onMutation?: () => void,
+): void {
   const files = [...state.files.values()];
   const added = files.reduce((total, file) => total + file.added, 0);
   const removed = files.reduce((total, file) => total + file.removed, 0);
@@ -474,7 +482,7 @@ function renderCard(state: FileChangeCardState): void {
   list.className = "file-change-list";
   const visibleFiles = state.expanded ? files : files.slice(0, FILE_CHANGE_PREVIEW_LIMIT);
   for (const file of visibleFiles) {
-    list.append(renderFileRow(file));
+    list.append(renderFileRow(file, onMutation));
   }
   state.card.append(list);
 
@@ -488,13 +496,17 @@ function renderCard(state: FileChangeCardState): void {
       : `Show ${files.length - FILE_CHANGE_PREVIEW_LIMIT} more ${files.length - FILE_CHANGE_PREVIEW_LIMIT === 1 ? "file" : "files"}`;
     expand.addEventListener("click", () => {
       state.expanded = !state.expanded;
-      renderCard(state);
+      renderCard(state, onMutation);
     });
     state.card.append(expand);
   }
+  onMutation?.();
 }
 
-function renderFileRow(file: FileChange): HTMLElement {
+function renderFileRow(
+  file: FileChange,
+  onMutation?: () => void,
+): HTMLElement {
   const entry = document.createElement("div");
   entry.className = "file-change-entry";
 
@@ -544,6 +556,7 @@ function renderFileRow(file: FileChange): HTMLElement {
     detail.hidden = !detail.hidden;
     row.setAttribute("aria-expanded", String(!detail.hidden));
     chevron.textContent = detail.hidden ? "›" : "⌄";
+    onMutation?.();
   });
 
   entry.append(row, detail);

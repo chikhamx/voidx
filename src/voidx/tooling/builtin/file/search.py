@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import warnings
 from pathlib import Path
 from typing import Literal
 
@@ -15,6 +16,7 @@ from voidx.tooling.adapters.persistence.result_storage import persist_named_tool
 from voidx.observability.tool_log import log_tool_event
 from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import ToolResult
+from voidx.tooling.domain.output_policy import DEFAULT_TOOL_OUTPUT_MAX_CHARS
 from voidx.platform.paths import resolve_tool_path as _resolve_tool_path
 from voidx.tooling.domain.schema import SKIP_DIRS, SKIP_SUFFIXES
 from voidx.tooling.application.authorization import sandbox_paths_for_access as _sandbox_paths_for_access
@@ -24,7 +26,7 @@ from voidx.tooling.application.file_state import record_read_range
 
 CaseMode = Literal["auto", "sensitive", "insensitive"]
 MatchMode = Literal["text", "word", "regex"]
-OUTPUT_CHAR_BUDGET = 4_000
+OUTPUT_CHAR_BUDGET = DEFAULT_TOOL_OUTPUT_MAX_CHARS
 
 
 class FindInput(BaseModel):
@@ -269,9 +271,22 @@ class SearchTool:
         if inp.match == "word":
             expression = rf"(?<!\w){expression}(?!\w)"
         try:
-            regex = re.compile(expression, flags)
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                regex = re.compile(expression, flags)
         except re.error as exc:
             return ToolResult(output=f"Invalid regex: {exc}", metadata={"error": True})
+        for warning in caught:
+            log_tool_event(
+                "python_warning",
+                tool_name="search",
+                message=warnings.formatwarning(
+                    warning.message,
+                    warning.category,
+                    warning.filename,
+                    warning.lineno,
+                ).rstrip(),
+            )
         extensions = set(inp.extensions or [])
         grouped: dict[str, list[dict]] = {}
         count = 0

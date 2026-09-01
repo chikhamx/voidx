@@ -5,6 +5,10 @@ import {
   resetConversationPrompts,
   showConversationPrompt,
   validateBlockedPromptQuiesceToken,
+  beginConversationPromptResponse,
+  failConversationPromptResponse,
+  peekConversationPromptToken,
+  validateConversationPromptToken,
 } from "../../src/ui/prompt";
 import {
   _resetForTest as resetStreams,
@@ -67,5 +71,35 @@ describe("blocked prompt quiesce", () => {
     }, vi.fn());
 
     expect(validateBlockedPromptQuiesceToken(proof as never)).toBe(false);
+  });
+});
+
+describe("live conversation prompt token", () => {
+  const showPrompt = () => showConversationPrompt("item-live", "thread-live", {
+    prompt_type: "clarify",
+    clarify_id: "request-live",
+    question: "Choose",
+    options: ["A"],
+  }, vi.fn())!;
+
+  it("invalidates tokens when response state changes without replacing the prompt element", () => {
+    const prompt = showPrompt();
+    const element = prompt.element;
+    const initial = peekConversationPromptToken("thread-live");
+    expect(initial).not.toBeNull();
+    expect(validateConversationPromptToken(initial!)).toBe(true);
+
+    expect(beginConversationPromptResponse("request-live")?.element).toBe(element);
+    expect(validateConversationPromptToken(initial!)).toBe(false);
+    const submitting = peekConversationPromptToken("thread-live");
+    expect(submitting).not.toBeNull();
+    expect(validateConversationPromptToken(submitting!)).toBe(true);
+
+    failConversationPromptResponse("request-live");
+    expect(prompt.element).toBe(element);
+    expect(validateConversationPromptToken(submitting!)).toBe(false);
+    const retryable = peekConversationPromptToken("thread-live");
+    expect(retryable).not.toBeNull();
+    expect(validateConversationPromptToken(retryable!)).toBe(true);
   });
 });

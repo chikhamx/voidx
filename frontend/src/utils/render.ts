@@ -11,6 +11,7 @@ import {
   validateCommittedStreamReservations,
   commitCommittedStreamReservationsNoFail,
   releaseCommittedStreamReservations,
+  type CommittedStreamClaim,
   type CommittedStreamReservation,
 } from './stream';
 import type { TranscriptNode, Payload } from '../rpc/protocol';
@@ -26,6 +27,7 @@ import {
 import type {
   FileChangeCardReservation,
   HistoricalFileChangeContext,
+  FileChangeCardState,
 } from './render-file-changes';
 import { iconSvg } from './icons';
 import type {
@@ -423,6 +425,50 @@ function committedStreamText(element: HTMLElement): string {
   return (element.querySelector<HTMLElement>(".markdown-body")?.textContent || "").trim();
 }
 
+export function claimCommittedStreamsForDescriptors(
+  descriptors: readonly TranscriptNodeDescriptor[],
+): {
+  syntheticBlocks: Map<HTMLElement, TranscriptLogicalBlock>;
+  claimByKey: Map<string, CommittedStreamClaim>;
+} {
+  const availableClaims = [...peekCommittedStreamsForSnapshot()];
+  const syntheticBlocks = new Map<HTMLElement, TranscriptLogicalBlock>();
+  const claimByKey = new Map<string, CommittedStreamClaim>();
+  for (const descriptor of descriptors) {
+    if (descriptor.memberNodes.length !== 1 || descriptor.memberNodes[0].node_type !== "assistant") continue;
+    const payload = descriptor.memberNodes[0].payload as Record<string, unknown> | undefined;
+    if (String(payload?.thinking_text ?? "")) continue;
+    const expectedText = snapshotAssistantText(descriptor.memberNodes[0]);
+    const claimIndex = availableClaims.findIndex((claim) => committedStreamText(claim.element) === expectedText);
+    if (claimIndex < 0) continue;
+    const [claim] = availableClaims.splice(claimIndex, 1);
+    syntheticBlocks.set(claim.element, {
+      key: descriptor.key,
+      fingerprint: descriptor.fingerprint,
+      rendererShapeVersion: descriptor.rendererShapeVersion,
+      turnId: descriptor.turnId,
+      roots: [claim.element],
+      primary: claim.element,
+      memberNodeIds: new Set(descriptor.memberNodeIds),
+      ownedToolCallIds: new Set(),
+      ownedFileChangeKeys: new Set(),
+    });
+    claimByKey.set(descriptor.key, claim);
+  }
+  return { syntheticBlocks, claimByKey };
+}
+
+export function stampTranscriptBlockOwnership(block: TranscriptLogicalBlock): void {
+  block.primary.dataset.reconcileKey = block.key;
+  block.primary.dataset.reconcileFingerprint = block.fingerprint;
+  block.primary.dataset.reconcileShape = block.rendererShapeVersion;
+  block.primary.dataset.reconcileRootCount = String(block.roots.length);
+  block.primary.dataset.reconcileMemberNodeIds = JSON.stringify([...block.memberNodeIds]);
+  block.primary.dataset.reconcileToolCallIds = "[]";
+  block.primary.dataset.reconcileFileChangeKeys = "[]";
+  if (block.turnId) block.primary.dataset.reconcileTurnId = block.turnId;
+}
+
 
 function collectTranscriptIds(root: HTMLElement): Map<string, HTMLElement> {
   const byId = new Map<string, HTMLElement>();
@@ -780,30 +826,7 @@ export function renderTranscript(
 ): RenderTranscriptResult {
   const descriptors = buildTranscriptDescriptors(snapshot.nodes || []);
 
-  const availableClaims = [...peekCommittedStreamsForSnapshot()];
-  const syntheticBlocks = new Map<HTMLElement, TranscriptLogicalBlock>();
-  const claimByKey = new Map<string, (typeof availableClaims)[number]>();
-  for (const descriptor of descriptors) {
-    if (descriptor.memberNodes.length !== 1 || descriptor.memberNodes[0].node_type !== "assistant") continue;
-    const payload = descriptor.memberNodes[0].payload as Record<string, unknown> | undefined;
-    if (String(payload?.thinking_text ?? "")) continue;
-    const expectedText = snapshotAssistantText(descriptor.memberNodes[0]);
-    const claimIndex = availableClaims.findIndex((claim) => committedStreamText(claim.element) === expectedText);
-    if (claimIndex < 0) continue;
-    const [claim] = availableClaims.splice(claimIndex, 1);
-    syntheticBlocks.set(claim.element, {
-      key: descriptor.key,
-      fingerprint: descriptor.fingerprint,
-      rendererShapeVersion: descriptor.rendererShapeVersion,
-      turnId: descriptor.turnId,
-      roots: [claim.element],
-      primary: claim.element,
-      memberNodeIds: new Set(descriptor.memberNodeIds),
-      ownedToolCallIds: new Set(),
-      ownedFileChangeKeys: new Set(),
-    });
-    claimByKey.set(descriptor.key, claim);
-  }
+  const { syntheticBlocks, claimByKey } = claimCommittedStreamsForDescriptors(descriptors);
 
   const pendingHandoffByKey = new Map<string, TranscriptLogicalBlock>();
   for (const descriptor of descriptors) {
@@ -904,14 +927,7 @@ export function renderTranscript(
       }
       for (const block of plan.keep) {
         if (!claimByKey.has(block.key) && !pendingHandoffByKey.has(block.key)) continue;
-        block.primary.dataset.reconcileKey = block.key;
-        block.primary.dataset.reconcileFingerprint = block.fingerprint;
-        block.primary.dataset.reconcileShape = block.rendererShapeVersion;
-        block.primary.dataset.reconcileRootCount = String(block.roots.length);
-        block.primary.dataset.reconcileMemberNodeIds = JSON.stringify([...block.memberNodeIds]);
-        block.primary.dataset.reconcileToolCallIds = "[]";
-        block.primary.dataset.reconcileFileChangeKeys = "[]";
-        if (block.turnId) block.primary.dataset.reconcileTurnId = block.turnId;
+        stampTranscriptBlockOwnership(block);
         if (pendingHandoffByKey.has(block.key)) {
           const descriptor = descriptors.find((candidate) => candidate.key === block.key);
           const node = descriptor?.memberNodes[0];
@@ -980,6 +996,7 @@ export interface DetachedTranscriptBlocks {
   fragment: DocumentFragment;
   blocks: TranscriptLogicalBlock[];
   context: TranscriptRenderContext;
+  stagedFileChangeStates: ReadonlyMap<string, FileChangeCardState>;
 }
 
 function renderDetachedMessage(context: TranscriptRenderContext, node: TranscriptNode): void {
@@ -1199,5 +1216,10 @@ export function renderTranscriptBlocksDetached(
     ));
   }
 
-  return { fragment, blocks, context };
+  return {
+    fragment,
+    blocks,
+    context,
+    stagedFileChangeStates: new Map(context.fileChanges.cards),
+  };
 }

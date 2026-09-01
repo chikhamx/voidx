@@ -261,3 +261,129 @@ describe("blocked file cache quiesce", () => {
     expect(peekFileChangeCard("turn-blocked")).toBeNull();
   });
 });
+
+
+describe("file change card three-state window reservations", () => {
+  it("reserves trim, materialize, and replace without publishing before one no-fail commit", async () => {
+    const diff = "--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-a\n+b";
+    renderFileChanges("trim-key", diff, "trim-source");
+    renderFileChanges("replace-key", diff, "replace-source");
+    const trimExpected = peekFileChangeCard("trim-key")!;
+    const replaceExpected = peekFileChangeCard("replace-key")!;
+    const { createHistoricalFileChangeContext, renderHistoricalFileChanges } = await import(
+      "../../src/utils/render-file-changes"
+    );
+    const detachedRoot = document.createDocumentFragment();
+    const context = createHistoricalFileChangeContext(detachedRoot);
+    renderHistoricalFileChanges(context, "materialize-key", diff, "materialize-source");
+    renderHistoricalFileChanges(
+      context,
+      "replace-key",
+      "--- a/replaced.ts\n+++ b/replaced.ts\n@@ -1 +1 @@\n-old\n+new",
+      "replace-next-source",
+    );
+    const materialized = context.cards.get("materialize-key")!;
+    const replacement = context.cards.get("replace-key")!;
+
+    const trim = reserveFileChangeCard("trim-key", trimExpected, null)!;
+    const materialize = reserveFileChangeCard("materialize-key", null, materialized)!;
+    const replace = reserveFileChangeCard("replace-key", replaceExpected, replacement)!;
+    const reservations = [trim, materialize, replace];
+
+    expect(validateFileChangeCardReservations(reservations)).toBe(true);
+    expect(peekFileChangeCard("trim-key")).toEqual(trimExpected);
+    expect(peekFileChangeCard("materialize-key")).toBeNull();
+    expect(peekFileChangeCard("replace-key")).toEqual(replaceExpected);
+
+    commitFileChangeCardReservationsNoFail(reservations);
+
+    expect(peekFileChangeCard("trim-key")).toBeNull();
+    expect(peekFileChangeCard("materialize-key")?.card).toBe(materialized.card);
+    expect(peekFileChangeCard("replace-key")?.card).toBe(replacement.card);
+  });
+
+  it("releases the whole acquired batch after a conflict so every key can be retried", () => {
+    const diff = "--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-a\n+b";
+    renderFileChanges("first-key", diff);
+    renderFileChanges("conflict-key", diff);
+    const firstExpected = peekFileChangeCard("first-key")!;
+    const conflictExpected = peekFileChangeCard("conflict-key")!;
+    const held = reserveFileChangeCard("conflict-key", conflictExpected, null)!;
+    const acquired = reserveFileChangeCard("first-key", firstExpected, null)!;
+
+    expect(reserveFileChangeCard("conflict-key", conflictExpected, null)).toBeNull();
+    releaseFileChangeCardReservations([acquired]);
+    releaseFileChangeCardReservations([held]);
+
+    const firstRetry = reserveFileChangeCard("first-key", firstExpected, null);
+    const conflictRetry = reserveFileChangeCard("conflict-key", conflictExpected, null);
+    expect(firstRetry).not.toBeNull();
+    expect(conflictRetry).not.toBeNull();
+    releaseFileChangeCardReservations([firstRetry!, conflictRetry!]);
+  });
+});
+
+
+describe("file change card production mutation generations", () => {
+  it("invalidates a reservation when renderFileChanges mutates the same production card", () => {
+    const first = "--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-a\n+b";
+    const second = "--- a/b.ts\n+++ b/b.ts\n@@ -1 +1 @@\n-old\n+new";
+    renderFileChanges("generation-key", first, "source-1");
+    const expected = peekFileChangeCard("generation-key")!;
+    const reservation = reserveFileChangeCard("generation-key", expected, null)!;
+
+    renderFileChanges("generation-key", second, "source-2");
+
+    const current = peekFileChangeCard("generation-key")!;
+    expect(current.card).toBe(expected.card);
+    expect(current.generation).toBeGreaterThan(expected.generation);
+    expect(validateFileChangeCardReservations([reservation])).toBe(false);
+
+    releaseFileChangeCardReservations([reservation]);
+    const retry = reserveFileChangeCard("generation-key", current, null);
+    expect(retry).not.toBeNull();
+    releaseFileChangeCardReservations([retry!]);
+  });
+
+  it("invalidates a reservation when renderFileChangeSummary mutates the same production card", () => {
+    renderFileChangeSummary("summary-generation", "Modified a.ts +1 -1");
+    const expected = peekFileChangeCard("summary-generation")!;
+    const reservation = reserveFileChangeCard("summary-generation", expected, null)!;
+
+    renderFileChangeSummary("summary-generation", "Modified b.ts +2 -1");
+
+    const current = peekFileChangeCard("summary-generation")!;
+    expect(current.card).toBe(expected.card);
+    expect(current.generation).toBeGreaterThan(expected.generation);
+    expect(validateFileChangeCardReservations([reservation])).toBe(false);
+
+    releaseFileChangeCardReservations([reservation]);
+    const retry = reserveFileChangeCard("summary-generation", current, null);
+    expect(retry).not.toBeNull();
+    releaseFileChangeCardReservations([retry!]);
+  });
+});
+
+
+describe("file change row interaction generations", () => {
+  it("invalidates a reservation when a production file row toggles its detail", () => {
+    const diff = "--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-old\n+new";
+    renderFileChanges("row-generation", diff);
+    const expected = peekFileChangeCard("row-generation")!;
+    const reservation = reserveFileChangeCard("row-generation", expected, null)!;
+    const row = expected.card.querySelector<HTMLButtonElement>(".file-change-row")!;
+
+    row.click();
+
+    const current = peekFileChangeCard("row-generation")!;
+    expect(row.getAttribute("aria-expanded")).toBe("true");
+    expect(current.card).toBe(expected.card);
+    expect(current.generation).toBeGreaterThan(expected.generation);
+    expect(validateFileChangeCardReservations([reservation])).toBe(false);
+
+    releaseFileChangeCardReservations([reservation]);
+    const retry = reserveFileChangeCard("row-generation", current, null);
+    expect(retry).not.toBeNull();
+    releaseFileChangeCardReservations([retry!]);
+  });
+});

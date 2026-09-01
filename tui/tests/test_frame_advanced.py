@@ -862,6 +862,69 @@ def test_choice_selection_repaint_invalidates_last_render_plan(tmp_path, monkeyp
     assert tui._last_render_plan is None
 
 
+
+
+def test_choice_close_forces_full_frame_repaint_before_next_paint(tmp_path, monkeypatch):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    for index in range(8):
+        dock.tree.new_node(
+            parent=dock.tree.root,
+            node_type="message",
+            header=f"stable history {index}",
+            collapsed=False,
+        )
+    tui._active_choice = [
+        ("resume one", "one", "first session"),
+        ("resume two", "two", "second session"),
+    ]
+    tui._choice_prompt = "Resume session?"
+    tui._choice_selected = 0
+
+    tui._render_frame()
+    fake_stdout.text = ""
+    tui._clear_choice_prompt()
+
+    def fail_diff(*_args, **_kwargs):
+        raise AssertionError("closing a choice must force a complete frame repaint")
+
+    monkeypatch.setattr(tui, "_render_diff", fail_diff)
+    tui._render_frame()
+
+    assert tui._render_stats.strategy == "full"
+    assert "\x1b[J" in fake_stdout.text
+    assert "Resume session?" not in fake_stdout.text
+
+
+def test_worker_choice_close_forces_full_frame_repaint(tmp_path, monkeypatch):
+    tui, writer = _worker_render_tui(tmp_path, monkeypatch)
+    tui._active_choice = [
+        ("resume one", "one", "first session"),
+        ("resume two", "two", "second session"),
+    ]
+    tui._choice_prompt = "Resume session?"
+    tui._choice_selected = 0
+
+    tui._render_frame()
+    assert "Resume session?" in "\n".join(writer.frames[0].target_lines)
+
+    tui._clear_choice_prompt()
+    tui._render_frame()
+
+    assert len(writer.frames) == 2
+    assert writer.frames[1].force_full is True
+    assert "Resume session?" not in "\n".join(writer.frames[1].target_lines)
+
+
 class _WorkerFrameWriter:
     worker_mode = True
 

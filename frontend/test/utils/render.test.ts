@@ -1167,6 +1167,70 @@ describe("renderTranscriptBlocksDetached", () => {
     expect(detached.context.fileChanges.cards.get("turn-tool")?.card).toBe(
       block.roots.find((root) => root.classList.contains("file-change-card")),
     );
+    expect(detached.stagedFileChangeStates.get("turn-tool")).toBe(
+      detached.context.fileChanges.cards.get("turn-tool"),
+    );
+    expect([...detached.stagedFileChangeStates.keys()]).toEqual(["turn-tool"]);
+    expect(peekFileChangeCard("turn-tool")).toBeNull();
     expect(attached.children).toHaveLength(0);
+  });
+});
+
+
+describe("Task 2 detached descriptor rematerialization metadata", () => {
+  it("renders only the requested descriptor and installs every reconciliation ownership field", async () => {
+    resetStreams();
+    const attached = document.createElement("div");
+    const sentinel = document.createElement("div");
+    sentinel.textContent = "attached sentinel";
+    attached.append(sentinel);
+    setTranscriptElement(attached);
+    const { buildTranscriptDescriptors } = await import("../../src/utils/transcript-reconciliation");
+    const descriptors = buildTranscriptDescriptors([
+      { node_type: "message", id: "outside", payload: { style: "text", raw_text: "do not render" } },
+      { node_type: "turn", id: "turn-requested", payload: { raw_text: "edit" } },
+      {
+        node_type: "tool_call",
+        id: "call-node",
+        tool_call_id: "tool-requested",
+        payload: {
+          tool_name: "write",
+          diff_text: "--- a/file.ts\n+++ b/file.ts\n@@ -1 +1 @@\n-old\n+new",
+        },
+      },
+      {
+        node_type: "tool_result",
+        id: "result-node",
+        tool_call_id: "tool-requested",
+        payload: { raw_text: "done" },
+      },
+      { node_type: "assistant", id: "answer-requested", payload: { raw_text: "finished" } },
+      { node_type: "turn", id: "turn-after", payload: { raw_text: "next turn" } },
+      { node_type: "message", id: "after", payload: { style: "text", raw_text: "also do not render" } },
+    ]);
+    const requested = descriptors.find((item) => item.key === "turn-with-tools:turn-requested")!;
+
+    const detached = renderTranscriptBlocksDetached([requested]);
+    const block = detached.blocks[0];
+
+    expect(detached.blocks).toHaveLength(1);
+    expect(detached.fragment.textContent).not.toContain("do not render");
+    expect(detached.fragment.textContent).not.toContain("also do not render");
+    expect(block.primary.dataset).toMatchObject({
+      reconcileKey: requested.key,
+      reconcileFingerprint: requested.fingerprint,
+      reconcileShape: requested.rendererShapeVersion,
+      reconcileRootCount: String(block.roots.length),
+      reconcileMemberNodeIds: JSON.stringify(requested.memberNodeIds),
+      reconcileToolCallIds: JSON.stringify(["tool-requested"]),
+      reconcileFileChangeKeys: JSON.stringify(["turn-requested"]),
+    });
+    expect(JSON.parse(block.primary.dataset.reconcileMemberNodeIds!)).toEqual(requested.memberNodeIds);
+    expect(JSON.parse(block.primary.dataset.reconcileToolCallIds!)).toEqual(["tool-requested"]);
+    expect(JSON.parse(block.primary.dataset.reconcileFileChangeKeys!)).toEqual(["turn-requested"]);
+    expect(block.memberNodeIds).toEqual(new Set(requested.memberNodeIds));
+    expect(block.ownedToolCallIds).toEqual(new Set(["tool-requested"]));
+    expect(block.ownedFileChangeKeys).toEqual(new Set(["turn-requested"]));
+    expect(Array.from(attached.childNodes)).toEqual([sentinel]);
   });
 });

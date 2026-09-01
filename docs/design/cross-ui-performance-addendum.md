@@ -167,8 +167,24 @@ related_docs:
 
 截至本阶段仍未完成：transcript DOM window/virtualization与overscan、P2 输入与 durable live-history、统一绝对 benchmark、真实浏览器滚动时序 smoke及完整慢路径观测。
 
-## 3. 已验证证据
+### 2.12 本轮实施记录（2026-09-02，Desktop P1 transcript DOM window）
 
+本轮闭环 **Desktop transcript DOM window/virtualization**；P2 输入与 durable live-history、统一绝对 benchmark、完整慢路径观测仍未完成，因此本文档继续保持 `status: in-progress`、`implementation_status: partial`，不归档：
+
+- [x] **Canonical 与 bounded DOM window**：新增 `frontend/src/utils/transcript-dom-window.ts`，以 descriptor 为唯一 logical block 单位，在完整 canonical model 上执行 windowed/earlier-page merge、像素预算与双向 overscan 规划、pinned owner 保留、连续 spacer 生成以及 anchor-preserving DOM transaction；canonical 历史不因 DOM omission 被删除。
+- [x] **Desktop integration 与生命周期隔离**：`main.ts` 接入 snapshot、resize、scroll、earlier-page、live append、thread switch/reset 和 owner reservation；retained stream、active/pending owner、pending-local、conversation prompt 与冲突 file/tool owner 按 generation、identity、containment 和 rollback 规则保护。ordinary snapshot 不再无条件清空 transcript 或将历史位置强制滚到底部。
+- [x] **分页竞态修复**：顶部滚动在窗口重排前保存 `scrollTop <= 24` 快照，避免 anchor 恢复改写滚动位置后漏发 `transcript.page`；earlier-page 成功合并后清理新 window state 的 pagination lock，同时按 state identity 隔离 stale response，避免旧请求误清新窗口锁。
+- [x] **自动验证**：受影响 Frontend 集合（`transcript-dom-window.test.ts`、`runtime-profile.test.ts`、`incremental-protocol.test.ts`）195 passed；完整 Frontend 48 files、964 tests passed；`npm run build` 通过（Vite 8.1.0、75 modules）；`git diff --check` 通过。`npx tsc --noEmit` 仍以退出码 2 结束，但仅包含已批准的 7 项基线诊断，本轮未新增诊断。
+- [x] **真实 Chrome page-only smoke**：使用 Chrome 152.0.7977.65、viewport 1280×800、devicePixelRatio 1、CDP page target（`workerTargetUsed=false`），证据保存于 `/tmp/voidx-chrome-dom-window-smoke.json`，代理日志为 `/tmp/voidx-ws-proxy-caps.jsonl`。长线程连续完成 5 次 earlier-page 请求/响应：`before_turn_id` 请求边界为 246→226→206→186→166，响应范围为 226/245、206/225、186/205、166/185、146/165；每次均为 `has_earlier=true`、`has_later=true`、`windowed=true`，响应 node count 为 4095、1382、1275、825、2259。
+  - 向下恢复未产生新的 `transcript.page`（`noNewTranscriptPage=true`）；历史位置 live append 的 `scrollTopDelta=0`，marker 在 append 前后均存在。
+  - tool/file 展开折叠恢复通过；该次视口没有可用 node 匹配项，因此 node-specific toggle 未执行。
+  - thread switch isolation 中旧 callback 未留下 marker 或旧 reconcile key，切回原线程通过；共记录 3 次 session switch。
+  - smoke `failures=[]`、`cdpExceptions=0`、代理记录 5 个 `transcript.page` 请求；未连接 Worker CDP target。
+- [x] **独立复审**：窄范围复审对分页锁生命周期、顶部滚动竞态、既有 `before_turn_id + turn_limit` 协议形状及两条回归测试给出 `PASS`，未发现实现或测试缺陷。
+
+截至本阶段仍未完成：P2 输入与 durable live-history、统一绝对 benchmark、完整慢路径观测，以及 addendum 其余未实现的跨端性能事项。
+
+## 3. 已验证证据
 
 ### 3.1 审计范围
 

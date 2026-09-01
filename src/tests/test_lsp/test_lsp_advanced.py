@@ -365,7 +365,7 @@ async def test_lsp_format_tool_accepts_eof_position_after_trailing_newline(tmp_p
             return False, old_text, old_text
 
 
-    ctx = ToolContext(workspace=str(tmp_path))
+    ctx = ToolContext(workspace=str(tmp_path), session_id="no-change")
     key = str(target.resolve())
     ctx.file_state.read_coverage[key] = {"ranges": [{"start_line": 1, "end_line": 1}]}
     result = await LspFormatTool(FakeService()).execute(
@@ -384,6 +384,8 @@ async def test_lsp_format_tool_accepts_eof_position_after_trailing_newline(tmp_p
 
     assert key in ctx.file_state.mtimes
     assert key in ctx.file_state.read_coverage
+    history_dir = tmp_path / ".voidx" / "sessions" / "no-change" / "file-history"
+    assert not (history_dir / "manifest.jsonl").exists()
 
 @pytest.mark.asyncio
 async def test_lsp_format_tool_does_not_overwrite_concurrent_change(tmp_path, monkeypatch):

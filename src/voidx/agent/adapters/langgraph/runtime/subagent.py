@@ -54,7 +54,10 @@ from voidx.agent.domain.task.state import GoalResolution, GoalSpec, TaskState
 from voidx.agent.domain.task.todo import TodoRunState
 from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.agent.application.tool_messages import sanitize_tool_message_content
-from voidx.agent.adapters.tools.result_storage import maybe_persist_tool_result
+from voidx.agent.adapters.tools.result_storage import (
+    maybe_persist_tool_result,
+    tool_name_for_persistence,
+)
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.tooling.domain.capability import ToolCapability
 from voidx.agent.adapters.langgraph.runtime.tool_surface import (
@@ -74,6 +77,7 @@ from voidx.agent.adapters.persistence.subagent_repository import append_subagent
 from voidx.tooling.application.execution import AuthorizationRuntime
 from voidx.tooling.domain.file_tracking import FileStateStore
 from voidx.tooling.domain.result import ToolResult
+from voidx.agent.adapters.langgraph.runtime.tool_executor.helpers import _approved_tool_risks_for_call
 from voidx.tooling.application.registry import ToolRegistry
 from voidx.agent.application.runtime.task_tracker import TaskTracker
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext, AgentToolRuntime
@@ -908,7 +912,10 @@ async def run_subagent(
                 result = None
                 try:
                     try:
-                        result = await agent_tools.execute_tool(tid, targs, ctx)
+                        tool_ctx = ctx.model_copy(
+                            update={"approved_tool_risks": tuple(_approved_tool_risks_for_call(tc))}
+                        )
+                        result = await agent_tools.execute_tool(tid, targs, tool_ctx)
                     except Exception as exc:
                         result = ToolResult(
                             output=f"Tool execution error: {exc}",
@@ -945,10 +952,11 @@ async def run_subagent(
                 if capture_tree and parent_node is not None:
                     capture.tool_done(tid, 0.0, True, tool_call_id=cid)
                     capture.tool_result(result.output, tool_call_id=cid)
+                persistence_tool_name = tool_name_for_persistence(result, tid)
                 llm_content = maybe_persist_tool_result(
                     result.output,
                     cid,
-                    tid,
+                    persistence_tool_name,
                     session_id=ctx.session_id,
                     workspace=ctx.workspace,
                 )
@@ -1076,6 +1084,9 @@ async def run_subagent(
             tracker.finish(task_id, "error")
         mark_finished("error")
         raise
+
+
+
 
 
 

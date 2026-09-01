@@ -40,6 +40,34 @@ export interface BlockedPromptQuiesceToken {
   previousRequestId: string | null;
 }
 
+export interface ConversationPromptToken {
+  threadId: string;
+  requestId: string;
+  element: HTMLElement;
+  generation: number;
+  submitting: boolean;
+}
+
+export function peekConversationPromptToken(threadId: string): ConversationPromptToken | null {
+  if (!activePrompt || activePrompt.threadId !== threadId) return null;
+  return {
+    threadId,
+    requestId: activePrompt.requestId,
+    element: activePrompt.element,
+    generation: promptGeneration,
+    submitting: activePrompt.submitting,
+  };
+}
+
+export function validateConversationPromptToken(token: ConversationPromptToken): boolean {
+  return Boolean(activePrompt)
+    && token.threadId === activePrompt!.threadId
+    && token.requestId === activePrompt!.requestId
+    && token.element === activePrompt!.element
+    && token.generation === promptGeneration
+    && token.submitting === activePrompt!.submitting;
+}
+
 export function quiesceConversationPromptForBlockedInstallNoDom(): BlockedPromptQuiesceToken {
   const previousRequestId = activePrompt?.requestId ?? null;
   promptGeneration += 1;
@@ -247,6 +275,7 @@ export function beginConversationPromptResponse(requestId: string): Conversation
     return null;
   }
   activePrompt.submitting = true;
+  promptGeneration += 1;
   removeReplyControls(activePrompt);
   return activePrompt;
 }
@@ -254,6 +283,7 @@ export function beginConversationPromptResponse(requestId: string): Conversation
 export function failConversationPromptResponse(requestId: string): void {
   if (!activePrompt || activePrompt.requestId !== requestId) return;
   activePrompt.submitting = false;
+  promptGeneration += 1;
   renderReplyControls(activePrompt);
 }
 

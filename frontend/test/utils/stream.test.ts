@@ -18,6 +18,8 @@ import {
   _resetForTest,
   flushTranscriptReconciliationNow,
   quiesceStreamsForBlockedInstallNoCallback,
+  peekTranscriptLiveOwners,
+  validateTranscriptLiveOwnerTokens,
 } from "../../src/utils/stream";
 import { renderMarkdown } from "../../src/utils/markdown";
 import {
@@ -712,5 +714,136 @@ describe("committed stream reservations", () => {
 
     expect(validateCommittedStreamReservations([reservation])).toBe(false);
     releaseCommittedStreamReservations([reservation]);
+  });
+});
+
+
+describe("transcript live-owner tokens", () => {
+  it("peeks and validates active stream ownership without exposing private maps", () => {
+    const stream = getOrCreateStream("active-owner", "text");
+
+    const tokens = peekTranscriptLiveOwners();
+
+    expect(tokens).toEqual([{
+      kind: "active-stream",
+      streamId: "active-owner",
+      element: stream.el,
+      streamGeneration: stream.streamGeneration,
+      canonicalRevision: stream.canonicalRevision,
+      viewportGeneration: expect.any(Number),
+    }]);
+    expect(validateTranscriptLiveOwnerTokens(tokens)).toBe(true);
+  });
+
+  it("prefers pending canonical ownership over the retained committed claim", () => {
+    const harness = controlledCanonicalCoordinator();
+    _setCanonicalMarkdownCoordinatorForTest(harness.coordinator);
+    appendStreamText("pending-owner", "answer", "text", "append");
+    const committed = commitStream("pending-owner")!;
+
+    const tokens = peekTranscriptLiveOwners();
+
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]).toMatchObject({
+      kind: "pending-canonical",
+      streamId: "pending-owner",
+      element: committed.el,
+    });
+    expect(validateTranscriptLiveOwnerTokens(tokens)).toBe(true);
+  });
+
+  it("prefers a new active stream over an older retained claim with the same stream id", () => {
+    appendStreamText("reused-owner", "old", "text", "append");
+    const retained = commitStream("reused-owner")!;
+    const active = getOrCreateStream("reused-owner", "text");
+
+    const tokens = peekTranscriptLiveOwners();
+
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]).toMatchObject({
+      kind: "active-stream",
+      streamId: "reused-owner",
+      element: active.el,
+    });
+    expect(tokens[0].element).not.toBe(retained.el);
+    expect(validateTranscriptLiveOwnerTokens(tokens)).toBe(true);
+  });
+
+  it("invalidates an active token after canonical revision changes", () => {
+    appendStreamText("revision-owner", "a", "text", "append");
+    const tokens = peekTranscriptLiveOwners();
+
+    appendStreamText("revision-owner", "b", "text", "append");
+
+    expect(validateTranscriptLiveOwnerTokens(tokens)).toBe(false);
+    expect(validateTranscriptLiveOwnerTokens(peekTranscriptLiveOwners())).toBe(true);
+  });
+
+  it("invalidates pending and retained tokens after settle or blocked quiesce", () => {
+    const harness = controlledCanonicalCoordinator();
+    _setCanonicalMarkdownCoordinatorForTest(harness.coordinator);
+    appendStreamText("settled-owner", "answer", "text", "append");
+    commitStream("settled-owner");
+    const pending = peekTranscriptLiveOwners();
+
+    harness.worker.respond();
+    harness.flushFrame();
+
+    expect(validateTranscriptLiveOwnerTokens(pending)).toBe(false);
+    const retained = peekTranscriptLiveOwners();
+    expect(retained).toHaveLength(1);
+    expect(retained[0].kind).toBe("retained-committed");
+
+    quiesceStreamsForBlockedInstallNoCallback();
+
+    expect(validateTranscriptLiveOwnerTokens(retained)).toBe(false);
+    expect(peekTranscriptLiveOwners()).toEqual([]);
+  });
+});
+
+
+describe("transcript live-owner token set validation", () => {
+  it("accepts an empty proof only when there are no live owners", () => {
+    expect(validateTranscriptLiveOwnerTokens([])).toBe(true);
+
+    getOrCreateStream("present-owner", "text");
+
+    expect(validateTranscriptLiveOwnerTokens([])).toBe(false);
+  });
+
+  it("rejects a proof that omits one current owner", () => {
+    getOrCreateStream("owner-a", "text");
+    getOrCreateStream("owner-b", "text");
+    const tokens = peekTranscriptLiveOwners();
+
+    expect(tokens).toHaveLength(2);
+    expect(validateTranscriptLiveOwnerTokens(tokens.slice(0, 1))).toBe(false);
+  });
+
+  it("rejects a proof after a new owner appears", () => {
+    getOrCreateStream("captured-owner", "text");
+    const tokens = peekTranscriptLiveOwners();
+
+    getOrCreateStream("new-owner", "text");
+
+    expect(validateTranscriptLiveOwnerTokens(tokens)).toBe(false);
+  });
+
+  it("uses the nearest stream buffer identity for pending canonical ownership", () => {
+    const harness = controlledCanonicalCoordinator();
+    _setCanonicalMarkdownCoordinatorForTest(harness.coordinator);
+    appendStreamText("metadata-owner", "answer", "text", "append");
+    const committed = commitStream("metadata-owner")!;
+    committed.el.dataset.streamId = "changed-metadata";
+
+    const tokens = peekTranscriptLiveOwners();
+
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]).toMatchObject({
+      kind: "pending-canonical",
+      streamId: "metadata-owner",
+      element: committed.el,
+    });
+    expect(validateTranscriptLiveOwnerTokens(tokens)).toBe(true);
   });
 });

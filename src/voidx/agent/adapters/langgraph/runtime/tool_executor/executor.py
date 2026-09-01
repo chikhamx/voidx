@@ -19,13 +19,15 @@ from voidx.agent.application.tool_messages import (
     sanitize_tool_message_content,
     tool_observation_kwargs,
 )
-from voidx.agent.adapters.tools.result_storage import maybe_persist_tool_result
+from voidx.agent.adapters.tools.result_storage import (
+    maybe_persist_tool_result,
+    tool_name_for_persistence,
+)
 from voidx.agent.adapters.langgraph.runtime.todo_events import todo_updated_event
 from voidx.agent.ports.ui import UiEventTimeout
 from voidx.agent.adapters.tools.automation.loop import LoopTool
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext, AgentToolRuntime
 from voidx.agent.adapters.tools.plugins import bind_agent_tool_runtime
-from voidx.tooling.domain.risk import ApprovedToolRisk
 from voidx.tooling.application.execution import (
     AuthorizationRuntime,
     CallbackInteractionPort,
@@ -59,6 +61,7 @@ from .helpers import (
     _requires_workspace_write_lock,
     _workspace_write_lock_manager,
     _infrastructure_skipped_tool,
+    _approved_tool_risks_for_call,
 )
 from .ui import (
     notify_tool_started,
@@ -564,8 +567,9 @@ class ToolExecutorAdapter:
                     ui_output = result.display or result.output
                 await notify_tool_text_output(host, ui_output, tid, tool_event_id, tool_node, display_policy, ok)
 
+            persistence_tool_name = tool_name_for_persistence(result, tid)
             llm_content = maybe_persist_tool_result(
-                result.output, tool_event_id, tid,
+                result.output, tool_event_id, persistence_tool_name,
                 session_id=host._session.id if host._session else "default",
                 workspace=ctx.workspace,
             )
@@ -797,14 +801,6 @@ class ToolExecutorAdapter:
 
 
 
-def _approved_tool_risks_for_call(tool_call: dict) -> list[ApprovedToolRisk]:
-    raw = (tool_call.get("metadata") or {}).get("approved_risk")
-    if not isinstance(raw, dict):
-        return []
-    try:
-        return [ApprovedToolRisk.model_validate(raw)]
-    except ValueError:
-        return []
 
 async def _emit_tool_heartbeat(
     host: Any,

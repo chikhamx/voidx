@@ -29,6 +29,20 @@ const canonicalOwners = new Map<string, {
   viewportGeneration: number;
 }>();
 
+export type TranscriptLiveOwnerKind =
+  | "active-stream"
+  | "pending-canonical"
+  | "retained-committed";
+
+export interface TranscriptLiveOwnerToken {
+  kind: TranscriptLiveOwnerKind;
+  streamId: string;
+  element: HTMLElement;
+  streamGeneration: number;
+  canonicalRevision: number;
+  viewportGeneration: number;
+}
+
 export interface CommittedStreamClaim {
   element: HTMLElement;
   streamId: string;
@@ -94,6 +108,10 @@ export function requestTranscriptFollowAfterMutation(): void {
 
 export function forceTranscriptScrollToBottom(): void {
   viewportController?.forceScrollToBottom();
+}
+
+export function isTranscriptFollowing(): boolean {
+  return viewportController?.isFollowing() ?? true;
 }
 
 export function getTranscriptInteractionGeneration(): number {
@@ -288,6 +306,122 @@ export function commitStream(streamId: string, retain = true): {
 
 export function takeCommittedStreams(): HTMLElement[] {
   return committedEls.splice(0);
+}
+
+function pendingCanonicalElement(streamId: string): HTMLElement | null {
+  return canonicalOwners.get(streamId)?.target.closest<HTMLElement>(".stream-buffer") ?? null;
+}
+
+function latestRetainedClaim(streamId: string): CommittedStreamClaim | null {
+  for (let index = committedEls.length - 1; index >= 0; index -= 1) {
+    const claim = committedClaims.get(committedEls[index]);
+    if (claim?.streamId === streamId) return claim;
+  }
+  return null;
+}
+
+export function peekTranscriptLiveOwners(): readonly TranscriptLiveOwnerToken[] {
+  const tokens: TranscriptLiveOwnerToken[] = [];
+  const represented = new Set<string>();
+  for (const [streamId, owner] of canonicalOwners) {
+    const element = pendingCanonicalElement(streamId);
+    if (!element) continue;
+    tokens.push({
+      kind: "pending-canonical",
+      streamId,
+      element,
+      streamGeneration: owner.generation,
+      canonicalRevision: owner.revision,
+      viewportGeneration: owner.viewportGeneration,
+    });
+    represented.add(streamId);
+  }
+  for (const [streamId, stream] of streams) {
+    if (represented.has(streamId)) continue;
+    tokens.push({
+      kind: "active-stream",
+      streamId,
+      element: stream.el,
+      streamGeneration: stream.streamGeneration,
+      canonicalRevision: stream.canonicalRevision,
+      viewportGeneration: transcriptViewportGeneration,
+    });
+    represented.add(streamId);
+  }
+  for (let index = committedEls.length - 1; index >= 0; index -= 1) {
+    const claim = committedClaims.get(committedEls[index]);
+    if (!claim || represented.has(claim.streamId)) continue;
+    tokens.push({
+      kind: "retained-committed",
+      streamId: claim.streamId,
+      element: claim.element,
+      streamGeneration: claim.streamGeneration,
+      canonicalRevision: claim.canonicalRevision,
+      viewportGeneration: transcriptViewportGeneration,
+    });
+    represented.add(claim.streamId);
+  }
+  return tokens;
+}
+
+function liveOwnerTokenMatchesCurrent(token: TranscriptLiveOwnerToken): boolean {
+  const owner = canonicalOwners.get(token.streamId);
+  const pendingElement = pendingCanonicalElement(token.streamId);
+  if (owner && pendingElement) {
+    return token.kind === "pending-canonical"
+      && token.element === pendingElement
+      && token.streamGeneration === owner.generation
+      && token.canonicalRevision === owner.revision
+      && token.viewportGeneration === owner.viewportGeneration;
+  }
+  const stream = streams.get(token.streamId);
+  if (stream) {
+    return token.kind === "active-stream"
+      && token.element === stream.el
+      && token.streamGeneration === stream.streamGeneration
+      && token.canonicalRevision === stream.canonicalRevision
+      && token.viewportGeneration === transcriptViewportGeneration;
+  }
+  const claim = latestRetainedClaim(token.streamId);
+  return claim !== null
+    && token.kind === "retained-committed"
+    && token.element === claim.element
+    && token.streamGeneration === claim.streamGeneration
+    && token.canonicalRevision === claim.canonicalRevision
+    && token.viewportGeneration === transcriptViewportGeneration;
+}
+
+function currentLiveOwnerCount(): number {
+  let count = 0;
+  for (const streamId of canonicalOwners.keys()) {
+    if (pendingCanonicalElement(streamId)) count += 1;
+  }
+  for (const streamId of streams.keys()) {
+    if (!pendingCanonicalElement(streamId)) count += 1;
+  }
+  for (let index = committedEls.length - 1; index >= 0; index -= 1) {
+    const claim = committedClaims.get(committedEls[index]);
+    if (!claim
+      || pendingCanonicalElement(claim.streamId)
+      || streams.has(claim.streamId)
+      || latestRetainedClaim(claim.streamId)?.element !== claim.element) continue;
+    count += 1;
+  }
+  return count;
+}
+
+export function validateTranscriptLiveOwnerTokens(
+  tokens: readonly TranscriptLiveOwnerToken[],
+): boolean {
+  if (tokens.length !== currentLiveOwnerCount()) return false;
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    for (let earlier = 0; earlier < index; earlier += 1) {
+      if (tokens[earlier].streamId === token.streamId) return false;
+    }
+    if (!liveOwnerTokenMatchesCurrent(token)) return false;
+  }
+  return true;
 }
 
 export function peekCommittedStreamsForSnapshot(): readonly CommittedStreamClaim[] {

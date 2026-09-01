@@ -160,6 +160,7 @@ export function createTranscriptViewportController(
     mutations: Array<() => void>,
     flags: TransactionFlags,
   ): void => {
+    const previousFollowing = following;
     const geometry = readGeometry();
     const bottomGap = Math.max(
       0,
@@ -183,6 +184,10 @@ export function createTranscriptViewportController(
     transactionActive = true;
     try {
       for (const mutate of mutations) mutate();
+    } catch (error) {
+      following = previousFollowing;
+      updateButton();
+      throw error;
     } finally {
       transactionActive = false;
     }

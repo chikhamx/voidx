@@ -5,3 +5,4 @@ export * from "./types";
 export { iconSvg, ICON_NAMES } from "./icons";
 export type { IconName } from "./icons";
 export * from "./transcript-viewport";
+export * from "./transcript-dom-window";

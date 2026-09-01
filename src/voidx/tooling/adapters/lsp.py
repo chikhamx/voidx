@@ -229,7 +229,6 @@ class LspFormatTool:
         range_error = _validate_lsp_range(old_text, inp.lsp_range())
         if range_error is not None:
             return ToolResult(output=range_error, metadata={"error": True})
-        await save_file_version(ctx, path, display_path=inp.file_path, tool_name=self.id)
         try:
             changed, service_old_text, new_text = await service.format_range(inp.file_path, inp.lsp_range())
         except LspTimeoutError as exc:
@@ -241,13 +240,14 @@ class LspFormatTool:
             return ToolResult(output=f"LSP range format failed: {exc}", metadata={"error": True})
         if service_old_text != old_text:
             return ToolResult(output="File changed while LSP range formatting was running.", metadata={"error": True})
-        if not changed:
+        if not changed or new_text == old_text:
             record_mtime(ctx, path)
             return ToolResult(
                 title="No formatting changes",
                 output=f"No range formatting changes for {inp.file_path}.",
                 metadata={"file": inp.file_path, "formatted": False},
             )
+        await save_file_version(ctx, path, display_path=inp.file_path, tool_name=self.id)
         write_error = _safe_write_text(path, new_text, expected_text=old_text)
         if write_error is not None:
             return ToolResult(output=write_error, metadata={"error": True})

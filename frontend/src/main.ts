@@ -28,22 +28,52 @@ import {
   snapshotTurnText,
   forceTranscriptScrollToBottom,
   type BlockedViewportQuiesceToken,
+  isTranscriptFollowing,
+  selectTranscriptWindowAnchor,
   getTranscriptInteractionGeneration,
   prepareTranscriptForSynchronousPrepend,
   resetTranscriptViewport,
+  peekTranscriptLiveOwners,
+  validateTranscriptLiveOwnerTokens,
+  planTranscriptDomWindow,
+  DEFAULT_BLOCK_ESTIMATE_PX,
+  DEFAULT_TRANSCRIPT_DOM_WINDOW_BUDGET,
+  type TranscriptDomWindowState,
+  type TranscriptSpacerSegment,
+  type TranscriptExternalInsertion,
+  type TranscriptLayoutEntry,
+  claimCommittedStreamsForDescriptors,
+  stampTranscriptBlockOwnership,
+  reserveCommittedStream,
+  validateCommittedStreamReservations,
+  commitCommittedStreamReservationsNoFail,
+  releaseCommittedStreamReservations,
+  type CommittedStreamReservation,
+  mergeCanonicalTranscript,
+  applyTranscriptDomWindowTransaction,
+  measureTranscriptLogicalBlockExtent,
 } from "./utils";
 import {
   prepareBlockedFileToolCacheState,
   publishBlockedFileToolCachesNoFail,
   quiesceFileToolCachesForBlockedInstallNoDom,
   resetFileChangeCards,
+  peekFileChangeCard,
+  reserveFileChangeCard,
+  validateFileChangeCardReservations,
+  commitFileChangeCardReservationsNoFail,
+  releaseFileChangeCardReservations,
+  type FileChangeCardReservation,
 } from "./utils/render-file-changes";
 import type {
   IncrementalStreamState,
   TranscriptSnapshot,
   SlashCommand,
 } from "./utils";
-import { buildTranscriptDescriptors } from "./utils/transcript-reconciliation";
+import {
+  buildTranscriptDescriptors,
+  collectExistingTranscriptBlocksSafely,
+} from "./utils/transcript-reconciliation";
 
 import {
   rpcCall,
@@ -129,6 +159,8 @@ import {
 import {
   quiesceConversationPromptForBlockedInstallNoDom,
   validateBlockedPromptQuiesceToken,
+  peekConversationPromptToken,
+  validateConversationPromptToken,
 } from "./ui/prompt";
 import {
   pushHistory,
@@ -203,6 +235,13 @@ interface PendingLocalMessage {
   style: "text" | "guidance";
 }
 
+export interface PendingLocalMessageToken {
+  threadId: string;
+  itemId: string;
+  element: HTMLElement;
+  generation: number;
+}
+
 interface SnapshotUserEntry {
   id: string;
   text: string;
@@ -211,8 +250,39 @@ interface SnapshotUserEntry {
 }
 
 let pendingLocalMessages: PendingLocalMessage[] = [];
+let pendingLocalGeneration = 0;
 let knownSnapshotUserNodeIds = new Map<string, Set<string>>();
 let localItemSequence = 0;
+
+export function peekPendingLocalMessageTokens(threadId: string): PendingLocalMessageToken[] {
+  return pendingLocalMessages
+    .filter((pending) => pending.threadId === threadId)
+    .map((pending) => {
+      const element = pendingLocalMessageElement(pending.itemId);
+      return element ? {
+        threadId,
+        itemId: pending.itemId,
+        element,
+        generation: pendingLocalGeneration,
+      } : null;
+    })
+    .filter((token): token is PendingLocalMessageToken => token !== null);
+}
+
+export function validatePendingLocalMessageTokens(
+  threadId: string,
+  tokens: readonly PendingLocalMessageToken[],
+): boolean {
+  if (tokens.some((token) => token.threadId !== threadId
+    || token.generation !== pendingLocalGeneration)) return false;
+  const pending = pendingLocalMessages.filter((message) => message.threadId === threadId);
+  if (pending.length !== tokens.length) return false;
+  return pending.every((message, index) => {
+    const token = tokens[index];
+    return token.itemId === message.itemId
+      && token.element === pendingLocalMessageElement(message.itemId);
+  });
+}
 
 function snapshotUserEntries(snapshot: TranscriptSnapshot): SnapshotUserEntry[] {
   const entries: SnapshotUserEntry[] = [];
@@ -261,6 +331,7 @@ function rememberPendingLocalMessage(
     text,
     style,
   });
+  pendingLocalGeneration += 1;
 }
 
 
@@ -351,11 +422,19 @@ function restorePendingLocalMessages(
     }
   }
 
-  pendingLocalMessages = retained;
+  if (retained.length !== pendingLocalMessages.length
+    || retained.some((pending, index) => pending !== pendingLocalMessages[index])) {
+    pendingLocalMessages = retained;
+    pendingLocalGeneration += 1;
+  }
 }
 
 function forgetPendingLocalMessage(itemId: string): void {
-  pendingLocalMessages = pendingLocalMessages.filter((pending) => pending.itemId !== itemId);
+  const retained = pendingLocalMessages.filter((pending) => pending.itemId !== itemId);
+  if (retained.length !== pendingLocalMessages.length) {
+    pendingLocalMessages = retained;
+    pendingLocalGeneration += 1;
+  }
 }
 
 function removePendingLocalMessage(itemId: string): void {
@@ -365,7 +444,10 @@ function removePendingLocalMessage(itemId: string): void {
 
 
 function forgetPendingLocalMessages(): void {
-  pendingLocalMessages = [];
+  if (pendingLocalMessages.length > 0) {
+    pendingLocalMessages = [];
+    pendingLocalGeneration += 1;
+  }
   knownSnapshotUserNodeIds.clear();
 }
 
@@ -671,22 +753,596 @@ interface ThreadTurnContext {
 const threadTurnContexts = new Map<string, ThreadTurnContext>();
 
 const TRANSCRIPT_PAGE_SIZE = 20;
-interface TranscriptWindowState {
-  snapshot: TranscriptSnapshot;
+interface TranscriptWindowState extends TranscriptDomWindowState {
   loading: boolean;
 }
 const transcriptWindows = new Map<string, TranscriptWindowState>();
 
+export function _peekTranscriptWindowSnapshotForTest(
+  threadId: string,
+): TranscriptSnapshot | null {
+  return transcriptWindows.get(threadId)?.snapshot ?? null;
+}
+
+export function _peekTranscriptWindowHeightKeysForTest(
+  threadId: string,
+): string[] | null {
+  const state = transcriptWindows.get(threadId);
+  return state ? [...state.heights.keys()] : null;
+}
+
+
+function createTranscriptWindowSpacer(segment: TranscriptSpacerSegment): HTMLElement {
+  const element = document.createElement("div");
+  element.className = "transcript-window-spacer";
+  element.setAttribute("aria-hidden", "true");
+  element.tabIndex = -1;
+  element.dataset.transcriptSpacer = JSON.stringify(segment);
+  element.style.height = `${segment.cssHeightPx}px`;
+  return element;
+}
+
+function transcriptRowGapPx(): number {
+  const value = Number.parseFloat(getComputedStyle(transcriptEl).rowGap);
+  return Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+function writeTranscriptScrollTop(value: number): void {
+  transcriptEl.scrollTop = value;
+}
+
+function installInitialTranscriptDomWindow(
+  threadId: string,
+  snapshot: TranscriptSnapshot,
+): TranscriptWindowState | null {
+  let descriptors: ReturnType<typeof buildTranscriptDescriptors>;
+  try {
+    descriptors = buildTranscriptDescriptors(snapshot.nodes || []);
+  } catch {
+    return null;
+  }
+
+  const sourceElements = Array.from(transcriptEl.children);
+  if (!sourceElements.every((element): element is HTMLElement => element instanceof HTMLElement)) {
+    return null;
+  }
+  const sourceChildren = sourceElements;
+  const collected = collectExistingTranscriptBlocksSafely(transcriptEl, descriptors);
+  if (collected.status !== "collected"
+    || collected.index.byKey.size > 0
+    || collected.spacers.length > 0
+    || collected.index.entries.some((entry) => entry.kind !== "retained")) return null;
+
+  const pendingTokens = peekPendingLocalMessageTokens(threadId);
+  const promptToken = peekConversationPromptToken(threadId);
+  const liveOwnerTokens = peekTranscriptLiveOwners();
+  const validateExternalOwners = (): boolean => (
+    validatePendingLocalMessageTokens(threadId, pendingTokens)
+    && (promptToken
+      ? validateConversationPromptToken(promptToken)
+      : peekConversationPromptToken(threadId) === null)
+    && validateTranscriptLiveOwnerTokens(liveOwnerTokens)
+  );
+  if (!validateExternalOwners()) return null;
+
+  const estimates = new Map<string, number>();
+  const entries: TranscriptLayoutEntry[] = descriptors.map((descriptor, descriptorIndex) => {
+    estimates.set(descriptor.rendererShapeVersion, DEFAULT_BLOCK_ESTIMATE_PX);
+    return {
+      kind: "canonical",
+      key: descriptor.key,
+      descriptorIndex,
+      extentPx: DEFAULT_BLOCK_ESTIMATE_PX,
+    };
+  });
+  entries.push(...sourceChildren.map((element, index) => ({
+    kind: "external" as const,
+    id: `initial-external:${index}`,
+    element,
+    extentPx: measureTranscriptLogicalBlockExtent([element as HTMLElement])
+      ?? DEFAULT_BLOCK_ESTIMATE_PX,
+    insertion: { edge: "after-all" } as TranscriptExternalInsertion,
+  })));
+  const plan = planTranscriptDomWindow({
+    entries,
+    attachedKeys: new Set(),
+    pinnedKeys: new Set(),
+    rowGapPx: transcriptRowGapPx(),
+    budget: DEFAULT_TRANSCRIPT_DOM_WINDOW_BUDGET,
+    viewport: {
+      scrollTop: transcriptEl.scrollTop,
+      clientHeight: transcriptEl.clientHeight,
+      following: true,
+    },
+    activation: "initial",
+    anchorKey: null,
+  });
+
+  let detached: ReturnType<typeof renderTranscriptBlocksDetached>;
+  try {
+    detached = renderTranscriptBlocksDetached(
+      descriptors.filter((descriptor) => plan.nextAttachedKeys.has(descriptor.key)),
+    );
+  } catch {
+    return null;
+  }
+  for (const block of detached.blocks) {
+    for (const root of block.roots) root.remove();
+  }
+  const stagedBlocks = new Map(detached.blocks.map((block) => [block.key, block]));
+  if (stagedBlocks.size !== plan.materializeKeys.length) return null;
+
+  const spacers = plan.spacerSegments.map((segment) => ({
+    element: createTranscriptWindowSpacer(segment),
+    segment,
+  }));
+  const spacerByStart = new Map(spacers.map((spacer) => [spacer.segment.startIndex, spacer]));
+  const nextChildren: Element[] = [];
+  for (let index = 0; index < descriptors.length;) {
+    const spacer = spacerByStart.get(index);
+    if (spacer) {
+      nextChildren.push(spacer.element);
+      index = spacer.segment.endIndex;
+      continue;
+    }
+    const descriptor = descriptors[index];
+    const block = stagedBlocks.get(descriptor.key);
+    if (plan.nextAttachedKeys.has(descriptor.key) && block) nextChildren.push(...block.roots);
+    index += 1;
+  }
+  nextChildren.push(...sourceChildren);
+
+  const interactionGeneration = getTranscriptInteractionGeneration();
+  const currentState: TranscriptWindowState = {
+    threadId,
+    snapshot,
+    descriptors,
+    heights: new Map(),
+    estimates,
+    attachedKeys: new Set(),
+    pinnedKeys: new Set(),
+    spacerSegments: [],
+    generation: 0,
+    loadingEarlier: false,
+    loading: false,
+  };
+  const nextState: TranscriptWindowState = {
+    ...currentState,
+    attachedKeys: new Set(plan.nextAttachedKeys),
+    spacerSegments: [...plan.spacerSegments],
+    generation: 1,
+  };
+  const reservations: FileChangeCardReservation[] = [];
+  const reserveFileChanges = (): boolean => {
+    for (const [key, state] of detached.stagedFileChangeStates) {
+      const reservation = reserveFileChangeCard(key, null, state);
+      if (!reservation) return false;
+      reservations.push(reservation);
+    }
+    return true;
+  };
+  const validateOwners = (): boolean => (
+    validateExternalOwners()
+    && validateFileChangeCardReservations(reservations)
+  );
+  const result = applyTranscriptDomWindowTransaction({
+    root: transcriptEl,
+    sourceChildren,
+    externalSourceChildren: new Set(sourceChildren),
+    nextChildren,
+    expectedNextChildren: [...nextChildren],
+    existingBlocks: new Map(),
+    plan,
+    stagedBlocks,
+    spacers,
+    anchorJournal: null,
+    expectedInteractionGeneration: interactionGeneration,
+    expectedWindowGeneration: 0,
+    validateInteractionGeneration: (generation) => (
+      generation === interactionGeneration
+      && getTranscriptInteractionGeneration() === interactionGeneration
+    ),
+    validateWindowGeneration: (generation) => (
+      generation === 0 && !transcriptWindows.has(threadId)
+    ),
+    measureBlock: (block) => measureTranscriptLogicalBlockExtent(block.roots)
+      ?? estimates.get(block.primary.dataset.reconcileShape ?? "")
+      ?? DEFAULT_BLOCK_ESTIMATE_PX,
+    writeScrollTop: writeTranscriptScrollTop,
+    resolvePrimaryByKey: () => null,
+    currentState,
+    nextState,
+    reserveOwnerReservations: reserveFileChanges,
+    validateOwnerReservations: validateOwners,
+    commitOwnerReservationsNoFail: () => {
+      commitFileChangeCardReservationsNoFail(reservations);
+    },
+    releaseOwnerReservations: () => {
+      releaseFileChangeCardReservations(reservations);
+    },
+  });
+  return result.status === "applied" ? nextState : null;
+}
+
+
+function applyTranscriptWindowReplan(
+  state: TranscriptWindowState,
+  snapshot: TranscriptSnapshot,
+  descriptors: TranscriptWindowState["descriptors"],
+  interactionGeneration: number,
+  preserveAnchor = true,
+  viewportClientHeight = transcriptEl.clientHeight,
+): boolean {
+
+  const { syntheticBlocks, claimByKey } = claimCommittedStreamsForDescriptors(descriptors);
+  const collected = collectExistingTranscriptBlocksSafely(transcriptEl, state.descriptors, syntheticBlocks);
+  if (collected.status !== "collected") return false;
+  const existingBlocks = collected.index.byKey;
+  const pendingTokens = peekPendingLocalMessageTokens(state.threadId);
+  const promptToken = peekConversationPromptToken(state.threadId);
+  const liveOwnerTokens = peekTranscriptLiveOwners();
+  const validateExternalOwners = (): boolean => (
+    validatePendingLocalMessageTokens(state.threadId, pendingTokens)
+    && (promptToken
+      ? validateConversationPromptToken(promptToken)
+      : peekConversationPromptToken(state.threadId) === null)
+    && validateTranscriptLiveOwnerTokens(liveOwnerTokens)
+  );
+  if (!validateExternalOwners()) return false;
+
+  const retained = collected.index.entries.flatMap((entry, entryIndex) => {
+    if (entry.kind !== "retained") return [];
+    let previousKey: string | null = null;
+    let nextKey: string | null = null;
+    for (let index = entryIndex - 1; index >= 0; index -= 1) {
+      const candidate = collected.index.entries[index];
+      if (candidate.kind === "block") {
+        previousKey = candidate.key;
+        break;
+      }
+    }
+    for (let index = entryIndex + 1; index < collected.index.entries.length; index += 1) {
+      const candidate = collected.index.entries[index];
+      if (candidate.kind === "block") {
+        nextKey = candidate.key;
+        break;
+      }
+    }
+    const insertion: TranscriptExternalInsertion = previousKey
+      ? { afterKey: previousKey }
+      : nextKey
+        ? { beforeKey: nextKey }
+        : { edge: "after-all" };
+    const rect = entry.root.getBoundingClientRect();
+    const extentPx = Number.isFinite(rect.height) && rect.height > 0
+      ? rect.height
+      : DEFAULT_BLOCK_ESTIMATE_PX;
+    return [{
+      id: `external:${entryIndex}`,
+      element: entry.root,
+      insertion,
+      extentPx,
+    }];
+  });
+  const candidateKeys = new Set(descriptors.map((descriptor) => descriptor.key));
+  const following = isTranscriptFollowing();
+  const transcriptRect = transcriptEl.getBoundingClientRect();
+  const pendingRoots = new Set(pendingTokens.map((token) => token.element));
+  const anchor = preserveAnchor
+    ? selectTranscriptWindowAnchor({
+        blocks: collected.index.blocks.filter((block) => candidateKeys.has(block.key)),
+        viewportTop: transcriptRect.top,
+        viewportBottom: transcriptRect.top + transcriptEl.clientHeight,
+        following,
+        pendingRoots,
+      })
+    : null;
+  const ownerPinnedKeys = new Set(
+    [...state.pinnedKeys].filter((key) => candidateKeys.has(key)),
+  );
+  const pinnedKeys = new Set(ownerPinnedKeys);
+  if (anchor) pinnedKeys.add(anchor.key);
+  for (const key of claimByKey.keys()) pinnedKeys.add(key);
+  const descriptorIndices = new Map(
+    descriptors.map((descriptor, index) => [descriptor.key, index]),
+  );
+  const externalByBoundary = new Map<number, typeof retained>();
+  for (const external of retained) {
+    let boundary: number;
+    if ("afterKey" in external.insertion) {
+      const index = descriptorIndices.get(external.insertion.afterKey);
+      if (index === undefined) return false;
+      boundary = index + 1;
+    } else if ("beforeKey" in external.insertion) {
+      const index = descriptorIndices.get(external.insertion.beforeKey);
+      if (index === undefined) return false;
+      boundary = index;
+    } else {
+      boundary = external.insertion.edge === "before-all" ? 0 : descriptors.length;
+    }
+    const bucket = externalByBoundary.get(boundary) ?? [];
+    bucket.push(external);
+    externalByBoundary.set(boundary, bucket);
+  }
+  const entries = descriptors.flatMap((descriptor, descriptorIndex) => [
+    ...(externalByBoundary.get(descriptorIndex) ?? []).map((external) => ({
+      kind: "external" as const,
+      id: external.id,
+      element: external.element,
+      extentPx: external.extentPx,
+      insertion: external.insertion,
+    })),
+    {
+      kind: "canonical" as const,
+      key: descriptor.key,
+      descriptorIndex,
+      extentPx: state.heights.get(descriptor.key)
+        ?? state.estimates.get(descriptor.rendererShapeVersion)
+        ?? DEFAULT_BLOCK_ESTIMATE_PX,
+    },
+  ]);
+  entries.push(...(externalByBoundary.get(descriptors.length) ?? []).map((external) => ({
+    kind: "external" as const,
+    id: external.id,
+    element: external.element,
+    extentPx: external.extentPx,
+    insertion: external.insertion,
+  })));
+  const planned = planTranscriptDomWindow({
+    entries,
+    attachedKeys: new Set(
+      [...existingBlocks.keys()].filter((key) => candidateKeys.has(key)),
+    ),
+    pinnedKeys,
+    rowGapPx: transcriptRowGapPx(),
+    budget: DEFAULT_TRANSCRIPT_DOM_WINDOW_BUDGET,
+    viewport: {
+      scrollTop: transcriptEl.scrollTop,
+      clientHeight: viewportClientHeight,
+      following,
+    },
+    activation: "replan",
+    anchorKey: anchor?.key ?? null,
+  });
+  const changedAttachedKeys = descriptors
+    .filter((descriptor) => {
+      const existing = existingBlocks.get(descriptor.key);
+      return existing !== undefined
+        && planned.nextAttachedKeys.has(descriptor.key)
+        && existing.fingerprint !== descriptor.fingerprint;
+    })
+    .map((descriptor) => descriptor.key);
+  const removedCanonicalKeys = [...existingBlocks.keys()]
+    .filter((key) => !candidateKeys.has(key));
+  const plan = {
+    ...planned,
+    materializeKeys: [...new Set([...planned.materializeKeys, ...changedAttachedKeys])],
+    trimKeys: [...new Set([
+      ...planned.trimKeys,
+      ...changedAttachedKeys,
+      ...removedCanonicalKeys,
+    ])],
+  };
+
+  let detached: ReturnType<typeof renderTranscriptBlocksDetached>;
+  try {
+    const materialize = new Set(plan.materializeKeys);
+    detached = renderTranscriptBlocksDetached(
+      descriptors.filter((descriptor) => materialize.has(descriptor.key)),
+    );
+  } catch {
+    return false;
+  }
+  const fileChanges = new Map<string, {
+    expected: ReturnType<typeof peekFileChangeCard>;
+    next: FileChangeCardReservation["next"];
+  }>();
+  for (const key of plan.trimKeys) {
+    const block = existingBlocks.get(key);
+    for (const fileKey of block?.ownedFileChangeKeys ?? []) {
+      fileChanges.set(fileKey, { expected: peekFileChangeCard(fileKey), next: null });
+    }
+  }
+  for (const [key, next] of detached.stagedFileChangeStates) {
+    fileChanges.set(key, { expected: peekFileChangeCard(key), next });
+  }
+  const fileReservations: FileChangeCardReservation[] = [];
+  const reserveFileChanges = (): boolean => {
+    for (const [key, change] of fileChanges) {
+      const reservation = reserveFileChangeCard(key, change.expected, change.next);
+      if (!reservation) return false;
+      fileReservations.push(reservation);
+    }
+    return true;
+  };
+  const streamReservations: CommittedStreamReservation[] = [];
+  const claimedAttachedBlocks = [...claimByKey.entries()].flatMap(([key, claim]) => {
+    if (!plan.nextAttachedKeys.has(key)) return [];
+    const block = existingBlocks.get(key);
+    return block && block.primary === claim.element ? [block] : [];
+  });
+  const reserveCommittedStreams = (): boolean => {
+    for (const block of claimedAttachedBlocks) {
+      const reservation = reserveCommittedStream(claimByKey.get(block.key)!);
+      if (!reservation) return false;
+      streamReservations.push(reservation);
+    }
+    return true;
+  };
+  const validateOwners = (): boolean => (
+    validateExternalOwners()
+    && validateFileChangeCardReservations(fileReservations)
+    && validateCommittedStreamReservations(streamReservations)
+  );
+  const promotedExistingKeys = new Set(claimedAttachedBlocks.map((block) => block.key));
+  const promotedMetadata = new Map<HTMLElement, Map<string, string | null>>();
+  const metadataAttributes = [
+    "data-reconcile-key",
+    "data-reconcile-fingerprint",
+    "data-reconcile-shape",
+    "data-reconcile-root-count",
+    "data-reconcile-member-node-ids",
+    "data-reconcile-tool-call-ids",
+    "data-reconcile-file-change-keys",
+    "data-reconcile-turn-id",
+  ];
+  for (const block of claimedAttachedBlocks) {
+    promotedMetadata.set(block.primary, new Map(
+      metadataAttributes.map((name) => [name, block.primary.getAttribute(name)]),
+    ));
+  }
+  const promoteExistingBlocks = (): void => {
+    for (const block of claimedAttachedBlocks) stampTranscriptBlockOwnership(block);
+  };
+  const rollbackPromotedBlocks = (): void => {
+    for (const [element, metadata] of promotedMetadata) {
+      for (const [name, value] of metadata) {
+        if (value === null) element.removeAttribute(name);
+        else element.setAttribute(name, value);
+      }
+    }
+  };
+  for (const block of detached.blocks) {
+    for (const root of block.roots) root.remove();
+  }
+  const stagedBlocks = new Map(detached.blocks.map((block) => [block.key, block]));
+  if (stagedBlocks.size !== plan.materializeKeys.length) return false;
+
+  const spacers = plan.spacerSegments.map((segment) => ({
+    element: createTranscriptWindowSpacer(segment),
+    segment,
+  }));
+  const spacerByStart = new Map(spacers.map((spacer) => [spacer.segment.startIndex, spacer]));
+  const nextChildren: Element[] = [];
+  for (let index = 0; index <= descriptors.length;) {
+    for (const external of externalByBoundary.get(index) ?? []) {
+      nextChildren.push(external.element);
+    }
+    if (index === descriptors.length) break;
+    const spacer = spacerByStart.get(index);
+    if (spacer) {
+      nextChildren.push(spacer.element);
+      index = spacer.segment.endIndex;
+      continue;
+    }
+    const descriptor = descriptors[index];
+    const block = stagedBlocks.get(descriptor.key) ?? existingBlocks.get(descriptor.key);
+    if (plan.nextAttachedKeys.has(descriptor.key) && block) nextChildren.push(...block.roots);
+    index += 1;
+  }
+
+  const nextState: TranscriptWindowState = {
+    ...state,
+    snapshot,
+    descriptors,
+    attachedKeys: new Set(plan.nextAttachedKeys),
+    pinnedKeys: ownerPinnedKeys,
+    spacerSegments: [...plan.spacerSegments],
+    generation: state.generation + 1,
+    loadingEarlier: false,
+    loading: state.loading,
+    heights: new Map(
+      [...state.heights].filter(([key]) => candidateKeys.has(key)),
+    ),
+    estimates: new Map(state.estimates),
+  };
+  const rootTop = transcriptEl.getBoundingClientRect().top;
+  const anchorJournal = anchor ? {
+    key: anchor.key,
+    oldRoot: anchor.primary,
+    offsetFromViewportTop: anchor.primary.getBoundingClientRect().top - rootTop,
+    scrollTop: transcriptEl.scrollTop,
+    scrollHeight: transcriptEl.scrollHeight,
+    interactionGeneration,
+  } : null;
+  const result = applyTranscriptDomWindowTransaction({
+    root: transcriptEl,
+    sourceChildren: Array.from(transcriptEl.children),
+    externalSourceChildren: new Set(retained.map((external) => external.element)),
+    nextChildren,
+    expectedNextChildren: [...nextChildren],
+    existingBlocks,
+    promotedExistingKeys,
+    promoteExistingBlocks,
+    rollbackPromotedBlocks,
+    plan,
+    stagedBlocks,
+    spacers,
+    anchorJournal,
+    expectedInteractionGeneration: interactionGeneration,
+    expectedWindowGeneration: state.generation,
+    validateInteractionGeneration: (generation) => (
+      generation === interactionGeneration
+      && getTranscriptInteractionGeneration() === interactionGeneration
+    ),
+    validateWindowGeneration: (generation) => (
+      generation === state.generation
+      && transcriptWindows.get(state.threadId) === state
+    ),
+    measureBlock: (block) => measureTranscriptLogicalBlockExtent(block.roots)
+      ?? state.estimates.get(block.primary.dataset.reconcileShape ?? "")
+      ?? DEFAULT_BLOCK_ESTIMATE_PX,
+    writeScrollTop: (value) => {
+      writeTranscriptScrollTop(value);
+    },
+    resolvePrimaryByKey: (key) => (
+      Array.from(transcriptEl.children).find(
+        (child) => (child as HTMLElement).dataset.reconcileKey === key,
+      ) as HTMLElement | undefined ?? null
+    ),
+    currentState: state,
+    nextState,
+    ownerPinnedKeys,
+    reserveOwnerReservations: () => (
+      reserveFileChanges() && reserveCommittedStreams()
+    ),
+    validateOwnerReservations: validateOwners,
+    commitOwnerReservationsNoFail: () => {
+      for (const block of claimedAttachedBlocks) stampTranscriptBlockOwnership(block);
+      commitCommittedStreamReservationsNoFail(streamReservations);
+      commitFileChangeCardReservationsNoFail(fileReservations);
+    },
+    releaseOwnerReservations: () => {
+      releaseCommittedStreamReservations(streamReservations);
+      releaseFileChangeCardReservations(fileReservations);
+    },
+  });
+  if (result.status !== "applied") return false;
+  transcriptWindows.set(state.threadId, nextState);
+  return true;
+}
+
+
+function applyEarlierPageToTranscriptWindow(
+  state: TranscriptWindowState,
+  page: TranscriptSnapshot,
+  interactionGeneration: number,
+): boolean {
+  const existingIds = new Set(state.snapshot.nodes.map((node) => node.id));
+  const pageNodes = historicalTranscriptPageNodes(page.nodes || [], existingIds);
+  const merge = mergeCanonicalTranscript(
+    state.snapshot,
+    { ...page, nodes: pageNodes },
+    "earlier-page",
+  );
+  return merge.status === "merged"
+    && applyTranscriptWindowReplan(
+      state,
+      merge.snapshot,
+      merge.descriptors,
+      interactionGeneration,
+    );
+}
 
 function loadEarlierTranscriptPage(): void {
   const threadId = uiState.sessionId;
   if (!threadId || uiState.isSwitchingThread) return;
   const state = transcriptWindows.get(threadId);
   if (
-    !state ||
-    state.loading ||
-    !state.snapshot.has_earlier ||
-    typeof state.snapshot.before_turn_id !== "number"
+    !state
+    || state.loading
+    || !state.snapshot.has_earlier
+    || typeof state.snapshot.before_turn_id !== "number"
   ) return;
 
   state.loading = true;
@@ -709,49 +1365,72 @@ function loadEarlierTranscriptPage(): void {
       const current = transcriptWindows.get(threadId);
       if (!current || current !== state) return;
 
-      const existingIds = new Set(current.snapshot.nodes.map((node) => node.id));
-      const newNodes = historicalTranscriptPageNodes(page.nodes, existingIds);
-      const fragment = renderHistoricalTranscriptPage(page, existingIds);
       if (!prepareTranscriptForSynchronousPrepend(interactionGeneration)) return;
-
-      const previousHeight = transcriptEl.scrollHeight;
-      const previousTop = transcriptEl.scrollTop;
-      const previousSnapshot = current.snapshot;
-      const insertedRoots = Array.from(fragment.childNodes);
-      const insertionPoint = transcriptEl.firstChild;
-      try {
-        transcriptEl.insertBefore(fragment, insertionPoint);
-        transcriptEl.scrollTop = previousTop
-          + (transcriptEl.scrollHeight - previousHeight);
-        current.snapshot = {
-          ...previousSnapshot,
-          nodes: [...newNodes, ...previousSnapshot.nodes],
-          revision: page.revision ?? previousSnapshot.revision,
-          before_turn_id: page.before_turn_id ?? null,
-          has_earlier: Boolean(page.has_earlier),
-        };
-        syncEmptyState();
-      } catch (error) {
-        for (const root of insertedRoots) root.parentNode?.removeChild(root);
-        current.snapshot = previousSnapshot;
-        Reflect.set(transcriptEl, "scrollTop", previousTop);
-        throw error;
-      }
+      if (!applyEarlierPageToTranscriptWindow(current, page, interactionGeneration)) return;
+      const next = transcriptWindows.get(threadId);
+      if (next && next !== state) next.loading = false;
+      syncEmptyState();
     })
     .catch((error: unknown) => {
       console.warn("voidx: transcript page failed", error);
     })
     .finally(() => {
       state.loading = false;
+      const current = transcriptWindows.get(threadId);
+      if (current === state) current.loading = false;
     });
 }
 
 function handleTranscriptScroll(): void {
-  if (transcriptEl.scrollTop > 24) return;
-  queueMicrotask(loadEarlierTranscriptPage);
+  const threadId = uiState.sessionId;
+  const contextGeneration = threadContextGeneration;
+  const wasAtTopBeforeReplan = transcriptEl.scrollTop <= 24;
+  queueMicrotask(() => {
+    if (!threadId
+      || uiState.sessionId !== threadId
+      || uiState.isSwitchingThread
+      || threadContextGeneration !== contextGeneration) return;
+    const state = transcriptWindows.get(threadId);
+    if (!state) return;
+    const interactionGeneration = getTranscriptInteractionGeneration();
+    applyTranscriptWindowReplan(
+      state,
+      state.snapshot,
+      state.descriptors,
+      interactionGeneration,
+    );
+    if (wasAtTopBeforeReplan || transcriptEl.scrollTop <= 24) loadEarlierTranscriptPage();
+  });
 }
 
 transcriptEl.addEventListener("scroll", handleTranscriptScroll);
+
+function handleTranscriptResize(): void {
+  const threadId = uiState.sessionId;
+  const contextGeneration = threadContextGeneration;
+  queueMicrotask(() => {
+    if (!threadId
+      || uiState.sessionId !== threadId
+      || uiState.isSwitchingThread
+      || threadContextGeneration !== contextGeneration) return;
+    const state = transcriptWindows.get(threadId);
+    if (!state) return;
+    applyTranscriptWindowReplan(
+      state,
+      state.snapshot,
+      state.descriptors,
+      getTranscriptInteractionGeneration(),
+    );
+  });
+}
+
+if (typeof ResizeObserver !== "undefined") {
+  new ResizeObserver(() => handleTranscriptResize()).observe(transcriptEl);
+}
+
+export function _notifyTranscriptResizeForTest(): void {
+  handleTranscriptResize();
+}
 
 function threadTurnContext(threadId: string): ThreadTurnContext {
   let context = threadTurnContexts.get(threadId);
@@ -1185,6 +1864,7 @@ function activateThread(threadId: string): void {
       retireThreadTurn(uiState.sessionId);
       clearIncrementalStreamStatesForThread(uiState.sessionId);
       snapshotRecoveryStates.delete(uiState.sessionId);
+      transcriptWindows.delete(uiState.sessionId);
     }
     threadContextGeneration += 1;
     clearCommittedStreams();
@@ -1462,18 +2142,20 @@ interface BlockedSnapshotPrebuilt {
   snapshotRevision: number;
   threadId: string;
   recoveryState: SnapshotRecoveryState;
+  windowState: TranscriptWindowState;
 }
 
 function publishBlockedFullSnapshotNoFail(prebuilt: BlockedSnapshotPrebuilt): void {
   transcriptEl.replaceChildren(prebuilt.fragment);
   publishBlockedFileToolCachesNoFail(prebuilt.fileCaches);
+  if (pendingLocalMessages !== prebuilt.pendingMessages) pendingLocalGeneration += 1;
   pendingLocalMessages = prebuilt.pendingMessages;
   knownSnapshotUserNodeIds = prebuilt.knownUserIds;
   renderedItemIdsByThread = prebuilt.renderedIds;
   incrementalStreamStates = prebuilt.incrementalStates;
   lastWorkspaceRevision = prebuilt.workspaceRevision;
   lastSnapshotRevisionByThread.set(prebuilt.threadId, prebuilt.snapshotRevision);
-  transcriptWindows.delete(prebuilt.threadId);
+  transcriptWindows.set(prebuilt.threadId, prebuilt.windowState);
   prebuilt.recoveryState.timerGeneration += 1;
   snapshotRecoveryStates.delete(prebuilt.threadId);
 }
@@ -1517,6 +2199,24 @@ function installBlockedFullSnapshot(
   const nextIncremental = new Map(
     [...incrementalStreamStates].filter(([, state]) => state.threadId !== threadId),
   );
+  const estimates = new Map<string, number>();
+  for (const descriptor of descriptors) {
+    estimates.set(descriptor.rendererShapeVersion, DEFAULT_BLOCK_ESTIMATE_PX);
+  }
+  const previousWindowGeneration = transcriptWindows.get(threadId)?.generation ?? 0;
+  const windowState: TranscriptWindowState = {
+    threadId,
+    snapshot,
+    descriptors,
+    heights: new Map(),
+    estimates,
+    attachedKeys: new Set(detached.blocks.map((block) => block.key)),
+    pinnedKeys: new Set(),
+    spacerSegments: [],
+    generation: previousWindowGeneration + 1,
+    loadingEarlier: false,
+    loading: false,
+  };
   const prebuilt: BlockedSnapshotPrebuilt = {
     fragment: detached.fragment,
     fileCaches: prepareBlockedFileToolCacheState(detached.context.fileChanges.cards),
@@ -1528,6 +2228,7 @@ function installBlockedFullSnapshot(
     snapshotRevision: incomingSnapshotRevision,
     threadId,
     recoveryState,
+    windowState,
   };
 
   quiesceStreamsForBlockedInstallNoCallback();
@@ -1545,6 +2246,19 @@ function installBlockedFullSnapshot(
 
   try {
     publishBlockedFullSnapshotNoFail(prebuilt);
+    queueMicrotask(() => {
+      if (uiState.sessionId !== threadId
+        || uiState.isSwitchingThread
+        || transcriptWindows.get(threadId) !== windowState) return;
+      applyTranscriptWindowReplan(
+        windowState,
+        windowState.snapshot,
+        windowState.descriptors,
+        getTranscriptInteractionGeneration(),
+        true,
+        Math.max(transcriptEl.clientHeight, DEFAULT_BLOCK_ESTIMATE_PX),
+      );
+    });
     return true;
   } catch {
     recoveryState.inFlight = false;
@@ -1610,6 +2324,26 @@ function renderWorkspaceSnapshot(params: Record<string, unknown>): void {
     uiState.workspace,
   );
   const typedSnapshot = snapshot as TranscriptSnapshot;
+  const currentWindowState = transcriptWindows.get(activeThreadId) ?? null;
+  const canonicalMerge = currentWindowState
+    ? mergeCanonicalTranscript(
+        currentWindowState.snapshot,
+        typedSnapshot,
+        typedSnapshot.windowed === true ? "windowed" : "full",
+      )
+    : null;
+  if (canonicalMerge?.status === "stale") {
+    requestSnapshotRecovery(activeThreadId, {
+      blocked: canonicalMerge.recovery === "blocked",
+    });
+    return;
+  }
+  const canonicalSnapshot = canonicalMerge?.status === "merged"
+    ? canonicalMerge.snapshot
+    : typedSnapshot;
+  const canonicalDescriptors = canonicalMerge?.status === "merged"
+    ? canonicalMerge.descriptors
+    : null;
   const blockedRecovery = snapshotRecoveryStates.get(activeThreadId)?.mode === "blocked";
   if (blockedRecovery && authoritativeRecoverySnapshot) {
     if (installBlockedFullSnapshot(activeThreadId, params, typedSnapshot)) {
@@ -1618,18 +2352,75 @@ function renderWorkspaceSnapshot(params: Record<string, unknown>): void {
     }
     return;
   }
-  const renderResult = renderTranscript(transcriptEl, typedSnapshot, {
-    pendingLocalHandoffs: pendingLocalHandoffs(activeThreadId, typedSnapshot),
-  });
-  if (renderResult.status !== "applied") {
-    requestSnapshotRecovery(activeThreadId, { blocked: true });
+  const subsequentWindowApplied = currentWindowState !== null
+    && canonicalDescriptors !== null
+    ? applyTranscriptWindowReplan(
+        currentWindowState,
+        canonicalSnapshot,
+        canonicalDescriptors,
+        getTranscriptInteractionGeneration(),
+      )
+    : false;
+  if (currentWindowState && !subsequentWindowApplied) {
+    requestSnapshotRecovery(activeThreadId, { blocked: typedSnapshot.windowed !== true });
     return;
+  }
+  const initialWindowState = typedSnapshot.windowed === true
+    && !transcriptWindows.has(activeThreadId)
+    ? installInitialTranscriptDomWindow(activeThreadId, typedSnapshot)
+    : null;
+  if (!initialWindowState && !subsequentWindowApplied) {
+    const renderResult = renderTranscript(transcriptEl, typedSnapshot, {
+      pendingLocalHandoffs: pendingLocalHandoffs(activeThreadId, typedSnapshot),
+    });
+    if (renderResult.status !== "applied") {
+      requestSnapshotRecovery(activeThreadId, { blocked: true });
+      return;
+    }
   }
 
   if (revision !== null) lastWorkspaceRevision = revision;
   if (activeThreadId) rememberSnapshotRevision(activeThreadId, params);
-  if (typedSnapshot.windowed) {
-    transcriptWindows.set(activeThreadId, { snapshot: typedSnapshot, loading: false });
+  if (typedSnapshot.windowed || subsequentWindowApplied) {
+    if (initialWindowState) {
+      transcriptWindows.set(activeThreadId, initialWindowState);
+    } else if (!subsequentWindowApplied) {
+      const descriptors = canonicalDescriptors
+        ?? buildTranscriptDescriptors(canonicalSnapshot.nodes || []);
+      const collected = collectExistingTranscriptBlocksSafely(transcriptEl, descriptors);
+      if (collected.status !== "collected") {
+        requestSnapshotRecovery(activeThreadId);
+        return;
+      }
+      const previous = currentWindowState;
+      const fallbackState: TranscriptWindowState = {
+        threadId: activeThreadId,
+        snapshot: canonicalSnapshot,
+        descriptors,
+        heights: new Map(previous?.heights),
+        estimates: new Map(previous?.estimates),
+        attachedKeys: new Set(collected.index.byKey.keys()),
+        pinnedKeys: new Set(previous?.pinnedKeys),
+        spacerSegments: collected.spacers.map((spacer) => spacer.segment),
+        generation: (previous?.generation ?? 0) + 1,
+        loadingEarlier: false,
+        loading: false,
+      };
+      transcriptWindows.set(activeThreadId, fallbackState);
+      queueMicrotask(() => {
+        if (uiState.sessionId !== activeThreadId
+          || uiState.isSwitchingThread
+          || transcriptWindows.get(activeThreadId) !== fallbackState) return;
+        applyTranscriptWindowReplan(
+          fallbackState,
+          fallbackState.snapshot,
+          fallbackState.descriptors,
+          getTranscriptInteractionGeneration(),
+          true,
+          Math.max(transcriptEl.clientHeight, DEFAULT_BLOCK_ESTIMATE_PX),
+        );
+      });
+    }
   } else {
     transcriptWindows.delete(activeThreadId);
   }
@@ -1643,7 +2434,6 @@ function renderWorkspaceSnapshot(params: Record<string, unknown>): void {
   }
   restorePendingLocalMessages(activeThreadId, typedSnapshot);
   syncEmptyState();
-  scrollToBottom();
 }
 
 export function handleNotification(

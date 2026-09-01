@@ -56,11 +56,14 @@ class _ChoicePromptMixin:
                 self._clear_choice_prompt()
 
     def _clear_choice_prompt(self) -> None:
+        had_choice = self._active_choice is not None
         self._drain_queue(self._choice_queue)
         self._active_choice = None
         self._choice_selected = 0
         self._choice_details = []
         self._choice_anchor = ""
+        if had_choice:
+            self._full_frame_repaint_pending = True
         invalidate_activity = getattr(self, "_invalidate_busy_activity_layout", None)
         if callable(invalidate_activity):
             invalidate_activity()

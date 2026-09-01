@@ -15,6 +15,26 @@ from voidx.agent.adapters.tools.result_storage import (
     cleanup_session_results,
     maybe_persist_tool_result,
 )
+from voidx.tooling.domain.result import ToolResult
+
+
+def test_routed_result_uses_final_tool_for_persistence():
+    from voidx.agent.adapters.tools.result_storage import tool_name_for_persistence
+
+    result = ToolResult(
+        output="edited",
+        metadata={"tool": "replace", "routed_from": "bash"},
+    )
+
+    assert tool_name_for_persistence(result, "bash") == "replace"
+
+
+def test_unrouted_result_metadata_does_not_override_persistence_tool():
+    from voidx.agent.adapters.tools.result_storage import tool_name_for_persistence
+
+    result = ToolResult(output="mcp result", metadata={"tool": "replace"})
+
+    assert tool_name_for_persistence(result, "mcp") == "mcp"
 
 
 class TestMakePreview:
@@ -120,6 +140,50 @@ class TestMaybePersistToolResult:
         result = maybe_persist_tool_result(content, "call_3", "read")
         assert result == content
         assert "<persisted-output>" not in result
+
+    def test_non_persistable_tool_does_not_persist_large_content(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        content = "x" * (TOOL_RESULT_PERSIST_THRESHOLD + 1)
+
+        for tool_name in ("read", "write", "replace", "manage", "lsp_format", "todo"):
+            result = maybe_persist_tool_result(
+                content,
+                f"call_{tool_name}",
+                tool_name,
+                session_id="non-persistable",
+            )
+            assert result == content
+
+        result_dir = tmp_path / ".voidx" / "tool-results" / "non-persistable"
+        assert not result_dir.exists()
+
+    def test_persistable_tool_can_persist_large_content(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        content = "x" * (TOOL_RESULT_PERSIST_THRESHOLD + 1)
+
+        result = maybe_persist_tool_result(
+            content,
+            "call_git",
+            "git",
+            session_id="persistable",
+        )
+
+        assert "<persisted-output>" in result
+        assert (tmp_path / ".voidx" / "tool-results" / "persistable" / "call_git.txt").read_text() == content
+
+    def test_unknown_tool_does_not_persist_large_content(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        content = "x" * (TOOL_RESULT_PERSIST_THRESHOLD + 1)
+
+        result = maybe_persist_tool_result(
+            content,
+            "call_unknown",
+            "future_tool",
+            session_id="unknown-tool",
+        )
+
+        assert result == content
+        assert not (tmp_path / ".voidx" / "tool-results" / "unknown-tool").exists()
 
     def test_custom_threshold(self):
         content = "medium output"

@@ -10,8 +10,10 @@ from pydantic import BaseModel
 from voidx.agent.application.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS
 import voidx.persistence.sqlite as store
 from voidx.platform.paths import voidx_workspace_dir
+from voidx.tooling.domain.output_policy import TOOL_RESULT_PERSISTABLE_TOOLS
 
 TOOL_RESULT_PERSIST_THRESHOLD = DEFAULT_TOOL_MESSAGE_MAX_CHARS
+
 TOOL_RESULT_PREVIEW_CHARS = 2_000
 PREVIEW_HEAD_FRACTION = 0.7
 
@@ -20,6 +22,17 @@ class PersistedResult(BaseModel):
     original_size: int
     file_path: str
     preview: str
+
+
+def tool_name_for_persistence(result: object, fallback_tool_name: str) -> str:
+    metadata = getattr(result, "metadata", None)
+    if not isinstance(metadata, dict):
+        return fallback_tool_name
+    routed_from = metadata.get("routed_from")
+    routed_tool = metadata.get("tool")
+    if routed_from == fallback_tool_name and isinstance(routed_tool, str) and routed_tool:
+        return routed_tool
+    return fallback_tool_name
 
 
 def maybe_persist_tool_result(
@@ -35,7 +48,7 @@ def maybe_persist_tool_result(
     if len(content) <= threshold:
         return content
 
-    if tool_name == "read":
+    if tool_name not in TOOL_RESULT_PERSISTABLE_TOOLS:
         return content
 
     try:

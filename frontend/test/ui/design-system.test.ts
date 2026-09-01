@@ -195,14 +195,16 @@ describe("transcript scroll ownership", () => {
     expect(snapshotHandler).toContain("renderTranscript(transcriptEl");
   });
 
-  it("keeps the only direct main transcript scroll writer in synchronous pagination prepend", () => {
+  it("keeps a single direct main transcript scroll writer behind the window transaction helper", () => {
     const main = readProjectFile("src/main.ts");
     const directWrites = [...main.matchAll(/transcriptEl\.scrollTop\s*=/g)];
-    const prependStart = main.indexOf("function loadEarlierTranscriptPage(");
-    const prependEnd = main.indexOf("\nfunction handleTranscriptScroll(", prependStart);
+    const helperStart = main.indexOf("function writeTranscriptScrollTop(");
+    const helperEnd = main.indexOf("\n}", helperStart);
 
+    expect(helperStart).toBeGreaterThanOrEqual(0);
+    expect(helperEnd).toBeGreaterThan(helperStart);
     expect(directWrites).toHaveLength(1);
-    expect(directWrites[0].index).toBeGreaterThan(prependStart);
-    expect(directWrites[0].index).toBeLessThan(prependEnd);
+    expect(directWrites[0].index).toBeGreaterThan(helperStart);
+    expect(directWrites[0].index).toBeLessThan(helperEnd);
   });
 });

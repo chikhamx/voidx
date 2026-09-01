@@ -13,6 +13,7 @@ function createHarness(initial: TranscriptViewportGeometry = {
   scrollHeight: 1000,
 }) {
   const transcript = document.createElement("div");
+  transcript.scrollTop = initial.scrollTop;
   const button = document.createElement("button");
   const frames = new Map<number, FrameRequestCallback>();
   const canceled: TranscriptFrameHandle[] = [];
@@ -42,6 +43,7 @@ function createHarness(initial: TranscriptViewportGeometry = {
     writeScrollTop(value) {
       order.push(`write:${value}`);
       writes.push(value);
+      transcript.scrollTop = value;
     },
   });
 
@@ -196,6 +198,7 @@ describe("createTranscriptViewportController", () => {
     expect(calls).toEqual(["first", "second"]);
   });
 
+
   it("flushes only the target mutation and preserves other keyed work", () => {
     const h = createHarness();
     const target = {};
@@ -243,6 +246,23 @@ describe("createTranscriptViewportController", () => {
       { followAfterMutation: true },
     )).toThrow(failure);
 
+    expect(h.writes).toEqual([]);
+    expect(h.pendingFrames()).toBe(0);
+  });
+
+  it("rolls back following, button, and consumed flags when flushMutationNow throws", () => {
+    const h = createHarness({ scrollTop: 100, clientHeight: 100, scrollHeight: 1000 });
+    const failure = new Error("measurement failed");
+    h.controller.requestFollowAfterExternalMutation();
+
+    expect(() => h.controller.flushMutationNow(
+      {},
+      () => { throw failure; },
+      { followAfterMutation: true },
+    )).toThrow(failure);
+
+    expect(h.controller.isFollowing()).toBe(true);
+    expect(h.button.hidden).toBe(true);
     expect(h.writes).toEqual([]);
     expect(h.pendingFrames()).toBe(0);
   });
@@ -380,5 +400,283 @@ describe("blocked install quiesce", () => {
     expect(validateBlockedQuiesceToken(after as never)).toBe(true);
     expect(h.pendingFrames()).toBe(0);
     expect(h.order).not.toContain("reentry");
+  });
+});
+
+
+describe("Task 3 window transaction viewport integration", () => {
+  type WindowTransactionResult =
+    | { status: "applied"; state: unknown }
+    | { status: "deferred"; reason: string };
+  type ApplyWindowTransaction = (input: {
+    viewportController: ReturnType<typeof createTranscriptViewportController>;
+    transactionKey: object;
+    root: HTMLElement;
+    sourceChildren: readonly Element[];
+    externalSourceChildren: ReadonlySet<Element>;
+    nextChildren: readonly Element[];
+    expectedNextChildren: readonly Element[];
+    existingBlocks: ReadonlyMap<string, {
+      key: string;
+      roots: readonly HTMLElement[];
+      primary: HTMLElement;
+    }>;
+    plan: {
+      materializeKeys: string[];
+      trimKeys: string[];
+      nextAttachedKeys: Set<string>;
+      spacerSegments: unknown[];
+      anchorKey: string | null;
+      overBudgetReason: string | null;
+    };
+    stagedBlocks: ReadonlyMap<string, { key: string; roots: HTMLElement[]; primary: HTMLElement }>;
+    spacers: readonly unknown[];
+    anchorJournal: null;
+    expectedInteractionGeneration: number;
+    expectedWindowGeneration: number;
+    validateInteractionGeneration: (generation: number) => boolean;
+    validateWindowGeneration: (generation: number) => boolean;
+    measureBlock: (block: { roots: HTMLElement[] }) => number;
+    writeScrollTop: (value: number) => void;
+    resolvePrimaryByKey: (key: string) => HTMLElement | null;
+    currentState: { generation: number; attachedKeys: Set<string>; heights: Map<string, number> };
+    nextState: { generation: number; attachedKeys: Set<string>; heights: Map<string, number> };
+    following: boolean;
+    beforeMutation?: () => void;
+  }) => WindowTransactionResult;
+
+  const loadApply = async (): Promise<ApplyWindowTransaction> => {
+    const module = await import("../../src/utils/transcript-dom-window") as unknown as {
+      applyTranscriptDomWindowTransaction: ApplyWindowTransaction;
+    };
+    return module.applyTranscriptDomWindowTransaction;
+  };
+
+  const inputFor = (
+    h: ReturnType<typeof createHarness>,
+    overrides: Partial<Parameters<ApplyWindowTransaction>[0]> = {},
+  ): Parameters<ApplyWindowTransaction>[0] => {
+    const tail = document.createElement("div");
+    tail.dataset.reconcileKey = "tail";
+    tail.dataset.reconcileFingerprint = "fingerprint:tail";
+    tail.dataset.reconcileShape = "test-shape-v1";
+    tail.dataset.reconcileRootCount = "1";
+    tail.dataset.reconcileMemberNodeIds = "[\"tail\"]";
+    tail.dataset.reconcileToolCallIds = "[]";
+    tail.dataset.reconcileFileChangeKeys = "[]";
+    const state = { generation: 1, attachedKeys: new Set<string>(), heights: new Map<string, number>() };
+    return {
+      viewportController: h.controller,
+      transactionKey: {},
+      root: h.transcript,
+      sourceChildren: Array.from(h.transcript.children),
+      externalSourceChildren: new Set<Element>(),
+      nextChildren: [tail],
+      expectedNextChildren: [tail],
+      existingBlocks: new Map(),
+      plan: {
+        materializeKeys: ["tail"], trimKeys: [], nextAttachedKeys: new Set(["tail"]),
+        spacerSegments: [], anchorKey: null, overBudgetReason: null,
+      },
+      stagedBlocks: new Map([["tail", { key: "tail", roots: [tail], primary: tail }]]),
+      spacers: [],
+      anchorJournal: null,
+      expectedInteractionGeneration: h.controller.getInteractionGeneration(),
+      expectedWindowGeneration: 1,
+      validateInteractionGeneration: (value) => value === h.controller.getInteractionGeneration(),
+      validateWindowGeneration: (value) => value === 1,
+      measureBlock: () => 40,
+      writeScrollTop: (value) => { h.transcript.scrollTop = value; },
+      resolvePrimaryByKey: (key) => Array.from(h.transcript.children).find(
+        (child) => (child as HTMLElement).dataset.reconcileKey === key,
+      ) as HTMLElement | undefined ?? null,
+      currentState: state,
+      nextState: { generation: 2, attachedKeys: new Set(["tail"]), heights: new Map() },
+      following: true,
+      ...overrides,
+    };
+  };
+
+  it("keeps a following viewport at the bottom after a tail append", async () => {
+    const apply = await loadApply();
+    const h = createHarness({ scrollTop: 900, clientHeight: 100, scrollHeight: 1000 });
+
+    expect(apply(inputFor(h))).toMatchObject({ status: "applied" });
+
+    expect(h.writes).toEqual([Number.MAX_SAFE_INTEGER]);
+    expect(h.controller.isFollowing()).toBe(true);
+    expect(h.pendingFrames()).toBe(0);
+  });
+
+  it("defers same-root synchronous reentry without partial state or another frame", async () => {
+    const apply = await loadApply();
+    const h = createHarness();
+    const outer = inputFor(h);
+    const innerState = { generation: 10, attachedKeys: new Set<string>(), heights: new Map<string, number>() };
+    const inner = inputFor(h, {
+      sourceChildren: outer.sourceChildren,
+      nextChildren: outer.nextChildren,
+      expectedNextChildren: outer.expectedNextChildren,
+      currentState: innerState,
+      nextState: { generation: 11, attachedKeys: new Set(["tail"]), heights: new Map() },
+      following: false,
+    });
+    let nested: WindowTransactionResult | undefined;
+    outer.beforeMutation = () => { nested = apply(inner); };
+
+    expect(apply(outer)).toMatchObject({ status: "applied" });
+    expect(nested).toMatchObject({ status: "deferred" });
+    expect(innerState.generation).toBe(10);
+    expect(h.pendingFrames()).toBe(0);
+    expect(h.writes).toEqual([Number.MAX_SAFE_INTEGER]);
+  });
+
+  it("defers a transaction whose root differs from its viewport controller before mutation", async () => {
+    const apply = await loadApply();
+    const h = createHarness();
+    const foreignRoot = document.createElement("div");
+    const tail = document.createElement("div");
+    tail.dataset.reconcileKey = "tail";
+    foreignRoot.append(tail);
+    const sourceChildren = Array.from(foreignRoot.children);
+    const replacement = document.createElement("div");
+    replacement.dataset.reconcileKey = "replacement";
+    const currentState = {
+      generation: 1, attachedKeys: new Set(["tail"]), heights: new Map([["tail", 40]]),
+    };
+    const nextState = {
+      generation: 2, attachedKeys: new Set(["replacement"]), heights: new Map(currentState.heights),
+    };
+    const input = inputFor(h, {
+      root: foreignRoot,
+      sourceChildren,
+      nextChildren: [replacement],
+      expectedNextChildren: [replacement],
+      existingBlocks: new Map([["tail", { key: "tail", roots: [tail], primary: tail }]]),
+      plan: {
+        materializeKeys: ["replacement"], trimKeys: ["tail"],
+        nextAttachedKeys: new Set(["replacement"]), spacerSegments: [],
+        anchorKey: null, overBudgetReason: null,
+      },
+      stagedBlocks: new Map([[
+        "replacement", { key: "replacement", roots: [replacement], primary: replacement },
+      ]]),
+      currentState,
+      nextState,
+      following: false,
+    });
+    const beforeHeights = new Map(nextState.heights);
+
+    expect.soft(apply(input)).toMatchObject({ status: "deferred" });
+    expect.soft(Array.from(foreignRoot.children)).toEqual(sourceChildren);
+    expect.soft(foreignRoot.children[0]).toBe(tail);
+    expect.soft(currentState).toEqual({
+      generation: 1, attachedKeys: new Set(["tail"]), heights: new Map([["tail", 40]]),
+    });
+    expect.soft(nextState.heights).toEqual(beforeHeights);
+    expect.soft(h.pendingFrames()).toBe(0);
+    expect.soft(h.writes).toEqual([]);
+  });
+
+  it.each(["measurement", "anchor write"] as const)(
+    "rolls back a following window transaction and viewport ownership after a %s exception away from bottom",
+    async (failurePoint) => {
+      const apply = await loadApply();
+      const h = createHarness({ scrollTop: 100, clientHeight: 100, scrollHeight: 1000 });
+      const input = inputFor(h);
+      const originalChildren = Array.from(h.transcript.children);
+      const originalState = {
+        generation: input.currentState.generation,
+        attachedKeys: new Set(input.currentState.attachedKeys),
+        heights: new Map(input.currentState.heights),
+      };
+      const nextHeights = new Map(input.nextState.heights);
+      if (failurePoint === "measurement") {
+        input.measureBlock = () => { throw new Error("measurement failed"); };
+      } else {
+        const anchor = document.createElement("div");
+        anchor.dataset.reconcileKey = "anchor";
+        anchor.dataset.reconcileFingerprint = "fingerprint:anchor";
+        anchor.dataset.reconcileShape = "test-shape-v1";
+        anchor.dataset.reconcileRootCount = "1";
+        anchor.dataset.reconcileMemberNodeIds = "[\"anchor\"]";
+        anchor.dataset.reconcileToolCallIds = "[]";
+        anchor.dataset.reconcileFileChangeKeys = "[]";
+        anchor.getBoundingClientRect = () => ({ top: 20, bottom: 60 } as DOMRect);
+        h.transcript.append(anchor);
+        input.sourceChildren = [anchor];
+        input.existingBlocks = new Map([["anchor", { key: "anchor", roots: [anchor], primary: anchor }]]);
+        input.nextChildren = [anchor, ...input.nextChildren];
+        input.expectedNextChildren = [anchor, ...input.expectedNextChildren];
+        input.plan.nextAttachedKeys = new Set(["anchor", "tail"]);
+        input.currentState.attachedKeys = new Set(["anchor"]);
+        input.currentState.heights = new Map([["anchor", 40]]);
+        input.nextState.attachedKeys = new Set(["anchor", "tail"]);
+        input.anchorJournal = {
+          key: "anchor",
+          oldRoot: anchor,
+          offsetFromViewportTop: 20,
+          scrollTop: 100,
+          scrollHeight: 1000,
+          interactionGeneration: input.expectedInteractionGeneration,
+        } as never;
+        input.resolvePrimaryByKey = (key) => key === "anchor" ? anchor : null;
+        input.writeScrollTop = () => { throw new Error("anchor write failed"); };
+        originalChildren.push(anchor);
+        originalState.attachedKeys.add("anchor");
+        originalState.heights.set("anchor", 40);
+      }
+
+      expect(() => apply(input)).toThrow(`${failurePoint} failed`);
+      expect(Array.from(h.transcript.children)).toEqual(originalChildren);
+      originalChildren.forEach((child, index) => expect(h.transcript.children[index]).toBe(child));
+      expect(input.currentState).toEqual(originalState);
+      expect(input.nextState.heights).toEqual(nextHeights);
+      expect(h.transcript.scrollTop).toBe(100);
+      expect(h.controller.isFollowing()).toBe(true);
+      expect(h.button.hidden).toBe(true);
+      expect(h.pendingFrames()).toBe(0);
+    },
+  );
+
+  it("does not return applied early for same-controller different-root synchronous nesting", async () => {
+    const apply = await loadApply();
+    const h = createHarness();
+    const outer = inputFor(h);
+    const innerRoot = document.createElement("div");
+    const innerTail = document.createElement("div");
+    innerTail.dataset.reconcileKey = "inner-tail";
+    const innerState = {
+      generation: 10, attachedKeys: new Set<string>(), heights: new Map<string, number>(),
+    };
+    const innerNextState = {
+      generation: 11, attachedKeys: new Set(["inner-tail"]), heights: new Map<string, number>(),
+    };
+    const inner = inputFor(h, {
+      root: innerRoot,
+      sourceChildren: [],
+      nextChildren: [innerTail],
+      expectedNextChildren: [innerTail],
+      plan: {
+        materializeKeys: ["inner-tail"], trimKeys: [], nextAttachedKeys: new Set(["inner-tail"]),
+        spacerSegments: [], anchorKey: null, overBudgetReason: null,
+      },
+      stagedBlocks: new Map([[
+        "inner-tail", { key: "inner-tail", roots: [innerTail], primary: innerTail },
+      ]]),
+      expectedWindowGeneration: 10,
+      validateWindowGeneration: (value) => value === 10,
+      currentState: innerState,
+      nextState: innerNextState,
+      following: false,
+    });
+    let nested: WindowTransactionResult | undefined;
+    outer.beforeMutation = () => { nested = apply(inner); };
+
+    expect(apply(outer)).toMatchObject({ status: "applied" });
+    expect.soft(nested).toMatchObject({ status: "deferred" });
+    expect.soft(Array.from(innerRoot.children)).toEqual([]);
+    expect.soft(innerNextState.heights).toEqual(new Map());
+    expect.soft(h.pendingFrames()).toBe(0);
   });
 });

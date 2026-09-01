@@ -1073,3 +1073,95 @@ async def test_subagent_applies_state_patch_before_terminal_message_result(tmp_p
     assert result == "terminal result"
     assert len(observed) == 1
     assert refreshed_routes[-1] == "review"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="bash is not registered on Windows")
+@pytest.mark.asyncio
+async def test_subagent_passes_approved_risk_to_bash_execution(tmp_path, monkeypatch):
+    import subprocess
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
+
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    (tmp_path / "tracked.txt").write_text("clean\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=tmp_path, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    subprocess.run(
+        ["git", "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "init"],
+        cwd=tmp_path,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    command = "git status --short && git diff --check -- tracked.txt"
+    calls = 0
+
+    class Model:
+        def bind_tools(self, _tool_defs):
+            return self
+
+    tool_results: list[ToolMessage] = []
+
+    async def fake_stream_llm(_model, messages, _renderer, _protocol, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "bash",
+                        "args": {"command": command},
+                        "id": "call-bash",
+                    }
+                ],
+            )
+        tool_results.extend(
+            message
+            for message in messages
+            if isinstance(message, ToolMessage) and message.tool_call_id == "call-bash"
+        )
+        return AIMessage(content="status: PASS\nfiles_changed: none")
+
+    async def approve_calls(tool_calls):
+        return [
+            {
+                **tool_call,
+                "metadata": {
+                    "approved_risk": {
+                        "tool_name": "bash",
+                        "pattern": command,
+                        "risk_level": "extreme",
+                        "tags": ["dynamic_shell"],
+                        "reason": "shell policy deferred: compound shell syntax",
+                    }
+                },
+            }
+            for tool_call in tool_calls
+        ], []
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_args, **_kwargs: Model())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    result = await subagent_module.run_subagent(
+        get_agent("voidx"),
+        "Run the approved shell check",
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        runtime_persona="implement",
+        goal_resolution=_child_goal_resolution(),
+        result_contract=_child_result_contract(),
+        debug=False,
+        parent_tools=build_registry(),
+        authorize_tools=approve_calls,
+        ui_port=SimpleNamespace(
+            ui=SimpleNamespace(step_header=lambda *_args: None, print=lambda *_args: None),
+            console=object(),
+            via_events=lambda: False,
+        ),
+    )
+
+    assert result == "status: PASS\nfiles_changed: none"
+    assert len(tool_results) == 1
+    assert tool_results[0].status == "success"
+    assert json.loads(tool_results[0].content)["ok"] is True
+    assert calls == 2

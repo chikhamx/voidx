@@ -16,6 +16,7 @@ from voidx.agent.application.tool_messages import (
 )
 from voidx.agent.domain.task.intent import PersonaName
 from voidx.tooling.domain.result import ToolResult
+from voidx.tooling.domain.risk import ApprovedToolRisk
 from voidx.tooling.domain.interaction import (
     UserInteraction,
     UserResponse,
@@ -39,6 +40,16 @@ def _invalidate_tui(host: object) -> None:
 
 
 _OTHER_VALUE_PREFIX = "__voidx_choice_prompt_other__"
+
+
+def _approved_tool_risks_for_call(tool_call: dict) -> list[ApprovedToolRisk]:
+    raw = (tool_call.get("metadata") or {}).get("approved_risk")
+    if not isinstance(raw, dict):
+        return []
+    try:
+        return [ApprovedToolRisk.model_validate(raw)]
+    except ValueError:
+        return []
 
 
 

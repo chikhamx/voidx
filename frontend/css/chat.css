@@ -47,6 +47,12 @@
   padding: var(--vx-space-2) max(var(--vx-space-6), calc((100% - var(--vx-content-max)) / 2)) var(--vx-space-8);
 }
 
+.transcript-window-spacer {
+  flex: 0 0 auto;
+  min-height: 0;
+  pointer-events: none;
+}
+
 .transcript > * {
   max-width: 100%;
   min-width: 0;

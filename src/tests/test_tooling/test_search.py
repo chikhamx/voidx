@@ -159,7 +159,7 @@ async def test_find_output_stays_within_char_budget_and_persists_overflow(tmp_pa
         tmp_path,
     )
     data = json.loads(result.output)
-    assert len(result.output) <= 4000
+    assert len(result.output) <= 8192
     assert data["truncated"] is True
     assert 0 < len(data["files"]) < 200
     overflow_path = data.get("overflow_path")
@@ -181,7 +181,7 @@ async def test_search_output_stays_within_char_budget_and_persists_overflow(tmp_
         tmp_path,
     )
     data = json.loads(result.output)
-    assert len(result.output) <= 4000
+    assert len(result.output) <= 8192
     assert data["truncated"] is True
     total_hits = sum(len(item["hits"]) for item in data["matches"])
     assert 0 < total_hits < 80
@@ -207,3 +207,74 @@ async def test_search_marks_matching_lines_as_read(tmp_path):
         ctx,
     )
     assert result.metadata.get("error") is not True
+
+
+@pytest.mark.asyncio
+async def test_search_captures_regex_warning_without_emitting_to_stderr(tmp_path, monkeypatch):
+    import warnings
+    import voidx.tooling.builtin.file.search as search_module
+
+    (tmp_path / "a.txt").write_text("[a-z]\n")
+    emitted = []
+    logged = []
+    monkeypatch.setattr(
+        warnings,
+        "showwarning",
+        lambda *args, **kwargs: emitted.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        search_module,
+        "log_tool_event",
+        lambda *args, **kwargs: logged.append((args, kwargs)),
+    )
+
+    result = await execute(
+        "search",
+        {"query": "[[a-z]]", "match": "regex", "path": "a.txt"},
+        tmp_path,
+    )
+
+    assert result.metadata.get("error") is not True
+    assert emitted == []
+    assert len(logged) == 1
+    args, kwargs = logged[0]
+    assert args == ("python_warning",)
+    assert kwargs["tool_name"] == "search"
+    assert "Possible nested set" in kwargs["message"]
+
+
+@pytest.mark.asyncio
+async def test_find_results_between_4000_and_8192_do_not_persist_overflow(tmp_path):
+    for index in range(40):
+        (tmp_path / f"file_{index:03d}_{'x' * 45}.py").touch()
+
+    result = await execute(
+        "find",
+        {"query": "file_", "extensions": ["py"], "max_results": 500},
+        tmp_path,
+    )
+
+    data = json.loads(result.output)
+    assert len(result.output) <= 8192
+    assert data["truncated"] is False
+    assert "overflow_path" not in data
+
+
+@pytest.mark.asyncio
+async def test_search_results_between_4000_and_8192_do_not_persist_overflow(tmp_path):
+    for index in range(35):
+        (tmp_path / f"file_{index:03d}.txt").write_text(
+            "needle " + "x" * 90 + "\n",
+            encoding="utf-8",
+        )
+
+    result = await execute(
+        "search",
+        {"query": "needle", "extensions": ["txt"], "max_results": 500},
+        tmp_path,
+    )
+
+    data = json.loads(result.output)
+    assert len(result.output) <= 8192
+    assert data["truncated"] is False
+    assert "overflow_path" not in data

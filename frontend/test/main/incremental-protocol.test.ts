@@ -1,9 +1,13 @@
 // @ts-nocheck
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   _resetWorkbenchForTest,
   handleItem,
   handleNotification,
+  peekPendingLocalMessageTokens,
+  validatePendingLocalMessageTokens,
+  _peekTranscriptWindowSnapshotForTest,
+  _peekTranscriptWindowHeightKeysForTest,
 } from "../../src/main";
 import { _setSocket } from "../../src/rpc/client";
 import { uiState } from "../../src/services/state";
@@ -25,6 +29,70 @@ function fakeSocket() {
     },
   };
 }
+let restoreTranscriptGeometry: (() => void) | null = null;
+
+function installTranscriptGeometry(transcript, blockHeight = 30, clientHeight = 50) {
+  restoreTranscriptGeometry?.();
+  const prototype = Element.prototype;
+  const previousPrototype = Object.getOwnPropertyDescriptor(prototype, "getBoundingClientRect");
+  const fallback = prototype.getBoundingClientRect;
+  const previousGeometry = new Map(
+    ["clientHeight", "scrollHeight", "scrollTop"]
+      .map((name) => [name, Object.getOwnPropertyDescriptor(transcript, name)]),
+  );
+  Object.defineProperty(transcript, "clientHeight", {
+    configurable: true,
+    value: clientHeight,
+  });
+  const rect = (top, height) => ({
+    top,
+    bottom: top + height,
+    left: 0,
+    right: 0,
+    width: 0,
+    height,
+    x: 0,
+    y: top,
+    toJSON: () => ({}),
+  });
+  Object.defineProperty(prototype, "getBoundingClientRect", {
+    configurable: true,
+    value: function getTranscriptTestRect() {
+      const element = this;
+      if (element === transcript) {
+        return rect(0, Math.max(1, Number(transcript.clientHeight) || 0));
+      }
+      const directIndex = element.parentElement === transcript
+        ? Array.from(transcript.children).indexOf(element)
+        : -1;
+      const detachedBlock = element.dataset?.reconcileKey !== undefined && !element.isConnected;
+      if (directIndex < 0 && !detachedBlock) return fallback.call(this);
+      if (directIndex < 0) return rect(0, blockHeight);
+      let top = 0;
+      for (const child of Array.from(transcript.children).slice(0, directIndex)) {
+        const spacerHeight = child.dataset.transcriptSpacer !== undefined
+          ? Number.parseFloat(child.style.height)
+          : NaN;
+        top += Number.isFinite(spacerHeight) && spacerHeight > 0 ? spacerHeight : blockHeight;
+      }
+      return rect(top - (Number(transcript.scrollTop) || 0), blockHeight);
+    },
+  });
+  restoreTranscriptGeometry = () => {
+    if (previousPrototype) Object.defineProperty(prototype, "getBoundingClientRect", previousPrototype);
+    else Reflect.deleteProperty(prototype, "getBoundingClientRect");
+    for (const [name, descriptor] of previousGeometry) {
+      if (descriptor) Object.defineProperty(transcript, name, descriptor);
+      else Reflect.deleteProperty(transcript, name);
+    }
+    restoreTranscriptGeometry = null;
+  };
+}
+
+afterEach(() => {
+  restoreTranscriptGeometry?.();
+});
+
 
 
 function eventSocket(initialReadyState = WebSocket.CONNECTING) {
@@ -522,6 +590,31 @@ describe("workspace snapshot keyed reconciliation", () => {
     expect(transcript.textContent).not.toContain("before");
   });
 
+  it("preserves a historical scroll position when a subsequent ordinary snapshot arrives", async () => {
+    const transcript = document.querySelector("#transcript");
+    installTranscriptGeometry(transcript, 30, 50);
+    Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 300 });
+
+    snapshot(1, Array.from({ length: 10 }, (_, index) => ({
+      node_type: "message",
+      id: `scroll-${index}`,
+      payload: { style: "text", raw_text: `scroll ${index}` },
+    })));
+
+    transcript.scrollTop = 90;
+    transcript.dispatchEvent(new Event("scroll"));
+    await Promise.resolve();
+    const historicalScrollTop = transcript.scrollTop;
+
+    snapshot(2, [{
+      node_type: "message",
+      id: "scroll-9",
+      payload: { style: "text", raw_text: "scroll 9 updated" },
+    }]);
+
+    expect(transcript.scrollTop).toBe(historicalScrollTop);
+  });
+
   it("does not delete absent canonical blocks from a windowed snapshot", () => {
     snapshot(1, [
       { node_type: "message", id: "outside", payload: { style: "text", raw_text: "outside" } },
@@ -538,6 +631,71 @@ describe("workspace snapshot keyed reconciliation", () => {
     expect(transcript.textContent).toContain("outside");
     expect(transcript.textContent).toContain("page updated");
   });
+
+  it("merges a windowed snapshot update into the complete canonical window model", () => {
+    const nodes = Array.from({ length: 241 }, (_, index) => ({
+      node_type: "message",
+      id: `canonical-window-${index}`,
+      payload: { style: "text", raw_text: `canonical ${index}` },
+    }));
+    snapshot(1, nodes, true);
+
+    snapshot(2, [{
+      node_type: "message",
+      id: "canonical-window-240",
+      payload: { style: "text", raw_text: "canonical updated" },
+    }], true);
+
+    const canonical = _peekTranscriptWindowSnapshotForTest("thread-1");
+    expect(canonical?.nodes).toHaveLength(241);
+    expect(canonical?.nodes[0].id).toBe("canonical-window-0");
+    expect(canonical?.nodes[240].payload.raw_text).toBe("canonical updated");
+  });
+
+  it("drops cached heights for blocks removed by a full snapshot", () => {
+    snapshot(1, Array.from({ length: 241 }, (_, index) => ({
+      node_type: "turn",
+      id: `height-old-${index}`,
+      header: `height old ${index}`,
+    })), true);
+    expect(
+      _peekTranscriptWindowHeightKeysForTest("thread-1")
+        ?.some((key) => key.startsWith("node:height-old-")),
+    ).toBe(true);
+
+    snapshot(2, [
+      { node_type: "turn", id: "height-new-0", header: "height new 0" },
+      { node_type: "turn", id: "height-new-1", header: "height new 1" },
+    ]);
+
+    const keys = _peekTranscriptWindowHeightKeysForTest("thread-1") ?? [];
+    expect(keys.some((key) => key.startsWith("node:height-old-"))).toBe(false);
+    expect(keys).toContain("node:height-new-1");
+    expect(keys).not.toContain("node:height-new-0");
+  });
+it("schedules a trim after a fallback full attach of a windowed snapshot", async () => {
+    installTranscriptGeometry(document.querySelector("#transcript"));
+    snapshot(1, [
+      { node_type: "message", id: "preexisting", payload: { style: "text", raw_text: "pre" } },
+    ]);
+
+    snapshot(2, Array.from({ length: 241 }, (_, index) => ({
+      node_type: "turn",
+      id: `fallback-${index}`,
+      header: `fallback ${index}`,
+    })), true);
+
+    const transcript = document.querySelector("#transcript");
+    expect(transcript.querySelectorAll("[data-reconcile-key]").length).toBeGreaterThan(240);
+
+    await Promise.resolve();
+
+    expect(transcript.querySelectorAll("[data-reconcile-key]").length).toBeLessThanOrEqual(240);
+    expect(transcript.querySelector("[data-transcript-spacer]")).not.toBeNull();
+  });
+
+
+
 
   it("preserves an unconfirmed pending local message identity across a same-thread snapshot", () => {
     const socket = eventSocket(WebSocket.OPEN);
@@ -557,6 +715,29 @@ describe("workspace snapshot keyed reconciliation", () => {
 
     expect(transcript.querySelector('[data-item-id^="user-"]')).toBe(pending);
     expect(transcript.textContent).toContain("pending local");
+  });
+
+
+  it("invalidates the complete pending-local token set when canonical handoff settles", () => {
+    const socket = eventSocket(WebSocket.OPEN);
+    _setSocket(socket);
+    const input = document.querySelector("#input");
+    const composer = document.querySelector("#composer");
+    input.value = "pending token";
+    composer.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+
+    const transcript = document.querySelector("#transcript");
+    const pending = transcript.querySelector('[data-item-id^="user-"]');
+    const tokens = peekPendingLocalMessageTokens("thread-1");
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].element).toBe(pending);
+    expect(validatePendingLocalMessageTokens("thread-1", tokens)).toBe(true);
+
+    snapshot(1, [
+      { node_type: "turn", id: "server-pending-token", header: "pending token" },
+    ]);
+
+    expect(validatePendingLocalMessageTokens("thread-1", tokens)).toBe(false);
   });
 
 
@@ -655,6 +836,31 @@ describe("workspace snapshot keyed reconciliation", () => {
     }
   });
 
+  it("escalates a malformed full snapshot over an existing window to blocked recovery", async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = eventSocket(WebSocket.OPEN);
+      _setSocket(socket);
+      snapshot(1, [
+        { node_type: "message", id: "window-a", payload: { style: "text", raw_text: "A" } },
+      ], true);
+
+      snapshot(2, [
+        { node_type: "message", id: "duplicate-node", payload: { style: "text", raw_text: "A" } },
+        { node_type: "message", id: "duplicate-node", payload: { style: "text", raw_text: "B" } },
+      ]);
+
+      expect(sent(socket, "snapshot.requested")).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(249);
+      expect(sent(socket, "snapshot.requested")).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(sent(socket, "snapshot.requested")).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+
   it("installs a blocked authoritative full snapshot through replacement and stops retry", async () => {
     vi.useFakeTimers();
     try {
@@ -665,6 +871,7 @@ describe("workspace snapshot keyed reconciliation", () => {
         { node_type: "message", id: "segment-b", payload: { style: "text", raw_text: "B" } },
       ]);
       const transcript = document.querySelector("#transcript");
+      installTranscriptGeometry(transcript);
       const boundary = document.createElement("div");
       boundary.dataset.pendingItemId = "damaged-boundary";
       transcript.insertBefore(boundary, transcript.querySelector('[data-reconcile-key="node:segment-b"]'));
@@ -674,17 +881,190 @@ describe("workspace snapshot keyed reconciliation", () => {
       ], true);
       expect(sent(socket, "snapshot.requested")).toHaveLength(1);
 
-      snapshot(2, [
-        { node_type: "message", id: "recovered", payload: { style: "text", raw_text: "recovered" } },
-      ]);
+      snapshot(2, Array.from({ length: 241 }, (_, index) => ({
+        node_type: "message",
+        id: `recovered-${index}`,
+        payload: { style: "text", raw_text: `recovered ${index}` },
+      })));
 
       expect(boundary.isConnected).toBe(false);
-      expect(transcript.querySelector('[data-reconcile-key="node:recovered"]')).not.toBeNull();
+      expect(transcript.querySelector('[data-reconcile-key="node:recovered-240"]')).not.toBeNull();
+      expect(_peekTranscriptWindowSnapshotForTest("thread-1")?.nodes).toHaveLength(241);
+      expect(transcript.querySelectorAll("[data-reconcile-key]")).toHaveLength(241);
+
+      await Promise.resolve();
+
+      expect(transcript.querySelectorAll("[data-reconcile-key]").length).toBeLessThanOrEqual(240);
+      expect(transcript.querySelector("[data-transcript-spacer]")).not.toBeNull();
       await vi.advanceTimersByTimeAsync(1000);
       expect(sent(socket, "snapshot.requested")).toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+
+  it("requests an earlier page when replan moves the scroll position after a top scroll", async () => {
+    const socket = eventSocket(WebSocket.OPEN);
+    _setSocket(socket);
+    const transcript = document.querySelector("#transcript");
+    installTranscriptGeometry(transcript);
+
+    handleNotification("workspace.snapshot", {
+      revision: 1,
+      active_thread_id: "thread-1",
+      threads: [{ thread_id: "thread-1" }],
+      active_snapshot: {
+        thread_id: "thread-1",
+        revision: 1,
+        windowed: true,
+        before_turn_id: 100,
+        has_earlier: true,
+        nodes: Array.from({ length: 241 }, (_, index) => ({
+          node_type: "turn",
+          id: `replan-scroll-${index}`,
+          header: `item ${index}`,
+        })),
+      },
+    });
+    expect(transcript.querySelectorAll("[data-reconcile-key]").length).toBeGreaterThan(0);
+
+    let scrollTop = 0;
+    let replanMovedScroll = false;
+    Object.defineProperty(transcript, "scrollTop", {
+      configurable: true,
+      get: () => (replanMovedScroll ? 100 : scrollTop),
+      set: (value) => {
+        if (!replanMovedScroll) scrollTop = Number(value) || 0;
+      },
+    });
+    const originalReplaceChildren = transcript.replaceChildren.bind(transcript);
+    transcript.replaceChildren = (...children) => {
+      originalReplaceChildren(...children);
+      replanMovedScroll = true;
+    };
+
+    transcript.scrollTop = 0;
+    transcript.dispatchEvent(new Event("scroll"));
+    await Promise.resolve();
+
+    transcript.replaceChildren = originalReplaceChildren;
+    expect(replanMovedScroll).toBe(true);
+    expect(sent(socket, "transcript.page")).toHaveLength(1);
+  });
+
+
+  it("releases the pagination lock after a successful earlier page", async () => {
+    const socket = eventSocket(WebSocket.OPEN);
+    _setSocket(socket);
+    const transcript = document.querySelector("#transcript");
+    const client = await import("../../src/rpc/client");
+
+    handleNotification("workspace.snapshot", {
+      revision: 1,
+      active_thread_id: "thread-1",
+      threads: [{ thread_id: "thread-1" }],
+      active_snapshot: {
+        thread_id: "thread-1",
+        revision: 1,
+        windowed: true,
+        before_turn_id: 100,
+        has_earlier: true,
+        nodes: [{ node_type: "turn", id: "page-lock-a", header: "A" }],
+      },
+    });
+
+    transcript.scrollTop = 0;
+    transcript.dispatchEvent(new Event("scroll"));
+    await Promise.resolve();
+    const firstRequest = sent(socket, "transcript.page")[0];
+    expect(firstRequest).toBeDefined();
+
+    client._resolvePendingForTest(firstRequest.id, {
+      thread_id: "thread-1",
+      revision: 2,
+      windowed: true,
+      before_turn_id: 50,
+      after_turn_id: 99,
+      has_earlier: true,
+      has_later: true,
+      nodes: [
+        { node_type: "turn", id: "page-lock-before", header: "Before" },
+        { node_type: "turn", id: "page-lock-a", header: "A" },
+      ],
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    transcript.scrollTop = 0;
+    transcript.dispatchEvent(new Event("scroll"));
+    await Promise.resolve();
+
+    expect(sent(socket, "transcript.page")).toHaveLength(2);
+  });
+
+
+  it("does not clear a newer window state's pagination lock when a stale page settles", async () => {
+    const socket = eventSocket(WebSocket.OPEN);
+    _setSocket(socket);
+    const transcript = document.querySelector("#transcript");
+    const client = await import("../../src/rpc/client");
+
+    handleNotification("workspace.snapshot", {
+      revision: 1,
+      active_thread_id: "thread-1",
+      threads: [{ thread_id: "thread-1" }],
+      active_snapshot: {
+        thread_id: "thread-1",
+        revision: 1,
+        windowed: true,
+        before_turn_id: 100,
+        has_earlier: true,
+        nodes: [{ node_type: "turn", id: "page-lock-a", header: "A" }],
+      },
+    });
+    transcript.scrollTop = 0;
+    transcript.dispatchEvent(new Event("scroll"));
+    await Promise.resolve();
+    expect(sent(socket, "transcript.page")).toHaveLength(1);
+    const staleRequest = sent(socket, "transcript.page")[0];
+
+    snapshot(2, [
+      { node_type: "message", id: "dup-node", payload: { style: "text", raw_text: "x" } },
+      { node_type: "message", id: "dup-node", payload: { style: "text", raw_text: "y" } },
+    ]);
+    expect(sent(socket, "snapshot.requested")).toHaveLength(1);
+
+    handleNotification("workspace.snapshot", {
+      revision: 3,
+      active_thread_id: "thread-1",
+      threads: [{ thread_id: "thread-1" }],
+      active_snapshot: {
+        thread_id: "thread-1",
+        revision: 3,
+        before_turn_id: 50,
+        has_earlier: true,
+        nodes: [{ node_type: "turn", id: "page-lock-b", header: "B" }],
+      },
+    });
+    await Promise.resolve();
+
+    transcript.scrollTop = 0;
+    transcript.dispatchEvent(new Event("scroll"));
+    await Promise.resolve();
+    expect(sent(socket, "transcript.page")).toHaveLength(2);
+
+    client._resolvePendingForTest(staleRequest.id, {
+      thread_id: "thread-1",
+      revision: 2,
+      windowed: true,
+      nodes: [],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    transcript.dispatchEvent(new Event("scroll"));
+    await Promise.resolve();
+    expect(sent(socket, "transcript.page")).toHaveLength(2);
   });
 
   it("keeps blocked commit slots unchanged when replacement throws and retries the same revision", () => {

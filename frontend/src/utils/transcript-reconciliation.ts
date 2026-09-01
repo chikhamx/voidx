@@ -1,4 +1,5 @@
 import type { TranscriptNode } from "../rpc/protocol";
+import type { TranscriptSpacerSegment } from "./transcript-dom-window";
 
 export const PRODUCTION_RENDERER_SHAPE_VERSION = "production-v1";
 
@@ -325,12 +326,22 @@ export type ExistingTranscriptEntry =
   | { kind: "block"; key: string }
   | { kind: "retained"; root: HTMLElement };
 
+export interface ExistingTranscriptSpacer {
+  element: HTMLElement;
+  segment: TranscriptSpacerSegment;
+}
+
 export interface ExistingTranscriptIndex {
   blocks: TranscriptLogicalBlock[];
   byKey: Map<string, TranscriptLogicalBlock>;
   entries: ExistingTranscriptEntry[];
   sourceChildren: readonly ChildNode[];
+  spacers: ExistingTranscriptSpacer[];
 }
+
+export type SafeExistingTranscriptCollection =
+  | { status: "collected"; index: ExistingTranscriptIndex; spacers: ExistingTranscriptSpacer[] }
+  | { status: "deferred"; reason: string };
 
 export interface TranscriptReconciliationPlan {
   keep: TranscriptLogicalBlock[];
@@ -357,6 +368,73 @@ function parseStringArrayMetadata(value: string | undefined, name: string): Set<
   return new Set(parsed);
 }
 
+function parseTranscriptSpacer(element: HTMLElement): ExistingTranscriptSpacer | null {
+  const value = element.dataset.transcriptSpacer;
+  if (value === undefined) return null;
+  const hasReconciliationMetadata = [
+    element.dataset.reconcileKey,
+    element.dataset.reconcileFingerprint,
+    element.dataset.reconcileShape,
+    element.dataset.reconcileTurnId,
+    element.dataset.reconcileRootCount,
+    element.dataset.reconcileMemberNodeIds,
+    element.dataset.reconcileToolCallIds,
+    element.dataset.reconcileFileChangeKeys,
+  ].some((metadata) => metadata !== undefined);
+  if (!element.classList.contains("transcript-window-spacer")
+    || element.getAttribute("aria-hidden") !== "true"
+    || element.dataset.itemId !== undefined
+    || hasReconciliationMetadata) {
+    throw new Error("malformed transcript spacer identity");
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("malformed transcript spacer metadata");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("malformed transcript spacer metadata");
+  }
+
+  const candidate = parsed as Record<string, unknown>;
+  const { startIndex, endIndex, omittedKeys, canonicalStartPx, canonicalEndPx, cssHeightPx } = candidate;
+  const validIndices = Number.isSafeInteger(startIndex)
+    && Number.isSafeInteger(endIndex)
+    && (startIndex as number) >= 0
+    && (endIndex as number) >= (startIndex as number);
+  const validKeys = Array.isArray(omittedKeys)
+    && omittedKeys.length > 0
+    && omittedKeys.every((key) => typeof key === "string" && key.length > 0)
+    && validIndices
+    && omittedKeys.length === (endIndex as number) - (startIndex as number);
+  const validCanonicalExtent = typeof canonicalStartPx === "number"
+    && Number.isFinite(canonicalStartPx)
+    && canonicalStartPx >= 0
+    && typeof canonicalEndPx === "number"
+    && Number.isFinite(canonicalEndPx)
+    && canonicalEndPx >= canonicalStartPx;
+  const validCssHeight = typeof cssHeightPx === "number"
+    && Number.isFinite(cssHeightPx)
+    && cssHeightPx >= 0;
+  if (!validIndices || !validKeys || !validCanonicalExtent || !validCssHeight) {
+    throw new Error("malformed transcript spacer metadata");
+  }
+
+  return {
+    element,
+    segment: {
+      startIndex: startIndex as number,
+      endIndex: endIndex as number,
+      omittedKeys: omittedKeys as string[],
+      canonicalStartPx,
+      canonicalEndPx,
+      cssHeightPx,
+    },
+  };
+}
+
 function hasOrphanReconciliationMetadata(element: HTMLElement): boolean {
   return !element.dataset.reconcileKey && [
     element.dataset.reconcileFingerprint,
@@ -378,6 +456,12 @@ export function collectExistingTranscriptBlocks(
   const blocks: TranscriptLogicalBlock[] = [];
   const byKey = new Map<string, TranscriptLogicalBlock>();
   const entries: ExistingTranscriptEntry[] = [];
+  const spacers: ExistingTranscriptSpacer[] = [];
+  const parsedSpacers = new Map<HTMLElement, ExistingTranscriptSpacer>();
+  for (const child of children) {
+    const spacer = parseTranscriptSpacer(child);
+    if (spacer) parsedSpacers.set(child, spacer);
+  }
   const legacyToolDescriptors = descriptors.filter(
     (descriptor) => descriptor.key.startsWith("turn-with-tools:") && descriptor.turnId,
   );
@@ -387,6 +471,12 @@ export function collectExistingTranscriptBlocks(
 
   for (let index = 0; index < children.length;) {
     const primary = children[index];
+    const spacer = parseTranscriptSpacer(primary);
+    if (spacer) {
+      spacers.push(spacer);
+      index += 1;
+      continue;
+    }
     if (hasOrphanReconciliationMetadata(primary)) {
       throw new Error("reconciliation metadata without key");
     }
@@ -481,6 +571,9 @@ export function collectExistingTranscriptBlocks(
     }
 
     const roots = children.slice(index, index + rootCount);
+    if (roots.some((candidate) => parsedSpacers.has(candidate))) {
+      throw new Error(`spacer overlaps reconciliation root range for ${key}`);
+    }
     for (let offset = 1; offset < roots.length; offset += 1) {
       if (roots[offset].dataset.reconcileKey || hasOrphanReconciliationMetadata(roots[offset])) {
         throw new Error(`overlapping primary in reconciliation root range for ${key}`);
@@ -504,7 +597,21 @@ export function collectExistingTranscriptBlocks(
     index += rootCount;
   }
 
-  return { blocks, byKey, entries, sourceChildren: [...children] };
+  return { blocks, byKey, entries, sourceChildren: [...children], spacers };
+}
+
+export function collectExistingTranscriptBlocksSafely(
+  root: HTMLElement,
+  descriptors: readonly TranscriptNodeDescriptor[] = [],
+  syntheticBlocks: ReadonlyMap<HTMLElement, TranscriptLogicalBlock> = new Map(),
+): SafeExistingTranscriptCollection {
+  try {
+    const index = collectExistingTranscriptBlocks(root, descriptors, syntheticBlocks);
+    return { status: "collected", index, spacers: index.spacers };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "malformed transcript reconciliation metadata";
+    return { status: "deferred", reason };
+  }
 }
 
 function stalePlan(

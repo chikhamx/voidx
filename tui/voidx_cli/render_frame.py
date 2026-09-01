@@ -66,6 +66,7 @@ class _FrameRendererMixin:
         clear_screen = False
         clear_submitted = False
         force_full = False
+        full_frame_repaint = False
         if self._tty:
             term_height = term_height or shutil.get_terminal_size().lines
             resize_frame = self._prev_frame_width != 0 and (
@@ -73,7 +74,14 @@ class _FrameRendererMixin:
                 or self._prev_frame_term_height != term_height
             )
             clear_screen = dock.consume_clear_screen_request()
-            force_full = self._bottom_region_dirty or resize_frame or clear_screen
+            full_frame_repaint = self._full_frame_repaint_pending
+            self._full_frame_repaint_pending = False
+            force_full = (
+                self._bottom_region_dirty
+                or resize_frame
+                or clear_screen
+                or full_frame_repaint
+            )
             if not worker_mode:
                 if resize_frame:
                     self._invalidate_frame_cache()
@@ -402,6 +410,9 @@ class _FrameRendererMixin:
         return bool(scroll_ansi)
 
     def _render_input_region(self) -> None:
+        if self._full_frame_repaint_pending:
+            self._render_frame()
+            return
         if self._tty and self._terminal_writer_worker_mode():
             self._render_frame()
             return
@@ -482,6 +493,8 @@ class _FrameRendererMixin:
         return True
 
     def _render_busy_activity_tick(self) -> bool:
+        if self._full_frame_repaint_pending:
+            return False
         if (
             not self._tty
             or not self._busy_activity_tick_active()
