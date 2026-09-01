@@ -890,9 +890,11 @@ Native `desktop/tauri/` 当前不在计划改动范围。
   - 文件：`tui/voidx_cli/parser.py`、`tui/voidx_cli/input.py`、`tui/tests/test_input_advanced.py`。
   - 验证：`./test.py --backend -- tui/tests/test_input_advanced.py -v`（59 passed）；相关输入集合 `./test.py --backend -- tui/tests/test_input_advanced.py tui/tests/test_input_handling.py -v`（87 passed）；完整 TUI 集合 `./test.py --backend -- tui/tests -v`（409 passed）；`py_compile` 通过。
 
-- [ ] **P2.2 paste buffer**：按 4KiB 分片输入 1/2/4/8MB，copy 次数和峰值内存近线性；超过阈值进入 spool。
-  - 文件：`tui/tests/test_paste_handling.py`
-  - 命令：`./test.py --backend -- tui/tests/test_paste_handling.py -v`
+- [x] **P2.2 paste buffer**：按 4KiB 分片使用线性 `bytearray.extend()`；超过 1 MiB 内存阈值迁移并 rollover 到 `SpooledTemporaryFile`，结束时一次 decode，完成和异常插入路径均关闭 spool；结束标记可跨 read 拆分。
+  - RED：当前 `bytes += data` 在每个分片重复复制，且没有 spool 或跨 read 结束标记处理。
+  - GREEN：`tui/voidx_cli/parser.py` 使用 `bytearray | BinaryIO` 缓冲、1 MiB 内部阈值、最多 5 字节 marker 尾缀保留和确定性 buffer close；`tui/voidx_cli/state.py` 更新缓冲类型。
+  - 文件：`tui/voidx_cli/parser.py`、`tui/voidx_cli/state.py`、`tui/tests/test_paste_handling.py`。
+  - 验证：4 KiB 分片输入 1/2/4/8 MiB 内容完整，spool rollover/完成关闭/插入异常关闭/迁移失败关闭及跨 read marker 均通过；聚焦粘贴测试（28 passed）；完整 TUI 集合（416 passed）；`py_compile` 与 `git diff --check` 通过。
 
 - [ ] **P2.3 candidate generation**：慢 provider 不阻塞输入；旧 generation 结果不覆盖新 query；大目录不全量排序。
   - 文件：`tui/tests/test_terminal_panels.py`

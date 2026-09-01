@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, BinaryIO, Callable
 
 from rich.console import Console
 
@@ -172,7 +172,7 @@ class TerminalState:
 @dataclass
 class PasteState:
     pending_bytes: bytes = b""
-    paste_buffer: bytes | None = None
+    paste_buffer: bytearray | BinaryIO | None = None
     entries: list[dict[str, Any]] = field(default_factory=list)
     next_id: int = 1
     clipboard_change_count: int = -1

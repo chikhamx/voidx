@@ -6,6 +6,7 @@ import asyncio
 import io
 import os
 import sys
+from tempfile import SpooledTemporaryFile
 
 from .helpers import _is_printable, _utf8_len, _parse_csi_modifier, _csi_modifier_has_shift
 
@@ -153,6 +154,7 @@ class _InputParserMixin:
 
     _PASTE_START = b"\x1b[200~"
     _PASTE_END = b"\x1b[201~"
+    _PASTE_BUFFER_MEMORY_LIMIT = 1024 * 1024
 
     def _process_input(self, data: bytes) -> bool:
         # Prepend any bytes held over from a previous truncated read
@@ -174,7 +176,7 @@ class _InputParserMixin:
             if start_idx > 0:
                 needs_render = self._process_input(data[:start_idx])
             # Enter paste mode
-            self._paste_buffer = b""
+            self._paste_buffer = bytearray()
             after = data[start_idx + len(self._PASTE_START) :]
             if after:
                 needs_render = self._process_paste(after) or needs_render
@@ -217,21 +219,70 @@ class _InputParserMixin:
         self._input_region_render_pending = needs_render and input_region_only
         return needs_render
 
+    def _append_paste_data(self, data: bytes) -> None:
+        if not data:
+            return
+        buffer = self._paste_buffer
+        if isinstance(buffer, bytearray):
+            if len(buffer) + len(data) <= self._PASTE_BUFFER_MEMORY_LIMIT:
+                buffer.extend(data)
+                return
+            spool = SpooledTemporaryFile(
+                max_size=self._PASTE_BUFFER_MEMORY_LIMIT,
+                mode="w+b",
+            )
+            try:
+                spool.write(buffer)
+                spool.write(data)
+                spool.rollover()
+            except BaseException:
+                spool.close()
+                raise
+            self._paste_buffer = spool
+            return
+        if buffer is None:
+            raise RuntimeError("paste buffer is not active")
+        buffer.write(data)
+
+    def _consume_paste_buffer(self) -> str:
+        buffer = self._paste_buffer
+        self._paste_buffer = None
+        if buffer is None:
+            return ""
+        try:
+            if isinstance(buffer, bytearray):
+                return buffer.decode("utf-8", errors="replace")
+            buffer.seek(0)
+            return buffer.read().decode("utf-8", errors="replace")
+        finally:
+            close = getattr(buffer, "close", None)
+            if close is not None:
+                close()
+
     def _process_paste(self, data: bytes) -> bool:
         """Process data while in bracketed paste mode."""
         end_idx = data.find(self._PASTE_END)
         if end_idx == -1:
-            # Paste continues — accumulate
-            self._paste_buffer += data
+            max_suffix = min(len(data), len(self._PASTE_END) - 1)
+            suffix_len = 0
+            for size in range(max_suffix, 0, -1):
+                if data[-size:] == self._PASTE_END[:size]:
+                    suffix_len = size
+                    break
+            if suffix_len:
+                self._append_paste_data(data[:-suffix_len])
+                self._pending_bytes = data[-suffix_len:]
+            else:
+                self._append_paste_data(data)
+                self._pending_bytes = b""
             return False
 
         # Paste complete — accumulate up to the end marker
-        self._paste_buffer += data[:end_idx]
+        self._append_paste_data(data[:end_idx])
         remaining = data[end_idx + len(self._PASTE_END) :]
 
         # Decode and insert the pasted text as a whole
-        text = self._paste_buffer.decode("utf-8", errors="replace")
-        self._paste_buffer = None
+        text = self._consume_paste_buffer()
         self._insert_pasted_text(text)
 
         # Process any remaining bytes after the paste end normally

@@ -2,6 +2,7 @@ from tui_helpers import *  # noqa: F403
 
 import asyncio
 import re
+import tempfile
 
 import pytest
 from rich.console import Console
@@ -362,3 +363,132 @@ def test_bracketed_paste_short_with_existing_text(tmp_path):
 
     assert tui._get_input_text() == "say hi"
     assert tui._paste_entries == []
+
+
+@pytest.mark.parametrize(
+    ("size", "expects_spool"),
+    [
+        (1 * 1024 * 1024, False),
+        (2 * 1024 * 1024, True),
+        (4 * 1024 * 1024, True),
+        (8 * 1024 * 1024, True),
+    ],
+)
+def test_bracketed_paste_uses_linear_buffer_and_spools_large_payload(
+    tmp_path, monkeypatch, size, expects_spool
+):
+    tui = _tui(tmp_path)
+    captured = []
+    created_spools = []
+    real_spooled_temporary_file = tempfile.SpooledTemporaryFile
+
+    def capture_paste(text):
+        captured.append(text)
+
+    def track_spool(*args, **kwargs):
+        spool = real_spooled_temporary_file(*args, **kwargs)
+        created_spools.append(spool)
+        return spool
+
+    monkeypatch.setattr(tui, "_insert_pasted_text", capture_paste)
+    monkeypatch.setattr(
+        "voidx_cli.parser.SpooledTemporaryFile", track_spool, raising=False
+    )
+
+    chunk = b"x" * 4096
+    tui._process_input(b"\x1b[200~" + chunk)
+    for _ in range(size // len(chunk) - 1):
+        tui._process_input(chunk)
+
+    buffer = tui._paste_buffer
+    if expects_spool:
+        assert isinstance(buffer, tempfile.SpooledTemporaryFile)
+        assert buffer._rolled is True
+        assert len(created_spools) == 1
+    else:
+        assert isinstance(buffer, bytearray)
+        assert created_spools == []
+
+    tui._process_input(b"\x1b[201~")
+
+    assert len(captured) == 1
+    assert len(captured[0]) == size
+    assert captured[0] == "x" * size
+    assert tui._paste_buffer is None
+    if expects_spool:
+        assert created_spools[0].closed
+
+
+def test_bracketed_paste_closes_spool_when_insert_fails(tmp_path, monkeypatch):
+    tui = _tui(tmp_path)
+    created_spools = []
+    real_spooled_temporary_file = tempfile.SpooledTemporaryFile
+
+    def track_spool(*args, **kwargs):
+        spool = real_spooled_temporary_file(*args, **kwargs)
+        created_spools.append(spool)
+        return spool
+
+    def fail_insert(_text):
+        raise RuntimeError("paste insert failed")
+
+    monkeypatch.setattr(tui, "_insert_pasted_text", fail_insert)
+    monkeypatch.setattr("voidx_cli.parser.SpooledTemporaryFile", track_spool)
+
+    chunk = b"x" * 4096
+    tui._process_input(b"\x1b[200~" + chunk)
+    for _ in range((1024 * 1024) // len(chunk)):
+        tui._process_input(chunk)
+
+    with pytest.raises(RuntimeError, match="paste insert failed"):
+        tui._process_input(b"\x1b[201~")
+
+    assert len(created_spools) == 1
+    assert created_spools[0].closed
+    assert tui._paste_buffer is None
+
+
+def test_bracketed_paste_end_marker_split_across_reads(tmp_path, monkeypatch):
+    tui = _tui(tmp_path)
+    captured = []
+
+    monkeypatch.setattr(tui, "_insert_pasted_text", captured.append)
+
+    tui._process_input(b"\x1b[200~line1\nline2\x1b[201")
+    assert tui._paste_buffer is not None
+    assert captured == []
+
+    tui._process_input(b"~")
+
+    assert captured == ["line1\nline2"]
+    assert tui._paste_buffer is None
+
+
+
+def test_bracketed_paste_closes_spool_when_migration_fails(tmp_path, monkeypatch):
+    tui = _tui(tmp_path)
+    created_spools = []
+
+    class FailingSpool:
+        closed = False
+
+        def write(self, _data):
+            raise OSError("paste spool migration failed")
+
+        def close(self):
+            self.closed = True
+
+    def track_spool(**_kwargs):
+        spool = FailingSpool()
+        created_spools.append(spool)
+        return spool
+
+    monkeypatch.setattr("voidx_cli.parser.SpooledTemporaryFile", track_spool)
+    tui._PASTE_BUFFER_MEMORY_LIMIT = 1
+    tui._paste_buffer = bytearray(b"x")
+
+    with pytest.raises(OSError, match="paste spool migration failed"):
+        tui._append_paste_data(b"y")
+
+    assert len(created_spools) == 1
+    assert created_spools[0].closed
