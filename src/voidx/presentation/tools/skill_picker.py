@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from voidx.skills.service import SkillService
@@ -39,25 +40,30 @@ def find_skill_token(text: str, cursor: int) -> SkillToken | None:
     return SkillToken(start=start, end=cursor, query=token)
 
 
-def list_skill_candidates(
-    query: str,
-    limit: int = 8,
-    *,
-    service: SkillService,
-) -> list[SkillCandidate]:
-    query_lower = query.strip().lower()
-    prefix_matches: list[SkillCandidate] = []
-    other_matches: list[SkillCandidate] = []
+def build_skill_catalog(service: SkillService) -> list[SkillCandidate]:
+    catalog: list[SkillCandidate] = []
     for skill in service.enabled_skills():
         if skill.meta.scope not in {"global", "project"}:
             continue
-        candidate = SkillCandidate(
+        catalog.append(SkillCandidate(
             name=skill.name,
             scope=skill.meta.scope,
             description=skill.meta.description.strip(),
             mode=service.mode(skill),
-        )
-        name_lower = skill.name.lower()
+        ))
+    return catalog
+
+
+def filter_skill_candidates(
+    catalog: Iterable[SkillCandidate],
+    query: str,
+    limit: int = 8,
+) -> list[SkillCandidate]:
+    query_lower = query.strip().lower()
+    prefix_matches: list[SkillCandidate] = []
+    other_matches: list[SkillCandidate] = []
+    for candidate in catalog:
+        name_lower = candidate.name.lower()
         desc_lower = candidate.description.lower()
         if not query_lower:
             prefix_matches.append(candidate)
@@ -68,6 +74,15 @@ def list_skill_candidates(
     prefix_matches.sort(key=_skill_candidate_sort_key)
     other_matches.sort(key=_skill_candidate_sort_key)
     return [*prefix_matches, *other_matches][:limit]
+
+
+def list_skill_candidates(
+    query: str,
+    limit: int = 8,
+    *,
+    service: SkillService,
+) -> list[SkillCandidate]:
+    return filter_skill_candidates(build_skill_catalog(service), query, limit=limit)
 
 
 def _skill_candidate_sort_key(candidate: SkillCandidate) -> tuple[int, str]:

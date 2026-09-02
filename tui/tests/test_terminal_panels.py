@@ -1,5 +1,9 @@
 from tui_helpers import *  # noqa: F403
 
+import asyncio
+import threading
+import time
+import pytest
 import os
 import re
 import sys
@@ -464,3 +468,255 @@ def test_input_cursor_position_counts_wide_chinese_cells(tmp_path, monkeypatch):
 
     assert fake_stdout.text.startswith("\x1b[1A")
     assert "\x1b[7G" in fake_stdout.text
+
+
+@pytest.mark.asyncio
+async def test_slow_file_candidate_query_does_not_block_input(tmp_path, monkeypatch):
+    tui = _tui(tmp_path)
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_list_file_candidates(workspace, query, limit=8):
+        started.set()
+        release.wait(timeout=0.15)
+        return [SimpleNamespace(rel_path=f"{query}.py", kind="file", size=0, mtime=0.0)]
+
+    monkeypatch.setattr(
+        "voidx_cli.panels.list_file_candidates",
+        slow_list_file_candidates,
+    )
+
+    timer = threading.Timer(0.15, release.set)
+    timer.start()
+    try:
+        started_at = time.perf_counter()
+        tui._process_input(b"@a")
+        elapsed = time.perf_counter() - started_at
+
+        assert elapsed < 0.1
+        await asyncio.wait_for(asyncio.to_thread(started.wait, 1), timeout=1)
+        tui._process_input(b"b")
+        assert tui._get_input_text() == "@ab"
+        release.set()
+
+        for _ in range(100):
+            if any(
+                candidate.rel_path == "ab.py"
+                for candidate in tui._attachment_matches_cache
+            ):
+                break
+            await asyncio.sleep(0.01)
+        assert [candidate.rel_path for candidate in tui._attachment_matches_cache] == ["ab.py"]
+    finally:
+        release.set()
+        timer.cancel()
+
+
+@pytest.mark.asyncio
+async def test_stale_file_candidate_generation_cannot_replace_new_query(tmp_path, monkeypatch):
+    tui = _tui(tmp_path)
+    started_a = threading.Event()
+    started_ab = threading.Event()
+    release_a = threading.Event()
+    release_ab = threading.Event()
+
+    def list_file_candidates(workspace, query, limit=8):
+        if query == "a":
+            started_a.set()
+            release_a.wait(timeout=0.15)
+        else:
+            started_ab.set()
+            release_ab.wait(timeout=1)
+        return [SimpleNamespace(rel_path=f"{query}.py", kind="file", size=0, mtime=0.0)]
+
+    monkeypatch.setattr("voidx_cli.panels.list_file_candidates", list_file_candidates)
+
+    try:
+        started_at = time.perf_counter()
+        tui._process_input(b"@a")
+        elapsed = time.perf_counter() - started_at
+        assert elapsed < 0.1
+        await asyncio.wait_for(asyncio.to_thread(started_a.wait, 1), timeout=1)
+
+        tui._process_input(b"b")
+        await asyncio.wait_for(asyncio.to_thread(started_ab.wait, 1), timeout=1)
+        release_ab.set()
+
+        for _ in range(100):
+            if any(
+                candidate.rel_path == "ab.py"
+                for candidate in tui._attachment_matches_cache
+            ):
+                break
+            await asyncio.sleep(0.01)
+        assert [candidate.rel_path for candidate in tui._attachment_matches_cache] == ["ab.py"]
+
+        release_a.set()
+        await asyncio.sleep(0.05)
+        assert [candidate.rel_path for candidate in tui._attachment_matches_cache] == ["ab.py"]
+    finally:
+        release_a.set()
+        release_ab.set()
+
+
+def test_file_candidate_selection_uses_bounded_top_k_and_directory_cache(tmp_path, monkeypatch):
+    from heapq import nlargest
+    from voidx.presentation.tools import file_picker
+
+    entries = [
+        SimpleNamespace(
+            name=f"file-{index:04d}.py",
+            is_dir=lambda: False,
+            stat=lambda index=index: SimpleNamespace(st_mtime=float(index)),
+        )
+        for index in range(10_000)
+    ]
+    scans = []
+    top_k_calls = []
+
+    class FakeScandir:
+        def __enter__(self):
+            scans.append(True)
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def __iter__(self):
+            scans.append(True)
+            return iter(entries)
+
+    def tracked_nlargest(limit, values, *, key):
+        top_k_calls.append(limit)
+        return nlargest(limit, values, key=key)
+
+    monkeypatch.setattr(file_picker.os, "scandir", lambda path: FakeScandir())
+    monkeypatch.setattr(
+        file_picker,
+        "heapq",
+        SimpleNamespace(nlargest=tracked_nlargest),
+        raising=False,
+    )
+    file_picker.invalidate_file_candidate_cache()
+
+    matches = file_picker.list_file_candidates(str(tmp_path), "file-", limit=8)
+    assert [candidate.rel_path for candidate in matches] == [
+        f"file-{index:04d}.py" for index in range(9_999, 9_991, -1)
+    ]
+    assert top_k_calls == [8]
+    assert len(scans) == 1
+
+    again = file_picker.list_file_candidates(str(tmp_path), "file-", limit=8)
+    assert [candidate.rel_path for candidate in again] == [candidate.rel_path for candidate in matches]
+    assert len(scans) == 1
+
+
+def test_file_candidate_cache_invalidates_when_directory_mtime_changes(tmp_path, monkeypatch):
+    from voidx.presentation.tools import file_picker
+
+    entries = [
+        SimpleNamespace(
+            name="old.py",
+            is_dir=lambda: False,
+            stat=lambda: SimpleNamespace(st_mtime=1.0),
+        )
+    ]
+    scans = []
+
+    class FakeScandir:
+        def __iter__(self):
+            scans.append(True)
+            return iter(entries)
+
+    monkeypatch.setattr(file_picker.os, "scandir", lambda path: FakeScandir())
+    file_picker.invalidate_file_candidate_cache()
+
+    file_picker.list_file_candidates(str(tmp_path), "", limit=8)
+    first_mtime_ns = tmp_path.stat().st_mtime_ns
+    os.utime(tmp_path, ns=(first_mtime_ns, first_mtime_ns + 1_000_000))
+    file_picker.list_file_candidates(str(tmp_path), "", limit=8)
+
+    assert len(scans) == 2
+
+
+@pytest.mark.asyncio
+async def test_skill_and_mcp_catalogs_are_reused_until_invalidated(tmp_path, monkeypatch):
+    tui = _tui(tmp_path)
+    skill_calls = 0
+    mcp_calls = 0
+
+    class FakeSkillService:
+        def enabled_skills(self):
+            nonlocal skill_calls
+            skill_calls += 1
+            return []
+
+    class FakeSkillsApi:
+        service = FakeSkillService()
+
+    def skills_provider(workspace):
+        return FakeSkillsApi()
+
+    def mcp_provider():
+        nonlocal mcp_calls
+        mcp_calls += 1
+        return []
+
+    tui.set_skills_api_provider(skills_provider)
+    tui.set_mcp_catalog_provider(mcp_provider)
+    tui._process_input(b"#a")
+    for _ in range(100):
+        if skill_calls and mcp_calls:
+            break
+        await asyncio.sleep(0.01)
+    tui._process_input(b"b")
+    await asyncio.sleep(0.05)
+
+    assert skill_calls == 1
+    assert mcp_calls == 1
+
+    tui.invalidate_skill_service_cache()
+    tui._process_input(b"c")
+    for _ in range(100):
+        if skill_calls >= 2 and mcp_calls >= 2:
+            break
+        await asyncio.sleep(0.01)
+
+    assert skill_calls == 2
+    assert mcp_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_panel_query_tasks_are_reaped_on_shutdown(tmp_path, monkeypatch):
+    import voidx_cli.panels as panels
+
+    async def blocked_to_thread(*args, **kwargs):
+        await asyncio.Future()
+
+    monkeypatch.setattr(panels.asyncio, "to_thread", blocked_to_thread)
+    tui = _tui(tmp_path)
+    tui._input_lines = ["@a"]
+    tui._cursor_col = len("@a")
+    tui._attachment_matches()
+
+    tui._input_lines = ["#a"]
+    tui._cursor_col = len("#a")
+    tui._skill_matches()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    attachment_task = tui._attachment_query_task
+    skill_task = tui._skill_query_task
+    catalog_task = tui._skill_catalog_task
+
+    assert attachment_task is not None and not attachment_task.done()
+    assert skill_task is not None and not skill_task.done()
+    assert catalog_task is not None and not catalog_task.done()
+
+    await tui._stop_panel_query_tasks()
+
+    assert attachment_task.done()
+    assert skill_task.done()
+    assert catalog_task.done()
+    assert tui._attachment_query_task is None
+    assert tui._skill_query_task is None
+    assert tui._skill_catalog_task is None

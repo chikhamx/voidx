@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import heapq
 import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,6 +39,12 @@ class FileCandidate:
     size: int
     mtime: float = 0.0
 
+
+_FILE_CANDIDATE_CACHE: dict[tuple[str, int, int], tuple[FileCandidate, ...]] = {}
+_FILE_CANDIDATE_CACHE_GENERATION = 0
+_FILE_CANDIDATE_CACHE_LOCK = threading.RLock()
+
+
 def find_attachment_token(text: str, cursor: int) -> AttachmentToken | None:
     cursor = max(0, min(cursor, len(text)))
     start = text.rfind("@", 0, cursor)
@@ -55,6 +63,80 @@ def find_attachment_token(text: str, cursor: int) -> AttachmentToken | None:
     if any(ch.isspace() for ch in token):
         return None
     return AttachmentToken(start=start, end=cursor, query=token, quoted=False)
+
+
+def invalidate_file_candidate_cache() -> None:
+    global _FILE_CANDIDATE_CACHE_GENERATION
+    with _FILE_CANDIDATE_CACHE_LOCK:
+        _FILE_CANDIDATE_CACHE_GENERATION += 1
+        _FILE_CANDIDATE_CACHE.clear()
+
+
+def _directory_signature(scan_dir: Path) -> tuple[int, int]:
+    try:
+        stat = scan_dir.stat()
+    except OSError:
+        return (0, 0)
+    return (stat.st_mtime_ns, stat.st_ctime_ns)
+
+
+def _directory_projection(
+    scan_dir: Path,
+    *,
+    dir_part: str,
+    root: Path,
+) -> tuple[FileCandidate, ...]:
+    mtime_ns, ctime_ns = _directory_signature(scan_dir)
+    with _FILE_CANDIDATE_CACHE_LOCK:
+        generation = _FILE_CANDIDATE_CACHE_GENERATION
+        key = (str(scan_dir), mtime_ns, generation ^ ctime_ns)
+        cached = _FILE_CANDIDATE_CACHE.get(key)
+        if cached is not None:
+            return cached
+
+    try:
+        entries = list(os.scandir(scan_dir))
+    except (OSError, PermissionError):
+        projection: tuple[FileCandidate, ...] = ()
+    else:
+        candidates: list[FileCandidate] = []
+        rel_prefix = (dir_part + "/") if dir_part else ""
+        for entry in entries:
+            name = entry.name
+            if name.startswith("."):
+                continue
+            try:
+                is_dir = entry.is_dir()
+            except OSError:
+                continue
+            if is_dir and name in SKIP_DIRS:
+                continue
+
+            try:
+                mtime = entry.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+
+            if is_dir:
+                candidates.append(FileCandidate(
+                    rel_path=rel_prefix + name + "/",
+                    kind="dir",
+                    size=0,
+                    mtime=mtime,
+                ))
+            else:
+                rel_path = rel_prefix + name
+                candidates.append(FileCandidate(
+                    rel_path=rel_path,
+                    kind="image" if is_image_file(rel_path) else "file",
+                    size=0,
+                    mtime=mtime,
+                ))
+        projection = tuple(candidates)
+
+    with _FILE_CANDIDATE_CACHE_LOCK:
+        _FILE_CANDIDATE_CACHE[key] = projection
+    return projection
 
 
 def list_file_candidates(workspace: str, query: str, limit: int = 8) -> list[FileCandidate]:
@@ -80,51 +162,23 @@ def list_file_candidates(workspace: str, query: str, limit: int = 8) -> list[Fil
         filter_part = normalized_query
 
     filter_lower = filter_part.lower()
-
     scan_dir = root / dir_part if dir_part else root
     if not scan_dir.is_dir():
         return []
 
-    candidates: list[FileCandidate] = []
-    try:
-        entries = list(os.scandir(scan_dir))
-    except (OSError, PermissionError):
+    projection = _directory_projection(scan_dir, dir_part=dir_part, root=root)
+    rel_prefix = (dir_part + "/") if dir_part else ""
+    matches = [
+        candidate
+        for candidate in projection
+        if candidate.rel_path[len(rel_prefix):].rstrip("/").lower().startswith(filter_lower)
+    ]
+    if not matches or limit <= 0:
         return []
 
-    for entry in entries:
-        name = entry.name
-        if name.startswith("."):
-            continue
-        if entry.is_dir() and name in SKIP_DIRS:
-            continue
-
-        if filter_lower and not name.lower().startswith(filter_lower):
-            continue
-
-        try:
-            mtime = entry.stat().st_mtime
-        except OSError:
-            mtime = 0.0
-
-        rel_prefix = (dir_part + "/") if dir_part else ""
-        if entry.is_dir():
-            candidates.append(FileCandidate(
-                rel_path=rel_prefix + name + "/",
-                kind="dir",
-                size=0,
-                mtime=mtime,
-            ))
-        else:
-            rel_path = rel_prefix + name
-            candidates.append(FileCandidate(
-                rel_path=rel_path,
-                kind="image" if is_image_file(rel_path) else "file",
-                size=0,
-                mtime=mtime,
-            ))
-
-    candidates.sort(key=lambda item: -item.mtime)
-    return candidates[:limit]
+    selected = heapq.nlargest(limit, matches, key=lambda item: item.mtime)
+    selected.sort(key=lambda item: -item.mtime)
+    return selected
 
 
 def is_image_file(path: str | Path) -> bool:

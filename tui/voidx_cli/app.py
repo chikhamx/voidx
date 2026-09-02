@@ -279,6 +279,11 @@ class PureTui(
                     except BaseException as exc:
                         log_internal_error(exc, context="terminal_consumer_stop")
                 try:
+                    await self._stop_panel_query_tasks()
+                except BaseException as exc:
+                    log_internal_error(exc, context="terminal_panel_query_stop")
+
+                try:
                     await self._stop_busy_activity_timer()
                 except BaseException as exc:
                     log_internal_error(exc, context="terminal_busy_timer_stop")
@@ -439,10 +444,7 @@ class PureTui(
         ))
 
     def invalidate_skill_service_cache(self) -> None:
-        self._skill_matches_cache_key = None
-        self._skill_matches_cache = []
-        self._skill_service_cache_key = None
-        self._skill_service_cache = None
+        self._invalidate_skill_catalog_cache()
 
     def cancel_external_input(
         self,
@@ -463,9 +465,11 @@ class PureTui(
 
     def set_mcp_catalog_provider(self, provider) -> None:
         self._mcp_catalog_provider = provider
+        self._invalidate_skill_catalog_cache()
 
     def set_skills_api_provider(self, provider) -> None:
         self._skills_api_provider = provider
+        self._invalidate_skill_catalog_cache()
 
     def show_transient_output(self, text: str, title: str = "") -> None:
         from voidx.presentation.output.dock import dock

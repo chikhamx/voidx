@@ -16,17 +16,14 @@ class McpCandidate:
     mode: str
 
 
-def list_mcp_candidates(
+def build_mcp_catalog(
     workspace: str,
-    query: str,
-    limit: int = 8,
     *,
     settings=None,
     catalog: Iterable | None = None,
 ) -> list[McpCandidate]:
     if settings is None:
         settings = Settings(workspace)
-    query_lower = query.strip().lower()
     catalog_by_name = {
         str(entry.name): entry
         for entry in (catalog or [])
@@ -36,15 +33,24 @@ def list_mcp_candidates(
     for server in settings.list_mcp_servers():
         if server.disabled:
             continue
-        mode = "auto" if server.auto else "manual"
-        description = _resolve_description(server, catalog_by_name.get(server.name))
-        candidate = McpCandidate(
+        candidates.append(McpCandidate(
             name=server.name,
-            description=description,
-            mode=mode,
-        )
-        name_lower = server.name.lower()
-        desc_lower = description.lower()
+            description=_resolve_description(server, catalog_by_name.get(server.name)),
+            mode="auto" if server.auto else "manual",
+        ))
+    return candidates
+
+
+def filter_mcp_candidates(
+    catalog: Iterable[McpCandidate],
+    query: str,
+    limit: int = 8,
+) -> list[McpCandidate]:
+    query_lower = query.strip().lower()
+    candidates: list[McpCandidate] = []
+    for candidate in catalog:
+        name_lower = candidate.name.lower()
+        desc_lower = candidate.description.lower()
         if not query_lower:
             candidates.append(candidate)
         elif name_lower.startswith(query_lower):
@@ -53,6 +59,21 @@ def list_mcp_candidates(
             candidates.append(candidate)
     candidates.sort(key=lambda c: c.name.lower())
     return candidates[:limit]
+
+
+def list_mcp_candidates(
+    workspace: str,
+    query: str,
+    limit: int = 8,
+    *,
+    settings=None,
+    catalog: Iterable | None = None,
+) -> list[McpCandidate]:
+    return filter_mcp_candidates(
+        build_mcp_catalog(workspace, settings=settings, catalog=catalog),
+        query,
+        limit=limit,
+    )
 
 
 def _resolve_description(server, catalog_entry=None) -> str:

@@ -67,12 +67,25 @@ class PanelState:
     attachment_suppressed_text: str = ""
     attachment_matches_cache_key: tuple[str, str, int, int] | None = None
     attachment_matches_cache: list[Any] = field(default_factory=list)
+    attachment_query_task: asyncio.Task[Any] | None = None
+    attachment_query_generation: int = 0
+    attachment_query_pending_key: tuple[str, str, int, int] | None = None
     skill_selected: int = 0
     skill_suppressed_text: str = ""
     skill_matches_cache_key: tuple[str, str, int, int] | None = None
     skill_matches_cache: list[Any] = field(default_factory=list)
     skill_service_cache_key: tuple[Any, ...] | None = None
     skill_service_cache: Any | None = None
+    skill_catalog_cache_key: tuple[Any, ...] | None = None
+    skill_catalog_cache: list[Any] = field(default_factory=list)
+    mcp_catalog_cache_key: tuple[Any, ...] | None = None
+    mcp_catalog_cache: list[Any] = field(default_factory=list)
+    skill_catalog_generation: int = 0
+    skill_catalog_task: asyncio.Task[Any] | None = None
+    skill_catalog_pending_key: tuple[Any, ...] | None = None
+    skill_query_task: asyncio.Task[Any] | None = None
+    skill_query_generation: int = 0
+    skill_query_pending_key: tuple[Any, ...] | None = None
 
 
 @dataclass
@@ -217,12 +230,25 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_attachment_panel_suppressed_text": ("_panel_state", "attachment_suppressed_text"),
     "_attachment_matches_cache_key": ("_panel_state", "attachment_matches_cache_key"),
     "_attachment_matches_cache": ("_panel_state", "attachment_matches_cache"),
+    "_attachment_query_task": ("_panel_state", "attachment_query_task"),
+    "_attachment_query_generation": ("_panel_state", "attachment_query_generation"),
+    "_attachment_query_pending_key": ("_panel_state", "attachment_query_pending_key"),
     "_skill_selected": ("_panel_state", "skill_selected"),
     "_skill_panel_suppressed_text": ("_panel_state", "skill_suppressed_text"),
     "_skill_matches_cache_key": ("_panel_state", "skill_matches_cache_key"),
     "_skill_matches_cache": ("_panel_state", "skill_matches_cache"),
     "_skill_service_cache_key": ("_panel_state", "skill_service_cache_key"),
     "_skill_service_cache": ("_panel_state", "skill_service_cache"),
+    "_skill_catalog_cache_key": ("_panel_state", "skill_catalog_cache_key"),
+    "_skill_catalog_cache": ("_panel_state", "skill_catalog_cache"),
+    "_mcp_catalog_cache_key": ("_panel_state", "mcp_catalog_cache_key"),
+    "_mcp_catalog_cache": ("_panel_state", "mcp_catalog_cache"),
+    "_skill_catalog_generation": ("_panel_state", "skill_catalog_generation"),
+    "_skill_catalog_task": ("_panel_state", "skill_catalog_task"),
+    "_skill_catalog_pending_key": ("_panel_state", "skill_catalog_pending_key"),
+    "_skill_query_task": ("_panel_state", "skill_query_task"),
+    "_skill_query_generation": ("_panel_state", "skill_query_generation"),
+    "_skill_query_pending_key": ("_panel_state", "skill_query_pending_key"),
     "_capture_buffer": ("_capture_state", "buffer"),
     "_capture_console": ("_capture_state", "console"),
     "_capture_console_key": ("_capture_state", "console_key"),

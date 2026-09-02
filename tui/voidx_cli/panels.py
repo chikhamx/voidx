@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
 from typing import Any
 
 from voidx.presentation.output.dock.formatting import strip_pasted_wrapper
@@ -15,11 +17,15 @@ from voidx.presentation.tools.file_picker import (
 from voidx.presentation.tools.skill_picker import (
     SkillCandidate,
     SkillToken,
+    build_skill_catalog,
+    filter_skill_candidates,
     find_skill_token,
     list_skill_candidates,
 )
 from voidx.presentation.tools.mcp_picker import (
     McpCandidate,
+    build_mcp_catalog,
+    filter_mcp_candidates,
     list_mcp_candidates,
 )
 
@@ -145,55 +151,401 @@ class _PanelManagerMixin:
     def _attachment_matches(self) -> list[FileCandidate]:
         token = self._attachment_token()
         if token is None:
+            self._cancel_attachment_query()
             self._attachment_matches_cache_key = None
             self._attachment_matches_cache = []
             return []
+
         workspace = str(self.status.workspace)
         key = (workspace, token.query, token.start, token.end)
         if key == self._attachment_matches_cache_key:
             return self._attachment_matches_cache
-        matches = list_file_candidates(workspace, token.query, limit=8)
-        self._attachment_matches_cache_key = key
-        self._attachment_matches_cache = matches
-        return matches
+        if key == self._attachment_query_pending_key:
+            return []
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            self._cancel_attachment_query()
+            matches = list_file_candidates(workspace, token.query, limit=8)
+            self._attachment_matches_cache_key = key
+            self._attachment_matches_cache = matches
+            return matches
+
+        self._start_attachment_query(workspace, token.query, key)
+        return []
+
+    def _start_attachment_query(
+        self,
+        workspace: str,
+        query: str,
+        key: tuple[str, str, int, int],
+    ) -> None:
+        task = self._attachment_query_task
+        if task is not None and not task.done():
+            task.cancel()
+        self._attachment_query_generation += 1
+        generation = self._attachment_query_generation
+        self._attachment_query_pending_key = key
+        self._attachment_query_task = asyncio.create_task(
+            self._run_attachment_query(workspace, query, key, generation)
+        )
+
+    async def _run_attachment_query(
+        self,
+        workspace: str,
+        query: str,
+        key: tuple[str, str, int, int],
+        generation: int,
+    ) -> None:
+        current = asyncio.current_task()
+        try:
+            try:
+                matches = await asyncio.to_thread(
+                    list_file_candidates,
+                    workspace,
+                    query,
+                    limit=8,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                matches = []
+
+            if not self._attachment_query_is_current(key, generation):
+                return
+            self._attachment_matches_cache_key = key
+            self._attachment_matches_cache = list(matches)
+        finally:
+            if self._attachment_query_task is current:
+                self._attachment_query_task = None
+            if self._attachment_query_pending_key == key:
+                self._attachment_query_pending_key = None
+            self.invalidate()
+
+    def _attachment_query_is_current(
+        self,
+        key: tuple[str, str, int, int],
+        generation: int,
+    ) -> bool:
+        if generation != self._attachment_query_generation:
+            return False
+        if self._attachment_query_pending_key != key:
+            return False
+        token = self._attachment_token()
+        if token is None:
+            return False
+        return (
+            str(self.status.workspace),
+            token.query,
+            token.start,
+            token.end,
+        ) == key
+
+    def _cancel_attachment_query(self) -> None:
+        task = self._attachment_query_task
+        if task is not None and not task.done():
+            task.cancel()
+        if task is not None or self._attachment_query_pending_key is not None:
+            self._attachment_query_generation += 1
+        self._attachment_query_task = None
+        self._attachment_query_pending_key = None
 
     def _skill_matches(self) -> list[SkillCandidate]:
         token = self._skill_token()
         if token is None:
+            self._cancel_skill_query()
             self._skill_matches_cache_key = None
             self._skill_matches_cache = []
             return []
+
         workspace = str(self.status.workspace)
         key = (workspace, token.query, token.start, token.end)
         if key == self._skill_matches_cache_key:
             return self._skill_matches_cache
-        if self._skills_api_provider is None:
-            skill_matches = []
+        if key == self._skill_query_pending_key:
+            return []
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return self._skill_matches_sync(token, key)
+
+        task = self._skill_query_task
+        if task is not None and not task.done():
+            task.cancel()
+        self._skill_query_generation += 1
+        generation = self._skill_query_generation
+        self._skill_query_pending_key = key
+        self._skill_query_task = asyncio.create_task(
+            self._run_skill_query(workspace, token.query, key, generation)
+        )
+        return []
+
+    def _skill_matches_sync(
+        self,
+        token: SkillToken,
+        key: tuple[str, str, int, int],
+    ) -> list[SkillCandidate]:
+        provider = self._skills_api_provider
+        service_key = (str(self.status.workspace), id(provider))
+        if service_key == self._skill_service_cache_key:
+            service = self._skill_service_cache
+        elif provider is None:
+            service = None
+            self._skill_service_cache_key = service_key
+            self._skill_service_cache = None
         else:
-            skills_api = self._skills_api_provider(workspace)
-            skill_matches = list_skill_candidates(
-                token.query,
-                limit=8,
-                service=skills_api.service,
-            )
+            skills_api = provider(str(self.status.workspace))
+            service = skills_api.service
+            self._skill_service_cache_key = service_key
+            self._skill_service_cache = service
+
+        skill_matches = (
+            list_skill_candidates(token.query, limit=8, service=service)
+            if service is not None
+            else []
+        )
         mcp_catalog = self._mcp_catalog_provider() if self._mcp_catalog_provider else None
         mcp_matches = list_mcp_candidates(
-            workspace, token.query, limit=8, catalog=mcp_catalog,
+            str(self.status.workspace),
+            token.query,
+            limit=8,
+            catalog=mcp_catalog,
         )
-        mcp_as_skill = [
-            SkillCandidate(name=m.name, scope="mcp", description=m.description, mode=m.mode)
-            for m in mcp_matches
-        ]
-        matches = [*skill_matches, *mcp_as_skill][:8]
+        matches = self._combine_skill_matches(skill_matches, mcp_matches)
         self._skill_matches_cache_key = key
         self._skill_matches_cache = matches
         return matches
 
-    def _attachment_selectable_count(self) -> int:
-        return min(len(self._attachment_matches()), 8)
+    async def _run_skill_query(
+        self,
+        workspace: str,
+        query: str,
+        key: tuple[str, str, int, int],
+        generation: int,
+    ) -> None:
+        current = asyncio.current_task()
+        try:
+            catalog_key = self._skill_catalog_key(workspace)
+            catalog_task = self._ensure_skill_catalog_task(workspace, catalog_key)
+            if catalog_task is not None:
+                await asyncio.shield(catalog_task)
+
+            skill_catalog = self._skill_catalog_cache
+            mcp_catalog = self._mcp_catalog_cache
+            matches = await asyncio.to_thread(
+                self._filter_skill_catalogs,
+                skill_catalog,
+                mcp_catalog,
+                query,
+            )
+            if not self._skill_query_is_current(key, generation):
+                return
+            self._skill_matches_cache_key = key
+            self._skill_matches_cache = matches
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            if self._skill_query_is_current(key, generation):
+                self._skill_matches_cache_key = key
+                self._skill_matches_cache = []
+        finally:
+            if self._skill_query_task is current:
+                self._skill_query_task = None
+            if self._skill_query_pending_key == key:
+                self._skill_query_pending_key = None
+            self.invalidate()
+
+    def _skill_query_is_current(
+        self,
+        key: tuple[str, str, int, int],
+        generation: int,
+    ) -> bool:
+        if generation != self._skill_query_generation:
+            return False
+        if self._skill_query_pending_key != key:
+            return False
+        token = self._skill_token()
+        if token is None:
+            return False
+        return (
+            str(self.status.workspace),
+            token.query,
+            token.start,
+            token.end,
+        ) == key
+
+    @staticmethod
+    def _combine_skill_matches(
+        skill_matches: list[SkillCandidate],
+        mcp_matches: list[McpCandidate],
+    ) -> list[SkillCandidate]:
+        mcp_as_skill = [
+            SkillCandidate(
+                name=match.name,
+                scope="mcp",
+                description=match.description,
+                mode=match.mode,
+            )
+            for match in mcp_matches
+        ]
+        return [*skill_matches, *mcp_as_skill][:8]
+
+    @staticmethod
+    def _filter_skill_catalogs(
+        skill_catalog: list[SkillCandidate],
+        mcp_catalog: list[McpCandidate],
+        query: str,
+    ) -> list[SkillCandidate]:
+        skill_matches = filter_skill_candidates(skill_catalog, query, limit=8)
+        mcp_matches = filter_mcp_candidates(mcp_catalog, query, limit=8)
+        return _PanelManagerMixin._combine_skill_matches(skill_matches, mcp_matches)
+
+    @staticmethod
+    def _file_signature(path: Path) -> tuple[int, int]:
+        try:
+            stat = path.stat()
+        except OSError:
+            return (0, 0)
+        return (stat.st_mtime_ns, stat.st_size)
+
+    def _skill_catalog_key(self, workspace: str) -> tuple[Any, ...]:
+        return (
+            workspace,
+            id(self._skills_api_provider),
+            id(self._mcp_catalog_provider),
+            self._file_signature(Path(workspace) / ".voidx" / "settings.json"),
+            self._file_signature(Path.home() / ".voidx" / "settings.json"),
+            self._file_signature(Path(workspace) / ".voidx" / "skills"),
+            self._skill_catalog_generation,
+        )
+
+    def _ensure_skill_catalog_task(
+        self,
+        workspace: str,
+        key: tuple[Any, ...],
+    ) -> asyncio.Task[Any] | None:
+        if (
+            self._skill_catalog_cache_key == key
+            and self._mcp_catalog_cache_key == key
+        ):
+            return None
+        task = self._skill_catalog_task
+        if self._skill_catalog_pending_key == key and task is not None and not task.done():
+            return task
+        if task is not None and not task.done():
+            task.cancel()
+        self._skill_catalog_pending_key = key
+        task = asyncio.create_task(
+            self._run_skill_catalog_task(
+                workspace,
+                key,
+                self._skills_api_provider,
+                self._mcp_catalog_provider,
+            )
+        )
+        self._skill_catalog_task = task
+        return task
+
+    async def _run_skill_catalog_task(
+        self,
+        workspace: str,
+        key: tuple[Any, ...],
+        skills_provider,
+        mcp_provider,
+    ) -> None:
+        current = asyncio.current_task()
+        try:
+            service, skill_catalog, mcp_catalog = await asyncio.to_thread(
+                self._build_skill_catalogs,
+                workspace,
+                skills_provider,
+                mcp_provider,
+            )
+            if key[-1] != self._skill_catalog_generation:
+                return
+            self._skill_service_cache_key = (workspace, id(skills_provider))
+            self._skill_service_cache = service
+            self._skill_catalog_cache_key = key
+            self._skill_catalog_cache = skill_catalog
+            self._mcp_catalog_cache_key = key
+            self._mcp_catalog_cache = mcp_catalog
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            if key[-1] == self._skill_catalog_generation:
+                self._skill_service_cache_key = (workspace, id(skills_provider))
+                self._skill_service_cache = None
+                self._skill_catalog_cache_key = key
+                self._skill_catalog_cache = []
+                self._mcp_catalog_cache_key = key
+                self._mcp_catalog_cache = []
+        finally:
+            if self._skill_catalog_task is current:
+                self._skill_catalog_task = None
+            if self._skill_catalog_pending_key == key:
+                self._skill_catalog_pending_key = None
+
+    @staticmethod
+    def _build_skill_catalogs(workspace: str, skills_provider, mcp_provider):
+        if skills_provider is None:
+            service = None
+            skill_catalog: list[SkillCandidate] = []
+        else:
+            skills_api = skills_provider(workspace)
+            service = skills_api.service
+            skill_catalog = build_skill_catalog(service)
+        raw_mcp_catalog = mcp_provider() if mcp_provider is not None else None
+        mcp_catalog = build_mcp_catalog(workspace, catalog=raw_mcp_catalog)
+        return service, skill_catalog, mcp_catalog
+
+    def _cancel_skill_query(self) -> None:
+        task = self._skill_query_task
+        if task is not None and not task.done():
+            task.cancel()
+        if task is not None or self._skill_query_pending_key is not None:
+            self._skill_query_generation += 1
+        self._skill_query_task = None
+        self._skill_query_pending_key = None
+
+    def _invalidate_skill_catalog_cache(self) -> None:
+        self._cancel_skill_query()
+        task = self._skill_catalog_task
+        if task is not None and not task.done():
+            task.cancel()
+        self._skill_catalog_generation += 1
+        self._skill_catalog_task = None
+        self._skill_catalog_pending_key = None
+        self._skill_catalog_cache_key = None
+        self._skill_catalog_cache = []
+        self._mcp_catalog_cache_key = None
+        self._mcp_catalog_cache = []
+        self._skill_matches_cache_key = None
+        self._skill_matches_cache = []
+        self._skill_service_cache_key = None
+        self._skill_service_cache = None
+
+    def _cancel_panel_query_tasks(self) -> None:
+        self._cancel_attachment_query()
+        self._invalidate_skill_catalog_cache()
+
+    async def _stop_panel_query_tasks(self) -> None:
+        tasks = [
+            self._attachment_query_task,
+            self._skill_query_task,
+            self._skill_catalog_task,
+        ]
+        self._cancel_panel_query_tasks()
+        pending = [task for task in tasks if task is not None]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
     def _skill_selectable_count(self) -> int:
         return min(len(self._skill_matches()), 8)
+
+    def _attachment_selectable_count(self) -> int:
+        return min(len(self._attachment_matches()), 8)
 
     def _clamp_attachment_selection(self) -> None:
         count = self._attachment_selectable_count()
