@@ -900,11 +900,14 @@ Native `desktop/tauri/` 当前不在计划改动范围。
   - 文件：`tui/tests/test_terminal_panels.py`
   - 命令：`./test.py --backend -- tui/tests/test_terminal_panels.py -v`
 
-- [ ] **P2.4 exit order（整体）**：50k 合成行下 terminal restore 先于 transcript.log 导出；导出超时仍恢复 terminal。
+- [x] **P2.4 exit order（整体）**：50k 合成行下 terminal restore 先于 transcript.log 导出；导出超时仍恢复 terminal。
   - [x] **TUI 顺序子项**：force flush/writer flush 后 restore terminal，再写退出序列并在线程中导出 transcript；顺序回归已覆盖。
-  - [ ] **超时子项**：导出超时后的恢复行为和 50k 合成行压力测试仍待补充。
-  - 文件：`tui/voidx_cli/app.py`、`tui/tests/test_input_advanced.py`
-  - 命令：`./test.py --backend -- tui/tests/test_input_advanced.py -k "run_restores_terminal_before_transcript_export" -v`
+  - [x] **超时子项**：`TRANSCRIPT_EXPORT_TIMEOUT_SECONDS = 2.0`；导出使用独立 daemon worker，不占用 asyncio 默认 executor；超时或异常只记录内部错误，不阻塞 terminal 恢复和退出 cleanup。
+  - RED：阻塞 `_dump_transcript_log()` 时原实现无限等待；50k 合成行用例无法证明有界退出。
+  - GREEN：`tui/voidx_cli/app.py` 增加 `_dump_transcript_log_with_timeout()`，以线程完成信号和硬 timeout 包装兼容日志导出；`tui/tests/test_input_advanced.py` 覆盖阻塞导出超时、50k 合成行恢复顺序，并保留导出期间取消传播回归。
+  - 文件：`tui/voidx_cli/app.py`、`tui/tests/test_input_advanced.py`。
+  - 验证：P2.4 focused 集合（5 passed）；`./test.py --backend -- tui/tests/test_input_advanced.py -v`（61 passed）；完整 TUI 集合（424 passed）；presentation 集合（590 passed）；`py_compile`、`git diff --check` 与相关 LSP diagnostics 通过。
+  - 命令：`./test.py --backend -- tui/tests/test_input_advanced.py -k "transcript_export_timeout or large_transcript_export or run_cancellation_during_transcript or run_restores_terminal_before_transcript_export or tty_shutdown_orders_commit_drain_restore_stop_and_dump" -v`
 
 - [ ] **P2.5 durable eviction**：只有 durable + committed + unreferenced turn 被驱逐；page restore 与原 tree snapshot 等价。
   - 文件：新增 OutputTree retention tests + transcript adapter tests。

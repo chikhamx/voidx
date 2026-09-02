@@ -5,6 +5,7 @@ import contextlib
 import os
 import sys
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -1134,6 +1135,121 @@ async def test_run_cancellation_during_transcript_waits_for_export_then_propagat
     assert events.index("dump_started") < events.index("dump_finished")
     assert dock._refresh_callback is None
     assert dock._width_provider is None
+
+
+
+
+@pytest.mark.asyncio
+async def test_transcript_export_timeout_does_not_block_terminal_shutdown(
+    tmp_path, monkeypatch
+):
+    import voidx_cli.app as app_module
+
+    events = []
+    writer = _LifecycleWriter(events)
+    tui = _prepare_lifecycle_tui(tmp_path, monkeypatch, writer)
+    export_started = threading.Event()
+    export_finished = threading.Event()
+    release_export = threading.Event()
+
+    def blocking_dump(*args, **kwargs):
+        del args, kwargs
+        events.append("dump_started")
+        export_started.set()
+        release_export.wait(timeout=1)
+        events.append("dump_finished")
+        export_finished.set()
+
+    monkeypatch.setattr(app_module, "_dump_transcript_log", blocking_dump)
+    monkeypatch.setattr(
+        app_module,
+        "TRANSCRIPT_EXPORT_TIMEOUT_SECONDS",
+        0.05,
+        raising=False,
+    )
+    async def read_input():
+        tui._running = False
+        return b""
+
+    monkeypatch.setattr(tui, "_read_input_raw", read_input)
+    monkeypatch.setattr(tui, "_flush_committed", lambda *, force=False: None)
+    monkeypatch.setattr(tui, "_render_frame", lambda: None)
+
+    async def on_submit(_text: str) -> bool:
+        return True
+
+    run_task = asyncio.create_task(tui.run(on_submit))
+    try:
+        assert await asyncio.wait_for(
+            asyncio.to_thread(export_started.wait, 1),
+            timeout=1,
+        )
+        started_at = time.perf_counter()
+        try:
+            await asyncio.wait_for(asyncio.shield(run_task), timeout=0.2)
+        except asyncio.TimeoutError:
+            completed_within_timeout = False
+        else:
+            completed_within_timeout = True
+        elapsed = time.perf_counter() - started_at
+
+        assert completed_within_timeout is True
+        assert elapsed < 0.2
+        assert events.index("restore_terminal") < events.index("dump_started")
+    finally:
+        release_export.set()
+        assert await asyncio.wait_for(
+            asyncio.to_thread(export_finished.wait, 1),
+            timeout=1,
+        )
+        if not run_task.done():
+            await asyncio.wait_for(run_task, timeout=1)
+        else:
+            run_task.result()
+
+
+@pytest.mark.asyncio
+async def test_large_transcript_export_restores_terminal_before_dump(
+    tmp_path, monkeypatch
+):
+    import voidx_cli.app as app_module
+    original_dump = app_module._dump_transcript_log
+
+    events = []
+    writer = _LifecycleWriter(events)
+    tui = _prepare_lifecycle_tui(tmp_path, monkeypatch, writer)
+    dock.tree.new_node(
+        parent=dock.tree.root,
+        node_type="message",
+        header="large transcript",
+        body_lines=[f"line-{index}" for index in range(50_000)],
+        collapsed=False,
+    )
+
+
+    def tracked_dump(*args, **kwargs):
+        events.append("dump_started")
+        original_dump(*args, **kwargs)
+        events.append("dump_finished")
+
+    monkeypatch.setattr(app_module, "_dump_transcript_log", tracked_dump)
+    monkeypatch.setattr(app_module, "TRANSCRIPT_EXPORT_TIMEOUT_SECONDS", 5.0, raising=False)
+    async def read_input():
+        tui._running = False
+        return b""
+
+    monkeypatch.setattr(tui, "_read_input_raw", read_input)
+    monkeypatch.setattr(tui, "_flush_committed", lambda *, force=False: None)
+    monkeypatch.setattr(tui, "_render_frame", lambda: None)
+
+    async def on_submit(_text: str) -> bool:
+        return True
+
+    await tui.run(on_submit)
+
+    assert events.index("restore_terminal") < events.index("dump_started")
+    assert events.index("dump_started") < events.index("dump_finished")
+    assert (tmp_path / ".voidx" / "transcript.log").exists()
 
 
 @pytest.mark.parametrize("size", [512, 1024, 2048, 4096])

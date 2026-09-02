@@ -7,6 +7,7 @@ explicit cursor positioning so IME overlays appear at the right spot.
 from __future__ import annotations
 
 import asyncio
+import threading
 import os
 import random
 import shutil
@@ -56,6 +57,54 @@ from .state import (
 from .terminal_mixin import _TerminalLifecycleMixin
 from .terminal_writer import BatchToken, TerminalWriter
 from .text_prompt_mixin import _TextPromptMixin
+
+
+TRANSCRIPT_EXPORT_TIMEOUT_SECONDS = 2.0
+
+async def _dump_transcript_log_with_timeout(
+    workspace: Path,
+    tree: OutputTree,
+    *,
+    timeout: float,
+) -> None:
+    loop = asyncio.get_running_loop()
+    completion: asyncio.Future[BaseException | None] = loop.create_future()
+
+    def finish(error: BaseException | None) -> None:
+        if not completion.done():
+            completion.set_result(error)
+
+    def publish(error: BaseException | None) -> None:
+        try:
+            loop.call_soon_threadsafe(finish, error)
+        except RuntimeError:
+            return
+
+    def worker() -> None:
+        try:
+            _dump_transcript_log(workspace, tree)
+        except BaseException as exc:
+            publish(exc)
+        else:
+            publish(None)
+
+    thread = threading.Thread(
+        target=worker,
+        name="voidx-transcript-export",
+        daemon=True,
+    )
+    thread.start()
+    try:
+        error = await asyncio.wait_for(asyncio.shield(completion), timeout=timeout)
+    except asyncio.TimeoutError:
+        log_internal_error(
+            TimeoutError(f"transcript export exceeded {timeout:.2f}s timeout"),
+            context="transcript_log_timeout",
+        )
+    else:
+        if error is not None:
+            log_internal_error(error, context="transcript_log_write")
+
 
 
 def _stream_is_tty(stream: Any) -> bool:
@@ -345,10 +394,10 @@ class PureTui(
 
                 if self._tty and writer_shutdown_succeeded:
                     try:
-                        await asyncio.to_thread(
-                            _dump_transcript_log,
+                        await _dump_transcript_log_with_timeout(
                             Path(self.status.workspace),
                             dock.tree,
+                            timeout=TRANSCRIPT_EXPORT_TIMEOUT_SECONDS,
                         )
                     except BaseException as exc:
                         log_internal_error(exc, context="transcript_log_write")
