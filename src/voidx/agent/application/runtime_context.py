@@ -184,6 +184,7 @@ class RuntimeContextBuilder:
         workflow_runs: Iterable[WorkflowRunState] = (),
         workflow_dag: WorkflowDAG | None = None,
         active_workflow_summaries: Iterable[str] = (),
+        show_workflow_transitions: bool = True,
         summary: str | None = None,
         task_state: "TaskState | None" = None,
         session_date: str | None = None,
@@ -211,6 +212,7 @@ class RuntimeContextBuilder:
         self.workflow_runs = list(workflow_runs)
         self.workflow_dag = workflow_dag
         self.active_workflow_summaries = [item for item in active_workflow_summaries if item.strip()]
+        self.show_workflow_transitions = show_workflow_transitions
         self.summary = summary.strip() if summary else ""
         self.task_intent = ts.current_intent
         self.current_goal = ts.current_goal
@@ -322,10 +324,11 @@ class RuntimeContextBuilder:
         active_workflow_names = self._active_workflow_node_names()
         if active_workflow_names:
             lines.append(f"- Active workflows: {'; '.join(active_workflow_names)}")
-        for workflow_name in active_workflow_names:
-            exits = workflow_exit_summaries(workflow_name, self.workflow_dag) if self.workflow_dag is not None else []
-            if exits:
-                lines.append(f"- Workflow transitions [{workflow_name}]: {'; '.join(exits)}")
+        if self.show_workflow_transitions:
+            for workflow_name in active_workflow_names:
+                exits = workflow_exit_summaries(workflow_name, self.workflow_dag) if self.workflow_dag is not None else []
+                if exits:
+                    lines.append(f"- Workflow transitions [{workflow_name}]: {'; '.join(exits)}")
         todo_lines = _render_task_state_todo_lines(self.todo_state)
         if todo_lines:
             lines.extend(todo_lines)

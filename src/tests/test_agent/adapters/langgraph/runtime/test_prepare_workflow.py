@@ -377,7 +377,7 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
             goal_type="feature",
             desc="Implement the feature",
             join="tdd",
-            leave="verify",
+            leave="tdd",
             contract_type="implementation_result",
         ),
         workflow_runtime_context=workflow_context,
@@ -400,6 +400,7 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
     assert "agent" not in captured["tool_ids"]
     assert "clarify" not in captured["tool_ids"]
     assert "checkpoint" not in captured["tool_ids"]
+    assert "workflow" not in captured["tool_ids"]
     assert "goal" not in captured["tool_ids"]
     assert "loop" not in captured["tool_ids"]
     task_payload = next(
@@ -432,6 +433,8 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
         )
     )
     assert "Workflow Node: tdd" in system_prompt
+    assert "Workflow Node: verify" not in system_prompt
+    assert "Workflow transitions [tdd]:" not in rendered_user
     assert "Active workflow nodes: tdd" in rendered_user
     assert "**使用中文回复。**" in runtime_state
     assert "Prefer responding in Chinese (Simplified) unless the user explicitly asks otherwise." in runtime_state

@@ -58,7 +58,7 @@ class NormalizedAgentDelegation:
 _MODE_ROUTES: dict[str, tuple[str, str, str]] = {
     "review": ("review", "review", "review"),
     "debug": ("debug", "debug", "debug"),
-    "implement": ("feature", "tdd", "verify"),
+    "implement": ("feature", "tdd", "tdd"),
 }
 
 _RESULT_PRESETS: dict[str, AgentResultContract] = {

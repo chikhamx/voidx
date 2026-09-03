@@ -251,6 +251,7 @@ async def test_run_subagent_registers_message_and_blocks_parent_only_tools(tmp_p
     from voidx.agent.adapters.tools.subagent import AgentTool
     from voidx.agent.adapters.tools.interaction.checkpoint import PlanCheckpointTool
     from voidx.agent.adapters.tools.interaction.clarify import ClarifyTool
+    from voidx.agent.adapters.tools.automation.workflow import WorkflowTool
     from voidx.tooling.application.registry import ToolRegistry
 
     gateway = InProcessSubagentGateway()
@@ -283,11 +284,12 @@ async def test_run_subagent_registers_message_and_blocks_parent_only_tools(tmp_p
         agent_tool.parameters_schema(),
         capability=ToolCapability.ORCHESTRATION,
     )
-    for tool in (ClarifyTool(), PlanCheckpointTool()):
+    for tool in (ClarifyTool(), PlanCheckpointTool(), WorkflowTool()):
         parent_tools.replace(tool.id, tool, tool.description, tool.parameters_schema())
 
     assert "message" not in parent_tools.ids()
     assert "agent" in parent_tools.ids()
+    assert "workflow" in parent_tools.ids()
 
     async def runner(run_id: str) -> str:
         return await run_subagent(
@@ -319,6 +321,7 @@ async def test_run_subagent_registers_message_and_blocks_parent_only_tools(tmp_p
     assert "agent" not in bound_tool_names
     assert "clarify" not in bound_tool_names
     assert "checkpoint" not in bound_tool_names
+    assert "workflow" not in bound_tool_names
     # child-only message must not leak into the parent registry
     assert "message" not in parent_tools.ids()
 

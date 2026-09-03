@@ -1,6 +1,6 @@
 # 子 Agent 单节点工作流收敛 — 技术规格
 
-> **Status: Proposed**  
+> **Status: Done** — Archived on 2026-09-02.
 > **Date: 2026-08-30**  
 > **Audience: Human + LLM**
 

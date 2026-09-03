@@ -29,7 +29,7 @@ def test_normalize_agent_input_uses_goal_and_mode_route():
     )
     assert normalized.goal_resolution.goal.desc == "精简 agent 工具"
     assert normalized.goal_resolution.plan.join == "tdd"
-    assert normalized.goal_resolution.plan.leave == "verify"
+    assert normalized.goal_resolution.plan.leave == "tdd"
     assert normalized.result_contract.model_dump() == {
         "format": "status, files_changed, tests_run, risks, followups",
     }

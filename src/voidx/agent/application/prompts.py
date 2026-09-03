@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from voidx.agent.domain.prompt_contracts import BaseSystemProfile, CHAT_PROFILE_SPEC
 from voidx.agent.domain.task.intent import PersonaName
+from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.agent.application.automation.workflow.service import WorkflowService
 from voidx.agent.domain.automation.workflow_schema import WorkflowDAG
 
@@ -70,22 +71,37 @@ class WorkflowRuntimePrompt(BaseModel):
         return "\n\n".join(parts)
 
 
-def child_workflow_runtime(mode: str, dag: WorkflowDAG) -> WorkflowRuntimePrompt:
+def child_workflow_runtime(
+    mode: str,
+    dag: WorkflowDAG,
+    *,
+    route: WorkflowRoute | None = None,
+) -> WorkflowRuntimePrompt:
     routes = {
         "review": ("review", "review"),
         "debug": ("debug", "debug"),
-        "implement": ("tdd", "verify"),
+        "implement": ("tdd", "tdd"),
     }
-    join, leave = routes[mode]
+    if route is None:
+        join, leave = routes[mode]
+    else:
+        join = route.join.strip()
+        leave = route.leave.strip() if route.leave else ""
     service = WorkflowService(dag)
-    nodes = [service.get(name) for name in (join, leave)]
+    node_names = tuple(dict.fromkeys(name for name in (join, leave) if name))
+    nodes = [service.get(name) for name in node_names]
     definitions = "\n\n".join(
         service.render_instruction(node) for node in nodes if node is not None
     )
     return WorkflowRuntimePrompt(
         rules=[
             PromptRule(detail="Current Task State is the sole source of active workflow nodes."),
-            PromptRule(detail=f"Active route joins at {join} and leaves at {leave}."),
+            PromptRule(
+                detail=(
+                    f"Active route joins at {join or 'not set'} "
+                    f"and leaves at {leave or 'not set'}."
+                )
+            ),
         ],
         node_definitions=definitions,
     )

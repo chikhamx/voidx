@@ -198,6 +198,8 @@ async def test_subagent_skill_context_matches_orchestrator(tmp_path, monkeypatch
     )
     assert len(task_messages) == 1
     assert "Workflow Node: tdd" in system_prompt
+    assert "Workflow Node: verify" in system_prompt
+    assert "Active route joins at tdd and leaves at verify." in system_prompt
     assert "Workflow Node: tdd" not in task_messages[0].content
     assert "Active workflow nodes: tdd" in task_messages[0].content
 

@@ -224,7 +224,7 @@ class TestInteractiveTools:
         }
         assert "PASS|FAIL|NEEDS_CHANGE" in captured["result"].format
     @pytest.mark.asyncio
-    async def test_agent_tool_normalizes_implement_mode_to_tdd_verify_route(self, tmp_path):
+    async def test_agent_tool_normalizes_implement_mode_to_tdd_route(self, tmp_path):
         captured: dict[str, object] = {}
 
         async def runner(agent_def, description, goal_resolution, result):
@@ -256,7 +256,7 @@ class TestInteractiveTools:
         goal_resolution = captured["goal_resolution"]
         assert goal_resolution.goal.desc == "Review one changed file"
         assert goal_resolution.plan.join == "tdd"
-        assert goal_resolution.plan.leave == "verify"
+        assert goal_resolution.plan.leave == "tdd"
         assert captured["result"].model_dump() == {
             "format": "status, files_changed, tests_run, risks, followups",
         }

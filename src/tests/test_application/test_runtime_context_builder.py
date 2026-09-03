@@ -20,6 +20,7 @@ from voidx.agent.adapters.langgraph.state import AgentState
 from voidx.agent.domain.task.state import GoalSpec, TaskState
 from voidx.agent.domain.task.todo import TodoRunState
 from voidx.agent.domain.automation.workflow import WorkflowRoute
+from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 from voidx.config import Config
 from voidx.agent.domain.user_profile import UserProfile
 from voidx.skills.context import (
@@ -110,6 +111,33 @@ def test_suppress_sections_filters_persona_workflow_and_task_state(tmp_path):
     assert "Profile Directive" in names
     assert "Runtime State" in names
     assert "Current Task State" not in context.render_task_context()
+
+
+def test_current_task_state_can_hide_workflow_transitions(tmp_path):
+    messages = [HumanMessage(content="实现这个功能")]
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="implement",
+        interaction_mode=InteractionMode.AUTO,
+        task_state=TaskState(current_intent=TaskIntent.CODING),
+        workflow_runs=[
+            WorkflowRunState(
+                name="tdd",
+                status=WorkflowRunStatus.ACTIVE,
+                source=WorkflowActivationSource.WORKFLOW,
+                reason="implement persona",
+            )
+        ],
+        workflow_dag=DEFAULT_WORKFLOW_DAG,
+        show_workflow_transitions=False,
+    ).build()
+
+    context.apply_to_messages(messages)
+
+    assert "Active workflows: tdd" in messages[-1].content
+    assert "Workflow transitions [tdd]:" not in messages[-1].content
 
 
 def test_runtime_context_system_omits_stable_workflow_dag_overview(tmp_path):

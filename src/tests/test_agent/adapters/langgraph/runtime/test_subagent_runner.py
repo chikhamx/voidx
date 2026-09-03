@@ -618,8 +618,8 @@ async def test_subagent_state_patch_is_applied_to_next_turn_context(tmp_path, mo
     observed: list[list] = []
     calls = 0
 
-    class WorkflowTool:
-        id = "workflow"
+    class StatePatchTool:
+        id = "state_patch_tool"
         description = "Updates workflow state."
 
         def parameters_schema(self):
@@ -651,7 +651,7 @@ async def test_subagent_state_patch_is_applied_to_next_turn_context(tmp_path, mo
         if calls == 1:
             return AIMessage(
                 content="",
-                tool_calls=[{"name": "workflow", "args": {}, "id": "call-workflow"}],
+                tool_calls=[{"name": "state_patch_tool", "args": {}, "id": "call-state-patch"}],
             )
         return AIMessage(
             content=(
@@ -666,7 +666,14 @@ async def test_subagent_state_patch_is_applied_to_next_turn_context(tmp_path, mo
     monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
 
     parent_tools = build_registry()
-    tool = WorkflowTool()
+    tool = StatePatchTool()
+    parent_tools.register(
+        tool.id,
+        tool,
+        tool.description,
+        tool.parameters_schema(),
+        capability=ToolCapability.ORCHESTRATION,
+    )
     parent_tools.replace(tool.id, tool, tool.description, tool.parameters_schema())
 
     from voidx.agent.adapters.langgraph.runtime.subagent import run_subagent

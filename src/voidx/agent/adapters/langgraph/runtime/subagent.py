@@ -92,7 +92,7 @@ bind_scoped_tools = None
 
 
 _RESULT_CONTRACT_RETRY_LIMIT = 2
-_BLOCKED_CHILD_TOOLS = {"agent", "clarify", "checkpoint"}
+_BLOCKED_CHILD_TOOLS = {"agent", "clarify", "checkpoint", "workflow"}
 _CHILD_WORKFLOW_MODE_BY_JOIN = {
     "review": "review",
     "debug": "debug",
@@ -378,7 +378,11 @@ async def run_subagent(
             workspace=config.workspace,
             base_system_prompt=build_base_system(context_config.user_profile.language),
             workflow_runtime=(
-                child_workflow_runtime(_child_workflow_mode(sub_task_state.workflow_route), workflow_dag)
+                child_workflow_runtime(
+                    _child_workflow_mode(sub_task_state.workflow_route),
+                    workflow_dag,
+                    route=sub_task_state.workflow_route,
+                )
                 if workflow_dag is not None
                 else None
             ),
@@ -388,6 +392,7 @@ async def run_subagent(
             workflow_runs=list(sub_task_state.workflow_runs.values()),
             workflow_dag=workflow_dag,
             active_workflow_summaries=active_summaries,
+            show_workflow_transitions=False,
             task_state=sub_task_state,
             child_runs=child_runs,
             child_runs_sampled_at=child_runs_sampled_at,
