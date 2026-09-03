@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { sha256 } from "../../src/utils/sha256";
 import {
   CANONICAL_RAW_HTML_BLOCK_MAX_CHARS,
   renderCanonicalMarkdownBlocks,
@@ -13,6 +14,17 @@ import type {
   CanonicalRenderRequest,
   CanonicalRenderResponse,
 } from "../../src/utils/markdown-worker-protocol";
+
+describe("synchronous UTF-8 SHA-256", () => {
+    it("matches known ASCII and Unicode vectors", () => {
+        expect(sha256("abc")).toBe(
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        );
+        expect(sha256("你好🌍")).toBe(
+            "25feb68e8651a1e87d13b2a93c080d75e40174800e19388820c27be17009cd66",
+        );
+    });
+});
 
 function htmlFrom(response: CanonicalRenderResponse): string {
   if (response.type !== "rendered") {
@@ -70,6 +82,9 @@ describe("canonical Markdown Worker renderer", () => {
         kind: "text",
         text: source,
         reason: "html_block_budget",
+            sourceStart: 0,
+            sourceEnd: source.length,
+            sourceHash: sha256(source),
       },
     ]);
   });
@@ -185,22 +200,168 @@ function createFrameHarness(times: number[] = []): {
 
 function renderedResponse(
   request: CanonicalRenderRequest,
-  blocks: CanonicalRenderResponse extends infer _Response
-    ? Array<
-        | { kind: "html"; html: string; sourceLength: number }
-        | { kind: "text"; text: string; reason: "html_block_budget" }
-      >
-    : never,
+    blocks: Array<
+        | {
+            kind: "html";
+            html: string;
+            sourceLength: number;
+            sourceStart?: number;
+            sourceEnd?: number;
+            sourceHash?: string;
+        }
+        | {
+            kind: "text";
+            text: string;
+            reason: "html_block_budget";
+            sourceStart?: number;
+            sourceEnd?: number;
+            sourceHash?: string;
+        }
+    >,
 ): CanonicalRenderResponse {
-  return {
-    type: "rendered",
-    jobId: request.jobId,
-    itemId: request.itemId,
-    revision: request.revision,
-    generation: request.generation,
-    blocks,
+    let sourceOffset = 0;
+    const sourceBoundBlocks = blocks.map((block) => {
+        const sourceLength = block.kind === "html"
+            ? block.sourceLength
+            : block.text.length;
+        const sourceStart = sourceOffset;
+        const sourceEnd = sourceStart + sourceLength;
+        sourceOffset = sourceEnd;
+        return {
+            sourceStart,
+            sourceEnd,
+            sourceHash: sha256(request.canonicalText.slice(sourceStart, sourceEnd)),
+            ...block,
+        };
+    });
+    return {
+        type: "rendered",
+        jobId: request.jobId,
+        itemId: request.itemId,
+        revision: request.revision,
+        generation: request.generation,
+        blocks: sourceBoundBlocks,
   };
 }
+
+type SourceBoundBlockFixture =
+    | {
+        kind: "html";
+        html: string;
+        sourceLength: number;
+        sourceStart: number;
+        sourceEnd: number;
+        sourceHash: string;
+    }
+    | {
+        kind: "text";
+        text: string;
+        reason: "html_block_budget";
+        sourceStart: number;
+        sourceEnd: number;
+        sourceHash: string;
+    };
+
+function sourceBoundRenderedResponse(
+    request: CanonicalRenderRequest,
+    blocks: SourceBoundBlockFixture[],
+): CanonicalRenderResponse {
+    return renderedResponse(
+        request,
+        blocks as unknown as Parameters<typeof renderedResponse>[1],
+    );
+}
+
+const SOURCE_BINDING_CANONICAL_TEXT = "first\n\nsecond";
+const SOURCE_BINDING_CASES: Array<{
+    name: string;
+    blocks: SourceBoundBlockFixture[];
+}> = [
+        {
+            name: "out-of-order ranges",
+            blocks: [
+                {
+                    kind: "html",
+                    html: "<p>second</p>",
+                    sourceLength: 6,
+                    sourceStart: 7,
+                    sourceEnd: 13,
+                    sourceHash: "hash-of-second",
+                },
+                {
+                    kind: "html",
+                    html: "<p>first</p>",
+                    sourceLength: 7,
+                    sourceStart: 0,
+                    sourceEnd: 7,
+                    sourceHash: "hash-of-first-separator",
+                },
+            ],
+        },
+        {
+            name: "repeated source ranges",
+            blocks: [
+                {
+                    kind: "html",
+                    html: "<p>first</p>",
+                    sourceLength: 7,
+                    sourceStart: 0,
+                    sourceEnd: 7,
+                    sourceHash: "hash-of-first-separator",
+                },
+                {
+                    kind: "html",
+                    html: "<p>first</p>",
+                    sourceLength: 6,
+                    sourceStart: 0,
+                    sourceEnd: 6,
+                    sourceHash: "hash-of-repeated-first",
+                },
+            ],
+        },
+        {
+            name: "HTML bound to different source",
+            blocks: [
+                {
+                    kind: "html",
+                    html: "<p>tampered</p>",
+                    sourceLength: 7,
+                    sourceStart: 0,
+                    sourceEnd: 7,
+                    sourceHash: "hash-of-tampered-html-source",
+                },
+                {
+                    kind: "html",
+                    html: "<p>second</p>",
+                    sourceLength: 6,
+                    sourceStart: 7,
+                    sourceEnd: 13,
+                    sourceHash: "hash-of-second",
+                },
+            ],
+        },
+        {
+            name: "text bound to different source",
+            blocks: [
+                {
+                    kind: "html",
+                    html: "<p>first</p>",
+                    sourceLength: 7,
+                    sourceStart: 0,
+                    sourceEnd: 7,
+                    sourceHash: "hash-of-first-separator",
+                },
+                {
+                    kind: "text",
+                    text: "xxxxxx",
+                    reason: "html_block_budget",
+                    sourceStart: 7,
+                    sourceEnd: 13,
+                    sourceHash: "hash-of-xxxxxx",
+                },
+            ],
+        },
+    ];
 
 describe("canonical Markdown main-thread coordinator", () => {
   it("keeps the preview visible while staging blocks across budgeted frames", () => {
@@ -801,4 +962,34 @@ describe("canonical Markdown main-thread coordinator", () => {
     expect(target.dataset.canonicalFallback).toBe("worker_protocol");
     expect(target.dataset.renderPending).toBeUndefined();
   });
+
+    it.each(SOURCE_BINDING_CASES)(
+        "falls back when source-bound descriptors have $name",
+        ({ blocks }) => {
+            const worker = new FakeCanonicalWorker();
+            const frames = createFrameHarness();
+            const coordinator = createCanonicalMarkdownCoordinator({
+                workerFactory: () => worker,
+                scheduleFrame: frames.scheduleFrame,
+                now: frames.now,
+            });
+            const target = document.createElement("div");
+
+            coordinator.start({
+                itemId: "assistant-source-binding",
+                revision: 16,
+                generation: 1,
+                canonicalText: SOURCE_BINDING_CANONICAL_TEXT,
+                target,
+                isCurrent: () => true,
+            });
+            worker.emit(sourceBoundRenderedResponse(worker.sent[0], blocks));
+            while (frames.pendingFrames() > 0) frames.flushFrame();
+
+            expect(target.textContent).toBe(SOURCE_BINDING_CANONICAL_TEXT);
+            expect(target.innerHTML).not.toContain("<p>");
+            expect(target.dataset.canonicalFallback).toBe("worker_protocol");
+            expect(target.dataset.renderPending).toBeUndefined();
+        },
+    );
 });

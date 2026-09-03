@@ -310,6 +310,258 @@ class OutputTree:
             return
         self.mark_dirty()
 
+    def _root_turn_segment(self, turn: OutputNode) -> tuple[OutputNode, ...]:
+        """Return a root turn and all following root siblings before the next turn."""
+        if turn.parent is not self.root or turn.node_type != "turn":
+            return ()
+        try:
+            start = self.root.children.index(turn)
+        except ValueError:
+            return ()
+        segment: list[OutputNode] = []
+        for child in self.root.children[start:]:
+            if child is not turn and child.node_type == "turn":
+                break
+            segment.append(child)
+        return tuple(segment)
+
+    def root_turn_segment(self, transcript_turn_id: int) -> tuple[OutputNode, ...]:
+        """Return the complete logical segment for a stable root turn id."""
+        for child in self.root.children:
+            if (
+                child.node_type == "turn"
+                and child.payload.get("transcript_turn_id") == transcript_turn_id
+            ):
+                return self._root_turn_segment(child)
+        return ()
+
+    def mark_root_turn_durable(self, transcript_turn_id: int) -> bool:
+        """Mark a successfully persisted logical segment as durable."""
+        segment = self.root_turn_segment(transcript_turn_id)
+        if not segment:
+            return False
+        for root in segment:
+            for node in _walk_subtree(root):
+                node.payload["durable"] = True
+        return True
+
+    def mark_root_turns_committed_through_line(
+        self,
+        console_width: int,
+        committed_line_count: int,
+    ) -> list[int]:
+        """Mark complete root-turn segments covered by a rendered line watermark."""
+        if committed_line_count < 0:
+            raise ValueError("committed line count must not be negative")
+        committed: list[int] = []
+        children = self.root.children
+        for index, child in enumerate(children):
+            if child.node_type != "turn":
+                continue
+            turn_id = child.payload.get("transcript_turn_id")
+            if not isinstance(turn_id, int) or isinstance(turn_id, bool) or turn_id < 0:
+                break
+            end = index + 1
+            while end < len(children) and children[end].node_type != "turn":
+                end += 1
+            segment_line_count = len(
+                self.render_root_slice(console_width, 0, end)
+            )
+            if segment_line_count > committed_line_count:
+                break
+            segment = self._root_turn_segment(child)
+            for root in segment:
+                for node in _walk_subtree(root):
+                    node.payload["committed"] = True
+            committed.append(turn_id)
+        return committed
+
+    def remove_root_turn(self, transcript_turn_id: int) -> tuple[OutputNode, ...]:
+        """Remove one safe logical root turn segment.
+
+        A segment includes the matching root turn and every following root
+        sibling until the next root turn.  Blank separators are removed with
+        the segment but are omitted from the returned logical roots.
+        """
+        for child in self.root.children:
+            if child.node_type != "turn":
+                continue
+            if child.payload.get("transcript_turn_id") != transcript_turn_id:
+                continue
+            segment = self._root_turn_segment(child)
+            if not segment or not self._root_turn_is_evictable(child):
+                return ()
+            for root in segment:
+                self._remove_subtree(root)
+            self.root.children[:] = [
+                root for root in self.root.children if root not in segment
+            ]
+            self._refresh_sibling_flags(self.root)
+            self._invalidate_render_cache()
+            return tuple(
+                root for root in segment if not _is_empty_message_spacer(root)
+            )
+        return ()
+
+    def evictable_root_turn_ids(self) -> list[int]:
+        """Return stable ids of root turns safe to evict."""
+        return [
+            turn_id
+            for child in self.root.children
+            if child.node_type == "turn"
+            and (turn_id := child.payload.get("transcript_turn_id")) is not None
+            and self._root_turn_is_evictable(child)
+        ]
+
+    def evict_root_turns(self, *, keep: int = 0) -> list[int]:
+        """Evict safe root turns from oldest to newest, retaining ``keep``.
+
+        Strictly annotated P2.5 segments form a safe prefix: the first unsafe
+        segment stops eviction so a later safe segment cannot leap over it.
+        Legacy roots retain the historical skip-unsafe behavior.
+        """
+        if keep < 0:
+            raise ValueError("keep must not be negative")
+        removed: list[int] = []
+        root_turns = [
+            child for child in self.root.children if child.node_type == "turn"
+        ]
+        candidates = root_turns[:-keep] if keep else root_turns
+        strict_mode = any(self._has_strict_safety_metadata(turn) for turn in candidates)
+        for turn in list(candidates):
+            turn_id = turn.payload.get("transcript_turn_id")
+            if not isinstance(turn_id, int):
+                if strict_mode:
+                    break
+                continue
+            if not self._root_turn_is_evictable(turn):
+                if strict_mode:
+                    break
+                continue
+            if self.remove_root_turn(turn_id):
+                removed.append(turn_id)
+        return removed
+
+    @staticmethod
+    def _has_strict_safety_metadata(turn: OutputNode) -> bool:
+        return any(key in turn.payload for key in ("lifecycle", "terminal", "active"))
+
+    @staticmethod
+    def _node_is_strictly_evictable(node: OutputNode) -> bool:
+        payload = node.payload
+        required = (
+            "durable",
+            "committed",
+            "lifecycle",
+            "active",
+            "referenced",
+            "pinned",
+            "render_pending",
+        )
+        if any(key not in payload for key in required):
+            return False
+        if payload["durable"] is not True or payload["committed"] is not True:
+            return False
+        if payload["lifecycle"] not in {"completed", "failed", "cancelled"}:
+            return False
+        if any(payload[key] is not False for key in required[3:]):
+            return False
+        if payload.get("terminal") is False:
+            return False
+        if payload.get("terminal") is not None and payload.get("terminal") is not True:
+            return False
+        if any(
+            payload.get(key) is True
+            for key in (
+                "expanded",
+                "search_targeted",
+                "diff_review_targeted",
+                "runtime_referenced",
+            )
+        ):
+            return False
+        return True
+
+    def _root_turn_is_evictable(self, turn: OutputNode) -> bool:
+        if turn.parent is not self.root or turn.node_type != "turn":
+            return False
+        segment = self._root_turn_segment(turn)
+        if not segment:
+            return False
+
+        strict = self._has_strict_safety_metadata(turn)
+        if strict:
+            return all(
+                self._node_is_strictly_evictable(node)
+                for root in segment
+                for node in _walk_subtree(root)
+            )
+
+        root_payload = turn.payload
+        if (
+            root_payload.get("durable") is not True
+            or root_payload.get("committed") is not True
+            or root_payload.get("referenced") is True
+            or root_payload.get("render_pending") is True
+            or root_payload.get("pinned") is True
+            or root_payload.get("active") is True
+        ):
+            return False
+        for root in segment:
+            for node in _walk_subtree(root):
+                if node is turn:
+                    continue
+                payload = node.payload
+                if (
+                    payload.get("durable") is False
+                    or payload.get("committed") is False
+                    or payload.get("referenced") is True
+                    or payload.get("render_pending") is True
+                    or payload.get("pinned") is True
+                    or payload.get("active") is True
+                ):
+                    return False
+        return True
+
+    def _remove_subtree(self, node: OutputNode) -> None:
+        for child in list(node.children):
+            self._remove_subtree(child)
+        self._all.pop(node.id, None)
+        self._node_ranges.pop(node.id, None)
+        self._node_prefixes.pop(node.id, None)
+        node.parent = None
+
+    def _invalidate_render_cache(self) -> None:
+        self._dirty = True
+        self._dirty_nodes.clear()
+        self._pending_root_append_start = None
+        self._rendered_root_child_ids = ()
+        self._rendered_root_child_count = 0
+        self._cached_lines = []
+        self._cached_width = 0
+        self._line_map.clear()
+        self._click_map.clear()
+        self._node_ranges.clear()
+        self._node_prefixes.clear()
+        self._revision += 1
+
+    def remove_node(self, node: OutputNode) -> bool:
+        """Remove an attached node after checking its subtree metadata."""
+        if node is self.root or node.id not in self._all:
+            return False
+        parent = node.parent
+        if parent is None or node not in parent.children:
+            return False
+        if node.node_type == "turn" and parent is self.root:
+            turn_id = node.payload.get("transcript_turn_id")
+            if not isinstance(turn_id, int) or not self._root_turn_is_evictable(node):
+                return False
+        self._remove_subtree(node)
+        parent.children.remove(node)
+        self._refresh_sibling_flags(parent)
+        self._invalidate_render_cache()
+        return True
+
     def move_child_to_first(self, parent: OutputNode, node: OutputNode) -> None:
         """Move an existing direct child to the first position.
 
@@ -1161,11 +1413,14 @@ def _is_empty_message_spacer(node: OutputNode) -> bool:
     )
 
 
-def _subtree_ids(node: OutputNode) -> set[str]:
-    ids = {node.id}
+def _walk_subtree(node: OutputNode):
+    yield node
     for child in node.children:
-        ids.update(_subtree_ids(child))
-    return ids
+        yield from _walk_subtree(child)
+
+
+def _subtree_ids(node: OutputNode) -> set[str]:
+    return {current.id for current in _walk_subtree(node)}
 
 
 def _visible_children(node: OutputNode) -> list[OutputNode]:

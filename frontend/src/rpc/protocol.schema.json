@@ -795,6 +795,18 @@
     "ThreadSnapshot": {
       "description": "Transcript snapshot for a single thread.",
       "properties": {
+        "after_cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Cursor"
+        },
         "after_turn_id": {
           "anyOf": [
             {
@@ -806,6 +818,18 @@
           ],
           "default": null,
           "title": "After Turn Id"
+        },
+        "before_cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Before Cursor"
         },
         "before_turn_id": {
           "anyOf": [
@@ -843,6 +867,12 @@
         },
         "thread_id": {
           "title": "Thread Id",
+          "type": "string"
+        },
+        "transcript_epoch": {
+          "default": "legacy",
+          "minLength": 1,
+          "title": "Transcript Epoch",
           "type": "string"
         },
         "windowed": {

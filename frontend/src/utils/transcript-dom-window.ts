@@ -205,16 +205,19 @@ function mergedSnapshot(
   current: TranscriptSnapshot,
   incoming: TranscriptSnapshot,
   descriptors: TranscriptNodeDescriptor[],
+  mode: Exclude<CanonicalMergeMode, "full">,
 ): TranscriptSnapshot {
   const currentBefore = current.before_turn_id;
   const incomingBefore = incoming.before_turn_id;
-  const incomingIsEarlier = incomingBefore != null
-    && (currentBefore == null || incomingBefore < currentBefore);
+  const incomingIsEarlier = mode === "earlier-page" || (
+    incomingBefore != null && (currentBefore == null || incomingBefore < currentBefore)
+  );
   const beforeSource = incomingIsEarlier ? incoming : current;
 
   const currentAfter = current.after_turn_id;
   const incomingAfter = incoming.after_turn_id;
-  const incomingIsLater = incomingAfter != null
+  const incomingIsLater = mode !== "earlier-page"
+    && incomingAfter != null
     && (currentAfter == null || incomingAfter > currentAfter);
   const afterSource = incomingIsLater ? incoming : current;
 
@@ -223,6 +226,9 @@ function mergedSnapshot(
     ...incoming,
     before_turn_id: beforeSource.before_turn_id,
     after_turn_id: afterSource.after_turn_id,
+    before_cursor: beforeSource.before_cursor,
+    after_cursor: afterSource.after_cursor,
+    transcript_epoch: incoming.transcript_epoch ?? current.transcript_epoch,
     has_earlier: beforeSource.has_earlier,
     has_later: afterSource.has_later,
     nodes: descriptors.flatMap((descriptor) => descriptor.memberNodes),
@@ -290,7 +296,7 @@ export function mergeCanonicalTranscript(
       return { status: "stale", reason: "earlier page is not anchored", recovery: "ordinary" };
     }
     const descriptors = [...incomingOnly, ...currentDescriptors];
-    return successful(mergedSnapshot(current, incoming, descriptors), descriptors);
+    return successful(mergedSnapshot(current, incoming, descriptors, mode), descriptors);
   }
 
   const matches = incomingDescriptors
@@ -311,7 +317,7 @@ export function mergeCanonicalTranscript(
     const descriptors = before
       ? [...incomingDescriptors, ...currentDescriptors]
       : [...currentDescriptors, ...incomingDescriptors];
-    return successful(mergedSnapshot(current, incoming, descriptors), descriptors);
+    return successful(mergedSnapshot(current, incoming, descriptors, mode), descriptors);
   }
 
   for (let index = 1; index < matches.length; index += 1) {
@@ -335,7 +341,7 @@ export function mergeCanonicalTranscript(
   const tail = incomingDescriptors.slice(previousIncoming + 1)
     .filter((descriptor) => !currentByKey.has(descriptor.key));
   result.splice(matches[matches.length - 1].currentIndex + offset + 1, 0, ...tail);
-  return successful(mergedSnapshot(current, incoming, result), result);
+  return successful(mergedSnapshot(current, incoming, result, mode), result);
 }
 
 export function normalizeTranscriptBlockExtents(

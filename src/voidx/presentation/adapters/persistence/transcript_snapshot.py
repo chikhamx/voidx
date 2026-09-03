@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
+import uuid
 from collections import defaultdict
 import asyncio
 from typing import Any, cast
@@ -91,13 +93,51 @@ async def append_transcript_turns(
     return written
 
 
-def tree_turn_count(tree: OutputTree) -> int:
-    """Count logical root turns without walking their descendants."""
-    return sum(
-        1
+def _tree_turn_entries(tree: OutputTree) -> list[tuple[int, OutputNode]]:
+    """Return root turns with stable ids, assigning safe ids to legacy nodes."""
+    root_turns = [
+        child
         for child in tree.root.children
         if child.node_type == "turn" and not _is_blank_separator(child)
-    )
+    ]
+    reserved_ids = {
+        child.payload["transcript_turn_id"]
+        for child in root_turns
+        if isinstance(child.payload.get("transcript_turn_id"), int)
+        and child.payload["transcript_turn_id"] >= 0
+    }
+    used_ids: set[int] = set()
+    entries: list[tuple[int, OutputNode]] = []
+    next_fallback = 0
+    next_allocated = max(reserved_ids, default=-1) + 1
+
+    for position, child in enumerate(root_turns):
+        candidate = child.payload.get("transcript_turn_id")
+        if (
+            not isinstance(candidate, int)
+            or candidate < 0
+            or candidate in used_ids
+        ):
+            candidate = position
+            while candidate in reserved_ids or candidate in used_ids:
+                candidate = max(next_fallback, next_allocated)
+                next_fallback = candidate + 1
+            next_allocated = max(next_allocated, candidate + 1)
+            child.payload["transcript_turn_id"] = candidate
+        used_ids.add(candidate)
+        entries.append((candidate, child))
+
+    return entries
+
+
+def tree_turn_count(tree: OutputTree) -> int:
+    """Count logical root turns without walking their descendants."""
+    return len(_tree_turn_entries(tree))
+
+
+def tree_transcript_turn_ids(tree: OutputTree) -> list[int]:
+    """Return root-turn ids in display order without renumbering sparse ids."""
+    return [turn_id for turn_id, _node in _tree_turn_entries(tree)]
 
 
 def tree_to_transcript_turn_rows(
@@ -108,19 +148,19 @@ def tree_to_transcript_turn_rows(
     """Export one root turn and its logical root siblings without older turns."""
     if turn_id < 0:
         raise ValueError("turn_id must not be negative")
-    current_turn = -1
-    target_index: int | None = None
-    for index, child in enumerate(tree.root.children):
-        if child.node_type == "startup" or _is_blank_separator(child):
-            continue
-        if child.node_type == "turn":
-            current_turn += 1
-            if current_turn == turn_id:
-                target_index = index
-                break
-    if target_index is None:
+
+    entries = _tree_turn_entries(tree)
+    target: tuple[int, OutputNode] | None = next(
+        (entry for entry in entries if entry[0] == turn_id),
+        None,
+    )
+    if target is None and turn_id < len(entries):
+        target = entries[turn_id]
+    if target is None:
         return []
 
+    stable_turn_id, target_node = target
+    target_index = tree.root.children.index(target_node)
     rows: list[TranscriptNodeRow] = []
     next_node_id = 0
     sort_order = 0
@@ -142,7 +182,7 @@ def tree_to_transcript_turn_rows(
         rows.append(
             TranscriptNodeRow(
                 session_id=session_id,
-                turn_id=turn_id,
+                turn_id=stable_turn_id,
                 node_id=node_id,
                 parent_node_id=parent_node_id,
                 sort_order=sort_order,
@@ -155,7 +195,11 @@ def tree_to_transcript_turn_rows(
                 message_id=node.message_id,
                 tool_call_id=node.tool_call_id,
                 agent_run_id=node.agent_run_id,
-                metadata={key: value for key, value in metadata.items() if value not in (None, "", {})},
+                metadata={
+                    key: value
+                    for key, value in metadata.items()
+                    if value not in (None, "", {})
+                },
             )
         )
         sort_order += 1
@@ -173,9 +217,18 @@ def tree_to_transcript_turn_rows(
 
 
 async def compact_transcript(session_id: str) -> None:
-    """Rewrite the durable transcript as one canonical snapshot."""
+    """Rewrite the durable transcript without changing its logical generation."""
     rows = await load_transcript(session_id)
-    await replace_transcript(session_id, rows)
+    epoch = await transcript_epoch(session_id)
+    timestamp = now()
+    turn_ids = sorted({row.turn_id for row in rows})
+    await _write_transcript_jsonl_snapshot(
+        session_id,
+        rows,
+        turn_ids,
+        timestamp,
+        transcript_epoch_override=epoch,
+    )
 
 
 async def maybe_compact_transcript(session_id: str) -> bool:
@@ -275,6 +328,11 @@ def _merge_transcript_index(
     merged["transcript_size"] = transcript_size
     merged["indexed_end_offset"] = transcript_size
     merged["range_readable"] = bool(existing.get("range_readable", False)) and bool(delta.get("range_readable", True))
+    delta_epoch = delta.get("transcript_epoch")
+    if isinstance(delta_epoch, str) and delta_epoch:
+        merged["transcript_epoch"] = delta_epoch
+    elif isinstance(existing.get("transcript_epoch"), str):
+        merged["transcript_epoch"] = existing["transcript_epoch"]
     return merged
 
 
@@ -331,7 +389,9 @@ async def replace_transcript(
     if turn_count is None:
         turn_ids = sorted({node.turn_id for node in nodes})
     else:
-        turn_ids = list(range(turn_count))
+        turn_ids = sorted({node.turn_id for node in nodes})
+        if not turn_ids and turn_count > 0:
+            turn_ids = list(range(turn_count))
 
     await _write_transcript_jsonl_snapshot(session_id, nodes, turn_ids, timestamp)
 
@@ -376,14 +436,32 @@ async def append_transcript_reset(session_id: str, *, reason: str) -> None:
         "type": "transcript_reset",
         "reason": reason,
         "created_at": now(),
+        "nonce": uuid.uuid4().hex,
     }
-    offsets, transcript_size = await append_session_records(session_id, "transcript.jsonl", [record])
-    index = _build_transcript_index(
-        [record],
-        offsets,
-        transcript_size,
-    )
-    await write_session_json(session_id, "transcript.idx.json", index)
+    async with session_directory_locks((session_id,)):
+        offsets, transcript_size = await append_session_records(
+            session_id, "transcript.jsonl", [record]
+        )
+        index = _build_transcript_index([record], offsets, transcript_size)
+        await write_session_json(session_id, "transcript.idx.json", index)
+
+
+async def transcript_epoch(session_id: str) -> str:
+    """Return the durable transcript generation identifier."""
+    if not session_id:
+        return _genesis_transcript_epoch("")
+    path = session_dir(session_id) / "transcript.jsonl"
+    if not path.exists():
+        return _genesis_transcript_epoch(session_id)
+    transcript_size = path.stat().st_size
+    index = _load_transcript_index(session_id)
+    if not _transcript_index_matches(index, transcript_size) or not isinstance(
+        index.get("transcript_epoch") if index else None, str
+    ):
+        index = await asyncio.to_thread(_scan_transcript_index, path)
+        await write_session_json(session_id, "transcript.idx.json", index)
+    epoch = index.get("transcript_epoch") if index else None
+    return epoch if isinstance(epoch, str) and epoch else _genesis_transcript_epoch(session_id)
 
 
 async def _write_transcript_jsonl_snapshot(
@@ -391,8 +469,15 @@ async def _write_transcript_jsonl_snapshot(
     nodes: list[TranscriptNodeRow],
     turn_ids: list[int],
     timestamp: str,
+    *,
+    transcript_epoch_override: str | None = None,
 ) -> None:
-    records = _transcript_snapshot_records(nodes, turn_ids, timestamp)
+    records = _transcript_snapshot_records(
+        nodes,
+        turn_ids,
+        timestamp,
+        transcript_epoch_override=transcript_epoch_override,
+    )
     offsets, transcript_size = await replace_session_records(session_id, "transcript.jsonl", records)
     checkpoint_path = "transcript.checkpoint.json"
     await write_session_json(session_id, checkpoint_path, _checkpoint_payload(nodes, transcript_size))
@@ -408,12 +493,18 @@ def _transcript_snapshot_records(
     nodes: list[TranscriptNodeRow],
     turn_ids: list[int],
     timestamp: str,
+    *,
+    transcript_epoch_override: str | None = None,
 ) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = [{
+    reset_record: dict[str, Any] = {
         "type": "transcript_reset",
         "reason": "replace_transcript",
         "created_at": timestamp,
-    }]
+        "nonce": uuid.uuid4().hex,
+    }
+    if transcript_epoch_override is not None:
+        reset_record["transcript_epoch"] = transcript_epoch_override
+    records: list[dict[str, Any]] = [reset_record]
     nodes_by_turn: dict[int, list[TranscriptNodeRow]] = {}
     for node in nodes:
         nodes_by_turn.setdefault(node.turn_id, []).append(node)
@@ -461,9 +552,28 @@ def _node_record(node: TranscriptNodeRow) -> dict[str, Any]:
     return record
 
 
+def _reset_transcript_epoch(record: dict[str, Any]) -> str:
+    preserved = record.get("transcript_epoch")
+    if isinstance(preserved, str) and preserved:
+        return preserved
+    identity = {
+        "type": "transcript_reset",
+        "created_at": record.get("created_at"),
+        "nonce": record.get("nonce"),
+        "reason": record.get("reason"),
+    }
+    encoded = json.dumps(identity, separators=(",", ":"), sort_keys=True).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _genesis_transcript_epoch(session_id: str) -> str:
+    return hashlib.sha256(f"voidx-transcript-genesis:{session_id}".encode()).hexdigest()
+
+
 class _TranscriptIndexBuilder:
     def __init__(self) -> None:
         self.last_reset_offset = 0
+        self.transcript_epoch: str | None = None
         self.turn_offsets: dict[str, int] = {}
         self.summary_offsets: dict[str, int] = {}
         self.turn_ranges: dict[str, list[int]] = {}
@@ -475,6 +585,7 @@ class _TranscriptIndexBuilder:
         record_type = record.get("type")
         if record_type == "transcript_reset":
             self.last_reset_offset = offset
+            self.transcript_epoch = _reset_transcript_epoch(record)
             self.turn_offsets.clear()
             self.summary_offsets.clear()
             self.turn_ranges.clear()
@@ -536,6 +647,7 @@ class _TranscriptIndexBuilder:
             "version": 2,
             "transcript_size": transcript_size,
             "last_reset_offset": self.last_reset_offset,
+            "transcript_epoch": self.transcript_epoch,
             "turn_offsets": self.turn_offsets,
             "turn_ranges": self.turn_ranges,
             "summary_offsets": self.summary_offsets,
@@ -1033,14 +1145,16 @@ _STATUSES = set(Status.__args__)
 
 
 def tree_to_transcript_rows(session_id: str, tree: OutputTree) -> tuple[list[TranscriptNodeRow], int]:
+    entries = _tree_turn_entries(tree)
+    turn_ids_by_node_id = {node.id: turn_id for turn_id, node in entries}
     rows: list[TranscriptNodeRow] = []
-    turn_id = -1
+    turn_id: int | None = None
     next_node_id = 0
     sort_order = 0
 
     def add_node(node: OutputNode, parent_node_id: int | None) -> None:
         nonlocal next_node_id, sort_order
-        if _is_blank_separator(node):
+        if _is_blank_separator(node) or turn_id is None:
             return
         node_id = next_node_id
         next_node_id += 1
@@ -1068,7 +1182,11 @@ def tree_to_transcript_rows(session_id: str, tree: OutputTree) -> tuple[list[Tra
                 message_id=node.message_id,
                 tool_call_id=node.tool_call_id,
                 agent_run_id=node.agent_run_id,
-                metadata={key: value for key, value in metadata.items() if value not in (None, "", {})},
+                metadata={
+                    key: value
+                    for key, value in metadata.items()
+                    if value not in (None, "", {})
+                },
             )
         )
         sort_order += 1
@@ -1076,19 +1194,16 @@ def tree_to_transcript_rows(session_id: str, tree: OutputTree) -> tuple[list[Tra
             add_node(child, node_id)
 
     for child in tree.root.children:
-        if child.node_type == "startup":
-            continue
-        if _is_blank_separator(child):
+        if child.node_type == "startup" or _is_blank_separator(child):
             continue
         if child.node_type == "turn":
-            turn_id += 1
+            turn_id = turn_ids_by_node_id[child.id]
             next_node_id = 0
             sort_order = 0
-        elif turn_id < 0:
-            continue
-        add_node(child, None)
+        if turn_id is not None:
+            add_node(child, None)
 
-    return rows, max(turn_id + 1, 0)
+    return rows, len(entries)
 
 
 def transcript_rows_to_tree(rows: list[TranscriptNodeRow]) -> OutputTree:
@@ -1103,6 +1218,9 @@ def transcript_rows_to_tree(rows: list[TranscriptNodeRow]) -> OutputTree:
         for row in pending:
             metadata = row.metadata
             payload = metadata.get("payload")
+            payload = dict(payload) if isinstance(payload, dict) else {}
+            if row.node_type == "turn":
+                payload["transcript_turn_id"] = turn_id
             node = OutputNode(
                 id=f"t{turn_id}:n{row.node_id}",
                 node_type=_node_type(row.node_type),
@@ -1118,7 +1236,7 @@ def transcript_rows_to_tree(rows: list[TranscriptNodeRow]) -> OutputTree:
                 tool_call_id=row.tool_call_id,
                 agent_run_id=row.agent_run_id,
                 message_id=row.message_id,
-                payload=payload if isinstance(payload, dict) else {},
+                payload=payload,
             )
             nodes[row.node_id] = node
             parent = tree.root if row.parent_node_id is None else nodes.get(row.parent_node_id)

@@ -18,7 +18,11 @@ import pytest
 
 from voidx.presentation.gateway.adapter import UiEventItemAdapter
 from voidx.presentation.gateway.session import GatewayEventConsumer, GatewaySession
-from voidx.presentation.adapters.persistence.transcript_snapshot import TranscriptNodeRow, replace_transcript
+from voidx.presentation.adapters.persistence.transcript_snapshot import (
+    TranscriptNodeRow,
+    append_transcript_reset,
+    replace_transcript,
+)
 from voidx.presentation.output.dock import BottomInputDock
 from voidx.presentation.output.events.schema import (
     AssistantStreamUpdated,
@@ -35,6 +39,7 @@ from voidx.presentation.protocol.v2.envelope import (
     PROTOCOL_VERSION,
     parse_jsonrpc_message,
 )
+from voidx.presentation.protocol.v2.incremental import CAPABILITY_TRANSCRIPT_WINDOW
 from voidx.presentation.protocol.v2.threads import ThreadInfo
 
 
@@ -987,3 +992,190 @@ async def test_v2_session_switch_without_turn_limit_resets_client_window_prefere
     if store._conn is not None:
         store._conn.close()
     store._conn = None
+
+
+async def _connect_window_client(
+    session: GatewaySession,
+    *,
+    capabilities: list[str] | None = None,
+) -> tuple[FakeClient, dict]:
+    client = FakeClient()
+    await session.connect(client, capabilities=capabilities)
+    message = _parse(client.messages[0])
+    assert message["method"] == "workspace.snapshot"
+    return client, message["params"]["active_snapshot"]
+
+
+async def _session_with_persisted_active_thread(
+    thread_id: str,
+    turn_count: int,
+) -> GatewaySession:
+    await _replace_thread_with_turns(thread_id, turn_count)
+    session = GatewaySession(lambda: BottomInputDock().tree, thread_id="bootstrap")
+    await session.register_thread(thread_id, title="Paged thread")
+    await session.switch_thread(thread_id)
+    return session
+
+
+@pytest.mark.asyncio
+async def test_v2_transcript_window_capability_connects_with_latest_40_turns_and_opaque_cursor(
+    tmp_path,
+    monkeypatch,
+):
+    import voidx.persistence.sqlite as store
+
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path / ".voidx-capability-window")
+    session = await _session_with_persisted_active_thread("windowed", 50)
+
+    _, windowed = await _connect_window_client(
+        session,
+        capabilities=[CAPABILITY_TRANSCRIPT_WINDOW],
+    )
+    _, legacy = await _connect_window_client(session)
+
+    assert windowed["windowed"] is True
+    assert [node["header"] for node in windowed["nodes"]] == [
+        f"turn {turn_id}" for turn_id in range(10, 50)
+    ]
+    assert isinstance(windowed["before_cursor"], str)
+    assert windowed["before_cursor"]
+    assert isinstance(windowed["transcript_epoch"], str)
+    assert windowed["transcript_epoch"]
+    assert legacy["windowed"] is False
+    assert [node["header"] for node in legacy["nodes"]] == [
+        f"turn {turn_id}" for turn_id in range(50)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_v2_transcript_page_uses_opaque_cursor_for_capability_client_and_keeps_legacy_numeric_paging(
+    tmp_path,
+    monkeypatch,
+):
+    import voidx.persistence.sqlite as store
+
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path / ".voidx-cursor-page")
+    session = await _session_with_persisted_active_thread("paged", 50)
+    capability_client, snapshot = await _connect_window_client(
+        session,
+        capabilities=[CAPABILITY_TRANSCRIPT_WINDOW],
+    )
+    legacy_client, _ = await _connect_window_client(session)
+    cursor = snapshot["before_cursor"]
+
+    cursor_result = await session.dispatch_request(
+        JsonRpcRequest(
+            id=49,
+            method="transcript.page",
+            params={"thread_id": "paged", "cursor": cursor},
+        ),
+        client=capability_client,
+    )
+    numeric_result = await session.dispatch_request(
+        JsonRpcRequest(
+            id=50,
+            method="transcript.page",
+            params={"thread_id": "paged", "before_turn_id": 45},
+        ),
+        client=legacy_client,
+    )
+
+    assert isinstance(cursor_result, JsonRpcResult)
+    assert [node["header"] for node in cursor_result.result["nodes"]] == [
+        f"turn {turn_id}" for turn_id in range(10)
+    ]
+    assert cursor_result.result["after_turn_id"] == 9
+    assert isinstance(numeric_result, JsonRpcResult)
+    assert [node["header"] for node in numeric_result.result["nodes"]] == [
+        f"turn {turn_id}" for turn_id in range(5, 45)
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_kind", ["tampered", "thread_mismatch"])
+async def test_v2_transcript_page_rejects_invalid_opaque_cursor_fail_closed(
+    tmp_path,
+    monkeypatch,
+    invalid_kind,
+):
+    import voidx.persistence.sqlite as store
+
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path / f".voidx-invalid-{invalid_kind}")
+    session = await _session_with_persisted_active_thread("cursor-owner", 50)
+    client, snapshot = await _connect_window_client(
+        session,
+        capabilities=[CAPABILITY_TRANSCRIPT_WINDOW],
+    )
+    cursor = snapshot["before_cursor"]
+    thread_id = "cursor-owner"
+    if invalid_kind == "tampered":
+        cursor = cursor + "tampered"
+    else:
+        thread_id = "other-thread"
+        await _replace_thread_with_turns(thread_id, 50)
+        await session.register_thread(thread_id, title="Other thread")
+
+    result = await session.dispatch_request(
+        JsonRpcRequest(
+            id=51,
+            method="transcript.page",
+            params={"thread_id": thread_id, "cursor": cursor},
+        ),
+        client=client,
+    )
+
+    assert isinstance(result, JsonRpcError)
+    assert result.error.code == -32602
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["append_reset", "replace"])
+async def test_v2_transcript_cursor_is_rejected_after_epoch_changes(
+    tmp_path,
+    monkeypatch,
+    mutation,
+):
+    import voidx.persistence.sqlite as store
+
+    if store._conn is not None:
+        store._conn.close()
+    store._conn = None
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path / f".voidx-epoch-{mutation}")
+    session = await _session_with_persisted_active_thread("epoch-thread", 50)
+    client, old_snapshot = await _connect_window_client(
+        session,
+        capabilities=[CAPABILITY_TRANSCRIPT_WINDOW],
+    )
+    old_cursor = old_snapshot["before_cursor"]
+    old_epoch = old_snapshot["transcript_epoch"]
+
+    if mutation == "append_reset":
+        await append_transcript_reset("epoch-thread", reason="test reset")
+    else:
+        await _replace_thread_with_turns("epoch-thread", 45)
+
+    _, new_snapshot = await _connect_window_client(
+        session,
+        capabilities=[CAPABILITY_TRANSCRIPT_WINDOW],
+    )
+    stale_result = await session.dispatch_request(
+        JsonRpcRequest(
+            id=52,
+            method="transcript.page",
+            params={"thread_id": "epoch-thread", "cursor": old_cursor},
+        ),
+        client=client,
+    )
+
+    assert new_snapshot["transcript_epoch"] != old_epoch
+    assert isinstance(stale_result, JsonRpcError)
+    assert stale_result.error.code == -32602

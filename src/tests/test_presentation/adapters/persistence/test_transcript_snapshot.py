@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -298,3 +299,122 @@ async def test_compact_transcript_collapses_old_snapshots_without_changing_rows(
     assert len([record for record in records_before if record["type"] == "transcript_reset"]) == 4
     assert len([record for record in records_after if record["type"] == "transcript_reset"]) == 1
     assert path.stat().st_size < size_before
+
+
+def _mark_first_turn_committed(dock) -> None:
+    width = 80
+    second_turn_index = next(
+        index
+        for index, node in enumerate(dock.tree.root.children)
+        if node.node_type == "turn" and node.payload["transcript_turn_id"] == 1
+    )
+    committed_lines = len(
+        dock.tree.render_root_slice(width, 0, second_turn_index)
+    )
+    dock.tree.mark_root_turns_committed_through_line(width, committed_lines)
+
+
+def test_dock_turn_ids_remain_stable_after_head_eviction():
+    from voidx.presentation.output.dock import BottomInputDock
+
+    dock = BottomInputDock()
+    dock.begin_capture()
+    first = dock.start_turn("first")
+    dock.end_turn()
+    second = dock.start_turn("second")
+    dock.end_turn()
+
+    assert [first.payload["transcript_turn_id"], second.payload["transcript_turn_id"]] == [0, 1]
+
+    dock.tree.mark_root_turn_durable(0)
+    _mark_first_turn_committed(dock)
+    assert dock.tree.remove_root_turn(0) == (first,)
+
+    third = dock.start_turn("third")
+
+    assert [node.payload["transcript_turn_id"] for node in dock.tree.root.children if node.node_type == "turn"] == [1, 2]
+    assert third.payload["transcript_turn_id"] == 2
+
+
+def test_transcript_rows_restore_stable_turn_id_into_root_payload():
+    from voidx.presentation.adapters.persistence.transcript_snapshot import (
+        transcript_rows_to_tree,
+        tree_to_transcript_rows,
+    )
+    from voidx.presentation.output.tree import OutputTree
+
+    tree = OutputTree()
+    turn = tree.new_node(
+        tree.root,
+        node_type="turn",
+        header="persisted",
+        payload={"transcript_turn_id": 17},
+    )
+    tree.new_node(turn, node_type="assistant", header="answer")
+
+    rows, turn_count = tree_to_transcript_rows("stable-id", tree)
+    restored = transcript_rows_to_tree(rows)
+
+    assert turn_count == 1
+    assert {row.turn_id for row in rows} == {17}
+    restored_turn = next(node for node in restored.root.children if node.node_type == "turn")
+    assert restored_turn.payload["transcript_turn_id"] == 17
+
+
+def test_transcript_rows_keep_sparse_stable_turn_ids_after_head_eviction():
+    from voidx.presentation.adapters.persistence.transcript_snapshot import (
+        transcript_rows_to_tree,
+        tree_to_transcript_rows,
+    )
+    from voidx.presentation.output.tree import OutputTree
+
+    tree = OutputTree()
+    for turn_id in (4, 9):
+        turn = tree.new_node(
+            tree.root,
+            node_type="turn",
+            header=f"turn {turn_id}",
+            payload={"transcript_turn_id": turn_id},
+        )
+        tree.new_node(turn, node_type="assistant", header="answer")
+
+    rows, _ = tree_to_transcript_rows("stable-id", tree)
+    restored = transcript_rows_to_tree(rows)
+
+    assert sorted({row.turn_id for row in rows}) == [4, 9]
+    assert [
+        node.payload["transcript_turn_id"]
+        for node in restored.root.children
+        if node.node_type == "turn"
+    ] == [4, 9]
+
+
+@pytest.mark.asyncio
+async def test_persist_current_uses_stable_ids_after_head_eviction(tmp_path, monkeypatch):
+    monkeypatch.setenv("VOIDX_HOME", str(tmp_path / ".voidx"))
+
+    from voidx.presentation.output.dock import BottomInputDock
+    from voidx.presentation.adapters.persistence.transcript_adapter import TranscriptSnapshotAdapter
+
+    dock = BottomInputDock()
+    dock.begin_capture()
+    first = dock.start_turn("first")
+    dock.end_turn()
+    second = dock.start_turn("second")
+    dock.end_turn()
+    adapter = TranscriptSnapshotAdapter(SimpleNamespace(get_dock=lambda: dock))
+    session_id = "stable-eviction"
+
+    await adapter.persist_current(session_id)
+    _mark_first_turn_committed(dock)
+    assert dock.tree.remove_root_turn(0) == (first,)
+    dock.start_turn("third")
+    await adapter.persist_current(session_id)
+
+    rows = await load_transcript(session_id)
+    assert [row.turn_id for row in rows if row.node_type == "turn"] == [0, 1, 2]
+    assert [
+        node.payload["transcript_turn_id"]
+        for node in dock.tree.root.children
+        if node.node_type == "turn"
+    ] == [1, 2]

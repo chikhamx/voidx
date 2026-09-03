@@ -810,6 +810,7 @@ async def test_tty_shutdown_orders_commit_drain_restore_stop_and_dump(
 
     cleanup_commit = events.index(("flush_committed", 2, True))
     commit_wait = events.index(("wait", "commit"))
+    final_empty_flush = events.index(("flush_committed", 3, True))
     drain = events.index("drain")
     termios_restore = events.index("restore_terminal")
     restore_barrier = next(
@@ -820,7 +821,7 @@ async def test_tty_shutdown_orders_commit_drain_restore_stop_and_dump(
     restore_wait = events.index(("wait", "restore"))
     shutdown = events.index("shutdown")
     dump = events.index("dump")
-    assert cleanup_commit < commit_wait < drain < termios_restore
+    assert cleanup_commit < commit_wait < final_empty_flush < drain < termios_restore
     assert termios_restore < restore_barrier < restore_wait < shutdown < dump
 
 

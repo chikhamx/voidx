@@ -136,6 +136,7 @@ class RenderState:
     restored_startup_flushed: bool = False
     restored_history_retired: bool = False
     committed_line_count: int = 0
+    committed_tree_revision: int = -1
     visible_committed_rows: int = 0
     was_busy: bool = False
     render_scheduled: bool = False
@@ -161,6 +162,14 @@ class RenderState:
     prev_frame_term_height: int | None = None
     last_render_plan: Any | None = None
     render_stats: RenderStats | None = None
+    pending_commit_tokens: list[Any] = field(default_factory=list)
+    pending_commit_updates: dict[int, Any] = field(default_factory=dict)
+    pending_commit_tasks: dict[int, asyncio.Task[None]] = field(default_factory=dict)
+    committed_turn_ids: set[int] = field(default_factory=set)
+    durable_turn_ids: set[int] = field(default_factory=set)
+    projected_body_bytes: int = 0
+    retained_root_turn_count: int = 0
+    last_evicted_turn_ids: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -275,6 +284,7 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_restored_startup_flushed": ("_render_state", "restored_startup_flushed"),
     "_restored_history_retired": ("_render_state", "restored_history_retired"),
     "_committed_line_count": ("_render_state", "committed_line_count"),
+    "_committed_tree_revision": ("_render_state", "committed_tree_revision"),
     "_visible_committed_rows": ("_render_state", "visible_committed_rows"),
     "_was_busy": ("_render_state", "was_busy"),
     "_render_scheduled": ("_render_state", "render_scheduled"),
@@ -298,6 +308,14 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_prev_frame_term_height": ("_render_state", "prev_frame_term_height"),
     "_last_render_plan": ("_render_state", "last_render_plan"),
     "_render_stats": ("_render_state", "render_stats"),
+    "_pending_commit_tokens": ("_render_state", "pending_commit_tokens"),
+    "_pending_commit_updates": ("_render_state", "pending_commit_updates"),
+    "_pending_commit_tasks": ("_render_state", "pending_commit_tasks"),
+    "_committed_turn_ids": ("_render_state", "committed_turn_ids"),
+    "_durable_turn_ids": ("_render_state", "durable_turn_ids"),
+    "_projected_body_bytes": ("_render_state", "projected_body_bytes"),
+    "_retained_root_turn_count": ("_render_state", "retained_root_turn_count"),
+    "_last_evicted_turn_ids": ("_render_state", "last_evicted_turn_ids"),
     "_external_request_handler": ("_external_state", "request_handler"),
     "_external_command_handler": ("_external_state", "command_handler"),
     "_mcp_catalog_provider": ("_external_state", "mcp_catalog_provider"),

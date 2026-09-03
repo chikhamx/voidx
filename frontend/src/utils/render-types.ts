@@ -70,6 +70,9 @@ export interface TranscriptSnapshot {
   windowed?: boolean;
   before_turn_id?: number | null;
   after_turn_id?: number | null;
+  before_cursor?: string | null;
+  after_cursor?: string | null;
+  transcript_epoch?: string | null;
   has_earlier?: boolean;
   has_later?: boolean;
 }

@@ -21,6 +21,7 @@ import {
   appendDiffItem,
   setTranscriptElement,
   appendStreamText,
+    getOrCreateStream,
   commitStream,
   clearCommittedStreams,
   clearActiveStreams,
@@ -74,6 +75,7 @@ import {
   buildTranscriptDescriptors,
   collectExistingTranscriptBlocksSafely,
 } from "./utils/transcript-reconciliation";
+import { sha256 } from "./utils/sha256";
 
 import {
   rpcCall,
@@ -752,7 +754,7 @@ interface ThreadTurnContext {
 }
 const threadTurnContexts = new Map<string, ThreadTurnContext>();
 
-const TRANSCRIPT_PAGE_SIZE = 20;
+const TRANSCRIPT_PAGE_SIZE = 40;
 interface TranscriptWindowState extends TranscriptDomWindowState {
   loading: boolean;
 }
@@ -1338,21 +1340,22 @@ function loadEarlierTranscriptPage(): void {
   const threadId = uiState.sessionId;
   if (!threadId || uiState.isSwitchingThread) return;
   const state = transcriptWindows.get(threadId);
-  if (
-    !state
-    || state.loading
-    || !state.snapshot.has_earlier
-    || typeof state.snapshot.before_turn_id !== "number"
-  ) return;
+  if (!state || state.loading || !state.snapshot.has_earlier) return;
+  const beforeCursor = state.snapshot.before_cursor;
+  const usesOpaqueCursor = typeof beforeCursor === "string";
+  if (!usesOpaqueCursor && typeof state.snapshot.before_turn_id !== "number") return;
 
   state.loading = true;
   const contextGeneration = threadContextGeneration;
   const interactionGeneration = getTranscriptInteractionGeneration();
-  void rpcCall("transcript.page", {
-    thread_id: threadId,
-    before_turn_id: state.snapshot.before_turn_id,
-    turn_limit: TRANSCRIPT_PAGE_SIZE,
-  })
+  const pageParams = usesOpaqueCursor
+    ? { thread_id: threadId, before_cursor: beforeCursor, turn_limit: TRANSCRIPT_PAGE_SIZE }
+    : {
+        thread_id: threadId,
+        before_turn_id: state.snapshot.before_turn_id,
+        turn_limit: TRANSCRIPT_PAGE_SIZE,
+      };
+  void rpcCall("transcript.page", pageParams)
     .then((result: unknown) => {
       if (
         uiState.sessionId !== threadId ||
@@ -1361,9 +1364,16 @@ function loadEarlierTranscriptPage(): void {
       ) return;
       if (!result || typeof result !== "object") return;
       const page = result as TranscriptSnapshot;
-      if (!Array.isArray(page.nodes) || (page.thread_id && page.thread_id !== threadId)) return;
+      if (!Array.isArray(page.nodes) || page.thread_id !== threadId) return;
       const current = transcriptWindows.get(threadId);
       if (!current || current !== state) return;
+      const requiresEpochMatch = usesOpaqueCursor
+        || typeof current.snapshot.transcript_epoch === "string";
+      if (requiresEpochMatch && (
+        typeof current.snapshot.transcript_epoch !== "string"
+        || typeof page.transcript_epoch !== "string"
+        || page.transcript_epoch !== current.snapshot.transcript_epoch
+      )) return;
 
       if (!prepareTranscriptForSynchronousPrepend(interactionGeneration)) return;
       if (!applyEarlierPageToTranscriptWindow(current, page, interactionGeneration)) return;
@@ -1767,6 +1777,64 @@ function clearIncrementalStreamItem(params: Record<string, unknown>): void {
       incrementalStreamStates.delete(key);
     }
   }
+}
+
+function freezeIncrementalStreamForRecovery(state: IncrementalStreamState): void {
+    const stream = getOrCreateStream(state.itemId, state.phase);
+    stream.committed = true;
+    stream.pendingProjectionUpdate = null;
+    stream.textEl.querySelector(".stream-cursor")?.remove();
+    if (state.phase === "thinking") {
+        stream.thinkingEl.hidden = false;
+        stream.thinkingBody.textContent = state.text;
+    } else if (stream.markdownProjection) {
+        stream.markdownProjection.update(state.text, "replace");
+    } else {
+        stream.textEl.textContent = state.text;
+    }
+    if (!stream.attached) {
+        document.querySelector("#transcript")?.append(stream.el);
+        stream.attached = true;
+    }
+}
+
+type IncrementalCompletionDisposition = "legacy" | "reject" | "commit";
+
+function validateIncrementalStreamCompletion(
+    params: Record<string, unknown>,
+    data: Record<string, unknown>,
+): IncrementalCompletionDisposition {
+    const threadId = typeof params.thread_id === "string" ? params.thread_id : "";
+    const turnId = typeof params.turn_id === "string" ? params.turn_id : "";
+    const itemId = typeof params.item_id === "string" ? params.item_id : "";
+    const state = Array.from(incrementalStreamStates.values()).find(
+        (candidate) => candidate.threadId === threadId
+            && candidate.turnId === turnId
+            && candidate.itemId === itemId,
+    );
+    if (!state) {
+        if (!isIncrementalStreamData(data)) return "legacy";
+        requestSnapshotRecovery(threadId);
+        return "reject";
+    }
+
+    const textByteLength = data.text_byte_length;
+    const contentHash = data.content_hash;
+    if (
+        snapshotRecoveryStates.has(threadId)
+        || data.stream_id !== state.streamId
+        || data.revision !== state.revision
+        || !isRevision(textByteLength)
+        || typeof contentHash !== "string"
+        || !/^[0-9a-f]{64}$/.test(contentHash)
+        || new TextEncoder().encode(state.text).length !== textByteLength
+        || sha256(state.text) !== contentHash
+    ) {
+        freezeIncrementalStreamForRecovery(state);
+        requestSnapshotRecovery(threadId);
+        return "reject";
+    }
+    return "commit";
 }
 
 function snapshotThreadMatchesActive(params: Record<string, unknown>, activeThreadId: string): boolean {
@@ -2553,8 +2621,10 @@ export function handleItem(
         );
       }
     } else if (method === "item.completed") {
-      const result = commitStream(itemId);
-      clearIncrementalStreamItem(params);
+        const completionDisposition = validateIncrementalStreamCompletion(params, data);
+        if (completionDisposition === "reject") return;
+        const result = commitStream(itemId);
+        if (completionDisposition === "commit") clearIncrementalStreamItem(params);
       if (result && result.thinking) {
         const elapsed = typeof data.elapsed === "number" ? data.elapsed : null;
         appendThoughtItem(

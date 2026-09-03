@@ -118,7 +118,9 @@ export type Text = string;
 export type ThreadId1 = string;
 export type TurnId = string;
 export type WorkspaceRevision = number;
+export type AfterCursor = string | null;
 export type AfterTurnId = number | null;
+export type BeforeCursor = string | null;
 export type BeforeTurnId = number | null;
 export type HasEarlier = boolean;
 export type HasLater = boolean;
@@ -158,6 +160,7 @@ export type ToolCallId = string | null;
 export type Nodes = TranscriptNode[];
 export type Revision5 = number;
 export type ThreadId2 = string;
+export type TranscriptEpoch = string;
 export type Windowed = boolean;
 export type ActiveThreadId1 = string;
 export type AiApprovalCount1 = number;
@@ -435,13 +438,16 @@ export interface WorkspaceSnapshot {
  * Transcript snapshot for a single thread.
  */
 export interface ThreadSnapshot {
+  after_cursor?: AfterCursor;
   after_turn_id?: AfterTurnId;
+  before_cursor?: BeforeCursor;
   before_turn_id?: BeforeTurnId;
   has_earlier?: HasEarlier;
   has_later?: HasLater;
   nodes?: Nodes;
   revision?: Revision5;
   thread_id: ThreadId2;
+  transcript_epoch?: TranscriptEpoch;
   windowed?: Windowed;
   [k: string]: unknown;
 }

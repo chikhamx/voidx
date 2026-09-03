@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pytest
@@ -76,6 +77,38 @@ async def test_stream_capability_falls_back_per_client_and_preserves_text() -> N
     assert legacy_updates[-1]["params"]["data"]["text"] == "hello world"
     assert "op" not in legacy_updates[-1]["params"]["data"]
 
+
+
+@pytest.mark.asyncio
+async def test_modern_stream_commit_carries_unicode_integrity_metadata_only() -> None:
+    session = GatewaySession(lambda: BottomInputDock().tree, thread_id="t1")
+    modern = FakeClient()
+    legacy = FakeClient()
+    await session.connect(modern, capabilities=[CAPABILITY_STREAM_APPEND])
+    await session.connect(legacy)
+    text = "你好, voidx 🌍"
+    utf8 = text.encode("utf-8")
+
+    await session.broadcast_event(AssistantStreamStarted(stream_id="s-unicode"))
+    await session.broadcast_event(
+        AssistantStreamUpdated(stream_id="s-unicode", text=text, phase="text")
+    )
+    await session.broadcast_event(AssistantStreamCommitted(stream_id="s-unicode"))
+
+    modern_commit = _messages(modern, "item.completed")[-1]
+    assert modern_commit["params"]["data"] == {
+        "revision": 1,
+        "stream_id": "s-unicode",
+        "text_byte_length": len(utf8),
+        "content_hash": hashlib.sha256(utf8).hexdigest(),
+    }
+
+    legacy_commit = _messages(legacy, "item.completed")[-1]
+    assert legacy_commit["params"]["data"] == {}
+    assert "revision" not in legacy_commit["params"]["data"]
+    assert "stream_id" not in legacy_commit["params"]["data"]
+    assert "text_byte_length" not in legacy_commit["params"]["data"]
+    assert "content_hash" not in legacy_commit["params"]["data"]
 
 
 @pytest.mark.asyncio

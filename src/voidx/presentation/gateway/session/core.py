@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import hashlib
 import inspect
+import os
 import uuid
 from collections.abc import Awaitable, Callable, Iterable
 from typing import Any, Protocol
@@ -48,6 +50,7 @@ from voidx.presentation.protocol.v2.incremental import (
     WorkspacePatch,
 )
 from voidx.presentation.protocol.v2.methods import MethodDispatch, MethodParamsError
+from voidx.presentation.gateway.session.cursor import encode_transcript_cursor
 from voidx.presentation.protocol.v2.snapshot import ThreadSnapshot, WorkspaceSnapshot
 from voidx.presentation.protocol.v2.threads import ThreadInfo
 
@@ -133,6 +136,7 @@ class GatewaySession(
         self._session_repository = session_repository
         self._dock = dock
         self._owner_id = uuid.uuid4().hex
+        self._cursor_secret = os.urandom(32)
         self._seq = 0
         self._workspace_revision = 0
         self._thread_id_provider: Callable[[], str] | None = None
@@ -209,11 +213,17 @@ class GatewaySession(
         self._client_capabilities[client] = self._normalize_capabilities(capabilities)
         self._client_workspace_revisions[client] = self._workspace_revision
         self._client_stream_revisions[client] = {}
+        default_turn_limit = (
+            40
+            if CAPABILITY_TRANSCRIPT_WINDOW in self.client_capabilities(client)
+            else None
+        )
+        self._remember_client_snapshot_limit(client, default_turn_limit)
         try:
             await client.send_text(
                 await self._encode_snapshot(
                     sync_persisted=False,
-                    turn_limit=None,
+                    turn_limit=default_turn_limit,
                 )
             )
             self._client_workspace_revisions[client] = self._workspace_revision
@@ -274,6 +284,9 @@ class GatewaySession(
 
     def _remember_current_client_snapshot_limit(self, turn_limit: int | None) -> None:
         self._remember_client_snapshot_limit(_request_client.get(), turn_limit)
+
+    def _current_client_supports(self, capability: str) -> bool:
+        return capability in self.client_capabilities(_request_client.get())
 
     # ── v1 compatibility (for run_loop.py registration) ───────────────────
 
@@ -530,10 +543,13 @@ class GatewaySession(
         elif isinstance(event, AssistantStreamCommitted):
             state = streams.get(stream_id)
             if state is not None:
+                canonical_text = state[2]
+                utf8 = canonical_text.encode("utf-8")
                 data.update({
                     "revision": state[1],
-                    "text_length": len(state[2]),
                     "stream_id": stream_id,
+                    "text_byte_length": len(utf8),
+                    "content_hash": hashlib.sha256(utf8).hexdigest(),
                 })
         else:
             data.update({"stream_id": stream_id})
@@ -918,11 +934,17 @@ class GatewaySession(
             )
             active_snapshot = active_snapshot.model_copy(update={"revision": self._seq})
         else:
+            from voidx.presentation.adapters.persistence.transcript_snapshot import (
+                transcript_epoch,
+            )
+
             transcript = await self._active_thread_snapshot()
+            epoch = await transcript_epoch(self._active_thread_id or self._session_id)
             active_snapshot = ThreadSnapshot(
                 thread_id=self._active_thread_id,
                 revision=self._seq,
                 nodes=transcript.nodes,
+                transcript_epoch=epoch,
             )
         runtime_state = self._runtime_state_provider() if self._runtime_state_provider else {}
         for thread_id in self._run_manager.active_thread_ids():
@@ -957,6 +979,7 @@ class GatewaySession(
     ) -> ThreadSnapshot:
         from voidx.presentation.adapters.persistence.transcript_snapshot import (
             load_transcript_page,
+            transcript_epoch,
             transcript_rows_to_tree,
         )
 
@@ -965,6 +988,7 @@ class GatewaySession(
             before_turn_id=before_turn_id,
             turn_limit=turn_limit,
         )
+        epoch = await transcript_epoch(thread_id)
         transcript = tree_to_snapshot(
             transcript_rows_to_tree(page.rows),
             session_id=thread_id,
@@ -976,6 +1000,29 @@ class GatewaySession(
             windowed=True,
             before_turn_id=page.before_turn_id,
             after_turn_id=page.after_turn_id,
+            before_cursor=(
+                encode_transcript_cursor(
+                    self._cursor_secret,
+                    thread_id=thread_id,
+                    direction="before",
+                    boundary_turn_id=page.before_turn_id,
+                    transcript_epoch=epoch,
+                )
+                if page.has_earlier and page.before_turn_id is not None
+                else None
+            ),
+            after_cursor=(
+                encode_transcript_cursor(
+                    self._cursor_secret,
+                    thread_id=thread_id,
+                    direction="after",
+                    boundary_turn_id=page.after_turn_id,
+                    transcript_epoch=epoch,
+                )
+                if page.has_later and page.after_turn_id is not None
+                else None
+            ),
+            transcript_epoch=epoch,
             has_earlier=page.has_earlier,
             has_later=page.has_later,
         )

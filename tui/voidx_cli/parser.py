@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import io
+import mmap
 import os
 import sys
 from tempfile import SpooledTemporaryFile
@@ -252,12 +254,33 @@ class _InputParserMixin:
         try:
             if isinstance(buffer, bytearray):
                 return buffer.decode("utf-8", errors="replace")
-            buffer.seek(0)
-            return buffer.read().decode("utf-8", errors="replace")
+            return self._decode_spooled_paste(buffer)
         finally:
             close = getattr(buffer, "close", None)
             if close is not None:
                 close()
+
+    @staticmethod
+    def _decode_spooled_paste(buffer) -> str:
+        # Spooled payloads are rolled to disk; decode straight from an mmap so
+        # the bytes are never copied into Python heap alongside the result str.
+        try:
+            buffer.flush()
+            fileno = buffer.fileno()
+        except (AttributeError, OSError, io.UnsupportedOperation):
+            fileno = None
+        if fileno is not None:
+            if os.fstat(fileno).st_size == 0:
+                return ""
+            with mmap.mmap(fileno, 0, access=mmap.ACCESS_READ) as view:
+                return codecs.decode(view, "utf-8", "replace")
+        buffer.seek(0)
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        parts = []
+        while chunk := buffer.read(65536):
+            parts.append(decoder.decode(chunk))
+        parts.append(decoder.decode(b"", final=True))
+        return "".join(parts)
 
     def _process_paste(self, data: bytes) -> bool:
         """Process data while in bracketed paste mode."""

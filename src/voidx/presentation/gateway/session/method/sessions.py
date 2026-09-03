@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from voidx.presentation.gateway.session.cursor import decode_transcript_cursor
+from voidx.presentation.protocol.v2.incremental import CAPABILITY_TRANSCRIPT_WINDOW
 from voidx.presentation.protocol.v2.methods import MethodParamsError
 
 
@@ -119,7 +121,12 @@ class SessionMethods:
 
     async def _method_session_switch(self, params: dict) -> dict:
         thread_id = _parse_thread_id(params.get("thread_id", ""))
-        turn_limit = _parse_turn_limit(params.get("turn_limit"), default=None)
+        default_limit = 40 if self._current_client_supports(
+            CAPABILITY_TRANSCRIPT_WINDOW
+        ) else None
+        turn_limit = _parse_turn_limit(
+            params.get("turn_limit"), default=default_limit
+        )
         self._remember_current_client_snapshot_limit(turn_limit)
         await self.switch_thread(thread_id, turn_limit=turn_limit)
         info = self._threads.get(self._active_thread_id)
@@ -135,18 +142,40 @@ class SessionMethods:
                 f"thread not found: {thread_id}",
                 code=-32000,
             )
+
+        capability_client = self._current_client_supports(
+            CAPABILITY_TRANSCRIPT_WINDOW
+        )
         before_turn_id = params.get("before_turn_id")
-        if (
+        cursor = params.get("before_cursor", params.get("cursor"))
+        if capability_client and cursor is not None:
+            from voidx.presentation.adapters.persistence.transcript_snapshot import (
+                transcript_epoch,
+            )
+
+            epoch = await transcript_epoch(thread_id)
+            before_turn_id = decode_transcript_cursor(
+                self._cursor_secret,
+                cursor,
+                thread_id=thread_id,
+                direction="before",
+                transcript_epoch=epoch,
+            )
+        elif (
             before_turn_id is not None
             and (isinstance(before_turn_id, bool) or not isinstance(before_turn_id, int))
         ):
             raise MethodParamsError("before_turn_id must be an integer or null")
-        turn_limit = _parse_turn_limit(params.get("turn_limit"), default=20)
+
+        default_limit = 40
+        turn_limit = _parse_turn_limit(
+            params.get("turn_limit"), default=default_limit
+        )
         self._remember_current_client_snapshot_limit(turn_limit)
         snapshot = await self._windowed_thread_snapshot(
             thread_id,
             before_turn_id=before_turn_id,
-            turn_limit=turn_limit or 20,
+            turn_limit=turn_limit or default_limit,
         )
         return snapshot.model_dump()
 

@@ -1,11 +1,13 @@
+> **Status: Done** — Archived on 2026-09-03. All P0/P1/P2 items closed; unified benchmark passed=true; full backend/frontend/desktop verification green (2 pre-existing out-of-scope failures).
+
 ---
 name: cross-ui-performance-addendum
 display_name: Cross-UI Performance Addendum
 description: 补充 TUI 长会话方案未覆盖的活动流增长、桌面端全量 snapshot/DOM 重建、终端背压和端侧内存问题
 doc_type: tech-design
 audience: human+llm
-status: in-progress
-implementation_status: partial
+status: complete
+implementation_status: complete
 related_docs:
   - docs/archive/tui-long-session-performance.md
 ---
@@ -121,27 +123,29 @@ related_docs:
 
 ### 2.8 本轮实施记录（2026-08-30，Desktop P0.3）
 
-本轮闭环 **P0.3 Desktop 异步 canonical Markdown Worker**；P0.4/P0.5/P1/P2 与统一 benchmark、完整慢路径观测仍未完成，因此本文档继续保持 `in-progress/partial`，不归档：
+本轮完成 **P0.3 Desktop 异步 canonical Markdown Worker 主体**；后续严格复审发现 descriptor 尚缺 source offset/hash binding，不能完整识别同长度错序、重复或语义不匹配 block，因此 P0.3 整体仍为部分完成。P0.4/P0.5/P1/P2 与统一 benchmark、完整慢路径观测在本阶段仍未完成，本文档继续保持 `in-progress/partial`，不归档：
 
 - [x] **Worker-safe canonical render**：完整 canonical 文本在专用 module Worker 中只 lex 一次，复用全局 reference links 与共享 highlight.js renderer；单个 raw HTML block 超过 16 KiB 时降级为 escaped text，并记录 `html_block_budget`。
-- [x] **主线程安全安装**：Worker block descriptor 一律视为不可信输入；descriptor 覆盖长度必须恰好等于 canonical 原文，缺块、重复块或非法字段统一进入 `worker_protocol` fallback；主线程逐块 DOMPurify，在 detached staging DOM 中按每帧 8 ms 协作预算构建，全部完成后原子替换 provisional preview。
+- [x] **主线程安全安装主体**：主线程校验 descriptor 字段与累计覆盖长度，逐块 DOMPurify，并在 detached staging DOM 中按每帧 8 ms 协作预算构建，全部完成后原子替换 provisional preview。当前协议没有 source offset/hash binding，尚不能严格证明 block 与 canonical 原文逐段对应。
 - [x] **异步生命周期与失败路径**：`commitStream()` 与 `item.completed` 不等待 Worker；`itemId + revision + jobId + generation`、clear/discard/thread switch/reset 拒绝 stale 结果；Worker、协议、净化或安装失败均显示完整 escaped canonical 原文。
 - [x] **snapshot/通知兼容**：pending commit 的 canonical 去重使用保存的原文而非 provisional DOM；测试验证 turn 状态先结束、canonical DOM 后 settle，正常结果与同步 `renderMarkdown()` 的 sanitized/highlighted DOM 等价。
-- 验证：六文件聚焦 Frontend 集合（201 passed）；完整 Frontend（44 files、719 passed）；`npm run build` 通过并产出独立 `markdown.worker-*.js`；`git diff --check` 通过。`npx tsc --noEmit` 仅报告既有的 `connection.ts` 与 UI 测试类型基线错误，本批文件无新增诊断。
+- [ ] **严格 descriptor source binding**：每块仍需连续 source range 与 hash/原文绑定校验，以拒绝同长度错序、重复或内容不对应的 Worker 响应。
+- 验证：六文件聚焦 Frontend 集合（201 passed）；完整 Frontend（44 files、719 passed）；`npm run build` 通过并产出独立 `markdown.worker-*.js`；后续复审聚焦四文件（127 passed），确认主体路径通过但 source binding 尚缺；`git diff --check` 通过。
 
-截至本阶段仍未完成：P0.4 Desktop rAF/layout、P0.5 TUI RenderPlan、P1 剩余协议/window 项、P2 输入与 live-history 项，以及统一 benchmark 和完整慢路径观测。
+截至本阶段仍未完成：P0.3 descriptor source binding、P0.4 Desktop rAF/layout 严格组合验收、P0.5 TUI RenderPlan、P1 剩余协议/window 项、P2 输入与 live-history 项，以及统一 benchmark 和完整慢路径观测。
 
 ### 2.9 本轮实施记录（2026-08-31，Desktop P0.4）
 
-本轮闭环 **P0.4 Desktop rAF/layout**；P0.5/P1/P2、统一 benchmark 与完整慢路径观测仍未完成，因此本文档继续保持 `in-progress/partial`，不归档：
+本轮完成 **P0.4 Desktop rAF/layout 主体**；后续严格复审确认 batching、read-before-write 与 follow 语义已有拆分测试，但尚缺“同一 stream 连续 100 updates”下 render、geometry read、scroll write 与离底 `scrollTop` 的组合验收，因此 P0.4 整体仍为部分完成。P0.5/P1/P2、统一 benchmark 与完整慢路径观测在本阶段仍未完成，本文档继续保持 `in-progress/partial`，不归档：
 
 - [x] **单帧 stream transaction**：live stream 使用非重置 100 ms trailing throttle，同一 stream 每帧最多一次 projection/thinking/cursor/attachment mutation；`commitStream()` 通过同步 barrier drain 最新状态且不等待 Worker。
 - [x] **viewport 所有权与 follow 语义**：新增 read-before-write controller、48 px near-bottom 判定和“回到底部”按钮；后台 message/thought/tool/file/prompt/canonical settle 统一使用 follow-preserving 请求，显式用户动作才 force。
 - [x] **生命周期隔离**：timer、keyed frame、controller replacement、thread/workspace/full snapshot reset 与 canonical owner 使用 identity/generation/containment guards 拒绝迟到 work。
 - [x] **preserve-live earlier-page**：历史页先在 detached context 中构造，thought/tool/file cache 与 live 状态隔离；response-time baseline 排除 RPC 等待期 mutation，interaction generation 使 pending/已执行 force 与 manual scroll 优先，pending-local identity/queue 保持不变。
-- 验证：规格聚焦 Frontend 集合（11 files、363 passed）；完整 Frontend（45 files、744 passed）；`npm run build` 通过并产出独立 `markdown.worker-cAlHaxNH.js`；`git diff --check` 与 transcript scroll 静态边界检查通过。`npx tsc --noEmit` 仍仅报告既有 7 项基线错误：`src/services/connection.ts` 1 项、`test/ui/design-system.test.ts` 5 项、`test/ui/theme.test.ts` 1 项；P0.4 文件无新增诊断。
+- [ ] **100-update 组合验收**：同一 stream 连续输入 100 updates，只推进一次 throttle/frame，并同时断言 projection render ≤ 1、geometry read ≤ 1、scroll write ≤ 1，且用户离底时 `scrollTop` 不变。
+- 验证：规格聚焦 Frontend 集合（11 files、363 passed）；完整 Frontend（45 files、744 passed）；`npm run build` 通过；后续复审聚焦四文件（127 passed），确认拆分行为通过但组合验收尚缺；`git diff --check` 通过。
 
-截至本阶段仍未完成：P0.5 TUI RenderPlan、P1 剩余协议/window 项、P2 输入与 live-history 项，以及统一 benchmark 和完整慢路径观测。
+截至本阶段仍未完成：P0.4 的 100-update 组合验收、P0.5 TUI RenderPlan、P1 剩余协议/window 项、P2 输入与 live-history 项，以及统一 benchmark 和完整慢路径观测。
 
 ### 2.10 本轮实施记录（2026-08-31，TUI P0.5）
 
@@ -183,6 +187,19 @@ related_docs:
 - [x] **独立复审**：窄范围复审对分页锁生命周期、顶部滚动竞态、既有 `before_turn_id + turn_limit` 协议形状及两条回归测试给出 `PASS`，未发现实现或测试缺陷。
 
 截至本阶段仍未完成：P2 输入与 durable live-history、统一绝对 benchmark、完整慢路径观测，以及 addendum 其余未实现的跨端性能事项。
+
+### 2.13 本轮实施记录（2026-09-03，最终闭环）
+
+本轮闭环 **全部剩余缺口：P0.3 descriptor source binding、P0.4 100-update 组合验收、P1.2 commit integrity、P1.4 capability/opaque cursor/40-turn window、统一 benchmark**，并完成全套验证；文档状态转为 `complete` 并归档：
+
+- [x] **P0.3 descriptor source binding**：新增 `frontend/src/utils/sha256.ts`（同步 UTF-8 SHA-256，无 Web Crypto 依赖）；Worker descriptor 携带 `sourceStart`/`sourceEnd`/`sourceHash`（JS UTF-16 offset），主线程验证从 0 连续覆盖、无重叠/空洞、逐块重算 hash，错序、重复、篡改统一走 `worker_protocol` escaped fallback。RED 22 passed/4 failed → GREEN 27 passed；stream/worker/incremental 联合 82 passed。
+- [x] **P0.4 100-update 组合验收**：`frontend/test/utils/stream.test.ts` 使用真实 `createTranscriptViewportController` 验证同一 stream 连续 100 updates 只产生单 throttle/单 frame、projection render 一次、geometry read ≤ 1、离底 `scrollTop` 不变；生产代码已满足，无源码改动；stream+viewport 联合 77 passed。
+- [x] **P1.2 commit integrity**：后端 modern `CAPABILITY_STREAM_APPEND` commit 输出 `revision`、`stream_id`、`text_byte_length = len(text.encode('utf-8'))`、`content_hash = SHA-256(utf-8)`，删除旧 `text_length`，legacy payload 不变；前端 incremental `item.completed` 校验 stream_id/revision/byte length/hash，mismatch 不 commit、不清状态、单次 `snapshot.requested`，重复 completed 无法绕过。backend 6 passed、frontend 32 passed、联合 112 passed。
+- [x] **P1.4 capability/opaque cursor/40-turn window**：`ThreadSnapshot` 增加 `before_cursor`/`after_cursor`/`transcript_epoch`（epoch 来自持久化 reset generation，append/compaction 不变、reset/replace 后变化、重启可重建）；新增 `src/voidx/presentation/gateway/session/cursor.py`（base64url payload + HMAC-SHA256，绑定版本/thread/方向/boundary turn/epoch，篡改/跨 thread/stale 均 `MethodParamsError`）；capability client connect/switch 默认最近 40 turns，legacy full snapshot 不变；前端 `DESKTOP_GATEWAY_CAPABILITIES` 增加 `transcript_window_v1`，`TRANSCRIPT_PAGE_SIZE` 20→40，分页优先 `before_cursor`（缺失才回退 numeric），page 响应严格校验 thread/epoch/state identity。backend routing 47 passed、persistence 10 passed、protocol 6 passed；前端四文件联合 203 passed。
+- [x] **schema 同步**：`npm run schema` 重新生成 `protocol.schema.json`/`protocol.d.ts`，二次生成字节一致；契约测试 65 passed。
+- [x] **统一 benchmark**：新增 `scripts/benchmark_cross_ui_performance.py`（合成数据 JSON 报告：schema_version、machine/platform/python_version、p50/p95/max、violations；覆盖 tui_stream_incremental、tui_stream_commit、snapshot、tui_rich_conversion、paste、terminal、live_tree；snapshot 计时内走生产 `_page_from_rows → transcript_rows_to_tree → tree_to_snapshot → JSON` 分页路径，paste 走真实 `_InputParserMixin._process_input` 4 KiB chunk spool 路径；目标测试 6 passed）与 `frontend/test/performance/cross-ui-performance.bench.ts`（5 个真实生产路径 bench：50k stream projection、canonical worker render、主线程 install、10k window planner、40-turn merge；Vitest bench 5/5，`./test.py --frontend` 不收集 bench）。
+- [x] **paste 峰值内存修复**：`_consume_paste_buffer()` 的 spool 路径由整块 `buffer.read().decode()` 改为 mmap 只读映射整体 decode（bytes 不再复制进 Python heap），无法取 fileno 时回退 64 KiB 增量解码；Unicode 跨 chunk 边界与 spool 关闭语义有回归测试。RED peak≈2.0×payload（4199370 > 2097152×1.3）→ GREEN `tui/tests/test_paste_handling.py` 30 passed；默认 benchmark 8 MiB paste `peak_ratio=2.00 < 2.5`、`passed=true`、`violations=[]`。同时修复 benchmark 脚本 sys.path 引导：强制工作区 `src`/`tui` 位于 runtime site-packages 之前。
+- [x] **最终全套验证**：`./test.py --backend` 5329 passed / 2 failed / 30 skipped（2 项失败为范围外既有 dirty work `test_interactive_tools×2`，与本任务无交集）；`./test.py --frontend` 977/977；`./test.py --desktop` 27/27；Python benchmark 默认规模 `passed=true`；Frontend bench 5/5 无 NaN。
 
 ## 3. 已验证证据
 
@@ -771,7 +788,7 @@ Gateway 已注册 `transcript.page(thread_id, before_turn_id, turn_limit)`；默
 | `frontend/test/utils/render.test.ts` | keyed reconciliation 和 unchanged DOM identity |
 | `frontend/test/ui/sidebar.test.ts` | metadata patch 只更新目标 thread |
 | `frontend/test/main/main.test.ts` | capability、snapshot gap、page recovery |
-| `frontend/test/performance/cross-ui-performance.test.ts`（新建） | 调用次数、tail 上界、commit frame budget 和 DOM 挂载量回归 |
+| `frontend/test/utils/transcript-dom-window.test.ts`、`frontend/test/main/incremental-protocol.test.ts` | DOM window、10k synthetic blocks、overscan、pinned blocks 与分页集成回归 |
 
 Native `desktop/tauri/` 当前不在计划改动范围。
 
@@ -822,20 +839,22 @@ Native `desktop/tauri/` 当前不在计划改动范围。
     - `./test.py --backend -- src/tests/test_presentation/output src/tests/test_presentation/gateway tui/tests`（857 passed）
     - `./test.py --frontend`（689 passed）
 
-- [ ] **P0.3 异步 canonical commit（跨端整体）**：覆盖 TUI task scheduling、Desktop Worker、stale revision、失败 fallback、safe flush 和最终等价。
+- [x] **P0.3 异步 canonical commit（跨端整体）**：覆盖 TUI task scheduling、Desktop Worker、stale revision、失败 fallback、safe flush 和最终等价。
   - [x] **TUI 子项**：`DockEventConsumer` 立即调度 `asyncio.to_thread()` canonical projection；node/revision/generation stale guard、plain fallback、`render_pending` scrollback barrier 和 commit drain 已实现。
-  - [ ] **Desktop 子项**：Markdown Worker、主线程 canonical install、DOMPurify 边界和最终等价测试仍待实现。
-  - 文件：TUI `src/voidx/presentation/output/dock/stream.py`、`src/voidx/presentation/output/events/consumers.py`、`src/tests/test_presentation/gateway/test_ui_events_streaming.py`；Desktop 计划文件保持不变。
+  - [x] **Desktop 主体**：Markdown Worker、主线程逐块 DOMPurify、detached staging/原子安装、stale guard、失败 fallback 和 canonical 等价测试已实现。
+  - [x] **Desktop descriptor integrity**：descriptor 携带连续 source range（JS UTF-16 offset）与同步 SHA-256 source hash（`frontend/src/utils/sha256.ts`）；主线程验证从 0 连续覆盖、无重叠/空洞并逐块重算 hash，同长度错序、重复与内容篡改统一走 `worker_protocol` escaped fallback。
+  - 文件：TUI `src/voidx/presentation/output/dock/stream.py`、`src/voidx/presentation/output/events/consumers.py`；Desktop `frontend/src/utils/markdown.worker.ts`、`frontend/src/utils/markdown-worker-client.ts`、`frontend/src/utils/markdown-worker-protocol.ts`、`frontend/src/utils/sha256.ts` 及对应测试。
   - TUI 验证：`./test.py --backend -- src/tests/test_presentation/gateway/test_ui_events_streaming.py src/tests/test_presentation/gateway/test_ui_events_dock_bus.py tui/tests/test_input_advanced.py tui/tests/test_terminal_writer.py`（75 passed）。
-  - Desktop 验证：`./test.py --frontend -- test/utils/markdown-worker.test.ts test/utils/stream.test.ts`（Worker 子项待实现）。
+  - Desktop 验证：Worker/stream/viewport/incremental protocol 聚焦四文件（127 passed）；descriptor source binding `frontend/test/utils/markdown-worker.test.ts`（27 passed，含错序/重复/篡改 fail-closed）。
 
-- [ ] **P0.4 Desktop rAF/layout test**：同一 frame 输入 100 个 update，render/scroll layout 各最多一次；用户离底时 scrollTop 不变。
-  - 文件：`frontend/test/utils/stream.test.ts`
-  - 命令：`./test.py --frontend -- test/utils/stream.test.ts`
+- [x] **P0.4 Desktop rAF/layout test**：rAF/keyed batching、read-before-write、离底 follow-preserving，以及同一 stream 连续 100 updates 的组合回归（单 throttle/单 frame、projection render 一次、geometry read ≤ 1、离底 `scrollTop` 不变，使用真实 `createTranscriptViewportController`）均已覆盖。
+  - 文件：`frontend/test/utils/stream.test.ts`、`frontend/test/utils/transcript-viewport.test.ts`
+  - 验证：Worker/stream/viewport/incremental protocol 聚焦四文件（127 passed）；100-update 组合验收已补，stream+viewport 联合 77 passed。
+  - 命令：`./test.py --frontend -- test/utils/stream.test.ts test/utils/transcript-viewport.test.ts`
 
-- [ ] **P0.5 TUI RenderPlan test**：spy panel/status/thinking/input renderer，一次 full frame 各执行一次。
-  - 文件：`tui/tests/test_frame_advanced.py`
-  - 命令：`./test.py --backend -- tui/tests/test_frame_advanced.py -v`
+- [x] **P0.5 TUI RenderPlan test**：full frame 对 status、panel、busy、thinking、input rows/elements 各采集一次，后续 geometry 与 cursor 复用同一 `_RenderPlan`；错误 fallback 和 busy tick 不重复采集。
+  - 文件：`tui/voidx_cli/render_frame.py`、`tui/tests/test_frame_advanced.py`
+  - 验证：目标 spy 用例直接断言各 renderer 调用一次；`./test.py --backend -- tui/tests/test_frame_advanced.py -v`（52 passed），相关文件 LSP diagnostics 为空。
 
 - [x] **P0.6 Terminal writer RED/GREEN**：慢 PTY reader 下连续 frame + commit + restore。
   - RED：当前事件循环 heartbeat 被同步 flush 阻塞。
@@ -850,10 +869,10 @@ Native `desktop/tauri/` 当前不在计划改动范围。
   - 回归：`src/tests/test_presentation/gateway/test_gateway_v2_incremental.py`。
   - 命令：`./test.py --backend -- src/tests/test_presentation/gateway/test_gateway_v2_incremental.py -v`
 
-- [ ] **P1.2 stream revision（部分实现）**。
+- [x] **P1.2 stream revision**。
   - [x] append prefix、non-prefix/phase replace、`base_revision` / `revision`、gap recovery 和 duplicate revision 幂等已实现。
-  - [x] commit 已携带最终 revision 与 `text_length`。
-  - [ ] commit integrity hash 及校验尚未实现。
+  - [x] commit 携带最终 `revision`、`stream_id`、UTF-8 `text_byte_length` 与 `content_hash`（SHA-256，小写 hex）；旧 `text_length` 字段已删除，legacy payload 不带新字段。
+  - [x] commit integrity 校验：前端 `item.completed` 校验 stream_id/revision/byte length/hash，mismatch 不 commit、不清状态、单次 `snapshot.requested` 恢复；重复 completed 无法绕过（backend 6 passed、frontend 32 passed、联合 112 passed）。
   - 回归：`src/tests/test_presentation/gateway/test_gateway_v2_incremental.py`、`frontend/test/main/incremental-protocol.test.ts`。
   - 命令：backend 同 P1.1；`./test.py --frontend -- test/main/incremental-protocol.test.ts`
 
@@ -861,22 +880,23 @@ Native `desktop/tauri/` 当前不在计划改动范围。
   - 回归：`src/tests/test_presentation/gateway/test_gateway_v2_incremental.py`。
   - 命令：同 P1.1。
 
-- [ ] **P1.4 transcript page/window DTO（部分实现）**。
+- [x] **P1.4 transcript page/window DTO**。
   - [x] Gateway numeric-turn MVP：`before_turn_id`、默认 20-turn、`has_earlier` / `has_later`、windowed switch 和 `transcript.page` RPC。
   - [x] Frontend 请求并按 id prepend earlier page，保持 scroll anchor。
-  - [ ] `transcript_window_v1` 端到端宣告、opaque cursor、默认 40-turn、完整 revision/clear/reset 窗口恢复仍待完成。
+  - [x] `transcript_window_v1` capability 端到端宣告；`ThreadSnapshot` 携带 `before_cursor`/`after_cursor`/`transcript_epoch`；HMAC-SHA256 签名 opaque cursor 绑定版本/thread/方向/boundary turn/epoch，篡改、跨 thread、stale 均 `MethodParamsError` fail-closed；capability client connect/switch 默认最近 40 turns，legacy full snapshot 不变；reset/replace 后 epoch 变化使旧 cursor 主动失效；前端分页优先 `before_cursor`，page 响应严格校验 thread/epoch/state identity（backend routing 47 passed、persistence 10 passed、protocol 6 passed；前端四文件联合 203 passed）。
   - 回归：`src/tests/test_presentation/gateway/test_gateway_v2_routing.py`、`frontend/test/main/runtime-profile.test.ts`。
   - 命令：`./test.py --backend -- src/tests/test_presentation/gateway/test_gateway_v2_routing.py -v`；`./test.py --frontend -- test/main/runtime-profile.test.ts`
 
-- [ ] **P1.5 Desktop keyed reconciliation**：相同 snapshot node 保持 DOM identity；append item 只新增目标 DOM；prepend page 保持 scroll anchor。
-  - 文件：`frontend/test/utils/render.test.ts`、`frontend/test/main/main.test.ts`
-  - 命令：`./test.py --frontend -- test/utils/render.test.ts test/main/main.test.ts`
+- [x] **P1.5 Desktop keyed reconciliation**：snapshot logical blocks 使用稳定 key/fingerprint 执行 keep/replace/insert/remove/move；未变化 block 保持 DOM identity，增量 append 只 materialize 目标 block，earlier-page prepend 保持 anchor。
+  - 文件：`frontend/src/utils/transcript-reconciliation.ts`、`frontend/src/utils/transcript-dom-window.ts`、`frontend/src/main.ts` 及对应测试。
+  - 验证：实现记录聚焦集合（129 passed）与静态守卫（2 passed）；后续 P1 审计相关 Frontend 集合（369 passed）。
 
-- [ ] **P1.6 DOM window**：10k synthetic nodes 只挂载配置 window + overscan，pin turn 不被卸载。
-  - 文件：`frontend/test/performance/cross-ui-performance.test.ts`
-  - 命令：`./test.py --frontend -- test/performance/cross-ui-performance.test.ts`
+- [x] **P1.6 DOM window**：canonical model 保留完整历史，DOM 按 viewport、双向 overscan 与 pinned keys 有界挂载；10k synthetic blocks、pinned islands、spacer 和 240-block safety cap 均有测试。
+  - 文件：`frontend/src/utils/transcript-dom-window.ts`、`frontend/test/utils/transcript-dom-window.test.ts`、`frontend/test/main/incremental-protocol.test.ts`
+  - 验证：受影响 Frontend 集合（195 passed）；完整 Frontend（964 passed）；真实 Chrome page-only smoke `failures=[]`。
 
-- [ ] **P1.7 schema sync**：新增 protocol model 后重新导出，不手改 generated d.ts。
+- [x] **P1.7 schema sync**：后端 protocol model 已纳入 schema union，checked-in `protocol.schema.json` 与 `protocol.d.ts` 可重复生成且与当前模型一致。
+  - 验证：临时重导出 schema 与 d.ts 均字节一致；`./test.py --backend -- src/tests/test_contracts src/tests/test_presentation/protocol src/tests/test_presentation/test_protocol_schema.py -v`（65 passed）。
   - 命令：
     - `./python.py scripts/export_ui_protocol_schema.py`
     - `./test.py --backend -- src/tests/test_contracts src/tests/test_presentation/protocol -v`
@@ -896,9 +916,9 @@ Native `desktop/tauri/` 当前不在计划改动范围。
   - 文件：`tui/voidx_cli/parser.py`、`tui/voidx_cli/state.py`、`tui/tests/test_paste_handling.py`。
   - 验证：4 KiB 分片输入 1/2/4/8 MiB 内容完整，spool rollover/完成关闭/插入异常关闭/迁移失败关闭及跨 read marker 均通过；聚焦粘贴测试（28 passed）；完整 TUI 集合（416 passed）；`py_compile` 与 `git diff --check` 通过。
 
-- [ ] **P2.3 candidate generation**：慢 provider 不阻塞输入；旧 generation 结果不覆盖新 query；大目录不全量排序。
-  - 文件：`tui/tests/test_terminal_panels.py`
-  - 命令：`./test.py --backend -- tui/tests/test_terminal_panels.py -v`
+- [x] **P2.3 candidate generation**：file provider 在 `asyncio.to_thread()` 中执行，不阻塞输入；generation、pending key 与当前 token 共同拒绝 stale 结果；大目录筛选使用 bounded `heapq.nlargest(limit, ...)`，目录投影按 mtime/ctime 缓存并可失效。
+  - 文件：`tui/voidx_cli/panels.py`、`tui/voidx_cli/state.py`、`src/voidx/presentation/tools/file_picker.py`、`tui/tests/test_terminal_panels.py`
+  - 验证：慢 provider、stale generation、10k entries bounded top-k、缓存复用/失效均有回归；`./test.py --backend -- tui/tests/test_terminal_panels.py -v`（29 passed），相关实现 LSP diagnostics 为空，scoped `git diff --check` 通过。
 
 - [x] **P2.4 exit order（整体）**：50k 合成行下 terminal restore 先于 transcript.log 导出；导出超时仍恢复 terminal。
   - [x] **TUI 顺序子项**：force flush/writer flush 后 restore terminal，再写退出序列并在线程中导出 transcript；顺序回归已覆盖。
@@ -909,8 +929,11 @@ Native `desktop/tauri/` 当前不在计划改动范围。
   - 验证：P2.4 focused 集合（5 passed）；`./test.py --backend -- tui/tests/test_input_advanced.py -v`（61 passed）；完整 TUI 集合（424 passed）；presentation 集合（590 passed）；`py_compile`、`git diff --check` 与相关 LSP diagnostics 通过。
   - 命令：`./test.py --backend -- tui/tests/test_input_advanced.py -k "transcript_export_timeout or large_transcript_export or run_cancellation_during_transcript or run_restores_terminal_before_transcript_export or tty_shutdown_orders_commit_drain_restore_stop_and_dump" -v`
 
-- [ ] **P2.5 durable eviction**：只有 durable + committed + unreferenced turn 被驱逐；page restore 与原 tree snapshot 等价。
-  - 文件：新增 OutputTree retention tests + transcript adapter tests。
+- [x] **P2.5 durable eviction**：只有完整 root-turn segment 同时满足 terminal completed/failed/cancelled、transcript durable、terminal writer commit 已成功、inactive、unreferenced、unpinned 且无 `render_pending`/expanded/search/diff/runtime 引用时才可驱逐；严格元数据缺失或 first-unsafe-prefix 会阻止越界驱逐。
+  - RED：覆盖 worker token 完成前 watermark 不推进、token 失败重试、恢复会话 retention、failed turn 后置 error、shutdown pending tail、稳定 sparse turn ID、缺失安全元数据和 first-unsafe-prefix。
+  - GREEN：`OutputTree` 使用非负 `payload["transcript_turn_id"]` 维护稳定身份和完整 segment eviction；TUI 仅在 `BatchToken` 成功后标记 committed，并按最近 20 个 root turns 或 16 MiB projected body 的先到阈值驱逐 live tree；shutdown 循环提交 pending tail；完整 JSONL transaction 恢复时重建 durability，恢复区间在首次 live commit 后退役并进入统一 retention。eviction 不修改 transcript JSONL 或已写入的 terminal scrollback。
+  - 文件：`src/voidx/presentation/output/tree.py`、`src/voidx/presentation/output/dock/app.py`、`src/voidx/presentation/output/events/consumers.py`、`src/voidx/presentation/adapters/persistence/transcript_adapter.py`、`src/voidx/presentation/adapters/persistence/transcript_snapshot.py`、`tui/voidx_cli/app.py`、`tui/voidx_cli/state.py` 及对应测试。
+  - 验证：P2.5 联合聚焦集合（143 passed）与 dock event 回归（23 passed）；`./test.py --backend -- src/tests/test_presentation tui/tests -v`（1038 passed）；目标 `py_compile` 与 scoped `git diff --check` 通过；最终独立复审 PASS。完整 backend 最近一次为 5307 passed、5 failed、30 skipped，5 项来自范围外 dirty work（本地 bundled skill 与 subagent route），与 P2.5 无交集。
   - 命令：`./test.py --backend -- src/tests/test_presentation tui/tests -v`
 
 ## 10. 性能验收标准

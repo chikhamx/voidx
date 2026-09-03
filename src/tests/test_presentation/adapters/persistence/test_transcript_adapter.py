@@ -147,3 +147,106 @@ async def test_clear_resets_persist_cursor(tmp_path, monkeypatch):
     assert [record["type"] for record in records].count("turn_start") == 2
     assert records[-3]["type"] == "turn_start"
     assert records[-2]["header"] == "new"
+
+
+@pytest.mark.asyncio
+async def test_persist_current_marks_successfully_confirmed_turns_durable(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("VOIDX_HOME", str(tmp_path / ".voidx"))
+
+    from voidx.presentation.output.dock import BottomInputDock
+
+    presentation_dock = BottomInputDock()
+    presentation_dock.begin_capture()
+    turn = presentation_dock.start_turn("durable user")
+    presentation_dock.end_turn()
+    adapter = TranscriptSnapshotAdapter(
+        SimpleNamespace(get_dock=lambda: presentation_dock)
+    )
+
+    await adapter.persist_current("durable-session")
+
+    assert turn.payload["durable"] is True
+
+
+@pytest.mark.asyncio
+async def test_persist_current_does_not_mark_turn_durable_when_append_fails(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("VOIDX_HOME", str(tmp_path / ".voidx"))
+
+    from voidx.presentation.adapters.persistence import transcript_adapter as module
+    from voidx.presentation.output.dock import BottomInputDock
+
+    presentation_dock = BottomInputDock()
+    presentation_dock.begin_capture()
+    turn = presentation_dock.start_turn("retry durable user")
+    presentation_dock.end_turn()
+    adapter = TranscriptSnapshotAdapter(
+        SimpleNamespace(get_dock=lambda: presentation_dock)
+    )
+
+    async def fail_append(*_args, **_kwargs):
+        raise OSError("durable append failed")
+
+    monkeypatch.setattr(module, "append_transcript_turns", fail_append)
+
+    with pytest.raises(OSError, match="durable append failed"):
+        await adapter.persist_current("durable-retry-session")
+
+    assert turn.payload.get("durable") is not True
+
+
+@pytest.mark.asyncio
+async def test_restore_current_marks_complete_transcript_segments_durable(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("VOIDX_HOME", str(tmp_path / ".voidx"))
+
+    from voidx.presentation.output.dock import BottomInputDock
+
+    source_dock = BottomInputDock()
+    source_dock.begin_capture()
+    turn = source_dock.start_turn("persisted user")
+    source_dock.append_message("persisted answer")
+    source_dock.end_turn()
+    session_id = "durable-restore-session"
+    source_adapter = TranscriptSnapshotAdapter(
+        SimpleNamespace(get_dock=lambda: source_dock)
+    )
+
+    await source_adapter.persist_current(session_id)
+
+    records = [
+        json.loads(line)
+        for line in (session_dir(session_id) / "transcript.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
+    node_records = [record for record in records if record["type"] == "node"]
+    assert any(
+        record.get("metadata", {}).get("payload", {}).get("durable") is False
+        for record in node_records
+    )
+
+    restored_dock = BottomInputDock()
+    restored_dock.begin_capture()
+    restored_adapter = TranscriptSnapshotAdapter(
+        SimpleNamespace(get_dock=lambda: restored_dock)
+    )
+
+    assert await restored_adapter.restore_current(session_id) is True
+
+    restored_segment = restored_dock.tree.root_turn_segment(
+        turn.payload["transcript_turn_id"]
+    )
+    assert restored_segment
+    stack = list(restored_segment)
+    while stack:
+        node = stack.pop()
+        assert node.payload["durable"] is True
+        stack.extend(node.children)

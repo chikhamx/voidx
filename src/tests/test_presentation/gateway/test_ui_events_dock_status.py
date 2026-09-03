@@ -587,6 +587,30 @@ async def test_turn_terminal_event_clears_all_active_turn_statuses(
         await bus.stop()
 
 
+
+@pytest.mark.asyncio
+async def test_failed_turn_error_inherits_terminal_segment_metadata(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(TurnStarted(text="fail"))
+        await bus.emit(TurnFailed(message="provider failed"))
+        await bus.drain()
+
+        turn = next(
+            node for node in isolated_dock.tree.root.children
+            if node.node_type == "turn"
+        )
+        turn_id = turn.payload["transcript_turn_id"]
+        isolated_dock.tree.mark_root_turn_durable(turn_id)
+        lines = len(isolated_dock.tree.render(80))
+        isolated_dock.tree.mark_root_turns_committed_through_line(80, lines)
+
+        assert isolated_dock.tree.evictable_root_turn_ids() == [turn_id]
+    finally:
+        await bus.stop()
+
 @pytest.mark.asyncio
 async def test_error_event_records_error_current_status(isolated_dock):
     """ErrorAppended must record error:current so active_error_text() is non-empty."""

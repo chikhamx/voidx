@@ -164,6 +164,8 @@ class PureTui(
 
     INPUT_HISTORY_LIMIT = 1000
     RENDER_THROTTLE_SECONDS = 0.016
+    LIVE_HISTORY_ROOT_TURN_LIMIT = 20
+    LIVE_HISTORY_PROJECTED_BODY_LIMIT = 16 * 1024 * 1024
 
     def __getattr__(self, name: str) -> Any:
         mapping = STATE_FIELD_MAP.get(name)
@@ -340,10 +342,7 @@ class PureTui(
                 writer_healthy = writer_started and not self._terminal_writer_failed
                 if self._tty and writer_healthy:
                     try:
-                        commit = self._flush_committed(force=True)
-                        if commit is not None:
-                            await self._terminal_writer.wait(commit)
-                        await self._terminal_writer.drain_async()
+                        await self._drain_committed_output()
                     except BaseException as exc:
                         writer_healthy = False
                         record_terminal_cleanup_error(
@@ -633,9 +632,151 @@ class PureTui(
             self._restored_startup_flushed = False
             self._restored_history_retired = False
             self._committed_line_count = 0
+            self._committed_tree_revision = -1
             self._has_rendered_frame = False
             self._invalidate_frame_cache()
         return restored_range
+    async def _drain_committed_output(self) -> None:
+        while True:
+            commit = self._flush_committed(force=True)
+            if commit is None:
+                break
+            pending_task = self._pending_commit_tasks.get(id(commit))
+            if pending_task is not None:
+                await pending_task
+            else:
+                await self._terminal_writer.wait(commit)
+        await self._terminal_writer.drain_async()
+
+
+    async def _wait_for_pending_commit(self, token: BatchToken) -> None:
+        token_key = id(token)
+        update = self._render_state.pending_commit_updates[token_key]
+        try:
+            await self._terminal_writer.wait(token)
+        except BaseException as exc:
+            if update["force_requested"]:
+                dock.request_force_flush()
+            dock.restore_guidance_echoes(update["raw_echoes"])
+            if not isinstance(exc, asyncio.CancelledError):
+                log_internal_error(exc, context="terminal_commit_wait")
+        else:
+            update["apply_state"]()
+            term_height = shutil.get_terminal_size().lines
+            self._visible_committed_rows = min(
+                term_height,
+                self._visible_committed_rows + update["flush_rows"],
+            )
+            self._invalidate_frame_cache()
+        finally:
+            self._render_state.pending_commit_updates.pop(token_key, None)
+            self._render_state.pending_commit_tasks.pop(token_key, None)
+            try:
+                self._render_state.pending_commit_tokens.remove(token)
+            except ValueError:
+                pass
+
+    def _track_pending_commit(
+        self,
+        token: BatchToken,
+        *,
+        apply_state,
+        flush_rows: int,
+        force_requested: bool,
+        raw_echoes: list[str],
+    ) -> None:
+        token_key = id(token)
+        self._render_state.pending_commit_tokens.append(token)
+        self._render_state.pending_commit_updates[token_key] = {
+            "apply_state": apply_state,
+            "flush_rows": flush_rows,
+            "force_requested": force_requested,
+            "raw_echoes": raw_echoes,
+        }
+        self._render_state.pending_commit_tasks[token_key] = asyncio.create_task(
+            self._wait_for_pending_commit(token)
+        )
+
+    @staticmethod
+    def _projected_segment_bytes(segment) -> int:
+        total = 0
+        stack = list(segment)
+        while stack:
+            node = stack.pop()
+            total += len(node.header.encode("utf-8"))
+            total += sum(len(line.encode("utf-8")) for line in node.body_lines)
+            stack.extend(node.children)
+        return total
+
+    def _record_committed_live_history(self, width: int) -> None:
+        committed = dock.tree.mark_root_turns_committed_through_line(
+            width,
+            self._committed_line_count,
+        )
+        self._committed_turn_ids.update(committed)
+        self._durable_turn_ids = {
+            turn_id
+            for child in dock.tree.root.children
+            if child.node_type == "turn"
+            and isinstance((turn_id := child.payload.get("transcript_turn_id")), int)
+            and not isinstance(turn_id, bool)
+            and turn_id >= 0
+            and child.payload.get("durable") is True
+        }
+        self._apply_live_history_retention(width)
+
+    def _apply_live_history_retention(self, width: int) -> list[int]:
+        tree = dock.tree
+        turns = [child for child in tree.root.children if child.node_type == "turn"]
+        projected_bytes = sum(
+            self._projected_segment_bytes(tree.root_turn_segment(turn_id))
+            for turn in turns
+            if isinstance((turn_id := turn.payload.get("transcript_turn_id")), int)
+            and not isinstance(turn_id, bool)
+            and turn_id >= 0
+        )
+        removed: list[int] = []
+        if (
+            len(turns) <= self.LIVE_HISTORY_ROOT_TURN_LIMIT
+            and projected_bytes <= self.LIVE_HISTORY_PROJECTED_BODY_LIMIT
+        ):
+            self._projected_body_bytes = projected_bytes
+            self._retained_root_turn_count = len(turns)
+            self._last_evicted_turn_ids = []
+            return removed
+        previous_line_count = len(
+            tree.render_root_slice(width, 0, len(tree.root.children))
+        )
+        while len(turns) > 1 and (
+            len(turns) > self.LIVE_HISTORY_ROOT_TURN_LIMIT
+            or projected_bytes > self.LIVE_HISTORY_PROJECTED_BODY_LIMIT
+        ):
+            oldest = turns[0]
+            turn_id = oldest.payload.get("transcript_turn_id")
+            if not isinstance(turn_id, int) or isinstance(turn_id, bool) or turn_id < 0:
+                break
+            segment = tree.root_turn_segment(turn_id)
+            segment_bytes = self._projected_segment_bytes(segment)
+            if not tree.remove_root_turn(turn_id):
+                break
+            removed.append(turn_id)
+            projected_bytes = max(0, projected_bytes - segment_bytes)
+            turns = [child for child in tree.root.children if child.node_type == "turn"]
+
+        if removed:
+            current_line_count = len(
+                tree.render_root_slice(width, 0, len(tree.root.children))
+            )
+            removed_lines = max(0, previous_line_count - current_line_count)
+            self._committed_line_count = max(
+                0,
+                self._committed_line_count - removed_lines,
+            )
+            self._invalidate_frame_cache()
+        self._projected_body_bytes = projected_bytes
+        self._retained_root_turn_count = len(turns)
+        self._last_evicted_turn_ids = removed
+        return removed
 
     def _flush_committed(self, *, force: bool = False) -> BatchToken | None:
         """Flush completed content to terminal scrollback."""
@@ -645,6 +786,11 @@ class PureTui(
         raw_echoes = dock.consume_guidance_echoes()
         echo_lines = _guidance_echo_lines(raw_echoes)
         worker_mode = self._tty and self._terminal_writer_worker_mode()
+        if worker_mode and self._render_state.pending_commit_tokens:
+            if force_requested:
+                dock.request_force_flush()
+            dock.restore_guidance_echoes(raw_echoes)
+            return self._render_state.pending_commit_tokens[-1]
 
         next_committed_line_count = self._committed_line_count
         next_restored_committed_line_count = self._restored_committed_line_count
@@ -658,6 +804,23 @@ class PureTui(
             self._restored_startup_flushed = next_restored_startup_flushed
             self._restored_history_retired = next_restored_history_retired
             self._was_busy = next_was_busy
+            if restored_range is None:
+                self._record_committed_live_history(width)
+            elif next_restored_history_retired:
+                dock.retire_restored_root_child_range()
+                self._restored_range_key = None
+                self._restored_committed_line_count = 0
+                self._restored_startup_flushed = False
+                self._restored_history_retired = False
+                self._committed_line_count = len(
+                    dock.tree.render_root_slice(
+                        width,
+                        0,
+                        len(dock.tree.root.children),
+                    )
+                )
+                self._record_committed_live_history(width)
+            self._committed_tree_revision = dock.tree.revision
 
         try:
             width = self._frame_width()
@@ -666,6 +829,15 @@ class PureTui(
             next_restored_committed_line_count = self._restored_committed_line_count
             next_restored_startup_flushed = self._restored_startup_flushed
             next_restored_history_retired = self._restored_history_retired
+            if (
+                restored_range is None
+                and not echo_lines
+                and dock.tree.revision == self._committed_tree_revision
+            ):
+                self._apply_live_history_retention(width)
+                self._committed_tree_revision = dock.tree.revision
+                return None
+
 
             if restored_range is not None:
                 restored_start, restored_end = restored_range
@@ -798,13 +970,22 @@ class PureTui(
                     clear_start_row=clear_start_row,
                     ansi=commit_ansi,
                 )
-                apply_state()
-                term_height = shutil.get_terminal_size().lines
-                self._visible_committed_rows = min(
-                    term_height,
-                    self._visible_committed_rows + flush_rows,
-                )
-                self._invalidate_frame_cache()
+                if callable(getattr(self._terminal_writer, "wait", None)):
+                    self._track_pending_commit(
+                        token,
+                        apply_state=apply_state,
+                        flush_rows=flush_rows,
+                        force_requested=force_requested,
+                        raw_echoes=raw_echoes,
+                    )
+                else:
+                    apply_state()
+                    term_height = shutil.get_terminal_size().lines
+                    self._visible_committed_rows = min(
+                        term_height,
+                        self._visible_committed_rows + flush_rows,
+                    )
+                    self._invalidate_frame_cache()
                 return token
 
             if clear_start_row > 0:

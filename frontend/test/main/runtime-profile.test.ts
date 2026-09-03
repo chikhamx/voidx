@@ -1831,7 +1831,7 @@ describe("strict metadata boundaries and complete reset", () => {
 
     expect(request.params).toEqual({
       thread_id: "thread-windowed",
-      turn_limit: 20,
+      turn_limit: 40,
     });
 
     const client = await import("../../src/rpc/client");
@@ -1881,7 +1881,7 @@ describe("strict metadata boundaries and complete reset", () => {
     expect(request.params).toEqual({
       thread_id: "thread-windowed",
       before_turn_id: 2,
-      turn_limit: 20,
+      turn_limit: 40,
     });
 
     backgroundHeight = 150;

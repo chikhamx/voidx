@@ -14,6 +14,7 @@ import json from "highlight.js/lib/languages/json";
 import rust from "highlight.js/lib/languages/rust";
 import diff from "highlight.js/lib/languages/diff";
 import type { CanonicalBlockDescriptor } from "./markdown-worker-protocol";
+import { sha256 } from "./sha256";
 
 export const CANONICAL_RAW_HTML_BLOCK_MAX_CHARS = 16 * 1024;
 
@@ -77,27 +78,39 @@ export function renderCanonicalMarkdownBlocks(
   const source = String(text ?? "");
   const tokens = marked.lexer(source, MARKDOWN_OPTIONS);
   const blocks: CanonicalBlockDescriptor[] = [];
+    let sourceOffset = 0;
 
-  for (const token of tokens) {
-    if (
-      token.type === "html"
-      && token.raw.length > CANONICAL_RAW_HTML_BLOCK_MAX_CHARS
-    ) {
-      blocks.push({
-        kind: "text",
-        text: token.raw,
-        reason: "html_block_budget",
-      });
-      continue;
-    }
+    for (const token of tokens) {
+        const sourceStart = sourceOffset;
+        const sourceEnd = sourceStart + token.raw.length;
+        const sourceHash = sha256(token.raw);
+        sourceOffset = sourceEnd;
 
-    const blockTokens = [token] as LinkedTokenList;
-    blockTokens.links = tokens.links;
-    const html = marked.parser(blockTokens, parserOptions());
-    blocks.push({
-      kind: "html",
-      html,
-      sourceLength: token.raw.length,
+        if (
+            token.type === "html"
+            && token.raw.length > CANONICAL_RAW_HTML_BLOCK_MAX_CHARS
+        ) {
+            blocks.push({
+                kind: "text",
+                text: token.raw,
+                reason: "html_block_budget",
+                sourceStart,
+                sourceEnd,
+                sourceHash,
+            });
+            continue;
+        }
+
+        const blockTokens = [token] as LinkedTokenList;
+        blockTokens.links = tokens.links;
+        const html = marked.parser(blockTokens, parserOptions());
+        blocks.push({
+            kind: "html",
+            html,
+            sourceLength: token.raw.length,
+            sourceStart,
+            sourceEnd,
+            sourceHash,
     });
   }
 

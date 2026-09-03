@@ -94,6 +94,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._needs_force_flush: bool = False
         self._restored_root_child_start: int | None = None
         self._restored_root_child_end: int | None = None
+        self._next_transcript_turn_id = 0
 
     @property
     def active(self) -> bool:
@@ -244,6 +245,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._needs_force_flush = True
         self._restored_root_child_start = None
         self._restored_root_child_end = None
+        self._next_transcript_turn_id = 0
         self.refresh()
 
     def restore_tree(self, tree: OutputTree, *, append: bool = False) -> None:
@@ -258,13 +260,47 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._todo_state = None
         self._restored_root_child_start = history_start
         self._restored_root_child_end = len(self._tree.root.children)
+        self._sync_transcript_turn_id_allocator()
         self._needs_force_flush = False
         self.refresh()
+
+    def _sync_transcript_turn_id_allocator(self) -> None:
+        used_ids: set[int] = set()
+        next_id = self._next_transcript_turn_id
+        for child in self._tree.root.children:
+            if child.node_type != "turn":
+                continue
+            turn_id = child.payload.get("transcript_turn_id")
+            if (
+                isinstance(turn_id, int)
+                and not isinstance(turn_id, bool)
+                and turn_id >= 0
+                and turn_id not in used_ids
+            ):
+                used_ids.add(turn_id)
+                next_id = max(next_id, turn_id + 1)
+                continue
+            while next_id in used_ids:
+                next_id += 1
+            child.payload["transcript_turn_id"] = next_id
+            used_ids.add(next_id)
+            next_id += 1
+        self._next_transcript_turn_id = max(self._next_transcript_turn_id, next_id)
+
+    def _allocate_transcript_turn_id(self) -> int:
+        self._sync_transcript_turn_id_allocator()
+        turn_id = self._next_transcript_turn_id
+        self._next_transcript_turn_id += 1
+        return turn_id
 
     def restored_root_child_range(self) -> tuple[int, int] | None:
         if self._restored_root_child_start is None or self._restored_root_child_end is None:
             return None
         return self._restored_root_child_start, self._restored_root_child_end
+
+    def retire_restored_root_child_range(self) -> None:
+        self._restored_root_child_start = None
+        self._restored_root_child_end = None
 
     def _reset_runtime_nodes(self) -> None:
         self._current_turn = None
@@ -304,19 +340,60 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         preview = strip_pasted_wrapper(preview)
         header, body_lines = self._render_turn_text(preview)
         header = f"[bold white]❯[/] {header}" if header else "[bold white]❯[/]"
+        transcript_turn_id = self._allocate_transcript_turn_id()
         self._current_turn = self._tree.new_node(
             parent=self._tree.root,
             node_type="turn",
             header=header,
             body_lines=body_lines,
             collapsed=False,
-            payload={"raw_text": raw_text if raw_text is not None else text},
+            payload={
+                "raw_text": raw_text if raw_text is not None else text,
+                "transcript_turn_id": transcript_turn_id,
+                "lifecycle": "running",
+                "active": True,
+                "terminal": False,
+                "committed": False,
+                "durable": False,
+                "referenced": False,
+                "pinned": False,
+                "render_pending": False,
+            },
         )
         self._mark_settled(self._current_turn)
         self.refresh()
         return self._current_turn
 
-    def end_turn(self) -> None:
+    def end_turn(
+        self,
+        *,
+        outcome: str = "completed",
+    ) -> None:
+        if outcome not in {"completed", "failed", "cancelled"}:
+            raise ValueError("turn outcome must be completed, failed, or cancelled")
+        turn = self._current_turn
+        if turn is not None:
+            turn_id = turn.payload.get("transcript_turn_id")
+            segment = (
+                self._tree.root_turn_segment(turn_id)
+                if isinstance(turn_id, int) and not isinstance(turn_id, bool)
+                else ()
+            )
+            for root in segment:
+                stack = [root]
+                while stack:
+                    node = stack.pop()
+                    node.payload.update(
+                        lifecycle=outcome,
+                        active=False,
+                        terminal=True,
+                    )
+                    node.payload.setdefault("committed", False)
+                    node.payload.setdefault("durable", False)
+                    node.payload.setdefault("referenced", False)
+                    node.payload.setdefault("pinned", False)
+                    node.payload.setdefault("render_pending", False)
+                    stack.extend(node.children)
         self._turn_in_progress = False
         self._current_turn_text = ""
         self._current_turn_metadata = TurnMetadata()
@@ -373,7 +450,11 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
             header=header,
             body_lines=body_lines,
             collapsed=False,
-            payload={"raw_text": text, "style": "guidance"},
+            payload={
+                "raw_text": text,
+                "style": "guidance",
+                "transcript_turn_id": self._allocate_transcript_turn_id(),
+            },
         )
         if self._stream_node is None:
             self._current_agent = None
@@ -599,11 +680,26 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         last = children[-1]
         if last.node_type == "message" and not last.header and not last.body_lines and not last.children:
             return
+        inherited_payload = {
+            key: last.payload[key]
+            for key in (
+                "lifecycle",
+                "terminal",
+                "active",
+                "committed",
+                "durable",
+                "referenced",
+                "pinned",
+                "render_pending",
+            )
+            if key in last.payload
+        }
         node = self._tree.new_node(
             parent=self._tree.root,
             node_type="message",
             header="",
             collapsed=False,
+            payload=inherited_payload,
         )
         self._mark_settled(node)
 

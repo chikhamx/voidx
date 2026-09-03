@@ -97,4 +97,5 @@ export interface IncrementalStreamState {
 export const DESKTOP_GATEWAY_CAPABILITIES = [
   "stream_append_v1",
   "workspace_patch_v1",
+  "transcript_window_v1",
 ] as const;

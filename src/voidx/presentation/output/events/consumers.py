@@ -217,16 +217,16 @@ class DockEventConsumer:
                 return self._dock.start_turn(text, metadata=metadata, raw_text=raw_text or None)
             case TurnCompleted():
                 self._reset_turn_state()
-                self._dock.end_turn()
+                self._dock.end_turn(outcome="completed")
                 return None
             case TurnCancelled():
                 self._reset_turn_state()
-                self._dock.end_turn()
+                self._dock.end_turn(outcome="cancelled")
                 return None
             case TurnFailed() as e:
                 self._reset_turn_state()
-                self._dock.end_turn()
                 if not e.message:
+                    self._dock.end_turn(outcome="failed")
                     return None
                 self._dock.record_status(
                     "error:current",
@@ -234,7 +234,9 @@ class DockEventConsumer:
                     e.message,
                     stage="error",
                 )
-                return self._dock.append_error(e.message)
+                node = self._dock.append_error(e.message)
+                self._dock.end_turn(outcome="failed")
+                return node
             case StartupShown() as e:
                 return self._dock.append_startup(
                     model=e.model,

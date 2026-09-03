@@ -7,17 +7,26 @@ export interface CanonicalRenderRequest {
   canonicalText: string;
 }
 
-export type CanonicalBlockDescriptor =
-  | {
-      kind: "html";
-      html: string;
-      sourceLength: number;
+interface CanonicalSourceBinding {
+    /** UTF-16 code unit offsets suitable for canonicalText.slice(). */
+    sourceStart: number;
+    sourceEnd: number;
+    /** SHA-256 of the source slice's UTF-8 bytes, lowercase hexadecimal. */
+    sourceHash: string;
+}
+
+export type CanonicalBlockDescriptor = CanonicalSourceBinding & (
+    | {
+        kind: "html";
+        html: string;
+        sourceLength: number;
     }
-  | {
-      kind: "text";
-      text: string;
-      reason: "html_block_budget";
-    };
+    | {
+        kind: "text";
+        text: string;
+        reason: "html_block_budget";
+    }
+);
 
 interface CanonicalRenderIdentity {
   jobId: number;

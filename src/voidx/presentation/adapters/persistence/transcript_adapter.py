@@ -10,7 +10,7 @@ from voidx.presentation.adapters.persistence.transcript_snapshot import (
     complete_transcript_turn_ids,
     load_transcript,
     tree_to_transcript_turn_rows,
-    tree_turn_count,
+    tree_transcript_turn_ids,
     transcript_rows_to_tree,
 )
 
@@ -35,20 +35,24 @@ class TranscriptSnapshotAdapter:
         active_dock = self._ui.get_dock()
         if active_dock is None:
             return
-        turn_count = tree_turn_count(active_dock.tree)
-        if turn_count <= 0:
+        turn_ids = tree_transcript_turn_ids(active_dock.tree)
+        if not turn_ids:
             return
 
         persisted_turn_ids = await complete_transcript_turn_ids(session_id)
         pending_turns: list[tuple[int, Any]] = []
-        for turn_id in range(turn_count):
+        for turn_id in turn_ids:
             if turn_id in persisted_turn_ids:
                 continue
             rows = tree_to_transcript_turn_rows(session_id, active_dock.tree, turn_id)
             if rows:
                 pending_turns.append((turn_id, rows))
         if pending_turns:
-            await append_transcript_turns(session_id, pending_turns)
+            written_turn_ids = await append_transcript_turns(session_id, pending_turns)
+            mark_durable = getattr(active_dock.tree, "mark_root_turn_durable", None)
+            if callable(mark_durable):
+                for turn_id in written_turn_ids:
+                    mark_durable(turn_id)
 
     async def restore_current(self, session_id: str, *, append: bool = False) -> bool:
         active_dock = self._ui.get_dock()
@@ -57,7 +61,10 @@ class TranscriptSnapshotAdapter:
         rows = await load_transcript(session_id)
         if not rows:
             return False
-        active_dock.restore_tree(transcript_rows_to_tree(rows), append=append)
+        restored_tree = transcript_rows_to_tree(rows)
+        for turn_id in {row.turn_id for row in rows}:
+            restored_tree.mark_root_turn_durable(turn_id)
+        active_dock.restore_tree(restored_tree, append=append)
         return True
 
     async def clear(self, session_id: str) -> None:

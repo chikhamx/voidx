@@ -24,6 +24,9 @@ class ThreadSnapshot(BaseModel):
     windowed: bool = False
     before_turn_id: int | None = None
     after_turn_id: int | None = None
+    before_cursor: str | None = None
+    after_cursor: str | None = None
+    transcript_epoch: str = Field(default="legacy", min_length=1)
     has_earlier: bool = False
     has_later: bool = False
 

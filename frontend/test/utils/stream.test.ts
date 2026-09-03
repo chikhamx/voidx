@@ -15,6 +15,7 @@ import {
   clearCommittedStreams,
   clearActiveStreams,
   _setCanonicalMarkdownCoordinatorForTest,
+  _setTranscriptViewportControllerForTest,
   _resetForTest,
   flushTranscriptReconciliationNow,
   quiesceStreamsForBlockedInstallNoCallback,
@@ -22,6 +23,7 @@ import {
   validateTranscriptLiveOwnerTokens,
 } from "../../src/utils/stream";
 import { renderMarkdown } from "../../src/utils/markdown";
+import { createTranscriptViewportController } from "../../src/utils/transcript-viewport";
 import {
   createCanonicalMarkdownCoordinator,
 } from "../../src/utils/markdown-worker-client";
@@ -551,6 +553,59 @@ describe("frame-owned stream scheduling", () => {
     expect(controller.flushOptions).toEqual([{ followAfterMutation: true }]);
   });
 
+
+  it("coalesces 100 updates into one real viewport transaction without following an away user", async () => {
+    const transcript = document.querySelector<HTMLElement>("#transcript")!;
+    transcript.scrollTop = 100;
+    const frames = new Map<number, FrameRequestCallback>();
+    const writes: number[] = [];
+    let nextFrame = 1;
+    let geometryReads = 0;
+    let renderTransactions = 0;
+    const viewport = createTranscriptViewportController({
+        transcript,
+        scheduleFrame(callback) {
+            const handle = nextFrame++;
+            frames.set(handle, callback);
+            return handle;
+        },
+        cancelFrame(handle) {
+            frames.delete(Number(handle));
+        },
+        readGeometry() {
+            geometryReads += 1;
+            renderTransactions += 1;
+            return { scrollTop: 100, clientHeight: 100, scrollHeight: 1000 };
+        },
+        writeScrollTop(value) {
+            writes.push(value);
+            transcript.scrollTop = value;
+        },
+    });
+    _setTranscriptViewportControllerForTest(viewport);
+
+    appendStreamText("burst", "0", "text", "append");
+    const stream = getOrCreateStream("burst", "text");
+    const projectionUpdate = vi.spyOn(stream.markdownProjection, "update");
+    const transcriptAppend = vi.spyOn(transcript, "append");
+    for (let update = 1; update < 100; update += 1) {
+        appendStreamText("burst", String(update), "text", "append");
+    }
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(frames.size).toBe(1);
+    const frame = frames.entries().next().value as [number, FrameRequestCallback];
+    frames.delete(frame[0]);
+    frame[1](0);
+
+    expect(projectionUpdate).toHaveBeenCalledTimes(1);
+    expect(transcriptAppend).toHaveBeenCalledTimes(1);
+    expect(renderTransactions).toBe(1);
+    expect(geometryReads).toBeLessThanOrEqual(1);
+    expect(writes).toHaveLength(0);
+    expect(transcript.scrollTop).toBe(100);
+    expect(frames.size).toBe(0);
+  });
 
   it("uses a non-resetting 100 ms trailing throttle and one frame transaction", async () => {
     appendStreamText("throttle", "a", "text", "append");

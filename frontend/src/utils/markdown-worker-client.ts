@@ -4,6 +4,7 @@ import type {
   CanonicalRenderRequest,
   CanonicalRenderResponse,
 } from "./markdown-worker-protocol";
+import { sha256 } from "./sha256";
 
 export const CANONICAL_INSTALL_BUDGET_MS = 8;
 
@@ -365,31 +366,43 @@ function isCanonicalBlockDescriptor(
 ): value is CanonicalBlockDescriptor {
   if (!value || typeof value !== "object") return false;
   const block = value as Partial<CanonicalBlockDescriptor>;
-  if (block.kind === "html") {
-    return typeof block.html === "string"
-      && Number.isInteger(block.sourceLength)
-      && (block.sourceLength as number) > 0;
-  }
-  if (block.kind === "text") {
-    return typeof block.text === "string"
-      && block.reason === "html_block_budget";
-  }
-  return false;
+    const hasSourceBinding = Number.isInteger(block.sourceStart)
+        && Number.isInteger(block.sourceEnd)
+        && (block.sourceStart as number) >= 0
+        && (block.sourceEnd as number) >= (block.sourceStart as number)
+        && typeof block.sourceHash === "string"
+        && /^[0-9a-f]{64}$/.test(block.sourceHash);
+    if (!hasSourceBinding) return false;
+    if (block.kind === "html") {
+        return typeof block.html === "string"
+            && Number.isInteger(block.sourceLength)
+            && (block.sourceLength as number) > 0
+            && block.sourceLength === (block.sourceEnd as number) - (block.sourceStart as number);
+    }
+    if (block.kind === "text") {
+        return typeof block.text === "string"
+            && block.reason === "html_block_budget";
+    }
+    return false;
 }
 
-
 function hasCompleteSourceCoverage(
-  blocks: CanonicalBlockDescriptor[],
-  canonicalText: string,
+    blocks: CanonicalBlockDescriptor[],
+    canonicalText: string,
 ): boolean {
-  let coveredLength = 0;
-  for (const block of blocks) {
-    coveredLength += block.kind === "html"
-      ? block.sourceLength
-      : block.text.length;
-    if (coveredLength > canonicalText.length) return false;
-  }
-  return coveredLength === canonicalText.length;
+    if (canonicalText.length === 0) return blocks.length === 0;
+    let expectedStart = 0;
+    for (const block of blocks) {
+        if (block.sourceStart !== expectedStart || block.sourceEnd <= block.sourceStart) {
+            return false;
+        }
+        if (block.sourceEnd > canonicalText.length) return false;
+        const sourceSlice = canonicalText.slice(block.sourceStart, block.sourceEnd);
+        if (block.kind === "text" && block.text !== sourceSlice) return false;
+        if (sha256(sourceSlice) !== block.sourceHash) return false;
+        expectedStart = block.sourceEnd;
+    }
+    return expectedStart === canonicalText.length;
 }
 function defaultWorkerFactory(): CanonicalWorkerLike {
   return new Worker(new URL("./markdown.worker.ts", import.meta.url), {

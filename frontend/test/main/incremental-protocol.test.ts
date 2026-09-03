@@ -18,6 +18,7 @@ import {
 import { renderMarkdown } from "../../src/utils/markdown";
 import { createCanonicalMarkdownCoordinator } from "../../src/utils/markdown-worker-client";
 import { handleCanonicalRenderRequest } from "../../src/utils/markdown.worker";
+import { sha256 } from "../../src/utils/sha256";
 
 function fakeSocket() {
   return {
@@ -397,6 +398,107 @@ describe("assistant stream incremental consumer", () => {
 
     expect(getOrCreateStream("item-1", "text").text).toBe("hello world");
     expect(sent(socket, "snapshot.requested")).toHaveLength(0);
+  });
+
+    it.each([
+        [
+            "text byte length",
+            (text) => ({
+                text_byte_length: new TextEncoder().encode(text).length + 1,
+                content_hash: sha256(text),
+            }),
+        ],
+        [
+            "content hash",
+            (text) => ({
+                text_byte_length: new TextEncoder().encode(text).length,
+                content_hash: "0".repeat(64),
+            }),
+        ],
+    ])(
+        "rejects a stream commit with mismatched %s and keeps recovery blocking repeated completion",
+        (_label, mismatch) => {
+            const harness = controlledCanonicalCoordinator();
+            _setCanonicalMarkdownCoordinatorForTest(harness.coordinator);
+            const socket = fakeSocket();
+            _setSocket(socket);
+            const text = "你好, stream 🌍";
+            const validIntegrity = {
+                revision: 1,
+                stream_id: "stream-unicode",
+                text_byte_length: new TextEncoder().encode(text).length,
+                content_hash: sha256(text),
+            };
+            assistantItem("item.started", {
+                op: "replace",
+                revision: 0,
+                stream_id: "stream-unicode",
+                text: "",
+                phase: "text",
+            });
+            assistantItem("item.delta", {
+                op: "append",
+                base_revision: 0,
+                revision: 1,
+                stream_id: "stream-unicode",
+                text,
+                phase: "text",
+            });
+
+            assistantItem("item.completed", {
+                ...validIntegrity,
+                ...mismatch(text),
+                phase: "text",
+            });
+            assistantItem("item.completed", { ...validIntegrity, phase: "text" });
+
+            const body = document.querySelector("#transcript .stream-buffer .markdown-body");
+            expect(body).not.toBeNull();
+            expect(body.dataset.renderPending).toBeUndefined();
+            expect(body.textContent).toContain(text);
+            expect(sent(socket, "snapshot.requested")).toEqual([
+                expect.objectContaining({ params: { thread_id: "thread-1" } }),
+            ]);
+        },
+    );
+
+    it("commits an incremental stream with matching Unicode byte length and hash", () => {
+        const harness = controlledCanonicalCoordinator();
+        _setCanonicalMarkdownCoordinatorForTest(harness.coordinator);
+        const socket = fakeSocket();
+        _setSocket(socket);
+        const text = "你好, stream 🌍";
+        assistantItem("item.started", {
+            op: "replace",
+            revision: 0,
+            stream_id: "stream-unicode",
+            text: "",
+            phase: "text",
+        });
+        assistantItem("item.delta", {
+            op: "append",
+            base_revision: 0,
+            revision: 1,
+            stream_id: "stream-unicode",
+            text,
+            phase: "text",
+        });
+        assistantItem("item.completed", {
+            revision: 1,
+            stream_id: "stream-unicode",
+            text_byte_length: new TextEncoder().encode(text).length,
+            content_hash: sha256(text),
+            phase: "text",
+        });
+
+        const body = document.querySelector("#transcript .stream-buffer .markdown-body");
+        expect(body).not.toBeNull();
+        expect(body.dataset.renderPending).toBe("true");
+        expect(sent(socket, "snapshot.requested")).toHaveLength(0);
+
+        harness.settle();
+        expect(body.dataset.renderPending).toBeUndefined();
+        expect(body.innerHTML).toBe(renderMarkdown(text).innerHTML);
   });
 
   it("commits through the canonical sanitized Markdown renderer", () => {
@@ -1066,6 +1168,143 @@ it("schedules a trim after a fallback full attach of a windowed snapshot", async
     await Promise.resolve();
     expect(sent(socket, "transcript.page")).toHaveLength(2);
   });
+
+    it("requests an earlier cursor page with the negotiated page size", async () => {
+        const socket = eventSocket(WebSocket.OPEN);
+        _setSocket(socket);
+        const transcript = document.querySelector("#transcript");
+
+        handleNotification("workspace.snapshot", {
+            revision: 1,
+            active_thread_id: "thread-1",
+            threads: [{ thread_id: "thread-1" }],
+            active_snapshot: {
+                thread_id: "thread-1",
+                revision: 1,
+                windowed: true,
+                before_cursor: "cursor-a",
+                before_turn_id: 100,
+                transcript_epoch: "epoch-a",
+                has_earlier: true,
+                nodes: [{ node_type: "turn", id: "cursor-current", header: "Current" }],
+            },
+        });
+
+        transcript.scrollTop = 0;
+        transcript.dispatchEvent(new Event("scroll"));
+        await Promise.resolve();
+
+        const request = sent(socket, "transcript.page")[0];
+        expect(request?.params).toEqual({
+            thread_id: "thread-1",
+            before_cursor: "cursor-a",
+            turn_limit: 40,
+        });
+        expect(request?.params).not.toHaveProperty("before_turn_id");
+    });
+
+    it("ignores an earlier page from a different transcript epoch", async () => {
+        const socket = eventSocket(WebSocket.OPEN);
+        _setSocket(socket);
+        const transcript = document.querySelector("#transcript");
+        const client = await import("../../src/rpc/client");
+
+        handleNotification("workspace.snapshot", {
+            revision: 1,
+            active_thread_id: "thread-1",
+            threads: [{ thread_id: "thread-1" }],
+            active_snapshot: {
+                thread_id: "thread-1",
+                revision: 1,
+                windowed: true,
+                before_cursor: "cursor-a",
+                before_turn_id: 100,
+                transcript_epoch: "epoch-a",
+                has_earlier: true,
+                nodes: [{ node_type: "turn", id: "epoch-current", header: "Current" }],
+            },
+        });
+        const beforeSnapshot = structuredClone(_peekTranscriptWindowSnapshotForTest("thread-1"));
+        const beforeHtml = transcript.innerHTML;
+
+        transcript.scrollTop = 0;
+        transcript.dispatchEvent(new Event("scroll"));
+        await Promise.resolve();
+        const request = sent(socket, "transcript.page")[0];
+        expect(request).toBeDefined();
+
+        client._resolvePendingForTest(request.id, {
+            thread_id: "thread-1",
+            revision: 2,
+            windowed: true,
+            before_cursor: "cursor-b",
+            before_turn_id: 50,
+            after_turn_id: 99,
+            transcript_epoch: "epoch-b",
+            has_earlier: false,
+            nodes: [
+                { node_type: "turn", id: "wrong-epoch-new", header: "Must not merge" },
+                { node_type: "turn", id: "epoch-current", header: "Current" },
+            ],
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(_peekTranscriptWindowSnapshotForTest("thread-1")).toEqual(beforeSnapshot);
+        expect(transcript.innerHTML).toBe(beforeHtml);
+        expect(transcript.querySelector('[data-reconcile-key="node:wrong-epoch-new"]')).toBeNull();
+    });
+
+    it("prepends an earlier page from the matching epoch and advances its cursor", async () => {
+        const socket = eventSocket(WebSocket.OPEN);
+        _setSocket(socket);
+        const transcript = document.querySelector("#transcript");
+        const client = await import("../../src/rpc/client");
+
+        handleNotification("workspace.snapshot", {
+            revision: 1,
+            active_thread_id: "thread-1",
+            threads: [{ thread_id: "thread-1" }],
+            active_snapshot: {
+                thread_id: "thread-1",
+                revision: 1,
+                windowed: true,
+                before_cursor: "cursor-a",
+                before_turn_id: 100,
+                transcript_epoch: "epoch-a",
+                has_earlier: true,
+                nodes: [{ node_type: "turn", id: "matching-current", header: "Current" }],
+            },
+        });
+
+        transcript.scrollTop = 0;
+        transcript.dispatchEvent(new Event("scroll"));
+        await Promise.resolve();
+        const request = sent(socket, "transcript.page")[0];
+        expect(request).toBeDefined();
+
+        client._resolvePendingForTest(request.id, {
+            thread_id: "thread-1",
+            revision: 2,
+            windowed: true,
+            before_cursor: "cursor-b",
+            before_turn_id: 50,
+            after_turn_id: 99,
+            transcript_epoch: "epoch-a",
+            has_earlier: false,
+            nodes: [
+                { node_type: "turn", id: "matching-new", header: "Earlier" },
+                { node_type: "turn", id: "matching-current", header: "Current" },
+            ],
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const snapshot = _peekTranscriptWindowSnapshotForTest("thread-1");
+        expect(snapshot?.before_cursor).toBe("cursor-b");
+        expect(snapshot?.transcript_epoch).toBe("epoch-a");
+        expect(snapshot?.nodes.map((node) => node.id)).toEqual(["matching-new", "matching-current"]);
+    });
 
   it("keeps blocked commit slots unchanged when replacement throws and retries the same revision", () => {
     const socket = eventSocket(WebSocket.OPEN);

@@ -492,3 +492,42 @@ def test_bracketed_paste_closes_spool_when_migration_fails(tmp_path, monkeypatch
 
     assert len(created_spools) == 1
     assert created_spools[0].closed
+
+
+def test_spooled_paste_decodes_unicode_across_chunk_boundaries(tmp_path, monkeypatch):
+    tui = _tui(tmp_path)
+    captured = []
+
+    monkeypatch.setattr(tui, "_insert_pasted_text", captured.append)
+    tui._PASTE_BUFFER_MEMORY_LIMIT = 64
+
+    text = "你好🌍0123456789abcdef" * 20
+    payload = text.encode("utf-8")
+    tui._process_input(b"\x1b[200~")
+    for offset in range(0, len(payload), 37):
+        tui._process_input(payload[offset:offset + 37])
+    tui._process_input(b"\x1b[201~")
+
+    assert captured == [text]
+    assert tui._paste_buffer is None
+
+
+def test_spooled_paste_decode_peak_stays_bounded(tmp_path, monkeypatch):
+    import tracemalloc
+
+    tui = _tui(tmp_path)
+    captured = []
+    monkeypatch.setattr(tui, "_insert_pasted_text", captured.append)
+    payload_bytes = 2 * 1024 * 1024
+    chunk = b"x" * 4096
+
+    tracemalloc.start()
+    tui._process_input(b"\x1b[200~" + chunk)
+    for _ in range(payload_bytes // len(chunk) - 1):
+        tui._process_input(chunk)
+    tui._process_input(b"\x1b[201~")
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    assert captured == ["x" * payload_bytes]
+    assert peak < payload_bytes * 1.3

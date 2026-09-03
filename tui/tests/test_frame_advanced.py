@@ -1,5 +1,6 @@
 from tui_helpers import *  # noqa: F403
 
+import asyncio
 import os
 import re
 import shutil
@@ -1450,3 +1451,300 @@ def test_worker_restored_flush_deferral_requeues_force_request(tmp_path):
     assert writer.commits == []
     assert tui._restored_committed_line_count == 0
     assert dock.consume_force_flush_request() is True
+
+
+class _DeferredCommitToken:
+    def __init__(self, loop):
+        self.future = loop.create_future()
+
+
+class _DeferredCommitWriter(_WorkerCommitWriter):
+    def __init__(self):
+        super().__init__()
+        self.tokens = []
+
+    def submit_commit(self, **kwargs):
+        if self.commit_error is not None:
+            raise self.commit_error
+        import asyncio
+
+        token = _DeferredCommitToken(asyncio.get_running_loop())
+        self.commits.append(kwargs)
+        self.tokens.append(token)
+        return token
+
+    async def wait(self, token):
+        await token.future
+
+
+@pytest.mark.asyncio
+async def test_worker_commit_watermark_waits_for_completed_writer_token(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitWriter()
+    tui._terminal_writer = writer
+    presentation_dock = dock
+    presentation_dock.begin_capture()
+    turn = presentation_dock.start_turn("deferred user")
+    presentation_dock.append_message("deferred answer")
+    presentation_dock.end_turn()
+    turn.payload.update(
+        durable=True,
+        lifecycle="completed",
+        terminal=True,
+        active=False,
+        referenced=False,
+        pinned=False,
+        render_pending=False,
+    )
+    for node in presentation_dock.tree.root.children:
+        if node is not turn:
+            node.payload.update(
+                durable=True,
+                committed=False,
+                lifecycle="completed",
+                terminal=True,
+                active=False,
+                referenced=False,
+                pinned=False,
+                render_pending=False,
+            )
+
+    token = tui._flush_committed(force=True)
+
+    assert token is writer.tokens[0]
+    assert tui._committed_line_count == 0
+    assert tui._visible_committed_rows == 0
+
+    writer.tokens[0].future.set_result(None)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert tui._committed_line_count > 0
+    assert tui._visible_committed_rows > 0
+
+
+@pytest.mark.asyncio
+async def test_worker_commit_token_failure_preserves_state_and_output_requests(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitWriter()
+    tui._terminal_writer = writer
+    dock.append_message("retry after token failure")
+    dock.request_force_flush()
+    dock.queue_guidance_echo("retry guidance")
+
+    token = tui._flush_committed()
+    assert token is writer.tokens[0]
+
+    writer.tokens[0].future.set_exception(RuntimeError("commit write failed"))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert tui._committed_line_count == 0
+    assert tui._visible_committed_rows == 0
+    assert dock.consume_force_flush_request() is True
+    assert dock.consume_guidance_echoes() == ["retry guidance"]
+    assert tui._render_state.pending_commit_tokens == []
+    assert tui._render_state.pending_commit_updates == {}
+    assert tui._render_state.pending_commit_tasks == {}
+
+
+
+def _append_safe_durable_turn(text: str):
+    turn = dock.start_turn(text)
+    dock.append_message(f"answer {text}")
+    dock.end_turn()
+    dock.tree.mark_root_turn_durable(turn.payload["transcript_turn_id"])
+    return turn
+
+
+def test_live_history_retention_keeps_latest_twenty_committed_turns(tmp_path):
+    tui = _tui(tmp_path)
+    turns = [_append_safe_durable_turn(f"turn {index}") for index in range(21)]
+    width = tui._frame_width()
+    committed_lines = len(dock.tree.render(width))
+    dock.tree.mark_root_turns_committed_through_line(width, committed_lines)
+    tui._committed_line_count = committed_lines
+
+    tui._apply_live_history_retention(width)
+
+    retained_ids = [
+        node.payload["transcript_turn_id"]
+        for node in dock.tree.root.children
+        if node.node_type == "turn"
+    ]
+    assert retained_ids == [turn.payload["transcript_turn_id"] for turn in turns[1:]]
+    assert tui._last_evicted_turn_ids == [turns[0].payload["transcript_turn_id"]]
+    assert tui._retained_root_turn_count == 20
+    assert tui._committed_line_count == len(dock.tree.render(width))
+
+
+def test_live_history_retention_uses_projected_body_byte_limit(tmp_path):
+    tui = _tui(tmp_path)
+    tui.LIVE_HISTORY_PROJECTED_BODY_LIMIT = 1
+    first = _append_safe_durable_turn("oldest")
+    second = _append_safe_durable_turn("latest")
+    width = tui._frame_width()
+    committed_lines = len(dock.tree.render(width))
+    dock.tree.mark_root_turns_committed_through_line(width, committed_lines)
+    tui._committed_line_count = committed_lines
+
+    tui._apply_live_history_retention(width)
+
+    retained_ids = [
+        node.payload["transcript_turn_id"]
+        for node in dock.tree.root.children
+        if node.node_type == "turn"
+    ]
+    assert retained_ids == [second.payload["transcript_turn_id"]]
+    assert tui._last_evicted_turn_ids == [first.payload["transcript_turn_id"]]
+    assert tui._projected_body_bytes > tui.LIVE_HISTORY_PROJECTED_BODY_LIMIT
+
+
+@pytest.mark.asyncio
+async def test_live_history_eviction_waits_for_completed_writer_token(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    tui.LIVE_HISTORY_ROOT_TURN_LIMIT = 1
+    writer = _DeferredCommitWriter()
+    tui._terminal_writer = writer
+    first = _append_safe_durable_turn("first")
+    second = _append_safe_durable_turn("second")
+
+    tui._flush_committed(force=True)
+
+    assert [
+        node.payload["transcript_turn_id"]
+        for node in dock.tree.root.children
+        if node.node_type == "turn"
+    ] == [first.payload["transcript_turn_id"], second.payload["transcript_turn_id"]]
+
+    writer.tokens[0].future.set_result(None)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert [
+        node.payload["transcript_turn_id"]
+        for node in dock.tree.root.children
+        if node.node_type == "turn"
+    ] == [second.payload["transcript_turn_id"]]
+    assert tui._last_evicted_turn_ids == [first.payload["transcript_turn_id"]]
+
+
+@pytest.mark.asyncio
+async def test_restored_history_enters_retention_after_live_commit(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    restored_dock = type(dock)()
+    restored_dock.begin_capture()
+    for index in range(21):
+        turn = restored_dock.start_turn(f"restored {index}")
+        restored_dock.append_message(f"answer {index}")
+        restored_dock.end_turn()
+        restored_dock.tree.mark_root_turn_durable(
+            turn.payload["transcript_turn_id"]
+        )
+    dock.restore_tree(restored_dock.tree)
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitWriter()
+    tui._terminal_writer = writer
+    tui._sync_restored_render_state()
+    tui._has_rendered_frame = True
+    dock.start_turn("live")
+    dock.append_message("live answer")
+    dock.end_turn()
+    live_turn = next(
+        node for node in reversed(dock.tree.root.children)
+        if node.node_type == "turn"
+    )
+    dock.tree.mark_root_turn_durable(live_turn.payload["transcript_turn_id"])
+
+    tui._flush_committed(force=True)
+    writer.tokens[0].future.set_result(None)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    retained_ids = [
+        node.payload["transcript_turn_id"]
+        for node in dock.tree.root.children
+        if node.node_type == "turn"
+    ]
+    assert retained_ids == list(range(2, 22))
+    assert dock.restored_root_child_range() is None
+    assert tui._retained_root_turn_count == 20
+
+
+@pytest.mark.asyncio
+async def test_drain_committed_output_flushes_tail_added_while_token_pending(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitWriter()
+    writer.drain_async = lambda: asyncio.sleep(0)
+    tui._terminal_writer = writer
+    dock.append_message("first batch")
+
+    tui._flush_committed(force=True)
+    dock.append_message("second batch")
+    dock.queue_guidance_echo("tail guidance")
+    drain_task = asyncio.create_task(tui._drain_committed_output())
+
+    writer.tokens[0].future.set_result(None)
+    for _ in range(5):
+        await asyncio.sleep(0)
+        if len(writer.tokens) == 2:
+            break
+    assert len(writer.tokens) == 2
+    writer.tokens[1].future.set_result(None)
+    await drain_task
+
+    assert "second batch" in writer.commits[1]["ansi"]
+    assert "tail guidance" in writer.commits[1]["ansi"]
+    assert tui._pending_commit_tokens == []
+    assert tui._pending_commit_updates == {}
+    assert tui._pending_commit_tasks == {}
