@@ -49,6 +49,7 @@ from .state import (
     PanelState,
     PasteState,
     RenderState,
+    CommittedProjection,
     STATE_FIELD_MAP,
     SubmitState,
     TerminalState,
@@ -632,6 +633,7 @@ class PureTui(
             self._restored_startup_flushed = False
             self._restored_history_retired = False
             self._committed_line_count = 0
+            self._committed_projection = None
             self._committed_tree_revision = -1
             self._has_rendered_frame = False
             self._invalidate_frame_cache()
@@ -675,6 +677,8 @@ class PureTui(
                 self._render_state.pending_commit_tokens.remove(token)
             except ValueError:
                 pass
+            if self._running:
+                self.invalidate()
 
     def _track_pending_commit(
         self,
@@ -695,6 +699,180 @@ class PureTui(
         }
         self._render_state.pending_commit_tasks[token_key] = asyncio.create_task(
             self._wait_for_pending_commit(token)
+        )
+
+    @staticmethod
+    def _committed_node_signature(node) -> tuple[Any, ...]:
+        parent = node.parent
+        grandparent = parent.parent if parent is not None else None
+        return (
+            node.node_type,
+            node.header,
+            tuple(node.body_lines),
+            node.collapsed,
+            node.status,
+            node.elapsed,
+            node.agent_name,
+            node.step_info,
+            node.meta,
+            node.tool_call_id,
+            node.agent_run_id,
+            node.message_id,
+            parent.id if parent is not None else None,
+            parent.node_type if parent is not None else None,
+            parent.payload.get("tool_name") if parent is not None else None,
+            grandparent.id if grandparent is not None else None,
+            grandparent.payload.get("tool_name") if grandparent is not None else None,
+            bool(node.payload.get("diff_text")),
+            bool(node.payload.get("full_width_user_row")),
+            bool(node.payload.get("align_full_width_user_row")),
+            node.payload.get("phase"),
+            node.payload.get("tool_name"),
+        )
+
+    @staticmethod
+    def _unowned_line_keys(
+        lines: list[str],
+        line_map: dict[int, str],
+    ) -> dict[int, tuple[str | None, str | None, int]]:
+        following_owners: list[str | None] = [None] * len(lines)
+        following: str | None = None
+        for index in range(len(lines) - 1, -1, -1):
+            owner = line_map.get(index)
+            if owner is not None:
+                following = owner
+            following_owners[index] = following
+
+        result: dict[int, tuple[str | None, str | None, int]] = {}
+        occurrences: dict[tuple[str | None, str | None], int] = {}
+        previous: str | None = None
+        for index in range(len(lines)):
+            owner = line_map.get(index)
+            if owner is not None:
+                previous = owner
+                continue
+            pair = (previous, following_owners[index])
+            occurrence = occurrences.get(pair, 0)
+            occurrences[pair] = occurrence + 1
+            result[index] = (*pair, occurrence)
+        return result
+
+    def _committed_projection_for_prefix(
+        self,
+        lines: list[str],
+        line_map: dict[int, str],
+        limit: int,
+    ) -> CommittedProjection:
+        bounded_limit = min(max(limit, 0), len(lines))
+        node_ids = {
+            node_id
+            for index in range(bounded_limit)
+            if (node_id := line_map.get(index)) is not None
+        }
+        node_signatures = {
+            node_id: self._committed_node_signature(node)
+            for node_id in node_ids
+            if (node := dock.tree.get(node_id)) is not None
+        }
+        unowned_keys = self._unowned_line_keys(lines, line_map)
+        unowned_signatures = {
+            unowned_keys[index]: lines[index]
+            for index in range(bounded_limit)
+            if index in unowned_keys
+        }
+        return CommittedProjection(
+            tree=dock.tree,
+            node_signatures=node_signatures,
+            unowned_signatures=unowned_signatures,
+        )
+
+    def _merged_committed_projection(
+        self,
+        lines: list[str],
+        line_map: dict[int, str],
+        limit: int,
+        previous: CommittedProjection | None,
+    ) -> CommittedProjection:
+        current = self._committed_projection_for_prefix(
+            lines,
+            line_map,
+            limit,
+        )
+        if previous is None or previous.tree is not dock.tree:
+            return current
+        node_signatures = {
+            node_id: signature
+            for node_id, signature in previous.node_signatures.items()
+            if dock.tree.get(node_id) is not None
+        }
+        node_signatures.update(current.node_signatures)
+        current_gap_keys = set(self._unowned_line_keys(lines, line_map).values())
+        unowned_signatures = {
+            key: signature
+            for key, signature in previous.unowned_signatures.items()
+            if key in current_gap_keys
+        }
+        unowned_signatures.update(current.unowned_signatures)
+        return CommittedProjection(
+            tree=current.tree,
+            node_signatures=node_signatures,
+            unowned_signatures=unowned_signatures,
+        )
+
+
+    def _identity_filtered_line_indexes(
+        self,
+        lines: list[str],
+        line_map: dict[int, str],
+        limit: int,
+        projection: CommittedProjection,
+    ) -> list[int]:
+        bounded_limit = min(max(limit, 0), len(lines))
+        current_signatures: dict[str, tuple[Any, ...]] = {}
+        for index in range(bounded_limit):
+            node_id = line_map.get(index)
+            if node_id is None or node_id in current_signatures:
+                continue
+            node = dock.tree.get(node_id)
+            if node is not None:
+                current_signatures[node_id] = self._committed_node_signature(node)
+        changed_nodes = {
+            node_id
+            for node_id, signature in current_signatures.items()
+            if projection.node_signatures.get(node_id) != signature
+        }
+        unowned_keys = self._unowned_line_keys(lines, line_map)
+        result: list[int] = []
+        for index in range(bounded_limit):
+            node_id = line_map.get(index)
+            if node_id is not None:
+                if node_id in changed_nodes:
+                    result.append(index)
+                continue
+            key = unowned_keys[index]
+            previous, following, _occurrence = key
+            if (
+                projection.unowned_signatures.get(key) != lines[index]
+                or previous in changed_nodes
+                or following in changed_nodes
+            ):
+                result.append(index)
+        return result
+
+    def _active_identity_line_indexes(
+        self,
+        lines: list[str],
+        line_map: dict[int, str],
+    ) -> list[int]:
+        projection = self._committed_projection
+        if projection is None or projection.tree is not dock.tree:
+            committed = min(self._committed_line_count, len(lines))
+            return list(range(committed, len(lines)))
+        return self._identity_filtered_line_indexes(
+            lines,
+            line_map,
+            len(lines),
+            projection,
         )
 
     @staticmethod
@@ -793,6 +971,7 @@ class PureTui(
             return self._render_state.pending_commit_tokens[-1]
 
         next_committed_line_count = self._committed_line_count
+        next_committed_projection = self._committed_projection
         next_restored_committed_line_count = self._restored_committed_line_count
         next_restored_startup_flushed = self._restored_startup_flushed
         next_restored_history_retired = self._restored_history_retired
@@ -800,6 +979,7 @@ class PureTui(
 
         def apply_state() -> None:
             self._committed_line_count = next_committed_line_count
+            self._committed_projection = next_committed_projection
             self._restored_committed_line_count = next_restored_committed_line_count
             self._restored_startup_flushed = next_restored_startup_flushed
             self._restored_history_retired = next_restored_history_retired
@@ -812,12 +992,16 @@ class PureTui(
                 self._restored_committed_line_count = 0
                 self._restored_startup_flushed = False
                 self._restored_history_retired = False
-                self._committed_line_count = len(
-                    dock.tree.render_root_slice(
-                        width,
-                        0,
-                        len(dock.tree.root.children),
-                    )
+                lines, line_map = dock.tree.render_root_slice_with_line_map(
+                    width,
+                    0,
+                    len(dock.tree.root.children),
+                )
+                self._committed_line_count = len(lines)
+                self._committed_projection = self._committed_projection_for_prefix(
+                    lines,
+                    line_map,
+                    len(lines),
                 )
                 self._record_committed_live_history(width)
             self._committed_tree_revision = dock.tree.revision
@@ -826,6 +1010,7 @@ class PureTui(
             width = self._frame_width()
             restored_range = self._sync_restored_render_state()
             next_committed_line_count = self._committed_line_count
+            next_committed_projection = self._committed_projection
             next_restored_committed_line_count = self._restored_committed_line_count
             next_restored_startup_flushed = self._restored_startup_flushed
             next_restored_history_retired = self._restored_history_retired
@@ -908,7 +1093,7 @@ class PureTui(
                 if flush_limit > committed_added:
                     next_restored_history_retired = True
             else:
-                tree_lines = dock.tree.render(width)
+                tree_lines, line_map = dock.tree.render_with_line_map(width)
                 total = len(tree_lines)
                 committed_count = min(next_committed_line_count, total)
                 if force:
@@ -921,17 +1106,31 @@ class PureTui(
                         flush_limit = total
                     else:
                         flush_limit = min(
-                            dock.safe_flush_line_count(width, committed_count),
+                            dock.safe_flush_line_count(width, 0),
                             total,
                         )
 
-                if flush_limit <= committed_count and not echo_lines:
-                    next_committed_line_count = committed_count
-                    apply_state()
-                    return None
-
-                flush_lines = tree_lines[committed_count:flush_limit]
+                previous_projection = next_committed_projection
+                if (
+                    previous_projection is not None
+                    and previous_projection.tree is dock.tree
+                ):
+                    flush_indexes = self._identity_filtered_line_indexes(
+                        tree_lines,
+                        line_map,
+                        flush_limit,
+                        previous_projection,
+                    )
+                    flush_lines = [tree_lines[index] for index in flush_indexes]
+                else:
+                    flush_lines = tree_lines[committed_count:flush_limit]
                 next_committed_line_count = flush_limit
+                next_committed_projection = self._merged_committed_projection(
+                    tree_lines,
+                    line_map,
+                    flush_limit,
+                    previous_projection,
+                )
 
             if not flush_lines and not echo_lines:
                 apply_state()

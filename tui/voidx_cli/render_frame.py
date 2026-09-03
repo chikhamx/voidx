@@ -62,6 +62,8 @@ class _FrameRendererMixin:
         term_height = shutil.get_terminal_size().lines if self._tty else None
         render_failed = False
         worker_mode = self._tty and self._terminal_writer_worker_mode()
+        if worker_mode and self._render_state.pending_commit_tokens:
+            return
         resize_frame = False
         clear_screen = False
         clear_submitted = False
@@ -87,6 +89,7 @@ class _FrameRendererMixin:
                     self._invalidate_frame_cache()
                 if clear_screen:
                     self._committed_line_count = 0
+                    self._committed_projection = None
                     self._visible_committed_rows = 0
                     self._invalidate_frame_cache()
 
@@ -168,6 +171,7 @@ class _FrameRendererMixin:
                     )
                     clear_submitted = True
                     self._committed_line_count = 0
+                    self._committed_projection = None
                     self._visible_committed_rows = 0
                     self._invalidate_frame_cache()
                 if scroll_ansi:
@@ -765,11 +769,12 @@ class _FrameRendererMixin:
                     if tail_line_map.get(index) != thinking_node_id
                 ]
             else:
-                tree_lines = dock.tree.render(width)
+                tree_lines, line_map = dock.tree.render_with_line_map(width)
                 thinking_line_ids = dock.active_thinking_stream_line_ids(width)
+                active_indexes = self._active_identity_line_indexes(tree_lines, line_map)
                 active_lines = [
-                    line
-                    for index, line in enumerate(tree_lines[committed:], start=committed)
+                    tree_lines[index]
+                    for index in active_indexes
                     if index not in thinking_line_ids
                 ]
 

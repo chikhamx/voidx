@@ -111,6 +111,13 @@ class RenderStats:
     strategy: str
 
 
+@dataclass(frozen=True)
+class CommittedProjection:
+    tree: Any
+    node_signatures: dict[str, tuple[Any, ...]]
+    unowned_signatures: dict[tuple[str | None, str | None, int], str]
+
+
 @dataclass
 class RenderState:
     running: bool = False
@@ -137,6 +144,7 @@ class RenderState:
     restored_history_retired: bool = False
     committed_line_count: int = 0
     committed_tree_revision: int = -1
+    committed_projection: CommittedProjection | None = None
     visible_committed_rows: int = 0
     was_busy: bool = False
     render_scheduled: bool = False
@@ -285,6 +293,7 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_restored_history_retired": ("_render_state", "restored_history_retired"),
     "_committed_line_count": ("_render_state", "committed_line_count"),
     "_committed_tree_revision": ("_render_state", "committed_tree_revision"),
+    "_committed_projection": ("_render_state", "committed_projection"),
     "_visible_committed_rows": ("_render_state", "visible_committed_rows"),
     "_was_busy": ("_render_state", "was_busy"),
     "_render_scheduled": ("_render_state", "render_scheduled"),

@@ -1477,6 +1477,51 @@ class _DeferredCommitWriter(_WorkerCommitWriter):
         await token.future
 
 
+
+class _DeferredCommitFrameWriter(_DeferredCommitWriter):
+    def __init__(self):
+        super().__init__()
+        self.frames = []
+        self.barriers = []
+
+    def submit_frame(self, batch):
+        self.frames.append(batch)
+
+    def submit_barrier(self, **kwargs):
+        self.barriers.append(kwargs)
+        return object()
+
+
+@pytest.mark.asyncio
+async def test_worker_defers_frame_until_pending_commit_is_applied(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitFrameWriter()
+    tui._terminal_writer = writer
+    dock.append_message("committed exactly once")
+
+    token = tui._flush_committed(force=True)
+    tui._render_frame()
+
+    assert writer.frames == []
+
+    token.future.set_result(None)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    tui._render_frame()
+
+    assert len(writer.frames) == 1
+    assert "committed exactly once" not in "\n".join(writer.frames[0].target_lines)
+
 @pytest.mark.asyncio
 async def test_worker_commit_watermark_waits_for_completed_writer_token(
     tmp_path,

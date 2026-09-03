@@ -427,3 +427,89 @@ def test_flushed_root_message_is_not_replayed_when_later_tools_are_added(tmp_pat
 
     assert fake_stdout.text.count("相比上次 review") == 1
     assert "让我看完所有变更。\n\n   ● Giting(\"git diff\")" in fake_stdout.text
+
+
+def test_flush_committed_reconciles_in_place_tool_growth_by_node_identity(
+    tmp_path, monkeypatch
+):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+
+    tui = _tui(tmp_path)
+    tui._tty = False
+    dock.begin_capture()
+    dock.start_turn("update the file")
+    tool = dock.start_tool(
+        "Editing",
+        'file_path="src/example.py"',
+        tool_name="edit",
+        raw_args={"file_path": "src/example.py"},
+    )
+    dock.finish_tool_node(tool, "Editing", 0.1, True)
+    dock.append_message("first narration")
+    dock.append_message("second narration")
+    tui._flush_committed(force=True)
+
+    assert fake_stdout.text.count("first narration") == 1
+    assert fake_stdout.text.count("second narration") == 1
+
+    dock.append_file_change(
+        """--- a/src/example.py
++++ b/src/example.py
+@@ -1 +1,3 @@
+ existing
++added one
++added two
+""",
+        parent=tool,
+        tool_call_id="edit-1",
+    )
+    tui._flush_committed(force=True)
+
+    assert "Update" in fake_stdout.text
+    assert "added one" in fake_stdout.text
+    assert "added two" in fake_stdout.text
+    assert fake_stdout.text.count("first narration") == 1
+    assert fake_stdout.text.count("second narration") == 1
+
+
+def test_active_frame_reconciles_in_place_tool_growth_by_node_identity(
+    tmp_path, monkeypatch
+):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+
+    tui = _tui(tmp_path)
+    tui._tty = False
+    dock.begin_capture()
+    dock.start_turn("update the file")
+    tool = dock.start_tool(
+        "Editing",
+        'file_path="src/example.py"',
+        tool_name="edit",
+        raw_args={"file_path": "src/example.py"},
+    )
+    dock.finish_tool_node(tool, "Editing", 0.1, True)
+    dock.append_message("first narration")
+    dock.append_message("second narration")
+    tui._flush_committed(force=True)
+
+    dock.append_file_change(
+        """--- a/src/example.py
++++ b/src/example.py
+@@ -1 +1,3 @@
+ existing
++added one
++added two
+""",
+        parent=tool,
+        tool_call_id="edit-1",
+    )
+
+    rendered = "\n".join(_render_lines(tui))
+
+    assert "Update" in rendered
+    assert "added one" in rendered
+    assert "added two" in rendered
+    assert "first narration" not in rendered
+    assert "second narration" not in rendered
