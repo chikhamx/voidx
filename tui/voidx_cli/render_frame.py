@@ -67,6 +67,7 @@ class _FrameRendererMixin:
         resize_frame = False
         clear_screen = False
         clear_submitted = False
+        committed_before_clear = None
         force_full = False
         full_frame_repaint = False
         if self._tty:
@@ -76,6 +77,15 @@ class _FrameRendererMixin:
                 or self._prev_frame_term_height != term_height
             )
             clear_screen = dock.consume_clear_screen_request()
+            if worker_mode and clear_screen:
+                committed_before_clear = (
+                    self._committed_line_count,
+                    self._committed_projection,
+                    self._visible_committed_rows,
+                )
+                self._committed_line_count = 0
+                self._committed_projection = None
+                self._visible_committed_rows = 0
             full_frame_repaint = self._full_frame_repaint_pending
             self._full_frame_repaint_pending = False
             force_full = (
@@ -282,6 +292,12 @@ class _FrameRendererMixin:
         finally:
             self._render_plan = None
             if worker_mode and clear_screen and not clear_submitted:
+                if committed_before_clear is not None:
+                    (
+                        self._committed_line_count,
+                        self._committed_projection,
+                        self._visible_committed_rows,
+                    ) = committed_before_clear
                 dock.request_clear_screen()
 
     def _render_full(self, start_row: int, lines: list[str]) -> tuple[int, str]:
@@ -315,8 +331,8 @@ class _FrameRendererMixin:
                 self._terminal_writer.write("\x1b[J")
                 wrote_tail_clear = True
                 break
-            self._terminal_writer.write("\x1b[K")
             self._terminal_writer.write(new_lines[index])
+            self._terminal_writer.write("\x1b[K")
         return len(changed), "diff-tail-clear" if wrote_tail_clear else "diff"
 
     def _invalidate_frame_cache(self) -> None:

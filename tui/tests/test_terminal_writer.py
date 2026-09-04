@@ -286,7 +286,9 @@ async def test_slow_pty_writer_keeps_event_loop_heartbeat_responsive():
         await asyncio.sleep(0)
 
         raw = bytes(captured)
-        expected_frame = b"\x1b[2;1H\x1b[Jfinal-a\nfinal-b<cursor-3>"
+        expected_frame = (
+            b"\x1b[?2026h\x1b[2;1H\x1b[Jfinal-a\nfinal-b<cursor-3>\x1b[?2026l"
+        )
         expected_marker = b"\x1b[2;1H\x1b[J<commit-marker>"
         assert reader_errors == []
         assert raw.count(b"p") == slow_payload_size
@@ -399,7 +401,7 @@ async def test_frame_generation_coalesces_against_last_applied_baseline():
         assert "<cursor-1>" in stream.value
         assert "<cursor-2>" not in stream.value
         assert "<cursor-3>" in stream.value
-        assert "\x1b[5;1H\x1b[KD" in stream.value
+        assert "\x1b[5;1HD\x1b[K" in stream.value
     finally:
         stream.release.set()
         await asyncio.wait_for(writer.shutdown_async(), timeout=1)
@@ -1040,7 +1042,9 @@ async def test_frame_start_row_change_forces_full_render():
         await asyncio.sleep(0)
 
         assert [result.strategy for result in results] == ["full", "full"]
-        assert stream.value.endswith("\x1b[4;1H\x1b[Ja\nb\nc\nD\ne")
+        assert stream.value.endswith(
+            "\x1b[4;1H\x1b[Ja\nb\nc\nD\ne\x1b[?2026l"
+        )
     finally:
         await asyncio.wait_for(writer.shutdown_async(), timeout=1)
 
@@ -1093,10 +1097,12 @@ async def test_coalesced_frames_equal_direct_latest_full_render():
 
         assert stream.value == (
             "<gate>"
+            "\x1b[?2026h"
             "\x1b[3;1H"
             "\x1b[J"
             "final-a\nfinal-b"
             "<cursor-3>"
+            "\x1b[?2026l"
         )
         assert [result.generation for result in results] == [3]
         assert results[0].strategy == "full"
@@ -1201,3 +1207,46 @@ async def test_shutdown_async_cancellation_waits_until_worker_is_reaped(monkeypa
             await asyncio.gather(shutdown_task, return_exceptions=True)
 
     assert writer.worker_alive is False
+
+
+@pytest.mark.asyncio
+async def test_diff_frame_is_synchronized_and_erases_after_replacement_text():
+    stream = _ThreadRecordingStream()
+    results: list[object] = []
+    writer = TerminalWriter(stream)
+    writer.start(
+        loop=asyncio.get_running_loop(),
+        on_frame_result=results.append,
+        on_error=lambda exc: pytest.fail(f"unexpected writer error: {exc}"),
+    )
+    frame_type = terminal_writer_module.FrameBatch
+    try:
+        writer.submit_frame(
+            frame_type(
+                generation=1,
+                start_row=1,
+                target_lines=("stream", "old input", "old status", "tail", "end"),
+                cursor_ansi="<cursor-1>",
+            )
+        )
+        await asyncio.wait_for(writer.drain_async(), timeout=1)
+        offset = len(stream.value)
+
+        writer.submit_frame(
+            frame_type(
+                generation=2,
+                start_row=1,
+                target_lines=("stream", "new input", "new status", "tail", "end"),
+                cursor_ansi="<cursor-2>",
+            )
+        )
+        await asyncio.wait_for(writer.drain_async(), timeout=1)
+        delta = stream.value[offset:]
+
+        assert delta.startswith("\x1b[?2026h")
+        assert delta.endswith("<cursor-2>\x1b[?2026l")
+        assert "\x1b[2;1Hnew input\x1b[K" in delta
+        assert "\x1b[3;1Hnew status\x1b[K" in delta
+        assert "\x1b[2;1H\x1b[Knew input" not in delta
+    finally:
+        await asyncio.wait_for(writer.shutdown_async(), timeout=1)

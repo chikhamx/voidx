@@ -246,7 +246,7 @@ def test_flush_committed_counts_trailing_blank_separator_row(tmp_path, monkeypat
     assert tui._visible_committed_rows == 2
 
 
-def test_flush_committed_counts_blank_separator_flushed_by_itself(tmp_path, monkeypatch):
+def test_pending_assistant_block_does_not_flush_internal_separator(tmp_path, monkeypatch):
     fake_stdout = _FakeStdout()
     monkeypatch.setattr(sys, "stdout", fake_stdout)
     monkeypatch.setattr(
@@ -270,12 +270,16 @@ def test_flush_committed_counts_blank_separator_flushed_by_itself(tmp_path, monk
     )
     dock.finish_tool_node(tool, "Read", 0.1, True)
     tui._flush_committed(force=True)
+    committed_line_count = tui._committed_line_count
+    visible_committed_rows = tui._visible_committed_rows
+    fake_stdout.text = ""
 
     dock.set_stream("second assistant")
     tui._flush_committed()
 
-    assert tui._committed_line_count == 5
-    assert tui._visible_committed_rows == 5
+    assert tui._committed_line_count == committed_line_count
+    assert tui._visible_committed_rows == visible_committed_rows
+    assert fake_stdout.text == ""
 
 
 def test_render_after_final_flush_does_not_redraw_flushed_final_answer(tmp_path, monkeypatch):
@@ -426,7 +430,8 @@ def test_flushed_root_message_is_not_replayed_when_later_tools_are_added(tmp_pat
     tui._flush_committed()
 
     assert fake_stdout.text.count("相比上次 review") == 1
-    assert "让我看完所有变更。\n\n   ● Giting(\"git diff\")" in fake_stdout.text
+    assert "让我看完所有变更。\n   ● Giting(\"git diff\")" in fake_stdout.text
+    assert "让我看完所有变更。\n\n" not in fake_stdout.text
 
 
 def test_flush_committed_reconciles_in_place_tool_growth_by_node_identity(

@@ -560,8 +560,15 @@ class PureTui(
         self._render_scheduled = False
         if not self._running:
             return
+        restore_needs_first_frame = (
+            dock.restored_root_child_range() is not None
+            and not self._has_rendered_frame
+        )
         self._flush_committed()
         self._render_frame()
+        if restore_needs_first_frame:
+            self._flush_committed()
+            self._render_frame()
 
     def _choose_busy_activity_verb(self) -> str:
         return random.choice(tui_activity.BUSY_ACTIVITY_VERBS)
@@ -1074,7 +1081,6 @@ class PureTui(
                 restored_lines: list[str] = []
                 if (
                     self._tty
-                    and restored_start
                     and flush_limit > committed_added
                     and not next_restored_history_retired
                 ):

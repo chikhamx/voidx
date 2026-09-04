@@ -12,6 +12,7 @@ from tempfile import SpooledTemporaryFile
 from typing import Callable, Iterator, Literal, TextIO
 
 from .async_utils import await_cancellation_safe
+from .helpers import _BEGIN_SYNCHRONIZED_OUTPUT, _END_SYNCHRONIZED_OUTPUT
 
 
 BarrierKind = Literal[
@@ -642,23 +643,27 @@ class TerminalWriter:
             )
             return
 
-        if (
-            self._baseline_valid
-            and not batch.force_full
-            and self._applied_start_row == batch.start_row
-        ):
-            changed_lines, strategy = self._write_frame_diff(
-                batch.start_row,
-                self._applied_lines,
-                batch.target_lines,
-            )
-        else:
-            changed_lines, strategy = self._write_frame_full(
-                batch.start_row,
-                batch.target_lines,
-            )
-        if batch.cursor_ansi:
-            self._worker_write(batch.cursor_ansi)
+        self._worker_write(_BEGIN_SYNCHRONIZED_OUTPUT)
+        try:
+            if (
+                self._baseline_valid
+                and not batch.force_full
+                and self._applied_start_row == batch.start_row
+            ):
+                changed_lines, strategy = self._write_frame_diff(
+                    batch.start_row,
+                    self._applied_lines,
+                    batch.target_lines,
+                )
+            else:
+                changed_lines, strategy = self._write_frame_full(
+                    batch.start_row,
+                    batch.target_lines,
+                )
+            if batch.cursor_ansi:
+                self._worker_write(batch.cursor_ansi)
+        finally:
+            self._worker_write(_END_SYNCHRONIZED_OUTPUT)
         self._worker_flush()
 
         self._applied_generation = batch.generation
@@ -710,8 +715,8 @@ class TerminalWriter:
                 self._worker_write("\x1b[J")
                 wrote_tail_clear = True
                 break
-            self._worker_write("\x1b[K")
             self._worker_write(current[index])
+            self._worker_write("\x1b[K")
         strategy = "diff-tail-clear" if wrote_tail_clear else "diff"
         return len(changed), strategy
 

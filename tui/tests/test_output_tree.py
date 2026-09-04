@@ -301,7 +301,7 @@ def test_tree_inserts_gap_between_user_turn_and_assistant_without_spacer():
     assert "reply" in _rich_plain(lines[2])
 
 
-def test_tree_inserts_gap_between_root_assistant_messages_without_spacer():
+def test_tree_keeps_root_assistant_messages_adjacent_without_spacer():
     from voidx.presentation.output.tree import OutputTree
 
     tree = OutputTree()
@@ -313,8 +313,7 @@ def test_tree_inserts_gap_between_root_assistant_messages_without_spacer():
 
     first_index = next(index for index, line in enumerate(lines) if "first reply" in _rich_plain(line))
     second_index = next(index for index, line in enumerate(lines) if "second reply" in _rich_plain(line))
-    assert lines[first_index + 1] == ""
-    assert second_index == first_index + 2
+    assert second_index == first_index + 1
 
 
 def test_tree_inserts_gap_before_user_turn_after_assistant_without_spacer():

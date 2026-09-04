@@ -79,7 +79,7 @@ def test_tool_call_text_aligns_with_assistant_text_start():
     assert metadata_line.index("loading") == reply_line.index("reply text")
 
 
-def test_agent_text_blocks_are_spaced_after_tool_calls():
+def test_ai_and_tool_blocks_are_compact_while_other_blocks_are_spaced():
     from voidx.presentation.output.tree import OutputTree
 
     tree = OutputTree()
@@ -89,6 +89,8 @@ def test_agent_text_blocks_are_spaced_after_tool_calls():
     tree.new_node(assistant, node_type="tool_call", header="[#A3BE8C]●[/#A3BE8C] [bold]Bash[/bold](rg)")
     tree.new_node(assistant, node_type="assistant", header="现在确认一下。")
     tree.new_node(assistant, node_type="assistant", header="继续说明。")
+    tree.new_node(assistant, node_type="clarify", header="● voidx clarify answered")
+    tree.new_node(assistant, node_type="checkpoint", header="● voidx plan approved")
 
     plain_lines = [_rich_plain(line) for line in tree.render(80)]
 
@@ -97,13 +99,21 @@ def test_agent_text_blocks_are_spaced_after_tool_calls():
     second_tool = next(index for index, line in enumerate(plain_lines) if "Bash(rg)" in line)
     second_text = plain_lines.index("现在确认一下。")
     third_text = plain_lines.index("继续说明。")
+    clarify = next(
+        index for index, line in enumerate(plain_lines) if "voidx clarify answered" in line
+    )
+    checkpoint = next(
+        index for index, line in enumerate(plain_lines) if "voidx plan approved" in line
+    )
 
     assert first_tool == first_text + 1
     assert second_tool == first_tool + 1
-    assert plain_lines[second_tool + 1] == ""
-    assert second_text == second_tool + 2
-    assert plain_lines[second_text + 1] == ""
-    assert third_text == second_text + 2
+    assert second_text == second_tool + 1
+    assert third_text == second_text + 1
+    assert plain_lines[third_text + 1] == ""
+    assert clarify == third_text + 2
+    assert plain_lines[clarify + 1] == ""
+    assert checkpoint == clarify + 2
 
 
 def test_thinking_stream_starts_immediately_after_last_tool_call_without_header():
@@ -137,7 +147,7 @@ def test_thinking_stream_starts_immediately_after_last_tool_call_without_header(
     assert all("Thinking" not in line for line in plain_lines)
 
 
-def test_text_stream_after_thinking_restores_gap_after_tool_call():
+def test_text_stream_after_thinking_stays_adjacent_to_tool_call():
     test_dock = dock
     test_dock.begin_capture()
     try:
@@ -158,8 +168,7 @@ def test_text_stream_after_thinking_restores_gap_after_tool_call():
         bash_index = next(index for index, line in enumerate(plain_lines) if "Bash" in line)
         answer_index = next(index for index, line in enumerate(plain_lines) if "final answer" in line)
 
-        assert plain_lines[bash_index + 1] == ""
-        assert answer_index == bash_index + 2
+        assert answer_index == bash_index + 1
     finally:
         test_dock.deactivate()
         test_dock.reset()

@@ -387,6 +387,51 @@ def test_non_tty_flush_prints_transcript_without_live_frame_chrome(tmp_path, mon
     assert fake_stdout.text == ""
 
 
+
+@pytest.mark.parametrize("interaction", ["clarify", "checkpoint"])
+def test_interactive_prompt_flushes_only_final_version(
+    interaction, tmp_path, monkeypatch
+):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+
+    tui = _tui(tmp_path)
+    tui._tty = False
+    tui._console = Console(file=None, force_terminal=False, width=80, height=24, _environ={})
+    dock.start_turn("demo")
+    if interaction == "clarify":
+        dock.show_clarify("cl_1", "Which approach?", ["implement", "document"])
+        prompt_text = "voidx clarify"
+        detail_text = "Question: Which approach?"
+    else:
+        dock.show_checkpoint(
+            "cp_1",
+            {"goal": "Add checkpoint node", "steps": ["Render TUI node"]},
+            [],
+        )
+        prompt_text = "voidx plan"
+        detail_text = "Plan: Add checkpoint node"
+
+    tui._flush_committed()
+
+    assert prompt_text not in fake_stdout.text
+    assert detail_text not in fake_stdout.text
+
+    if interaction == "clarify":
+        dock.resolve_clarify("cl_1", "implement")
+    else:
+        dock.resolve_checkpoint(
+            "cp_1",
+            "approved",
+            "Implement directly",
+            "Implement directly",
+        )
+    tui._flush_committed()
+
+    assert fake_stdout.text.count(prompt_text) == 1
+    assert fake_stdout.text.count(detail_text) == 1
+
+
 def test_typing_redraws_input_region_without_rewriting_transcript(tmp_path, monkeypatch):
     class FakeStdout:
         def __init__(self) -> None:
@@ -600,9 +645,12 @@ def test_resume_restore_does_not_replay_history_after_new_output(
     tui._render_frame()
 
     rendered = fake_stdout.text
-    assert rendered.index("new user") < rendered.index("new ai message")
-    assert rendered.rfind("history C") < rendered.index("new user")
-    assert rendered.count("history C") == 1
+    new_user_offset = rendered.index("new user")
+    clear_offset = rendered.rfind("\x1b[J", 0, new_user_offset)
+    visible_output = rendered[clear_offset:]
+    assert visible_output.index("history C") < visible_output.index("new user")
+    assert visible_output.index("new user") < visible_output.index("new ai message")
+    assert visible_output.count("history C") == 1
 
 
 
@@ -684,6 +732,51 @@ def test_resume_does_not_retire_history_before_first_frame(
 
     tui._render_frame()
     assert "restored history" in fake_stdout.text
+
+
+def test_resume_from_empty_tree_commits_history_before_first_input(
+    tmp_path, monkeypatch
+):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 12)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._running = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=12, _environ={})
+    restored = type(dock.tree)()
+    restored.new_node(
+        parent=restored.root,
+        node_type="message",
+        header="restored history",
+        collapsed=False,
+    )
+
+    dock.reset()
+    dock.restore_tree(restored, append=True)
+    dock.append_message("Resumed session")
+    fake_stdout.text = ""
+
+    tui._run_scheduled_render()
+
+    assert fake_stdout.text.index("restored history") < fake_stdout.text.index(
+        "Resumed session"
+    )
+    assert dock.restored_root_child_range() is None
+
+    fake_stdout.text = ""
+    assert tui._process_input(b"x") is True
+    tui._render_after_input()
+
+    assert "restored history" not in fake_stdout.text
+    assert "x" in fake_stdout.text
+
+
 
 
 def test_thinking_stream_lookup_uses_only_stream_node_subtree(monkeypatch):
@@ -1234,6 +1327,8 @@ def test_worker_resize_barrier_failure_preserves_frame_cache(tmp_path, monkeypat
 def test_worker_clear_barrier_failure_preserves_counts_and_request(tmp_path, monkeypatch):
     tui, writer = _worker_render_tui(tmp_path, monkeypatch)
     tui._committed_line_count = 7
+    projection = object()
+    tui._committed_projection = projection
     tui._visible_committed_rows = 5
     dock.reset()
     writer.barrier_error = RuntimeError("clear failed")
@@ -1242,6 +1337,7 @@ def test_worker_clear_barrier_failure_preserves_counts_and_request(tmp_path, mon
         tui._render_frame()
 
     assert tui._committed_line_count == 7
+    assert tui._committed_projection is projection
     assert tui._visible_committed_rows == 5
     assert dock.consume_clear_screen_request() is True
     assert tui._render_plan is None
@@ -1490,6 +1586,115 @@ class _DeferredCommitFrameWriter(_DeferredCommitWriter):
     def submit_barrier(self, **kwargs):
         self.barriers.append(kwargs)
         return object()
+
+
+@pytest.mark.asyncio
+async def test_worker_resume_scheduled_render_commits_before_first_input(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._running = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitFrameWriter()
+    tui._terminal_writer = writer
+    restored = type(dock.tree)()
+    restored.new_node(
+        parent=restored.root,
+        node_type="message",
+        header="restored history",
+        collapsed=False,
+    )
+    dock.reset()
+    dock.restore_tree(restored, append=True)
+    dock.append_message("Resumed session")
+
+    tui._run_scheduled_render()
+
+    assert len(writer.commits) == 1
+    commit_ansi = writer.commits[0]["ansi"]
+    assert commit_ansi.index("restored history") < commit_ansi.index("Resumed session")
+    assert dock.restored_root_child_range() == (0, 1)
+    assert tui._restored_history_retired is False
+
+    frame_count = len(writer.frames)
+    assert tui._process_input(b"x") is True
+    tui._render_after_input()
+    assert len(writer.frames) == frame_count
+
+    writer.tokens[0].future.set_result(None)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert dock.restored_root_child_range() is None
+    tui._run_scheduled_render()
+
+    assert len(writer.commits) == 1
+    final_frame = "\n".join(writer.frames[-1].target_lines)
+    assert "restored history" not in final_frame
+    assert "Resumed session" not in final_frame
+    assert "x" in final_frame
+    tui._running = False
+
+
+
+
+@pytest.mark.asyncio
+async def test_worker_clear_keeps_startup_in_first_frame_and_first_input(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._running = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitFrameWriter()
+    tui._terminal_writer = writer
+    dock.append_message("old transcript")
+    tui._committed_line_count = len(dock.tree.render(tui._frame_width()))
+
+    dock.reset()
+    dock.append_startup(
+        model="test-model",
+        provider="test-provider",
+        workspace=str(tmp_path),
+        session_title="New session",
+        is_new=True,
+    )
+
+    token = tui._flush_committed()
+    assert token is writer.tokens[0]
+    tui._render_frame()
+    assert writer.frames == []
+
+    token.future.set_result(None)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    tui._render_frame()
+
+    first_frame = "\n".join(writer.frames[-1].target_lines)
+    assert "voidx v" in first_frame
+    assert "old transcript" not in first_frame
+
+    assert tui._process_input(b"x") is True
+    tui._render_after_input()
+
+    input_frame = "\n".join(writer.frames[-1].target_lines)
+    assert "voidx v" in input_frame
+    assert "old transcript" not in input_frame
+    assert "x" in input_frame
+    tui._running = False
+
+
 
 
 @pytest.mark.asyncio
