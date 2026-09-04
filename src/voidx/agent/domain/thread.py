@@ -48,11 +48,19 @@ class GoalStatePatch(BaseModel):
     interrupt_reason: str | None = None
 
 
+class LoopGuardrailState(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    stall_count: int = Field(default=0, ge=0)
+    missing_decision_count: int = Field(default=0, ge=0)
+
+
 class DecisionMetadata(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     goal_state_patch: GoalStatePatch | None = None
     evidence_summary: dict[str, Any] | None = None
+    loop_guardrail: LoopGuardrailState | None = None
 
 
 class RuntimeDecision(BaseModel):

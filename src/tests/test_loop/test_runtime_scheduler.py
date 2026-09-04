@@ -4,9 +4,14 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from voidx.agent.domain.automation.loop import LoopSpec
+from voidx.agent.domain.automation.loop import NO_LOOP_DECISION_REASON, LoopSpec
 from voidx.agent.domain.profile import RuntimeProfile
-from voidx.agent.domain.thread import AgentThread
+from voidx.agent.domain.thread import (
+    AgentThread,
+    DecisionMetadata,
+    LoopGuardrailState,
+    RuntimeDecision,
+)
 from voidx.agent.application.automation.loop.scheduler import LoopRuntimeScheduler
 from voidx.agent.adapters.persistence.thread_repository import ThreadStore
 
@@ -316,3 +321,147 @@ async def test_pump_without_registered_loops_claims_nothing(tmp_path) -> None:
     )
 
     assert await scheduler._dispatch_next_wakeup() is None
+
+
+# ── Loop guardrails: stall / missing-decision auto-pause ─────────────────────
+
+
+@dataclass
+class NoProgressRuntime:
+    requests: list = field(default_factory=list)
+
+    async def run_turn(self, request):
+        self.requests.append(request)
+        controller = request.context.loop_controller
+        await controller.submit_decision(
+            controller.spec_decision(
+                outcome="continue",
+                summary="nothing changed",
+                progress="none",
+                next_delay_seconds=0,
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_loop_pauses_after_consecutive_none_progress_iterations(tmp_path) -> None:
+    scheduler = LoopRuntimeScheduler(
+        store=ThreadStore(),
+        runtime=NoProgressRuntime(),
+        workspace=str(tmp_path),
+        lease_owner="test-worker",
+        lease_seconds=60,
+        session_id="session-1",
+    )
+    scheduler.register_loop_thread("loop:session-1:active")
+
+    first = await scheduler.run_prompt(
+        "check build", display_text="[loop] check", session_id="session-1"
+    )
+    assert first is not None
+    assert first.decision.outcome == "continue"
+    assert first.decision.metadata.loop_guardrail.stall_count == 1
+
+    outcomes = []
+    for _ in range(4):
+        result = await scheduler._dispatch_next_wakeup()
+        assert result is not None
+        outcomes.append(result.decision)
+
+    assert [d.outcome for d in outcomes] == ["continue", "continue", "continue", "needs_user"]
+    assert outcomes[-1].reason == "loop_stalled"
+    assert outcomes[-1].next_delay_seconds is None
+
+    # A paused loop leaves no wakeup behind.
+    assert await scheduler._dispatch_next_wakeup() is None
+
+
+@pytest.mark.asyncio
+async def test_loop_pauses_after_consecutive_missing_decisions(tmp_path) -> None:
+    store = ThreadStore()
+    await store.create_thread(
+        AgentThread(thread_id="loop:session-1:active"),
+        profile=RuntimeProfile(profile_id="loop", revision=1, name="Loop"),
+    )
+    runtime = FakeRuntime()  # never submits a loop decision
+    scheduler = LoopRuntimeScheduler(
+        store=store,
+        runtime=runtime,
+        workspace=str(tmp_path),
+        lease_owner="test-worker",
+        lease_seconds=60,
+        session_id="session-1",
+    )
+    scheduler.register_loop_thread("loop:session-1:active")
+
+    previous = RuntimeDecision(
+        outcome="continue",
+        summary="Iteration ended without a loop decision; continuing with the default delay.",
+        progress="none",
+        reason=NO_LOOP_DECISION_REASON,
+        metadata=DecisionMetadata(
+            loop_guardrail=LoopGuardrailState(stall_count=2, missing_decision_count=2)
+        ),
+    )
+    await store.enqueue_outbox(
+        thread_id="loop:session-1:active",
+        kind="wakeup",
+        payload={
+            "prompt": "check",
+            "spec": LoopSpec(prompt="check").model_dump(mode="json"),
+            "decision": previous.model_dump(mode="json"),
+        },
+        expected_state_version=0,
+    )
+
+    result = await scheduler._dispatch_next_wakeup()
+
+    assert result is not None
+    assert result.decision.outcome == "needs_user"
+    assert result.decision.reason == "loop_decision_missing"
+    assert result.decision.next_delay_seconds is None
+
+    # A paused loop leaves no wakeup behind.
+    assert await scheduler._dispatch_next_wakeup() is None
+
+
+@pytest.mark.asyncio
+async def test_loop_stall_counter_resets_after_meaningful_progress(tmp_path) -> None:
+    @dataclass
+    class AlternatingRuntime:
+        requests: list = field(default_factory=list)
+
+        async def run_turn(self, request):
+            self.requests.append(request)
+            progress = "meaningful" if len(self.requests) % 2 == 0 else "none"
+            controller = request.context.loop_controller
+            await controller.submit_decision(
+                controller.spec_decision(
+                    outcome="continue",
+                    summary=f"iteration {len(self.requests)}",
+                    progress=progress,
+                    next_delay_seconds=0,
+                )
+            )
+
+    scheduler = LoopRuntimeScheduler(
+        store=ThreadStore(),
+        runtime=AlternatingRuntime(),
+        workspace=str(tmp_path),
+        lease_owner="test-worker",
+        lease_seconds=60,
+        session_id="session-1",
+    )
+    scheduler.register_loop_thread("loop:session-1:active")
+
+    decision = (
+        await scheduler.run_prompt("check build", display_text="[loop] check", session_id="session-1")
+    ).decision
+    for _ in range(6):
+        assert decision.outcome == "continue"
+        result = await scheduler._dispatch_next_wakeup()
+        assert result is not None
+        decision = result.decision
+
+    # Alternating progress keeps resetting the stall counter, so the loop never pauses.
+    assert decision.outcome == "continue"

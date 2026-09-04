@@ -46,7 +46,11 @@ class LoopDecisionInput(BaseModel):
     )
     summary: str = Field(default="", description="Concise durable summary of this loop iteration.")
     progress: Literal["none", "partial", "meaningful"] = Field(
-        default="none", description="none, partial, or meaningful."
+        default="none",
+        description=(
+            "Progress toward the loop goal: none, partial, or meaningful. Report it "
+            "honestly — consecutive 'none' iterations auto-pause the loop for user review."
+        ),
     )
     next_delay_seconds: float | None = Field(default=None)
     reason: str = Field(default="")

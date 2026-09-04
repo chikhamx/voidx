@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from voidx.agent.domain.profile import RuntimeProfile
 from voidx.agent.domain.prompt_policy import LoopPromptPolicy
+from voidx.agent.domain.thread import DecisionMetadata, LoopGuardrailState, RuntimeDecision
 from voidx.agent.domain.tool_view import BoundToolView
 
 
@@ -71,6 +72,72 @@ class LoopDecision(BaseModel):
         if not value.strip():
             raise ValueError("summary must not be empty")
         return value
+
+
+LOOP_STALL_LIMIT = 5
+LOOP_MISSING_DECISION_LIMIT = 3
+NO_LOOP_DECISION_REASON = "no_loop_decision_submitted"
+
+
+def apply_loop_guardrails(
+    previous: RuntimeDecision | None, decision: RuntimeDecision
+) -> RuntimeDecision:
+    """Pause a loop that stalls or whose model repeatedly skips the commit decision.
+
+    Consecutive progress="none" iterations and consecutive runtime fallback
+    decisions are counted across iterations via decision metadata carried in
+    the wakeup payload; hitting either limit rewrites the decision to
+    needs_user so the loop pauses instead of burning iterations forever.
+    """
+    stall = 0
+    missing = 0
+    if (
+        previous is not None
+        and previous.metadata is not None
+        and previous.metadata.loop_guardrail is not None
+    ):
+        stall = previous.metadata.loop_guardrail.stall_count
+        missing = previous.metadata.loop_guardrail.missing_decision_count
+
+    if decision.outcome == "continue":
+        stall = stall + 1 if decision.progress == "none" else 0
+        missing = missing + 1 if decision.reason == NO_LOOP_DECISION_REASON else 0
+        if missing >= LOOP_MISSING_DECISION_LIMIT:
+            decision = decision.model_copy(
+                update={
+                    "outcome": "needs_user",
+                    "next_delay_seconds": None,
+                    "reason": "loop_decision_missing",
+                    "summary": (
+                        f"Loop paused: {missing} consecutive iterations ended without "
+                        f"a loop decision. Last summary: {decision.summary}"
+                    ),
+                }
+            )
+        elif stall >= LOOP_STALL_LIMIT:
+            decision = decision.model_copy(
+                update={
+                    "outcome": "needs_user",
+                    "next_delay_seconds": None,
+                    "reason": "loop_stalled",
+                    "summary": (
+                        f"Loop paused: no progress for {stall} consecutive iterations. "
+                        f"Last summary: {decision.summary}"
+                    ),
+                }
+            )
+    else:
+        stall = 0
+        missing = 0
+
+    metadata = (decision.metadata or DecisionMetadata()).model_copy(
+        update={
+            "loop_guardrail": LoopGuardrailState(
+                stall_count=stall, missing_decision_count=missing
+            )
+        }
+    )
+    return decision.model_copy(update={"metadata": metadata})
 
 
 LOOP_ITERATION_USER_TEXT = "Run the next scheduled loop iteration."
@@ -154,5 +221,7 @@ class LoopToolView(BoundToolView):
 
 __all__ = [
     "LoopDecision", "LoopMode", "LoopSpec", "LoopToolView", "LOOP_IDLE_DIRECTIVE",
-    "LOOP_ITERATION_USER_TEXT", "LOOP_PROFILE", "loop_profile_for_spec",
+    "LOOP_ITERATION_USER_TEXT", "LOOP_MISSING_DECISION_LIMIT", "LOOP_PROFILE",
+    "LOOP_STALL_LIMIT", "NO_LOOP_DECISION_REASON", "apply_loop_guardrails",
+    "loop_profile_for_base", "loop_profile_for_spec",
 ]

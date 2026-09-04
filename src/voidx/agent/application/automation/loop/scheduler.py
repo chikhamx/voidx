@@ -8,8 +8,10 @@ from typing import Any
 
 from voidx.agent.domain.automation.loop import (
     LOOP_ITERATION_USER_TEXT,
+    NO_LOOP_DECISION_REASON,
     LoopSpec,
     LoopToolView,
+    apply_loop_guardrails,
     loop_profile_for_base,
 )
 from voidx.agent.domain.agent_profile import ResolvedAgentProfile
@@ -33,6 +35,17 @@ def _publish_loop_waiting(decision: RuntimeDecision, events: AgentEventPublisher
         events.show_loop_waiting(time.time() + float(decision.next_delay_seconds))
     else:
         events.clear_loop_waiting()
+
+
+def _previous_decision(input_frame: dict) -> RuntimeDecision | None:
+    """The prior iteration's committed decision rides in the wakeup payload."""
+    raw = input_frame.get("decision")
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return RuntimeDecision.model_validate(raw)
+    except Exception:
+        return None
 
 
 _DEFAULT_DYNAMIC_DELAY_SECONDS = 600.0
@@ -82,20 +95,23 @@ class LoopRuntimeRunner:
                 guidance=tuple(input_frame.get("guidance") or ()),
             )
         )
+        previous = _previous_decision(input_frame)
         submitted = controller.final_decision()
         if submitted is not None:
-            _publish_loop_waiting(submitted, self.events)
-            return submitted
+            guarded = apply_loop_guardrails(previous, submitted)
+            _publish_loop_waiting(guarded, self.events)
+            return guarded
         fallback = await controller.submit_decision(
             RuntimeDecision(
                 outcome="continue",
                 summary="Iteration ended without a loop decision; continuing with the default delay.",
                 next_delay_seconds=None if spec.interval_seconds is not None else _DEFAULT_DYNAMIC_DELAY_SECONDS,
-                reason="no_loop_decision_submitted",
+                reason=NO_LOOP_DECISION_REASON,
             )
         )
-        _publish_loop_waiting(fallback, self.events)
-        return fallback
+        guarded = apply_loop_guardrails(previous, fallback)
+        _publish_loop_waiting(guarded, self.events)
+        return guarded
 
 
 class LoopRuntimeScheduler(WakeupPumpMixin):
