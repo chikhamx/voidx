@@ -1,12 +1,15 @@
 ---
 name: macos-ocr-tool-2026-09-02
-display_name: macOS OCR 工具调研与接入设计草案
-description: 调研 Apple Vision OCR，并设计 voidx 在 macOS 上为非多模态模型提供图片文字读取能力的接入路线
+display_name: macOS OCR 工具调研与接入设计草案（已被独立 Rust CLI 方案取代）
+description: 调研 Apple Vision OCR，并记录 voidx 在 macOS 上提供 OCR 能力的历史接入路线
 doc_type: rfc
 audience: human+llm
-status: draft
-implementation_status: not-started
+status: superseded
+implementation_status: superseded
 related_docs:
+  - tools/macos-ocr/Cargo.toml
+  - tools/macos-ocr/SKILL.md
+  - tools/macos-ocr/src/lib.rs
   - src/voidx/agent/application/attachments.py
   - src/voidx/tooling/ports/tool.py
   - desktop/tauri/tauri.conf.json
@@ -16,36 +19,36 @@ related_docs:
 
 ## 1. 摘要
 
-本文件只覆盖 macOS，不修改实现代码，也不锁定最终依赖版本。目标是在 voidx 中增加只读 `ocr` 工具，使非多模态模型能够读取本地图片；同时评估是否把图片附件自动转换为 OCR 文本。
+本文件是 2026-09-02 的历史 RFC。原提案曾计划把 Apple Vision OCR 接入 Python `ToolPlugin` 和附件 fallback；该路线已被 `tools/macos-ocr` 的独立 Rust CLI 方案取代，原有 Python/Tauri 接入内容仅保留为背景，不是当前实现规格。
 
 **调研结论：**
 
 - macOS 的首选 OCR 引擎是 Apple Vision 的 `VNRecognizeTextRequest`，而不是外部 `tesseract`、`osascript` 或网络 OCR 服务。
 - Vision 的文字识别 API 从 macOS 10.15 可用；项目桌面端最低 macOS 为 12.0，系统版本满足要求。
-- 推荐让 Python 后端拥有 OCR 领域接口，并优先验证 `pyobjc-framework-Vision` 直连系统框架；如果桌面打包、签名或线程隔离验证失败，再切换为随 Tauri 应用分发的 Swift helper。两种方案对上层 `OcrEngine` 和 `ocr` 工具契约应保持不变。
+- 原提案曾推荐 Python 后端通过 `pyobjc-framework-Vision` 接入，再视发布条件切换为 Tauri/Swift helper；该路线没有实施，已由 `tools/macos-ocr` 的独立 Rust CLI 取代。
 - `ocr` 应是只读、文件范围受授权控制的工具。它必须复用 `authorized_path()`，不能因为“只是读取图片”而绕过 workspace、sandbox 或 grant 校验。
 - “显式调用 `ocr`”和“非多模态模型收到图片时自动 OCR”是两个不同层次的功能。建议先确定稳定的显式工具契约，再以模型能力字段为前置条件实现自动 fallback；不要根据 provider/model 名称猜测视觉能力。
 
-**当前状态：** 调研和设计草案；未安装 Vision bridge，未运行 macOS OCR smoke test，未修改 `pyproject.toml`、`uv.lock`、桌面构建脚本或源代码。
+**当前状态（2026-09-03）：** 本 RFC 的 Python/Tauri 接入路线已被 `tools/macos-ocr` 独立 Rust CLI 取代。CLI 已完成 Apple Vision OCR、图像预处理、PDF、目录批处理、候选文字、布局排序、条码和 JSON/text/JSONL 输出；Apple Silicon arm64 图片、QR、PDF 和批量 smoke test 已通过；arm64/x86_64 release 构建和 universal binary 合并已通过，当前产物已完成 ad-hoc codesign。正式签名、notarization、DMG/Tauri 集成仍未完成。
 
 ## 2. 范围与非目标
 
-### 2.1 本阶段范围
+### 2.1 原提案范围
 
 - Apple Silicon 和 Intel macOS 桌面端的 Apple Vision OCR 可行性。
 - Python 后端工具接口、路径授权、附件 fallback 的接入边界。
 - Vision bridge 的依赖、打包、签名、线程、错误和隐私风险。
 - 后续实现所需的测试和发布验收条件。
 
-### 2.2 非目标
+### 2.2 原提案非目标
 
-- 本阶段不实现 `ocr` 工具或自动 OCR fallback。
+- 原提案不实现 Python `ocr` 工具或附件自动 OCR fallback；当前独立 CLI 不接入 Python `ToolPlugin` 或附件链路。
 - 本阶段不覆盖 Windows、Linux、PaddleOCR、RapidOCR、Tesseract 或跨平台统一引擎。
 - 本阶段不改变当前多模态模型的图片输入协议。
-- 本阶段不承诺新增 HEIC、PDF、扫描文档版面分析、表格识别、手写识别或二维码识别。
+- 原提案不承诺 HEIC、PDF、扫描文档版面分析、表格识别、手写识别或二维码识别；当前独立 CLI 已支持 PDF、二维码/条码和确定性的布局排序，但仍不支持 HEIC/HEIF、表格、表单或手写识别。
 - 本阶段不把 Vision 的识别结果当作事实保证；OCR 文本必须带有低置信度和可能误识别的语义边界。
 
-## 3. 当前代码现状
+## 3. 原提案背景与当前实现状态
 
 ### 3.1 图片附件链路
 

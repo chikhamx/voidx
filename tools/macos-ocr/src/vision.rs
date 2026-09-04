@@ -19,23 +19,22 @@ pub fn normalized_rect_to_top_left(rect: NormalizedRect) -> NormalizedRect {
 mod platform {
     use super::{normalized_rect_to_top_left, NormalizedRect};
     use crate::cli::{CliOptions, RecognitionLevel};
-    use crate::output::{BoundingBox, TextBlock};
+    use crate::output::{BoundingBox, TextBlock, TextCandidate};
+    use crate::preprocess::CoordinateMapper;
     use objc2::rc::autoreleasepool;
     use objc2::AnyThread;
     use objc2_foundation::{NSArray, NSData, NSDictionary, NSError, NSString};
     use objc2_vision::{
         VNImageRequestHandler, VNRecognizeTextRequest, VNRequest, VNRequestTextRecognitionLevel,
     };
-    use std::fs;
 
-    pub fn recognize(options: &CliOptions) -> Result<Vec<TextBlock>, VisionError> {
-        let image_data = fs::read(&options.input).map_err(|error| VisionError {
-            code: "read_failed",
-            message: format!("failed to read input image {}: {error}", options.input.display()),
-        })?;
-
+    pub fn recognize(
+        image_data: &[u8],
+        mapper: &CoordinateMapper,
+        options: &CliOptions,
+    ) -> Result<Vec<TextBlock>, VisionError> {
         autoreleasepool(|_| {
-            let image_data = NSData::with_bytes(&image_data);
+            let image_data = NSData::with_bytes(image_data);
             let request = VNRecognizeTextRequest::new();
             request.setRecognitionLevel(match options.recognition_level {
                 RecognitionLevel::Fast => VNRequestTextRecognitionLevel::Fast,
@@ -76,7 +75,7 @@ mod platform {
             let observations = request.results().unwrap_or_else(|| NSArray::new());
             let mut blocks = Vec::with_capacity(observations.len());
             for observation in observations.to_vec() {
-                let candidates = observation.topCandidates(1);
+                let candidates = observation.topCandidates(options.candidates);
                 let Some(candidate) = candidates.to_vec().into_iter().next() else {
                     continue;
                 };
@@ -93,23 +92,51 @@ mod platform {
                 });
                 blocks.push(TextBlock {
                     text,
+                    candidates: candidate_list(options, &candidates),
                     confidence: candidate.confidence(),
-                    bounding_box: options_for_block(options, box_value),
+                    bounding_box: options_for_block(options, mapper, box_value),
                 });
             }
             Ok(blocks)
         })
     }
 
+    fn candidate_list(
+        options: &CliOptions,
+        candidates: &NSArray<objc2_vision::VNRecognizedText>,
+    ) -> Option<Vec<TextCandidate>> {
+        if options.candidates <= 1 {
+            return None;
+        }
+
+        let candidates = candidates
+            .to_vec()
+            .into_iter()
+            .filter_map(|candidate| {
+                let text = candidate.string().to_string();
+                (!text.is_empty()).then_some(TextCandidate {
+                    text,
+                    confidence: candidate.confidence(),
+                })
+            })
+            .collect::<Vec<_>>();
+        Some(candidates)
+    }
+
     fn options_for_block(
         options: &CliOptions,
+        mapper: &CoordinateMapper,
         box_value: NormalizedRect,
     ) -> Option<BoundingBox> {
-        options.regions.then_some(BoundingBox {
-            x: box_value.x,
-            y: box_value.y,
-            width: box_value.width,
-            height: box_value.height,
+        options.include_regions.then_some({
+            let (x, y, width, height) =
+                mapper.map_rect(box_value.x, box_value.y, box_value.width, box_value.height);
+            BoundingBox {
+                x,
+                y,
+                width,
+                height,
+            }
         })
     }
 
@@ -126,10 +153,15 @@ mod platform {
 
 #[cfg(not(target_os = "macos"))]
 mod platform {
-    use crate::output::TextBlock;
     use crate::cli::CliOptions;
+    use crate::output::TextBlock;
+    use crate::preprocess::CoordinateMapper;
 
-    pub fn recognize(_options: &CliOptions) -> Result<Vec<TextBlock>, VisionError> {
+    pub fn recognize(
+        _image_data: &[u8],
+        _mapper: &CoordinateMapper,
+        _options: &CliOptions,
+    ) -> Result<Vec<TextBlock>, VisionError> {
         Err(VisionError {
             code: "vision_unavailable",
             message: "Apple Vision OCR is available only on macOS".to_owned(),
@@ -143,7 +175,7 @@ mod platform {
     }
 }
 
-pub use platform::recognize;
+pub use platform::{recognize, VisionError};
 
 #[cfg(test)]
 mod tests {
