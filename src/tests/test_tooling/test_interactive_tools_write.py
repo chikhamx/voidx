@@ -40,12 +40,12 @@ from voidx.agent.adapters.subagent import InProcessSubagentGateway
 from voidx.agent.application.runtime.task_tracker import TaskTracker
 from voidx.agent.adapters.tools.todo import TodoInput, TodoWriteTool
 from voidx.tooling.application.registry import ToolRegistry
-from voidx.agent.adapters.tools.interaction.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
+from voidx.agent.adapters.tools.interaction.clarify import ClarifyTool, ClarifyInput
 from voidx.tooling.adapters.skills import SkillsTool
 from voidx.tooling.builtin.document import DocumentTool, DocumentInput
 from voidx.agent.adapters.tools.interaction.checkpoint import PlanCheckpointTool
-from voidx.agent.domain.task.state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
-from voidx.agent.application.runtime_context import TaskIntent
+from voidx.agent.domain.task.state import GoalSpec, GoalResolution, PlanResolution, ToolStatePatch
+
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 from voidx.agent.domain.automation.workflow import WorkflowStateEventKind
@@ -215,7 +215,7 @@ class TestInteractiveTools:
 
         assert "[completed]" in wait_result.output
         assert "Result:\nchild result" in wait_result.output
-        assert set(spawn_result.metadata) == {"agent", "run_id", "status"}
+        assert set(spawn_result.metadata) == {"agent", "mode", "run_id", "status"}
         assert "Scope: src/voidx/tools/agent.py" in captured["description"]
         assert "Result contract:" not in captured["description"]
         assert captured["goal_resolution"].goal.desc == "Review one changed file"

@@ -5,8 +5,9 @@ from langchain_core.messages import AIMessage
 from voidx.agent.application.agents import AgentDef
 from voidx.config import Config
 from voidx.agent.adapters.subagent import InProcessSubagentGateway
-from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
-from voidx.agent.domain.task.intent import TaskIntent
+from voidx.agent.domain.task.state import GoalResolution, GoalSpec, PlanResolution
+
+
 from voidx.agent.adapters.tools.subagent import AgentResultContract
 
 
@@ -50,7 +51,6 @@ class FakeUiPort:
 
 def _goal_resolution() -> GoalResolution:
     return GoalResolution(
-        intent=IntentResolution(type=TaskIntent.CODING),
         goal=GoalSpec(desc="Retry child LLM calls"),
         plan=PlanResolution(join="tdd", leave="verify"),
     )

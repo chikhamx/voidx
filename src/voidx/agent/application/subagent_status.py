@@ -56,6 +56,7 @@ def public_child_run_snapshot(run: AgentRun) -> dict:
         "parent_run_id": run.parent_run_id,
         "agent_type": run.agent_type,
         "agent_name": run.agent_name,
+        "mode": run.mode,
         "description": run.description,
         "status": run.status,
         "result": run.result,

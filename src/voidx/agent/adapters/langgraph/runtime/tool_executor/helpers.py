@@ -555,11 +555,10 @@ def _apply_state_update(
 ) -> None:
     """Apply a state update dict, mutating runtime variables in place.
 
-    runtime_persona_ref is a mutable list [persona_str, intent_str] so we can update it.
+    runtime_persona_ref is a mutable list [persona_str] so we can update it.
     runtime_task_state is a mutable list [state, goal, workflow_runs_list].
     """
     from voidx.agent.application.todo_state import apply_todo_state_to_host
-    from voidx.agent.domain.task.intent import TaskIntent
     from voidx.agent.domain.automation.workflow import WorkflowRoute
 
     if not update:
@@ -577,10 +576,6 @@ def _apply_state_update(
         apply_todo_state_to_host(host, update.get("todo_state"))
         runtime_task_state[0].todo_state = _todo_state_for_state(update.get("todo_state"))
         state_update["todo_state"] = update.get("todo_state")
-        state_update["task_state"] = runtime_task_state[0].model_dump(mode="json")
-    if "task_intent" in update:
-        runtime_persona_ref[1] = update.get("task_intent") or "coding"
-        runtime_task_state[0].current_intent = TaskIntent(runtime_persona_ref[1])
         state_update["task_state"] = runtime_task_state[0].model_dump(mode="json")
     if "current_goal" in update:
         raw_goal = update.get("current_goal")

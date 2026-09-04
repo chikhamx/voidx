@@ -2,18 +2,17 @@ from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
 import pytest
 
 from voidx.agent.application.instruction import InstructionService
-from voidx.agent.domain.task.intent import TaskIntent
+
 from voidx.agent.domain.task.state import (
+
     GoalResolution,
     GoalSpec,
-    IntentResolution,
     PlanResolution,
     TaskState,
     ToolStatePatch,
 )
 from voidx.agent.adapters.tools.automation.workflow import WorkflowTool
 from tests.agent_tool_context import agent_tool_context as ToolContext
-from voidx.tooling.domain.result import ToolResult
 from voidx.agent.application.automation.workflow.reconcile import reconcile_workflow_runs_for_turn
 from voidx.agent.application.automation.workflow.runtime import advance_workflow_states
 from voidx.agent.domain.automation.workflow import (
@@ -33,26 +32,7 @@ def test_goal_type_compatibility_exports_are_removed():
         assert not hasattr(module, "goal_type_value")
 
 
-def test_state_update_applies_intent_resolution_patch():
-    from voidx.agent.adapters.langgraph.runtime.tool_executor import _ExecutedTool, _state_update_from_executed_tools
 
-    patch = {
-        "intent": {
-            "type": "general",
-            "desc": "tool clarified this is general conversation",
-        }
-    }
-    executed = [
-        _ExecutedTool(
-            message=None,
-            result=ToolResult(output="clarified", metadata={"state_patch": patch}),
-            tool_call={"name": "clarify"},
-        )
-    ]
-
-    update = _state_update_from_executed_tools(executed, workflow_dag=DEFAULT_WORKFLOW_DAG)
-
-    assert update["task_intent"] == "general"
 
 
 @pytest.mark.asyncio
@@ -69,7 +49,6 @@ async def test_workflow_context_skips_trigger_matching_when_resolver_join_is_abs
 def test_reconcile_uses_plan_join_as_route_target():
     goal = GoalSpec(desc="review current diff")
     resolution = GoalResolution(
-        intent=IntentResolution(type=TaskIntent.CODING),
         goal=goal,
         plan=PlanResolution(join="review", leave="review"),
     )

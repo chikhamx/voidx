@@ -261,14 +261,13 @@ class ToolExecutorAdapter:
             state.get("task_state"),
             fallback=getattr(host, "_task_state", None),
         )
-        runtime_task_intent = runtime_task_state.current_intent.value
         runtime_goal = runtime_task_state.current_goal
-        runtime_workflow_runs = list((runtime_task_state.workflow_runs or {}).values())
+        runtime_workflow_runs = runtime_task_state.visible_workflow_runs()
         turn_count = int(state.get("step_count", 0) or 0)
         state_update: dict = {}
         display_policy = getattr(host, "_display_policy", None) or ToolDisplayPolicy(rules=DEFAULT_DISPLAY_RULES)
 
-        runtime_persona_ref = [runtime_persona, runtime_task_intent]
+        runtime_persona_ref = [runtime_persona]
         runtime_task_state_ref = [runtime_task_state, runtime_goal, runtime_workflow_runs]
 
         permission = host._permission
@@ -346,7 +345,6 @@ class ToolExecutorAdapter:
         )
 
         def make_context() -> ToolContext:
-            agent_runtime.task_intent = str(runtime_persona_ref[1] or "coding")
             agent_runtime.goal_type = goal_type_from_join(
                 runtime_task_state_ref[0].workflow_route.join
                 if runtime_task_state_ref[0].workflow_route is not None

@@ -20,7 +20,6 @@ from voidx.agent.adapters.persistence.message_rows import (
     messages_from_rows_incremental,
 )
 from voidx.agent.application.automation.goal.goal_resolver import build_goal_resolution, resolve_plan_mode
-from voidx.agent.application.runtime_context import TaskIntent
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.domain.turn_metadata import turn_metadata_from_context
 from voidx.agent.domain.task.intent import InteractionMode
@@ -33,10 +32,8 @@ from voidx.agent.adapters.langgraph.runtime.thread_context import (
 from voidx.agent.adapters.langgraph.state import AgentState
 from voidx.agent.domain.task.state import (
     GoalResolution,
-    IntentResolution,
     TaskState,
     TurnExchange,
-    goal_label,
     goal_type_from_join,
 )
 from voidx.llm.message_status import message_status
@@ -65,7 +62,8 @@ def _resolve_recursion_limit(*_args, **_kwargs) -> int:
 
 def _initial_persona_for_goal(task_state: TaskState) -> str:
     personas: list[str] = []
-    for run in (task_state.workflow_runs or {}).values():
+    visible_runs = task_state.visible_workflow_runs()
+    for run in visible_runs:
         if run.status == WorkflowRunStatus.ACTIVE:
             personas.extend(persona for persona in run.personas if persona)
     if personas:
@@ -374,12 +372,11 @@ class TurnRunner:
                 if interaction_mode == InteractionMode.GOAL.value and base_task_state.current_goal is None:
                     base_task_state.set_goal(payload.title_text)
                 if interaction_mode == InteractionMode.PLAN.value:
-                    intent_resolution = resolve_plan_mode(payload.title_text, base_task_state)
+                    goal_resolution = resolve_plan_mode(payload.title_text, base_task_state)
                 elif interaction_mode == InteractionMode.GOAL.value:
-                    intent_resolution = build_goal_resolution(payload.title_text, base_task_state)
+                    goal_resolution = build_goal_resolution(payload.title_text, base_task_state)
                 else:
-                    intent_resolution = GoalResolution(
-                        intent=IntentResolution(type=TaskIntent.CODING),
+                    goal_resolution = GoalResolution(
                         goal=None,
                         plan=None,
                     )
@@ -388,15 +385,7 @@ class TurnRunner:
                 if current_state is not None:
                     current_state.task_state = base_task_state
                 turn_task_state = base_task_state.model_copy(deep=True)
-                turn_task_state.update_after_turn(
-                    intent_resolution,
-                    payload.title_text,
-                    scope_text=(
-                        goal_label(base_task_state.current_goal)
-                        if interaction_mode == "goal"
-                        else payload.title_text
-                    ),
-                )
+                turn_task_state.update_after_turn(goal_resolution)
                 current_state = current_thread_execution_state()
                 if current_state is not None:
                     current_state.task_state = turn_task_state
@@ -412,7 +401,7 @@ class TurnRunner:
                 workflow_dag = context.workflow_context.dag if context.workflow_context else None
                 if workflow_dag is not None:
                     reconciled_workflow_runs = reconcile_workflow_runs_for_turn(
-                        goal_resolution=intent_resolution,
+                        goal_resolution=goal_resolution,
                         after_state=turn_task_state,
                         dag=workflow_dag,
                     )
@@ -498,7 +487,6 @@ class TurnRunner:
                         message_id=user_message_id,
                         session_id=host._session.id,
                         interaction_mode=interaction_mode,
-                        task_intent=final_task_state.current_intent,
                         current_goal=final_task_state.current_goal,
                         workflow_runs=final_task_state.workflow_runs,
                     ))

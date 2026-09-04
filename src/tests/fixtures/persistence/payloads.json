@@ -2,13 +2,12 @@
   "runtime": {
     "interaction_mode": "auto",
     "task_state": {
-      "current_intent": "coding",
-      "previous_intent": null,
       "current_goal": null,
       "workflow_route": null,
       "workflow_runs": {},
       "recent_exchanges": [],
-      "todo_state": null
+      "todo_state": null,
+      "workflow_context_mode": "none"
     },
     "compaction_summary": "",
     "session_time": "2026-08-05 UTC",

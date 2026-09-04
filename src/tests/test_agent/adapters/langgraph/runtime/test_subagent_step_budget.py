@@ -42,12 +42,14 @@ from voidx.agent.adapters.persistence.session_repository import (
 )
 from voidx.presentation.adapters.persistence.transcript_snapshot import load_transcript
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
-from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
-from voidx.agent.domain.task.intent import TaskIntent
+from voidx.agent.domain.task.state import GoalResolution, GoalSpec, PlanResolution
+
+
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.agent.application.automation.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 from voidx.agent.domain.task.state import TaskState, ToolStatePatch
+
 from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import ToolResult
@@ -85,7 +87,6 @@ def _child_goal_resolution(
     leave: str = "verify",
 ) -> GoalResolution:
     return GoalResolution(
-        intent=IntentResolution(type=TaskIntent.CODING),
         goal=GoalSpec(desc=desc),
         plan=PlanResolution(join=join, leave=leave),
     )
@@ -425,7 +426,7 @@ async def test_subagent_todo_updates_sink_with_current_tool_message(tmp_path, mo
         "Inspect the workspace",
         "test-key",
         Config(workspace=str(tmp_path)),
-        **_subagent_contract_kwargs(),
+        **_subagent_contract_kwargs(join="tdd", leave="verify"),
         parent_tools=build_registry(),
         todo_state_sink=todo_states.append,
         debug=False,
@@ -571,7 +572,7 @@ async def test_subagent_todo_uses_local_tracker_and_queued_event(tmp_path, monke
         "test-key",
         Config(workspace=str(tmp_path)),
         parent_tracker,
-        **_subagent_contract_kwargs(),
+        **_subagent_contract_kwargs(join="tdd", leave="verify"),
         parent_tools=build_registry(tracker=parent_tracker),
         agent_id=7,
         ui_port=RecordingUiPort(),

@@ -24,7 +24,7 @@ TURN_TOOL_DEFINITION: dict[str, Any] = {
     "function": {
         "name": TURN_TOOL_NAME,
         "description": (
-            "Turn lifecycle control. At turn start, call operation='start' with intent and a short goal. "
+            "Turn lifecycle control. At turn start, call operation='start' with a short goal. "
             "start may be combined with regular tools in the same message; start is applied first, then the other tools run. "
             "At turn end, call operation='stop' with params=null only after the pending final answer is complete. "
             "stop may be combined with regular tools in the same message when the final answer text is already present; tools run first, then stop commits. "
@@ -37,18 +37,17 @@ TURN_TOOL_DEFINITION: dict[str, Any] = {
                 "operation": {
                     "type": "string",
                     "enum": ["start", "stop"],
-                    "description": "start declares intent and goal; stop commits the pending final answer.",
+                    "description": "start declares the goal; stop commits the pending final answer.",
                 },
                 "params": {
                     "anyOf": [
                         {
                             "type": "object",
                             "properties": {
-                                "intent": {"type": "string", "enum": ["coding", "general"]},
                                 "goal": {"type": "string"},
-                            },
-                            "required": ["intent", "goal"],
-                            "additionalProperties": False,
+                                },
+                            "required": ["goal"],
+                            "additionalProperties": False
                         },
                         {"type": "null"},
                     ],
@@ -78,7 +77,7 @@ TURN_STOP_PROMPT = (
 )
 
 TURN_START_PROMPT = (
-    "Turn state is initial. Do not output text yet. Call turn with operation='start', intent, and a short goal now."
+    "Turn state is initial. Do not output text yet. Call turn with operation='start' and a short goal now."
 )
 
 FIRST_MISS_PROMPT = TURN_STOP_PROMPT
@@ -102,6 +101,15 @@ LOOP_DECISION_PROMPT = (
 def _has_tool_calls(msg: AIMessage) -> bool:
     calls = getattr(msg, "tool_calls", None)
     return bool(calls)
+
+
+def _valid_start_params(params: Any) -> bool:
+    if not isinstance(params, dict):
+        return False
+    allowed = {"goal"}
+    if set(params) - allowed or set(params) < {"goal"}:
+        return False
+    return _is_non_empty_text(params.get("goal"))
 
 
 def classify_turn_call(msg: AIMessage) -> TurnClassification:
@@ -129,10 +137,7 @@ def classify_turn_call(msg: AIMessage) -> TurnClassification:
                 return TurnClassification.VALID_TURN
         if (
             operation == TurnOperation.START
-            and isinstance(params, dict)
-            and set(params) == {"intent", "goal"}
-            and params.get("intent") in {"coding", "general"}
-            and _is_non_empty_text(params.get("goal"))
+            and _valid_start_params(params)
             and set(args) == {"operation", "params"}
         ):
             return TurnClassification.VALID_START
@@ -147,10 +152,7 @@ def classify_turn_call(msg: AIMessage) -> TurnClassification:
         params = args.get("params")
         if (
             operation == TurnOperation.START
-            and isinstance(params, dict)
-            and set(params) == {"intent", "goal"}
-            and params.get("intent") in {"coding", "general"}
-            and _is_non_empty_text(params.get("goal"))
+            and _valid_start_params(params)
             and set(args) == {"operation", "params"}
         ):
             return TurnClassification.VALID_START_WITH_TOOLS

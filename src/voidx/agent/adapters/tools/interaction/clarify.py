@@ -7,8 +7,6 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from voidx.agent.domain.task.intent import TaskIntent
-from voidx.agent.domain.task.state import IntentResolution, ToolStatePatch
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import ToolResult
 from voidx.tooling.domain.interaction import (
@@ -31,7 +29,6 @@ class ClarifyResult(BaseModel):
     question: str
     answer: str
     cancelled: bool = False
-    state_patch: ToolStatePatch | None = None
 
 
 class ClarifyTool:
@@ -77,16 +74,13 @@ class ClarifyTool:
                 metadata={"clarify_cancelled": True},
             )
 
-        patch = _infer_state_patch(response)
         result = ClarifyResult(
             question=inp.question,
             answer=response.value,
-            state_patch=patch,
         )
         payload = result.model_dump(mode="json")
         metadata = {
             "clarify_answer": response.value,
-            "state_patch": patch.model_dump(mode="json", exclude_unset=True) if patch else None,
         }
         return ToolResult(
             title=f"clarify: {response.value}",
@@ -94,30 +88,6 @@ class ClarifyTool:
             summary=f"answer: {response.value}",
             metadata=metadata,
         )
-
-
-def _infer_state_patch(response: UserResponse) -> ToolStatePatch | None:
-    answer = response.value.strip()
-    if not answer:
-        return None
-
-    normalized = answer.lower()
-    intent_map = {
-        "general": TaskIntent.GENERAL,
-        "coding": TaskIntent.CODING,
-        "chat": TaskIntent.GENERAL,
-        "inspect": TaskIntent.CODING,
-        "design": TaskIntent.CODING,
-        "review": TaskIntent.CODING,
-        "implement": TaskIntent.CODING,
-        "debug": TaskIntent.CODING,
-    }
-    if normalized in intent_map:
-        return ToolStatePatch(
-            intent=IntentResolution(type=intent_map[normalized]),
-        )
-
-    return None
 
 
 def _emit_clarify_shown(

@@ -43,12 +43,14 @@ from voidx.agent.adapters.persistence.session_repository import (
 )
 from voidx.presentation.adapters.persistence.transcript_snapshot import load_transcript
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
-from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
-from voidx.agent.domain.task.intent import TaskIntent
+from voidx.agent.domain.task.state import GoalResolution, GoalSpec, PlanResolution
+
+
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.agent.application.automation.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 from voidx.agent.domain.task.state import TaskState, ToolStatePatch
+
 from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import ToolResult
@@ -87,7 +89,6 @@ def _child_goal_resolution(
     leave: str = "verify",
 ) -> GoalResolution:
     return GoalResolution(
-        intent=IntentResolution(type=TaskIntent.CODING),
         goal=GoalSpec(desc=desc),
         plan=PlanResolution(join=join, leave=leave),
     )
@@ -218,10 +219,14 @@ async def test_subagent_inherits_parent_mcp_gateway(tmp_path, monkeypatch):
     async def fake_stream_llm(_model, _messages, _renderer, _protocol, **kwargs):
         return AIMessage(content="done")
 
+    class FakeMcpGateway:
+        # Stand-in for the shared MCP gateway; must be explicitly shareable.
+        child_shareable = True
+
     parent_tools = build_registry()
     parent_tools.replace(
         "mcp",
-        object(),
+        FakeMcpGateway(),
         "MCP gateway",
         {"type": "object", "properties": {}},
     )
@@ -240,14 +245,14 @@ async def test_subagent_inherits_parent_mcp_gateway(tmp_path, monkeypatch):
         "Inspect the workspace",
         "test-key",
         Config(workspace=str(tmp_path)),
-        **_subagent_contract_kwargs(),
+        **_subagent_contract_kwargs(join="tdd", leave="verify"),
         parent_tools=parent_tools,
         debug=False,
     )
 
     assert output == "done"
     tool_names = [tool["function"]["name"] for tool in captured["tool_defs"]]
-    assert "mcp" in tool_names
+    assert "mcp" not in tool_names
 
 @pytest.mark.asyncio
 async def test_subagent_with_mcp_gateway_copies_parent_gateway(tmp_path, monkeypatch):
@@ -262,6 +267,7 @@ async def test_subagent_with_mcp_gateway_copies_parent_gateway(tmp_path, monkeyp
             return self
 
     class FakeMcpTool:
+        child_shareable = True
         async def execute(self, args, _ctx):
             calls.append(args)
             return ToolResult(output="mcp result")
@@ -310,20 +316,15 @@ async def test_subagent_with_mcp_gateway_copies_parent_gateway(tmp_path, monkeyp
         "Send the message",
         "test-key",
         Config(workspace=str(tmp_path)),
-        **_subagent_contract_kwargs(desc="Send the message"),
+        **_subagent_contract_kwargs(desc="Send the message", join="tdd", leave="verify"),
         parent_tools=parent_tools,
         debug=False,
     )
 
     assert output == "done"
     tool_names = [tool["function"]["name"] for tool in captured["tool_defs"]]
-    assert "mcp" in tool_names
-    assert calls == [{
-        "op": "call",
-        "server": "demo",
-        "tool": "send_message",
-        "arguments": {"text": "hello"},
-    }]
+    assert "mcp" not in tool_names
+    assert calls == []
 
 
 @pytest.mark.asyncio
@@ -364,7 +365,7 @@ async def test_subagent_tool_filter_always_blocks_nested_agent_tool(tmp_path, mo
             "Inspect the workspace",
             "test-key",
             Config(workspace=str(tmp_path)),
-            **_subagent_contract_kwargs(),
+            **_subagent_contract_kwargs(join="tdd", leave="verify"),
             parent_tools=parent_tools,
             debug=False,
         )

@@ -34,8 +34,8 @@ class ScriptedStreamingModel:
             yield chunk
 
 
-def _turn_args(operation: str = "stop", intent: str = "", goal: str = "") -> dict[str, str]:
-    return {"operation": operation, "params": None if operation == "stop" else {"intent": intent, "goal": goal}}
+def _turn_args(operation: str = "stop", goal: str = "") -> dict[str, str]:
+    return {"operation": operation, "params": None if operation == "stop" else {"goal": goal}}
 
 
 def _turn_chunk(decision: str = "stop") -> AIMessageChunk:

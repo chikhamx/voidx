@@ -74,14 +74,13 @@ class SkillService:
         user_text: str,
         *,
         agent: str = "",
-        task_intent: str | None = None,
         interaction_mode: str | None = None,
         limit: int = 5,
         scopes: Iterable[SkillScope] | None = None,
         exclude_names: Iterable[str] = (),
     ) -> list[SkillMatch]:
         text = user_text.strip()
-        has_context = bool(agent or task_intent or interaction_mode)
+        has_context = bool(agent or interaction_mode)
         if not text and not has_context:
             return []
 
@@ -118,7 +117,6 @@ class SkillService:
         user_text: str,
         *,
         agent: str = "",
-        task_intent: str | None = None,
         interaction_mode: str | None = None,
         limit: int = 5,
         scopes: Iterable[SkillScope] | None = None,
@@ -129,7 +127,6 @@ class SkillService:
             for match in self.select(
                 user_text,
                 agent=agent,
-                task_intent=task_intent,
                 interaction_mode=interaction_mode,
                 limit=limit,
                 scopes=scopes,
@@ -142,7 +139,6 @@ class SkillService:
         user_text: str,
         *,
         agent: str = "",
-        task_intent: str | None = None,
         interaction_mode: str | None = None,
         limit: int = 5,
         scopes: Iterable[SkillScope] | None = None,
@@ -153,7 +149,6 @@ class SkillService:
             for match in self.select(
                 user_text,
                 agent=agent,
-                task_intent=task_intent,
                 interaction_mode=interaction_mode,
                 limit=limit,
                 scopes=scopes,

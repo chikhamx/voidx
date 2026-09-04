@@ -28,12 +28,12 @@ def _ai_with_turn_stop() -> AIMessage:
     )
 
 
-def _ai_with_turn_start(intent: str = "coding", goal: str = "Fix the bug") -> AIMessage:
+def _ai_with_turn_start(goal: str = "Fix the bug") -> AIMessage:
     return AIMessage(
         content="",
         tool_calls=[{
             "name": "turn",
-            "args": {"operation": "start", "params": {"intent": intent, "goal": goal}},
+            "args": {"operation": "start", "params": {"goal": goal}},
             "id": "call_start",
             "type": "tool_call",
         }],
@@ -63,7 +63,7 @@ def _ai_with_start_and_regular_tools() -> AIMessage:
         tool_calls=[
             {
                 "name": "turn",
-                "args": {"operation": "start", "params": {"intent": "coding", "goal": "Inspect file"}},
+                "args": {"operation": "start", "params": {"goal": "Inspect file"}},
                 "id": "call_start_mixed",
                 "type": "tool_call",
             },
@@ -87,15 +87,15 @@ def test_turn_tool_definition_description_requires_start_and_stop():
     description = TURN_TOOL_DEFINITION["function"]["description"]
     assert "operation='start'" in description
     assert "operation='stop'" in description
-    assert "intent and a short goal" in description
+    assert "a short goal" in description
     assert "At turn end" in description
 
 
-def test_turn_tool_definition_requires_operation_intent_goal():
+def test_turn_tool_definition_requires_operation_and_goal():
     params = TURN_TOOL_DEFINITION["function"]["parameters"]
     assert params["type"] == "object"
     assert params["properties"]["operation"]["enum"] == ["start", "stop"]
-    assert params["properties"]["params"]["anyOf"][0]["properties"]["intent"]["enum"] == ["coding", "general"]
+    assert "intent" not in params["properties"]["params"]["anyOf"][0]["properties"]
     assert "goal" in params["properties"]["params"]["anyOf"][0]["properties"]
     assert params["required"] == ["operation", "params"]
     assert params["additionalProperties"] is False
@@ -103,6 +103,13 @@ def test_turn_tool_definition_requires_operation_intent_goal():
 
 def test_turn_tool_definition_is_strict():
     assert TURN_TOOL_DEFINITION["function"]["strict"] is True
+
+def test_turn_tool_definition_params_object_branch_lists_only_goal_as_required():
+    params = TURN_TOOL_DEFINITION["function"]["parameters"]
+    object_branch = params["properties"]["params"]["anyOf"][0]
+
+    assert set(object_branch["properties"]) == {"goal"}
+    assert object_branch["required"] == ["goal"]
 
 
 # ── Classification ───────────────────────────────────────────────────────────
@@ -131,19 +138,30 @@ def test_classify_valid_turn_start_call():
     assert classify_turn_call(msg) == TurnClassification.VALID_START
 
 
-def test_classify_turn_start_accepts_general_intent():
-    msg = _ai_with_turn_start(intent="general", goal="Answer the question")
-    assert classify_turn_call(msg) == TurnClassification.VALID_START
-
-
 def test_classify_turn_start_rejects_empty_goal():
     msg = _ai_with_turn_start(goal="  ")
     assert classify_turn_call(msg) == TurnClassification.INVALID_TURN
 
 
-def test_classify_turn_start_rejects_empty_or_invalid_intent():
-    assert classify_turn_call(_ai_with_turn_start(intent="")) == TurnClassification.INVALID_TURN
-    assert classify_turn_call(_ai_with_turn_start(intent="debug")) == TurnClassification.INVALID_TURN
+
+def test_classify_turn_start_rejects_workflow_inheritance():
+    msg = AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "turn",
+            "args": {
+                "operation": "start",
+                "params": {
+                    "goal": "Continue the previous task",
+                    "workflow_inheritance": "resume",
+                },
+            },
+            "id": "call_resume",
+            "type": "tool_call",
+        }],
+    )
+
+    assert classify_turn_call(msg) == TurnClassification.INVALID_TURN
 
 
 def test_classify_turn_stop_ignores_empty_sentinel_fields():
@@ -250,7 +268,7 @@ def test_classify_start_with_regular_tools_order_independent():
             {"name": "read", "args": {"file_path": "x.py"}, "id": "call_read_first", "type": "tool_call"},
             {
                 "name": "turn",
-                "args": {"operation": "start", "params": {"intent": "coding", "goal": "Inspect file"}},
+                "args": {"operation": "start", "params": {"goal": "Inspect file"}},
                 "id": "call_start_second",
                 "type": "tool_call",
             },
@@ -275,7 +293,7 @@ def test_classify_multiple_turn_calls_invalid():
         content="Done.",
         tool_calls=[
             {"name": "turn", "args": {"operation": "stop", "params": None}, "id": "call_stop_1", "type": "tool_call"},
-            {"name": "turn", "args": {"operation": "start", "params": {"intent": "coding", "goal": "x"}}, "id": "call_start_2", "type": "tool_call"},
+            {"name": "turn", "args": {"operation": "start", "params": {"goal": "x"}}, "id": "call_start_2", "type": "tool_call"},
         ],
     )
     assert classify_turn_call(msg) == TurnClassification.INVALID_TURN
@@ -287,7 +305,7 @@ def test_classify_start_with_tools_rejects_empty_goal():
         tool_calls=[
             {
                 "name": "turn",
-                "args": {"operation": "start", "params": {"intent": "coding", "goal": "  "}},
+                "args": {"operation": "start", "params": {"goal": "  "}},
                 "id": "call_start_empty",
                 "type": "tool_call",
             },
@@ -381,11 +399,10 @@ def test_first_miss_prompt_mentions_turn():
     assert "still need to work" in prompt
 
 
-def test_start_prompt_mentions_start_intent_and_goal():
+def test_start_prompt_mentions_start_and_goal():
     prompt = TURN_START_PROMPT.lower()
     assert "turn" in prompt
     assert "operation='start'" in prompt
-    assert "intent" in prompt
     assert "goal" in prompt
 
 

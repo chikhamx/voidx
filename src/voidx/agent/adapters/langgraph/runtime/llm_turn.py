@@ -37,7 +37,7 @@ from voidx.agent.application.prompts import (
 )
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.agent.adapters.langgraph.state import AgentState
-from voidx.agent.domain.task.state import TaskState, goal_label, goal_type_from_join
+from voidx.agent.domain.task.state import TaskState, WorkflowContextMode, goal_label, goal_type_from_join
 from voidx.agent.domain.task.todo import TodoRunState
 from voidx.agent.adapters.langgraph.runtime.tool_surface import (
     ToolSurfaceContext,
@@ -756,24 +756,27 @@ class LlmTurn:
         instructions = await host._instruction.system(include_files=profile_id != "chat")
         task_state = _task_state_for_context(state.get("task_state"), getattr(host, "_task_state", None))
         current_goal = task_state.current_goal
-        existing_workflow_runs = list((task_state.workflow_runs or {}).values())
-        workflow_start = (
-            task_state.workflow_route.join
-            if task_state.workflow_route and task_state.workflow_route.join
-            else None
-        )
-        workflow_context = await host._workflow_context_for(
-            goal_type=goal_type_from_join(workflow_start),
-            scope=goal_label(current_goal) or current_user_text,
-            active_names=active_workflow_names(existing_workflow_runs),
-            workflow_start=workflow_start,
-            workflow_dag=workflow_dag,
-        )
-        workflow_runs = _merge_workflow_runs(
-            existing_workflow_runs,
-            workflow_context.runs,
-        )
-        runtime_persona = _persona_for_workflow_runs(workflow_runs, fallback=runtime_persona)
+        workflow_runs = []
+        workflow_active: list[str] = []
+        if task_state.workflow_context_mode == WorkflowContextMode.ACTIVE:
+            existing_workflow_runs = task_state.visible_workflow_runs()
+            workflow_start = (
+                task_state.workflow_route.join
+                if task_state.workflow_route and task_state.workflow_route.join
+                else None
+            )
+            workflow_context = await host._workflow_context_for(
+                goal_type=goal_type_from_join(workflow_start),
+                scope=goal_label(current_goal) or current_user_text,
+                active_names=active_workflow_names(existing_workflow_runs),
+                workflow_start=workflow_start,
+                workflow_dag=workflow_dag,
+            )
+            workflow_runs = _merge_workflow_runs(
+                existing_workflow_runs,
+                workflow_context.runs,
+            )
+            workflow_active = workflow_context.active
         summary = host._pending_summary or host._compaction_summary
         host._pending_summary = None
 
@@ -799,7 +802,7 @@ class LlmTurn:
             instructions=instructions,
             workflow_runs=workflow_runs,
             workflow_dag=workflow_dag,
-            active_workflow_summaries=workflow_context.active,
+            active_workflow_summaries=workflow_active,
             summary=summary,
             task_state=task_state,
             session_date=host._session_date,
@@ -813,7 +816,8 @@ class LlmTurn:
         context, host._context_cache = host._last_context_builder.build_incremental(host._context_cache)
         context.apply_to_messages(state.get("messages", []))
 
-        task_state.workflow_runs = {run.name: run for run in workflow_runs}
+        if task_state.workflow_context_mode == WorkflowContextMode.ACTIVE:
+            task_state.workflow_runs = {run.name: run for run in workflow_runs}
         host._task_state = task_state.model_copy(deep=True)
         _invalidate_tui(host)
         return {

@@ -29,11 +29,6 @@ class InteractionMode(str, Enum):
         return self == InteractionMode.PLAN
 
 
-class TaskIntent(str, Enum):
-    CODING = "coding"
-    GENERAL = "general"
-
-
 class PersonaName(str, Enum):
     COORDINATE = "coordinate"
     EXPLORE = "explore"

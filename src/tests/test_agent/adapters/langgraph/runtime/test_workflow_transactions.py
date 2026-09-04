@@ -27,6 +27,7 @@ from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.adapters.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.adapters.persistence.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
+
 from voidx.config import Config, Settings
 from voidx.agent.domain.user_profile import UserProfile
 from voidx.llm.compaction import CompactionSelection
@@ -41,12 +42,14 @@ from voidx.agent.adapters.persistence.session_repository import (
 )
 from voidx.presentation.adapters.persistence.transcript_snapshot import load_transcript
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
-from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
-from voidx.agent.domain.task.intent import TaskIntent
+from voidx.agent.domain.task.state import GoalResolution, GoalSpec, PlanResolution
+
+
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.agent.application.automation.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 from voidx.agent.domain.task.state import TaskState, ToolStatePatch
+
 from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import ToolResult
@@ -84,7 +87,6 @@ def _child_goal_resolution(
     leave: str = "verify",
 ) -> GoalResolution:
     return GoalResolution(
-        intent=IntentResolution(type=TaskIntent.CODING),
         goal=GoalSpec(desc=desc),
         plan=PlanResolution(join=join, leave=leave),
     )
@@ -156,7 +158,7 @@ async def test_execute_tools_does_not_apply_removed_on_intent_state_patch(tmp_pa
         "persona": "coordinate",
         "plan_mode": False,
         "interaction_mode": "auto",
-        "task_state": _task_state_json(current_intent=TaskIntent.GENERAL),
+                "task_state": _task_state_json(),
     })
 
     assert "task_state" not in result
@@ -238,14 +240,13 @@ async def test_plan_checkpoint_transaction_executes_following_tools_with_updated
             return {"type": "object", "properties": {}}
 
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-            observed["task_intent"] = ctx.runtime.task_intent
             observed["goal_target"] = ctx.runtime.goal_target
             observed["goal_type"] = ctx.runtime.goal_type
             observed["workflow_turns"] = {
                 run.name: (run.status.value, run.updated_turn)
                 for run in ctx.runtime.workflow_runs
             }
-            return ToolResult(output=f"read after plan: {ctx.runtime.task_intent}:{ctx.runtime.goal_type}:{ctx.runtime.goal_target}")
+            return ToolResult(output=f"read after plan: {ctx.runtime.goal_type}:{ctx.runtime.goal_target}")
 
     graph.tools.replace("read", RecordingReadTool(), "fake read", {"type": "object", "properties": {}})
 
@@ -300,7 +301,6 @@ async def test_plan_checkpoint_transaction_executes_following_tools_with_updated
         "interaction_mode": "auto",
         "step_count": 5,
         "task_state": _task_state_json(
-            current_intent=TaskIntent.CODING,
             workflow_runs={
                 "debug": WorkflowRunState(name="debug", status=WorkflowRunStatus.ACTIVE),
             },
@@ -309,12 +309,10 @@ async def test_plan_checkpoint_transaction_executes_following_tools_with_updated
 
     assert [message.tool_call_id for message in result["messages"]] == ["call_plan", "call_read"]
     task_state = _result_task_state(result)
-    assert task_state.current_intent == TaskIntent.CODING
     assert task_state.current_goal is not None
     assert task_state.current_goal.desc == "Update runtime state handling"
-    assert result["messages"][1].content == "read after plan: coding:feature:Update runtime state handling"
+    assert result["messages"][1].content == "read after plan: feature:Update runtime state handling"
     assert observed == {
-        "task_intent": "coding",
         "goal_type": "feature",
         "goal_target": "Update runtime state handling",
         "workflow_turns": {

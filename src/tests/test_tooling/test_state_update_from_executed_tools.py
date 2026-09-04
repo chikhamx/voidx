@@ -29,12 +29,12 @@ from voidx.agent.adapters.tools.subagent import AgentInput, AgentTool
 from voidx.agent.application.runtime.task_tracker import TaskTracker
 from voidx.agent.adapters.tools.todo import TodoInput, TodoWriteTool
 from voidx.tooling.application.registry import ToolRegistry
-from voidx.agent.adapters.tools.interaction.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
+from voidx.agent.adapters.tools.interaction.clarify import ClarifyTool, ClarifyInput
 from voidx.tooling.adapters.skills import SkillsTool
 from voidx.tooling.builtin.document import DocumentTool, DocumentInput
 from voidx.agent.adapters.tools.interaction.checkpoint import PlanCheckpointTool
-from voidx.agent.domain.task.state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
-from voidx.agent.application.runtime_context import TaskIntent
+from voidx.agent.domain.task.state import GoalSpec, GoalResolution, PlanResolution, ToolStatePatch
+
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 from voidx.agent.domain.automation.workflow import WorkflowStateEventKind
@@ -45,7 +45,7 @@ class TestStateUpdateFromExecutedTools:
     def test_merges_state_patches(self):
         from voidx.agent.adapters.langgraph.runtime.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
-        patch1 = ToolStatePatch(intent=IntentResolution(type=TaskIntent.CODING))
+        patch1 = ToolStatePatch()
         patch2 = ToolStatePatch(
             goal=GoalSpec(desc="Refactor auth"),
             plan=PlanResolution(join="tdd", leave="verify"),
@@ -63,7 +63,6 @@ class TestStateUpdateFromExecutedTools:
         ]
 
         update = _state_update_from_executed_tools(executed, workflow_dag=DEFAULT_WORKFLOW_DAG)
-        assert update["task_intent"] == "coding"
         assert update["current_goal"]["desc"] == "Refactor auth"
         assert "type" not in update["current_goal"]
         assert update["workflow_route"] == {"join": "tdd", "leave": "verify"}
@@ -71,8 +70,8 @@ class TestStateUpdateFromExecutedTools:
     def test_later_patch_overrides_earlier(self):
         from voidx.agent.adapters.langgraph.runtime.tool_executor import _state_update_from_executed_tools, _ExecutedTool
 
-        patch1 = ToolStatePatch(intent=IntentResolution(type=TaskIntent.GENERAL))
-        patch2 = ToolStatePatch(intent=IntentResolution(type=TaskIntent.CODING))
+        patch1 = ToolStatePatch(goal=GoalSpec(desc="First goal"))
+        patch2 = ToolStatePatch(goal=GoalSpec(desc="Second goal"))
 
         msg1 = ToolMessage(content="r1", tool_call_id="c1")
         msg2 = ToolMessage(content="r2", tool_call_id="c2")
@@ -86,7 +85,7 @@ class TestStateUpdateFromExecutedTools:
         ]
 
         update = _state_update_from_executed_tools(executed, workflow_dag=DEFAULT_WORKFLOW_DAG)
-        assert update["task_intent"] == "coding"
+        assert update["current_goal"]["desc"] == "Second goal"
 
     def test_state_patch_updates_runtime_persona(self):
         from voidx.agent.adapters.langgraph.runtime.tool_executor import _state_update_from_executed_tools, _ExecutedTool

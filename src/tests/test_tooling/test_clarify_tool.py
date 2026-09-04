@@ -30,7 +30,7 @@ from voidx.agent.adapters.tools.subagent import AgentInput, AgentTool
 from voidx.agent.application.runtime.task_tracker import TaskTracker
 from voidx.agent.adapters.tools.todo import TodoInput, TodoWriteTool
 from voidx.tooling.application.registry import ToolRegistry
-from voidx.agent.adapters.tools.interaction.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
+from voidx.agent.adapters.tools.interaction.clarify import ClarifyTool, ClarifyInput
 from voidx.presentation.output.events import (
     ClarifyAnswerSubmitted,
     ClarifyPromptShown,
@@ -43,8 +43,8 @@ from voidx.presentation.output.events import (
     CheckpointPromptShown,
     ui_events,
 )
-from voidx.agent.domain.task.state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
-from voidx.agent.application.runtime_context import TaskIntent
+from voidx.agent.domain.task.state import GoalSpec, GoalResolution, PlanResolution, ToolStatePatch
+
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 from voidx.agent.domain.automation.workflow import WorkflowStateEventKind
@@ -54,7 +54,7 @@ import voidx.persistence.sqlite as store
 class TestClarifyTool:
 
     @pytest.mark.asyncio
-    async def test_clarify_uses_interaction_callback_and_returns_state_patch(self, tmp_path):
+    async def test_clarify_uses_interaction_callback(self, tmp_path):
         requests = []
 
         async def interact(request):
@@ -71,7 +71,6 @@ class TestClarifyTool:
 
         assert requests
         assert result.metadata["clarify_answer"] == "implement"
-        assert result.metadata["state_patch"]["intent"]["type"] == "coding"
 
 
     @pytest.mark.asyncio

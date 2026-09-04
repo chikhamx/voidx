@@ -107,9 +107,10 @@ def rerender_task_context(
     if task_state is not None:
         builder.task_state = task_state
         builder.current_goal = task_state.current_goal
-        builder.task_intent = task_state.current_intent
         builder.workflow_route = task_state.workflow_route
-        builder.workflow_runs = list(task_state.workflow_runs.values())
+        builder.workflow_context_mode = task_state.workflow_context_mode
+        visible_workflow_runs = task_state.visible_workflow_runs()
+        builder.workflow_runs = visible_workflow_runs
         builder.todo_state = task_state.todo_state
         builder.active_workflow_summaries = [
             (
@@ -117,7 +118,7 @@ def rerender_task_context(
                 if run.reason.strip()
                 else run.name
             )
-            for run in task_state.workflow_runs.values()
+            for run in visible_workflow_runs
             if getattr(run.status, "value", run.status) == "active"
         ]
     context = builder.build()

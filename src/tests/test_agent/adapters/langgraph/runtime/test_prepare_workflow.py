@@ -31,6 +31,7 @@ from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.adapters.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.adapters.persistence.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
+
 from voidx.config import Config, Settings
 from voidx.agent.domain.user_profile import UserProfile
 from voidx.llm.compaction import CompactionSelection
@@ -45,12 +46,21 @@ from voidx.agent.adapters.persistence.session_repository import (
 )
 from voidx.presentation.adapters.persistence.transcript_snapshot import load_transcript
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
-from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
-from voidx.agent.domain.task.intent import TaskIntent
+from voidx.agent.domain.task.state import GoalResolution, GoalSpec, PlanResolution
+
+
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.agent.application.automation.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
+from voidx.agent.domain.task.state import (
+
+    GoalResolution,
+    GoalSpec,
+    PlanResolution,
+    TaskState,
+)
 from voidx.agent.domain.task.state import TaskState, ToolStatePatch
+
 from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import ToolResult
@@ -102,7 +112,6 @@ def _child_goal_resolution(
     leave: str = "verify",
 ) -> GoalResolution:
     return GoalResolution(
-        intent=IntentResolution(type=TaskIntent.CODING),
         goal=GoalSpec(desc=desc),
         plan=PlanResolution(join=join, leave=leave),
     )
@@ -208,9 +217,7 @@ async def test_prepare_injects_workflow_nodes_from_task_state(tmp_path):
         "persona": "voidx",
         "plan_mode": False,
         "interaction_mode": "auto",
-        "task_intent": "coding",
         "task_state": TaskState(
-            current_intent=TaskIntent.CODING,
             current_goal=GoalSpec(desc="修复 runtime bug"),
             workflow_route=WorkflowRoute(join="debug", leave="verify"),
         ).model_dump(mode="json"),
@@ -272,7 +279,6 @@ async def test_prepare_syncs_triggered_workflow_to_status_state(tmp_path):
             "plan_mode": False,
             "interaction_mode": "auto",
             "task_state": TaskState(
-                current_intent=TaskIntent.CODING,
                 current_goal=GoalSpec(desc="debug this flaky test"),
                 workflow_route=WorkflowRoute(join="debug", leave="verify"),
             ).model_dump(mode="json"),
@@ -313,7 +319,7 @@ async def test_prepare_samples_direct_child_runs_into_current_task_state(tmp_pat
         "persona": "coordinate",
         "plan_mode": False,
         "interaction_mode": "auto",
-        "task_state": TaskState(current_intent=TaskIntent.CODING).model_dump(mode="json"),
+                "task_state": TaskState().model_dump(mode="json"),
         "tool_results": {},
         "step_count": 0,
         "should_continue": True,
@@ -466,7 +472,6 @@ async def test_prepare_does_not_reactivate_satisfied_workflow_via_stale_route(tm
         "plan_mode": False,
         "interaction_mode": "auto",
         "task_state": TaskState(
-            current_intent=TaskIntent.CODING,
             current_goal=GoalSpec(desc="实现 feature X"),
             workflow_route=WorkflowRoute(join="feedback", leave=None),
             workflow_runs={

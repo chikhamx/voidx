@@ -974,7 +974,7 @@
           },
           "progress": {
             "default": "none",
-            "description": "none, partial, or meaningful.",
+            "description": "Progress toward the loop goal: none, partial, or meaningful. Report it honestly — consecutive 'none' iterations auto-pause the loop for user review.",
             "enum": [
               "none",
               "partial",

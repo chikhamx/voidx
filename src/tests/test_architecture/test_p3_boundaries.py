@@ -122,7 +122,6 @@ def test_tool_execution_context_contains_values_not_service_objects() -> None:
     assert not any(token.lower() in text.lower() for token in forbidden)
     assert not any(isinstance(node, ast.FunctionDef) and node.name == "__init__" for node in context.body)
     forbidden_fields = {
-        "task_intent",
         "goal_type",
         "goal_target",
         "active_workflow_names",

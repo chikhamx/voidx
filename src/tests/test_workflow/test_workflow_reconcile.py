@@ -1,10 +1,10 @@
 from voidx.agent.domain.agent_profile import content_hash_of
 from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
-from voidx.agent.domain.task.intent import TaskIntent
+
 from voidx.agent.domain.task.state import (
+
     GoalResolution,
     GoalSpec,
-    IntentResolution,
     PlanResolution,
     TaskState,
 )
@@ -33,7 +33,6 @@ def _resolution(
     leave: str | None = None,
 ) -> GoalResolution:
     return GoalResolution(
-        intent=IntentResolution(type=TaskIntent.CODING),
         goal=goal,
         plan=PlanResolution(join=join, leave=leave) if join is not None else None,
     )

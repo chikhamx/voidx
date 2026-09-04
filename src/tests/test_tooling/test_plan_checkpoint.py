@@ -32,7 +32,7 @@ from voidx.agent.adapters.tools.subagent import AgentInput, AgentTool
 from voidx.agent.application.runtime.task_tracker import TaskTracker
 from voidx.agent.adapters.tools.todo import TodoInput, TodoWriteTool
 from voidx.tooling.application.registry import ToolRegistry
-from voidx.agent.adapters.tools.interaction.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
+from voidx.agent.adapters.tools.interaction.clarify import ClarifyTool, ClarifyInput
 from voidx.presentation.output.events import (
     ClarifyAnswerSubmitted,
     ClarifyPromptShown,
@@ -45,8 +45,8 @@ from voidx.presentation.output.events import (
     CheckpointPromptShown,
     ui_events,
 )
-from voidx.agent.domain.task.state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
-from voidx.agent.application.runtime_context import TaskIntent
+from voidx.agent.domain.task.state import GoalSpec, GoalResolution, PlanResolution, ToolStatePatch
+
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 from voidx.agent.domain.automation.workflow import WorkflowStateEventKind
@@ -66,7 +66,6 @@ class TestPlanCheckpoint:
 
         assert result.metadata["plan_decision"] == "approved"
         patch = result.metadata["state_patch"]
-        assert patch["intent"]["type"] == "coding"
         assert patch["goal"]["desc"] == "Update runtime state handling"
         assert patch["plan"] == {"join": "tdd", "leave": "verify"}
         assert patch["workflow_runs"][0]["name"] == "tdd"
@@ -272,7 +271,6 @@ class TestPlanCheckpoint:
 
         assert result.metadata["plan_decision"] == "rejected"
         patch = result.metadata["state_patch"]
-        assert patch["intent"]["type"] == "coding"
         assert "goal" not in patch
         assert result.next_step_hint == ""
 
@@ -292,7 +290,6 @@ class TestPlanCheckpoint:
         assert any(label == "Document first" for label, _, _ in requests[0].options)
         assert result.metadata["plan_decision"] == "needs_doc"
         patch = result.metadata["state_patch"]
-        assert patch["intent"]["type"] == "coding"
         assert patch["goal"]["desc"] == "Add checkpoint document option"
         assert patch["plan"] == {"join": "design", "leave": "design"}
         assert result.next_step_hint == ""
@@ -336,7 +333,6 @@ class TestPlanCheckpoint:
 
         assert result.metadata["plan_decision"] == "modified"
         patch = result.metadata["state_patch"]
-        assert patch["intent"]["type"] == "coding"
         assert patch["goal"]["desc"] == "Only refactor the login function"
         assert result.next_step_hint == ""
         assert len(interact_calls) == 2
@@ -357,7 +353,6 @@ class TestPlanCheckpoint:
         assert payload["decision"] == "modified"
         assert payload["modified_scope"] == "Only update the login form"
         patch = result.metadata["state_patch"]
-        assert patch["intent"]["type"] == "coding"
         assert patch["goal"]["desc"] == "Only update the login form"
 
     @pytest.mark.asyncio

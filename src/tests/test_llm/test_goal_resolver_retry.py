@@ -6,12 +6,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 from voidx.agent.application.automation.goal.goal_resolver import resolve_goal_for_turn, ResolverGoal
 from voidx.config import RetryConfig
-from voidx.agent.domain.task.intent import TaskIntent
-from voidx.agent.domain.task.state import TaskState
+
+from voidx.agent.domain.task.state import GoalSpec, TaskState
 
 
-def _make_task_state() -> TaskState:
-    return TaskState()
+
+def _make_task_state(goal: str | None = None) -> TaskState:
+    return TaskState(current_goal=GoalSpec(desc=goal) if goal else None)
 
 
 def _make_model(ainvoke_side_effects):
@@ -28,7 +29,7 @@ class TestGoalResolverRetry:
     @pytest.mark.asyncio
     async def test_retries_on_timeout_then_succeeds(self):
         task_state = _make_task_state()
-        good_result = ResolverGoal(intent="coding", goal="fix bug")
+        good_result = ResolverGoal(goal="fix bug")
         model = _make_model([
             asyncio.TimeoutError(),
             good_result,
@@ -42,11 +43,11 @@ class TestGoalResolverRetry:
             task_state=task_state,
             retry_config=rc,
         )
-        assert result.intent.type == TaskIntent.CODING
+        assert result.goal is not None
 
     @pytest.mark.asyncio
     async def test_falls_back_after_exhausting_retries(self):
-        task_state = _make_task_state()
+        task_state = _make_task_state(goal="existing goal")
         model = _make_model([
             asyncio.TimeoutError(),
             asyncio.TimeoutError(),
@@ -61,12 +62,12 @@ class TestGoalResolverRetry:
             task_state=task_state,
             retry_config=rc,
         )
-        assert result.intent.type == TaskIntent.GENERAL
+        assert result.goal is not None
 
     @pytest.mark.asyncio
     async def test_no_retry_config_uses_default(self):
         task_state = _make_task_state()
-        good_result = ResolverGoal(intent="coding", goal="fix bug")
+        good_result = ResolverGoal(goal="fix bug")
         model = _make_model([
             asyncio.TimeoutError(),
             good_result,
@@ -78,11 +79,11 @@ class TestGoalResolverRetry:
             interaction_mode=None,
             task_state=task_state,
         )
-        assert result.intent.type == TaskIntent.CODING
+        assert result.goal is not None
 
     @pytest.mark.asyncio
     async def test_non_retryable_exception_no_retry(self):
-        task_state = _make_task_state()
+        task_state = _make_task_state(goal="existing goal")
         model = _make_model([
             ValueError("not a transient error"),
         ])
@@ -95,4 +96,4 @@ class TestGoalResolverRetry:
             task_state=task_state,
             retry_config=rc,
         )
-        assert result.intent.type == TaskIntent.GENERAL
+        assert result.goal is not None

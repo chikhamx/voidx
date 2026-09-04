@@ -8,16 +8,17 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from typing_extensions import NotRequired
 
 from voidx.agent.application.runtime_context import (
+
     COMPACTION_GUIDE_MARKER,
     ContextCompilerCache,
     InteractionMode,
     RuntimeContextBuilder,
-    TaskIntent,
     is_goal_resolution_guide_content,
     raw_semantic_messages,
 )
 from voidx.agent.adapters.langgraph.state import AgentState
 from voidx.agent.domain.task.state import GoalSpec, TaskState
+
 from voidx.agent.domain.task.todo import TodoRunState
 from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
@@ -121,7 +122,7 @@ def test_current_task_state_can_hide_workflow_transitions(tmp_path):
         base_system_prompt="You are voidx.",
         persona="implement",
         interaction_mode=InteractionMode.AUTO,
-        task_state=TaskState(current_intent=TaskIntent.CODING),
+        task_state=TaskState(),
         workflow_runs=[
             WorkflowRunState(
                 name="tdd",
@@ -385,7 +386,7 @@ def test_runtime_context_system_uses_session_date_not_runtime_state(tmp_path):
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
         session_date="2026-06-06 CST",
-        task_state=TaskState(current_intent=TaskIntent.GENERAL),
+        task_state=TaskState(),
     ).build()
     second = RuntimeContextBuilder(
         config=Config(workspace=str(tmp_path)),
@@ -394,7 +395,7 @@ def test_runtime_context_system_uses_session_date_not_runtime_state(tmp_path):
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
         session_date="2026-06-06 CST",
-        task_state=TaskState(current_intent=TaskIntent.CODING),
+        task_state=TaskState(),
     ).build()
 
     assert first.render_system() == second.render_system()
@@ -551,7 +552,7 @@ def test_runtime_context_migrates_task_overlay_from_ai_message_to_latest_message
         HumanMessage(content="current request"),
         AIMessage(content=(
             "VOIDX_RUNTIME_CONTEXT\n\n"
-            "## Current Task State\n- Intent: coding\n\n"
+            "## Current Task State\n\n"
             "## Task Context\nassistant visible text"
         )),
         ToolMessage(content="latest tool result", tool_call_id="call_latest"),
@@ -582,7 +583,7 @@ def test_runtime_context_migrates_task_overlay_from_ai_list_content_to_latest_me
                 "type": "text",
                 "text": (
                     "VOIDX_RUNTIME_CONTEXT\n\n"
-                    "## Current Task State\n- Intent: coding\n\n"
+                    "## Current Task State\n\n"
                     "## Task Context\nassistant visible text"
                 ),
             },
@@ -617,7 +618,7 @@ def test_runtime_context_migrates_task_overlay_from_tool_message_to_latest_messa
         ToolMessage(
             content=(
                 "VOIDX_RUNTIME_CONTEXT\n\n"
-                "## Current Task State\n- Intent: coding\n\n"
+                "## Current Task State\n\n"
                 "## Task Context\ntool visible text"
             ),
             tool_call_id="call_old",

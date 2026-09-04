@@ -13,8 +13,10 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 import voidx.persistence.sqlite as store
 import voidx.persistence.jsonl as jsonl_store
 
-from voidx.agent.application.runtime_context import InteractionMode, TaskIntent
+from voidx.agent.application.runtime_context import InteractionMode
+
 from voidx.agent.domain.task.state import GoalSpec, TaskState, TurnExchange
+
 from voidx.agent.domain.task.todo import TodoRunState
 from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.agent.adapters.persistence.session_repository import (
@@ -55,8 +57,6 @@ async def test_runtime_state_round_trips_structured_goal_state():
     session = await create_session()
     try:
         state = TaskState(
-            current_intent=TaskIntent.CODING,
-            previous_intent=TaskIntent.CODING,
             current_goal=GoalSpec(desc="优化 markdown 渲染截断"),
             workflow_route=WorkflowRoute(join="brainstorm", leave="plan"),
             recent_exchanges=[
@@ -99,8 +99,6 @@ async def test_runtime_state_round_trips_structured_goal_state():
 
         assert loaded.interaction_mode == InteractionMode.GOAL
         assert loaded.session_time == "2026-06-11 CST"
-        assert loaded.task_state.current_intent == TaskIntent.CODING
-        assert loaded.task_state.previous_intent == TaskIntent.CODING
         assert loaded.task_state.current_goal is not None
         assert loaded.task_state.current_goal.desc == "优化 markdown 渲染截断"
         assert loaded.task_state.current_goal.desc == "优化 markdown 渲染截断"
@@ -150,7 +148,6 @@ async def test_message_runtime_snapshot_round_trips_per_turn_state():
             message_id=message_id,
             session_id=session.id,
             interaction_mode=InteractionMode.GOAL,
-            task_intent=TaskIntent.CODING,
             current_goal=GoalSpec(desc="优化 markdown 渲染截断"),
             workflow_route=WorkflowRoute(join="brainstorm", leave="plan"),
             workflow_runs={
@@ -167,7 +164,6 @@ async def test_message_runtime_snapshot_round_trips_per_turn_state():
 
         assert loaded is not None
         assert loaded.interaction_mode == InteractionMode.GOAL
-        assert loaded.task_intent == TaskIntent.CODING
         assert loaded.current_goal is not None
         assert loaded.current_goal.desc == "优化 markdown 渲染截断"
         assert loaded.workflow_route is not None
@@ -187,7 +183,6 @@ async def test_message_runtime_snapshot_round_trips_from_runtime_debug_jsonl():
             message_id=message_id,
             session_id=session.id,
             interaction_mode=InteractionMode.GOAL,
-            task_intent=TaskIntent.CODING,
             current_goal=GoalSpec(desc="优化 markdown 渲染截断"),
             workflow_route=WorkflowRoute(join="brainstorm", leave="plan"),
             workflow_runs={
@@ -224,7 +219,6 @@ async def test_message_runtime_snapshot_does_not_write_legacy_snapshot_table():
             message_id=message_id,
             session_id=session.id,
             interaction_mode=InteractionMode.GOAL,
-            task_intent=TaskIntent.CODING,
             current_goal=GoalSpec(desc="优化 markdown 渲染截断"),
         ))
 
@@ -249,7 +243,6 @@ async def test_message_runtime_snapshot_updates_latest_session_runtime_state():
             message_id=message_id,
             session_id=session.id,
             interaction_mode=InteractionMode.GOAL,
-            task_intent=TaskIntent.CODING,
             current_goal=GoalSpec(desc="优化 markdown 渲染截断"),
             workflow_route=WorkflowRoute(join="brainstorm", leave="plan"),
             workflow_runs={
@@ -265,7 +258,6 @@ async def test_message_runtime_snapshot_updates_latest_session_runtime_state():
         loaded = await load_runtime_state(session.id)
 
         assert loaded.interaction_mode == InteractionMode.GOAL
-        assert loaded.task_state.current_intent == TaskIntent.CODING
         assert loaded.task_state.current_goal is not None
         assert loaded.task_state.current_goal.desc == "优化 markdown 渲染截断"
         assert loaded.task_state.workflow_route is not None
@@ -301,7 +293,6 @@ async def test_delete_session_cascades_all_child_tables():
             message_id=msg_id,
             session_id=session.id,
             interaction_mode=InteractionMode.GOAL,
-            task_intent=TaskIntent.CODING,
         ))
 
         await delete_session(session.id)

@@ -32,7 +32,6 @@ class AgentToolRuntime:
     events: ToolUiEventPublisher | None = None
     access_grants: object | None = None
     revocation_epoch: object | None = None
-    task_intent: str = "coding"
     goal_type: str = ""
     goal_target: str = ""
     active_workflow_names: list[str] = field(default_factory=list)

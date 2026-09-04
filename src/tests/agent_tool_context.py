@@ -7,7 +7,6 @@ from voidx.agent.adapters.tools.context import AgentToolExecutionContext, AgentT
 
 
 _AGENT_RUNTIME_FIELDS = (
-    "task_intent",
     "goal_type",
     "goal_target",
     "active_workflow_names",

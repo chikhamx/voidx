@@ -35,8 +35,9 @@ class ScriptedStreamingModel:
         yield AIMessageChunk(content="")
 
 
-def _turn_args(operation: str = "stop", intent: str = "", goal: str = "") -> dict[str, str]:
-    return {"operation": operation, "params": None if operation == "stop" else {"intent": intent, "goal": goal}}
+def _turn_args(operation: str = "stop", goal: str = "") -> dict:
+    params = None if operation == "stop" else {"goal": goal}
+    return {"operation": operation, "params": params}
 
 
 def _turn_call_chunk() -> AIMessageChunk:
@@ -61,12 +62,15 @@ def _turn_stop_with_text_chunk(text: str = "unexpected text") -> AIMessageChunk:
 
 
 
-def _turn_start_chunk(intent: str = "coding", goal: str = "Fix the issue") -> AIMessageChunk:
+def _turn_start_chunk(goal: str = "Fix the issue") -> AIMessageChunk:
     return AIMessageChunk(
         content="",
         tool_calls=[{
             "name": "turn",
-            "args": _turn_args(operation="start", intent=intent, goal=goal),
+            "args": _turn_args(
+                operation="start",
+                goal=goal,
+            ),
             "id": "tc-start",
             "type": "tool_call",
         }],
@@ -91,7 +95,7 @@ def test_turn_tool_definition_describes_start_and_stop_usage():
     assert "start may be combined with regular tools" in description
     assert "stop may be combined with regular tools" in description
     assert definition["parameters"]["properties"]["operation"]["description"] == (
-        "start declares intent and goal; stop commits the pending final answer."
+        "start declares the goal; stop commits the pending final answer."
     )
 
 
@@ -106,7 +110,6 @@ def _mixed_chunk() -> AIMessageChunk:
 
 
 def _start_with_regular_tools_chunk(
-    intent: str = "coding",
     goal: str = "Inspect file",
 ) -> AIMessageChunk:
     return AIMessageChunk(
@@ -114,7 +117,7 @@ def _start_with_regular_tools_chunk(
         tool_calls=[
             {
                 "name": "turn",
-                "args": _turn_args(operation="start", intent=intent, goal=goal),
+                "args": _turn_args(operation="start", goal=goal),
                 "id": "tc-start-mixed",
                 "type": "tool_call",
             },
@@ -193,6 +196,7 @@ async def test_turn_start_accepts_goal_then_continues_to_stop(tmp_path, monkeypa
         and "Check the active workflow" in str(msg.content)
         for msg in model.received_messages[1]
     )
+
 
 
 # ── Test 1: valid turn commits latest provisional response ──────────────────

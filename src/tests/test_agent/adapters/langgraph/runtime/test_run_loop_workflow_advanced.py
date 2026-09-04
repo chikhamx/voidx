@@ -19,10 +19,13 @@ from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.application.agent_service import AgentService
 from voidx.agent.adapters.langgraph.execution import _sanitize_generated_title
-from voidx.agent.application.runtime_context import InteractionMode, TaskIntent
-from voidx.agent.domain.task.state import GoalResolution, IntentResolution, PlanResolution, GoalSpec, TaskState
+from voidx.agent.application.runtime_context import InteractionMode
+
+from voidx.agent.domain.task.state import GoalResolution, PlanResolution, GoalSpec, TaskState
+
 from voidx.agent.application.automation.goal.goal_resolver import ResolverGoal
 from voidx.agent.domain.task.state import GoalSpec, TaskState
+
 from voidx.config import Config
 from voidx.llm.usage import UsageStats
 from voidx.agent.adapters.persistence.runtime_state_repository import RuntimeStateSnapshot, save_runtime_state
@@ -85,7 +88,6 @@ async def test_run_turn_clears_stale_completed_workflow_when_resolver_has_no_joi
             assert "## ResolverGoal Schema" not in messages[-1].content
             assert "检查检查，准备push吧" in messages[-1].content
             return {
-                "intent": "coding",
                 "goal": None,
                 "workflow": None,
                 "kind_hint": "chore",
@@ -132,7 +134,6 @@ async def test_run_turn_preadvances_workflow_from_resolver_workflow_start(tmp_pa
 
     def _fake_build_goal_resolution(user_text, task_state):
         return GoalResolution(
-            intent=IntentResolution(type=TaskIntent.CODING),
             goal=GoalSpec(desc="agent_name 语义清理"),
             plan=PlanResolution(join="design", leave=None),
         )

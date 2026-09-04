@@ -27,6 +27,7 @@ from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.adapters.langgraph.execution import AGENT_RESULT_PREVIEW_CHARS, _agent_result_preview
 from voidx.agent.adapters.persistence.message_rows import RowMessageCacheEntry
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
+
 from voidx.config import Config, Settings
 from voidx.agent.domain.user_profile import UserProfile
 from voidx.llm.compaction import CompactionSelection
@@ -41,12 +42,14 @@ from voidx.agent.adapters.persistence.session_repository import (
 )
 from voidx.presentation.adapters.persistence.transcript_snapshot import load_transcript
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
-from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
-from voidx.agent.domain.task.intent import TaskIntent
+from voidx.agent.domain.task.state import GoalResolution, GoalSpec, PlanResolution
+
+
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.agent.application.automation.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 from voidx.agent.domain.task.state import TaskState, ToolStatePatch
+
 from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import ToolResult
@@ -84,7 +87,6 @@ def _child_goal_resolution(
     leave: str = "verify",
 ) -> GoalResolution:
     return GoalResolution(
-        intent=IntentResolution(type=TaskIntent.CODING),
         goal=GoalSpec(desc=desc),
         plan=PlanResolution(join=join, leave=leave),
     )
@@ -204,9 +206,8 @@ async def test_multiple_barriers_apply_patches_in_order(tmp_path):
             return {"type": "object", "properties": {}}
 
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-            observed.append(f"clarify:{ctx.runtime.task_intent}:{ctx.runtime.goal_type}:{ctx.runtime.goal_target}")
+            observed.append(f"clarify:{ctx.runtime.goal_type}:{ctx.runtime.goal_target}")
             patch = ToolStatePatch(
-                intent=IntentResolution(type=TaskIntent.CODING),
                 goal=GoalSpec(desc="after intent"),
             )
             return ToolResult(
@@ -222,9 +223,8 @@ async def test_multiple_barriers_apply_patches_in_order(tmp_path):
             return {"type": "object", "properties": {}}
 
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-            observed.append(f"checkpoint:{ctx.runtime.task_intent}:{ctx.runtime.goal_type}:{ctx.runtime.goal_target}")
+            observed.append(f"checkpoint:{ctx.runtime.goal_type}:{ctx.runtime.goal_target}")
             patch = ToolStatePatch(
-                intent=IntentResolution(type=TaskIntent.CODING),
                 goal=GoalSpec(desc="after plan"),
             )
             return ToolResult(
@@ -240,8 +240,8 @@ async def test_multiple_barriers_apply_patches_in_order(tmp_path):
             return {"type": "object", "properties": {}}
 
         async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
-            observed.append(f"read:{ctx.runtime.task_intent}:{ctx.runtime.goal_type}:{ctx.runtime.goal_target}")
-            return ToolResult(output=f"read after barriers: {ctx.runtime.task_intent}:{ctx.runtime.goal_type}:{ctx.runtime.goal_target}")
+            observed.append(f"read:{ctx.runtime.goal_type}:{ctx.runtime.goal_target}")
+            return ToolResult(output=f"read after barriers: {ctx.runtime.goal_type}:{ctx.runtime.goal_target}")
 
     graph.tools.replace("clarify", FakeClarifyTool(), "fake clarify", {"type": "object", "properties": {}})
     graph.tools.replace("checkpoint", FakePlanTool(), "fake plan", {"type": "object", "properties": {}})
@@ -271,7 +271,7 @@ async def test_multiple_barriers_apply_patches_in_order(tmp_path):
         "persona": "voidx",
         "plan_mode": False,
         "interaction_mode": "auto",
-        "task_state": _task_state_json(current_intent=TaskIntent.GENERAL),
+                "task_state": _task_state_json(),
     })
 
     assert [message.tool_call_id for message in result["messages"]] == [
@@ -280,15 +280,14 @@ async def test_multiple_barriers_apply_patches_in_order(tmp_path):
         "call_read",
     ]
     assert observed == [
-        "clarify:general::",
-        "checkpoint:coding::after intent",
-        "read:coding::after plan",
+        "clarify::",
+        "checkpoint::after intent",
+        "read::after plan",
     ]
     task_state = _result_task_state(result)
-    assert task_state.current_intent == TaskIntent.CODING
     assert task_state.current_goal is not None
     assert task_state.current_goal.desc == "after plan"
-    assert result["messages"][2].content == "read after barriers: coding::after plan"
+    assert result["messages"][2].content == "read after barriers: :after plan"
 
 
 @pytest.mark.asyncio
@@ -336,7 +335,6 @@ async def test_workflow_transaction_reauthorizes_following_write(tmp_path):
         "plan_mode": False,
         "interaction_mode": "auto",
         "task_state": _task_state_json(
-            current_intent=TaskIntent.CODING,
             workflow_runs={
                 "brainstorm": WorkflowRunState(name="brainstorm", status=WorkflowRunStatus.ACTIVE),
             },

@@ -8,7 +8,6 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMe
 from voidx.agent.adapters.langgraph.runtime.core.loop import LlmLoopState
 from voidx.agent.domain.task.intent import InteractionMode
 from voidx.agent.adapters.langgraph.runtime.streaming import extract_text
-from voidx.agent.adapters.langgraph.runtime.topology import latest_user_text
 from voidx.agent.adapters.langgraph.runtime.turn_control import (
     NO_USER_RESPONSE_PROMPT,
     TURN_START_PROMPT,
@@ -20,10 +19,8 @@ from voidx.agent.adapters.langgraph.runtime.turn_control import (
 from voidx.agent.domain.task.state import (
     GoalResolution,
     GoalSpec,
-    IntentResolution,
     TaskState,
 )
-from voidx.agent.application.runtime_context import TaskIntent
 from voidx.llm.message_markers import GUIDANCE_MARKER
 from voidx.agent.application.automation.workflow.service import reconcile_workflow_runs_for_turn
 from voidx.agent.domain.automation.workflow_schema import WorkflowDAG
@@ -293,19 +290,12 @@ async def _handle_turn_start(
 
     start_args = (start_call or {}).get("args") or {}
     start_params = start_args.get("params") or {}
-    intent_value = str(start_params.get("intent") or "coding")
     goal_text = str(start_params.get("goal") or "").strip()
     resolution = GoalResolution(
-        intent=IntentResolution(
-            type=TaskIntent.GENERAL if intent_value == "general" else TaskIntent.CODING,
-        ),
         goal=GoalSpec(desc=goal_text),
         plan=None,
     )
-    runtime_task_state.update_after_turn(
-        resolution,
-        latest_user_text(state_messages),
-    )
+    runtime_task_state.update_after_turn(resolution)
     if workflow_dag is not None:
         reconciled_workflow_runs = reconcile_workflow_runs_for_turn(
             goal_resolution=resolution,

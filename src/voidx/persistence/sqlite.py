@@ -511,8 +511,6 @@ def bootstrap_schema(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS session_runtime_state (
             session_id TEXT PRIMARY KEY,
             interaction_mode TEXT NOT NULL DEFAULT 'auto',
-            current_intent TEXT NOT NULL DEFAULT 'coding',
-            previous_intent TEXT,
             current_goal_json TEXT,
             workflow_route_json TEXT NOT NULL DEFAULT '',
             workflow_runs_json TEXT NOT NULL DEFAULT '{}',
@@ -630,8 +628,6 @@ def canonicalize_core_schema(conn: sqlite3.Connection) -> None:
     expected_runtime_columns = [
         "session_id",
         "interaction_mode",
-        "current_intent",
-        "previous_intent",
         "current_goal_json",
         "workflow_route_json",
         "workflow_runs_json",

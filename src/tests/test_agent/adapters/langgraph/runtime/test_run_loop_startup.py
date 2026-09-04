@@ -19,11 +19,12 @@ from voidx.agent.adapters.langgraph.runtime.compaction_coordinator import Prefli
 from voidx.agent.application.coding_service import CODING_PROFILE, CodingService
 from voidx.agent.application.agent_service import AgentService
 from voidx.agent.adapters.langgraph.execution import _sanitize_generated_title
-from voidx.agent.application.runtime_context import InteractionMode, TaskIntent
+from voidx.agent.application.runtime_context import InteractionMode
+
 from voidx.agent.domain.task.state import (
+
     GoalResolution,
     GoalSpec,
-    IntentResolution,
     PlanResolution,
     TaskState,
 )
@@ -718,7 +719,6 @@ async def test_resume_restores_structured_runtime_state(tmp_path):
         RuntimeStateSnapshot(
             interaction_mode=InteractionMode.GOAL,
             task_state=TaskState(
-                current_intent=TaskIntent.CODING,
                 current_goal=GoalSpec(desc="优化 markdown 渲染截断"),
             ),
         ),
@@ -737,7 +737,6 @@ async def test_resume_restores_structured_runtime_state(tmp_path):
         )._resume(f"/resume {session.id}")
 
         assert execution._interaction_mode == InteractionMode.GOAL
-        assert execution._task_state.current_intent == TaskIntent.CODING
         assert execution._task_state.current_goal is not None
         assert execution._task_state.current_goal.desc == "优化 markdown 渲染截断"
     finally:

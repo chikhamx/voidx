@@ -8,16 +8,17 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from typing_extensions import NotRequired
 
 from voidx.agent.application.runtime_context import (
+
     COMPACTION_GUIDE_MARKER,
     ContextCompilerCache,
     InteractionMode,
     RuntimeContextBuilder,
-    TaskIntent,
     is_goal_resolution_guide_content,
     raw_semantic_messages,
 )
 from voidx.agent.adapters.langgraph.state import AgentState
 from voidx.agent.domain.task.state import GoalSpec, TaskState
+
 from voidx.agent.domain.task.todo import TodoRunState
 from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
@@ -53,7 +54,6 @@ def test_current_task_state_records_intent_and_implementation_gate(tmp_path):
 
     context.apply_to_messages(messages)
 
-    assert "Intent: coding" in messages[-1].content
     assert "Implementation intent explicit" not in messages[-1].content
 
 
@@ -65,7 +65,7 @@ def test_current_task_state_records_active_workflow_nodes(tmp_path):
         base_system_prompt="You are voidx.",
         persona="implement",
         interaction_mode=InteractionMode.AUTO,
-        task_state=TaskState(current_intent=TaskIntent.CODING),
+        task_state=TaskState(),
         active_workflow_summaries=[
             "tdd (implement persona)",
             "verify (implement lifecycle)",
@@ -85,7 +85,7 @@ def test_current_task_state_records_structured_workflow_runs(tmp_path):
         base_system_prompt="You are voidx.",
         persona="implement",
         interaction_mode=InteractionMode.AUTO,
-        task_state=TaskState(current_intent=TaskIntent.CODING),
+        task_state=TaskState(),
         workflow_runs=[
             WorkflowRunState(
                 name="tdd",
@@ -117,7 +117,6 @@ def test_current_task_state_records_workflow_route(tmp_path):
         persona="review",
         interaction_mode=InteractionMode.AUTO,
         task_state=TaskState(
-            current_intent=TaskIntent.CODING,
             workflow_route=WorkflowRoute(join="review", leave="verify"),
         ),
     ).build()
@@ -135,7 +134,7 @@ def test_current_task_state_lists_feedback_design_and_plan_exits(tmp_path):
         base_system_prompt="You are voidx.",
         persona="implement",
         interaction_mode=InteractionMode.AUTO,
-        task_state=TaskState(current_intent=TaskIntent.CODING),
+        task_state=TaskState(),
         workflow_runs=[
             WorkflowRunState(
                 name="feedback",
@@ -168,7 +167,7 @@ def test_current_task_state_records_user_profile_preferences(tmp_path):
         base_system_prompt="You are voidx.",
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
-        task_state=TaskState(current_intent=TaskIntent.CODING),
+        task_state=TaskState(),
     ).build()
 
     context.apply_to_messages(messages)
@@ -187,7 +186,7 @@ def test_current_task_state_records_refined_intent_without_visible_tools(tmp_pat
         base_system_prompt="You are voidx.",
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
-        task_state=TaskState(current_intent=TaskIntent.CODING),
+        task_state=TaskState(),
     ).build()
 
     context.apply_to_messages(messages)
@@ -205,14 +204,12 @@ def test_current_task_state_records_current_goal(tmp_path):
         persona="voidx",
         interaction_mode=InteractionMode.AUTO,
         task_state=TaskState(
-            current_intent=TaskIntent.CODING,
             current_goal=GoalSpec(desc="优化 runtime context"),
         ),
     ).build()
 
     context.apply_to_messages(messages)
 
-    assert "Intent: coding" in messages[-1].content
     assert "Goal: 优化 runtime context" in messages[-1].content
     assert "Pending approval" not in messages[-1].content
 
@@ -226,7 +223,6 @@ def test_current_task_state_omits_legacy_goal_mode_goal(tmp_path):
         persona="voidx",
         interaction_mode=InteractionMode.GOAL,
         task_state=TaskState(
-            current_intent=TaskIntent.CODING,
             current_goal=GoalSpec(desc="优化 markdown 渲染截断"),
         ),
     ).build()

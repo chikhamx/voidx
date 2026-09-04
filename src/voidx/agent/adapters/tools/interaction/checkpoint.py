@@ -8,7 +8,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 from voidx.agent.domain.agent_profile import content_hash_of
-from voidx.agent.domain.task.state import GoalSpec, IntentResolution, PlanResolution, TaskIntent, ToolStatePatch
+from voidx.agent.domain.task.state import GoalSpec, PlanResolution, ToolStatePatch
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import ToolResult
 from voidx.tooling.domain.interaction import UserInteraction
@@ -197,7 +197,6 @@ def _decision_result(
     if decision == "approved":
         scope = inp.goal.strip()
         patch = ToolStatePatch(
-            intent=IntentResolution(type=TaskIntent.CODING),
             goal=GoalSpec(desc=scope),
             plan=PlanResolution(join="tdd", leave="verify"),
             workflow_runs=_checkpoint_workflow_runs(
@@ -213,7 +212,6 @@ def _decision_result(
     elif decision == "needs_doc":
         scope = inp.goal.strip()
         patch = ToolStatePatch(
-            intent=IntentResolution(type=TaskIntent.CODING),
             goal=GoalSpec(desc=scope),
             plan=PlanResolution(join="design", leave="design"),
             workflow_runs=_checkpoint_workflow_runs(
@@ -229,13 +227,11 @@ def _decision_result(
     elif decision == "modified":
         scope = modified_scope or inp.goal.strip()
         patch = ToolStatePatch(
-            intent=IntentResolution(type=TaskIntent.CODING),
             goal=GoalSpec(desc=scope),
         )
         next_step_hint = ""
     else:
         patch = ToolStatePatch(
-            intent=IntentResolution(type=TaskIntent.CODING),
         )
         next_step_hint = ""
 

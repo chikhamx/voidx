@@ -5,7 +5,9 @@ from voidx.agent.adapters.persistence.runtime_state_mapper import (
 )
 from voidx.agent.adapters.persistence.runtime_state_repository import RuntimeStateSnapshot
 from voidx.agent.domain.task.state import GoalSpec, TaskState
-from voidx.agent.domain.task.intent import InteractionMode, TaskIntent
+
+from voidx.agent.domain.task.intent import InteractionMode
+
 from voidx.agent.domain.task.todo import TodoRunState
 from voidx.agent.domain.automation.workflow import WorkflowRoute
 
@@ -14,8 +16,6 @@ def test_agent_runtime_snapshot_round_trip_preserves_persisted_json() -> None:
     snapshot = RuntimeStateSnapshot(
         interaction_mode=InteractionMode.GOAL,
         task_state=TaskState(
-            current_intent=TaskIntent.CODING,
-            previous_intent=TaskIntent.GENERAL,
             current_goal=GoalSpec(desc="unify agent state"),
             workflow_route=WorkflowRoute(join="tdd", leave="verify"),
             todo_state=TodoRunState.model_validate(

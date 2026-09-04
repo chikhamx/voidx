@@ -50,11 +50,7 @@ def _state_update_from_executed_tools(
         patch = ToolStatePatch.model_validate(raw)
         data = patch.model_dump(mode="json")
         for field in patch.model_fields_set:
-            if field == "intent":
-                value = data.get(field)
-                if value is not None:
-                    update["task_intent"] = value.get("type") or "coding"
-            elif field == "workflow_runs":
+            if field == "workflow_runs":
                 route_limited = _explicit_advance_route_limited_runs(
                     item,
                     merged_workflow_runs,

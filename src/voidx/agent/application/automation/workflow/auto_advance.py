@@ -25,9 +25,11 @@ from voidx.agent.domain.automation.workflow import (
     WorkflowStateEventKind,
 )
 
-_REVIEW_VERDICT_RE = re.compile(
-    r"^verdict\s*:\s*(FAIL|NEEDS_CHANGE)", re.IGNORECASE | re.MULTILINE
+_REVIEW_VERDICT_ANY_RE = re.compile(
+    r"^verdict\s*[:=]\s*(PASS|FAIL|NEEDS_CHANGE)\b", re.IGNORECASE | re.MULTILINE
 )
+_REVIEW_FAILING_VERDICTS = frozenset({"FAIL", "NEEDS_CHANGE"})
+_COMPLETE_FINISH_REASONS = frozenset({"", "final_answer", "message_result"})
 
 _TEST_COMMAND_RE = re.compile(
     r"\b(pytest|unittest|nosetests|trial|cargo test|go test|npm test|yarn test|pnpm test|"
@@ -75,8 +77,8 @@ def auto_advance_events(
         metadata = getattr(result, "metadata", None) or {}
         output = getattr(result, "output", "") or ""
 
-        if tool_name == "agent":
-            event = _check_review_result(output, metadata, active_names, dag)
+        if tool_name in ("agent", "agent_control"):
+            event = _check_review_result(tool_name, output, metadata, active_names, dag)
             if event:
                 events.append(event)
         elif tool_name in ("bash", "powershell"):
@@ -89,22 +91,23 @@ def auto_advance_events(
 
 
 def _check_review_result(
+    tool_name: str,
     output: str,
     metadata: dict,
     active_names: set[str],
     dag: WorkflowDAG,
 ) -> WorkflowStateEvent | None:
-    """Detect review_has_issues when a review agent returns FAIL/NEEDS_CHANGE.
+    """Detect review_has_issues from a review-mode child agent result.
 
-    Relies on the review agent following the `verdict: PASS|FAIL|NEEDS_CHANGE`
-    format specified in its system prompt. The regex matches at line start to
-    avoid false positives from inline mentions.
+    Structured terminal-snapshot fields (mode/verdict on the child run result)
+    take priority; the legacy ``agent=review`` + ``verdict: FAIL`` text path
+    remains as a marked fallback. Incomplete/failed/timed-out runs never
+    produce a verdict event.
     """
-    if metadata.get("agent") != "review":
-        return None
     if "review" not in active_names:
         return None
-    if not _REVIEW_VERDICT_RE.search(output):
+    verdict = _review_verdict_for(tool_name, output, metadata)
+    if verdict not in _REVIEW_FAILING_VERDICTS:
         return None
 
     edges = dag.edges_from("review")
@@ -120,6 +123,56 @@ def _check_review_result(
         reason="auto-detected from review agent verdict",
         condition="review_has_issues",
     )
+
+
+def _review_verdict_for(tool_name: str, output: str, metadata: dict) -> str | None:
+    """Resolve the normalized review verdict for a child-agent tool result.
+
+    Returns PASS/FAIL/NEEDS_CHANGE when the result carries a review-mode
+    terminal verdict; None when the result is not a review result or the run
+    is incomplete/failed/timed out.
+    """
+    if tool_name == "agent_control":
+        run = metadata.get("run")
+        if not isinstance(run, dict):
+            return None
+        result_payload = run.get("result")
+        result_payload = result_payload if isinstance(result_payload, dict) else {}
+        mode = str(run.get("mode") or "") or str(result_payload.get("mode") or "")
+        if mode != "review":
+            return None
+        if str(run.get("status") or "") != "completed":
+            return None
+        if str(metadata.get("wait_outcome") or "") == "timed_out":
+            return None
+        finish_reason = str(result_payload.get("finish_reason") or "")
+        if finish_reason not in _COMPLETE_FINISH_REASONS:
+            return None
+        structured = str(result_payload.get("verdict") or "").strip().upper()
+        if structured:
+            return structured
+        text = str(result_payload.get("result") or "") or output
+        return _legacy_review_verdict(text)
+    if tool_name == "agent":
+        # Legacy synchronous adapter path; gateway spawn results are always
+        # status=running and carry no verdict.
+        status = str(metadata.get("status") or "")
+        if status not in {"", "completed"}:
+            return None
+        mode = str(metadata.get("mode") or "")
+        if str(metadata.get("agent") or "") != "review" and mode != "review":
+            return None
+        structured = str(metadata.get("verdict") or "").strip().upper()
+        if structured:
+            return structured
+        return _legacy_review_verdict(output)
+    return None
+
+
+def _legacy_review_verdict(text: str) -> str | None:
+    """Legacy fallback: parse ``verdict: X`` / ``verdict=X`` from result text."""
+    match = _REVIEW_VERDICT_ANY_RE.search(text or "")
+    return match.group(1).upper() if match else None
 
 
 def _check_shell_result(

@@ -438,3 +438,99 @@ class TestWorkflowGoalInheritance:
         by_name = {run.name: run for run in updated}
 
         assert by_name["verify"].goal == "实现 workflow goal 参数改造"
+
+
+
+class TestAutoAdvanceReviewViaAgentControl:
+    """review verdicts consumed from agent_control(wait) terminal snapshots."""
+
+    def _wait_result(
+        self,
+        *,
+        mode="review",
+        verdict=None,
+        text="",
+        status="completed",
+        finish_reason="",
+        wait_outcome="already_terminal",
+    ) -> ToolResult:
+        result_payload = {"result": text}
+        if verdict:
+            result_payload["verdict"] = verdict
+        if finish_reason:
+            result_payload["finish_reason"] = finish_reason
+        run = {
+            "run_id": "run_1",
+            "mode": mode,
+            "status": status,
+            "result": result_payload,
+        }
+        metadata = {"run": run, "status": status, "wait_outcome": wait_outcome}
+        return ToolResult(output=text, metadata=metadata)
+
+    def _events(self, tool_result: ToolResult, *, tool_name="agent_control"):
+        runs = [WorkflowRunState(name="review", status=WorkflowRunStatus.ACTIVE)]
+        return auto_advance_events(
+            [{"name": tool_name, "result": tool_result}],
+            workflow_runs=runs,
+            dag=DEFAULT_WORKFLOW_DAG,
+        )
+
+    def test_structured_fail_triggers_review_has_issues(self):
+        result = self._wait_result(verdict="FAIL", text="verdict=FAIL\nfindings: bug")
+        events = self._events(result)
+        assert len(events) == 1
+        assert events[0].condition == "review_has_issues"
+
+    def test_structured_needs_change_triggers_review_has_issues(self):
+        result = self._wait_result(verdict="NEEDS_CHANGE", text="verdict=NEEDS_CHANGE")
+        events = self._events(result)
+        assert len(events) == 1
+        assert events[0].condition == "review_has_issues"
+
+    def test_structured_pass_does_not_trigger(self):
+        result = self._wait_result(verdict="PASS", text="verdict=PASS")
+        assert self._events(result) == []
+
+    def test_structured_pass_wins_over_legacy_fail_text(self):
+        result = self._wait_result(verdict="PASS", text="verdict: FAIL\nfindings: stale text")
+        assert self._events(result) == []
+
+    def test_legacy_verdict_equals_in_result_text_triggers(self):
+        result = self._wait_result(text="verdict=FAIL\nfindings: bug")
+        events = self._events(result)
+        assert len(events) == 1
+        assert events[0].condition == "review_has_issues"
+
+    def test_legacy_verdict_colon_in_result_text_triggers(self):
+        result = self._wait_result(text="verdict: FAIL\nfindings: bug")
+        events = self._events(result)
+        assert len(events) == 1
+
+    def test_failed_run_with_verdict_text_does_not_trigger(self):
+        result = self._wait_result(status="failed", text="verdict: FAIL")
+        assert self._events(result) == []
+
+    def test_timed_out_wait_does_not_trigger(self):
+        result = self._wait_result(status="running", wait_outcome="timed_out", text="verdict: FAIL")
+        assert self._events(result) == []
+
+    def test_incomplete_finish_reason_does_not_trigger(self):
+        result = self._wait_result(finish_reason="context_limit", text="verdict: FAIL")
+        assert self._events(result) == []
+
+    def test_missing_mode_does_not_trigger(self):
+        result = self._wait_result(mode="", text="verdict: FAIL")
+        assert self._events(result) == []
+
+    def test_debug_mode_does_not_trigger_review_event(self):
+        result = self._wait_result(mode="debug", verdict="FAIL", text="verdict: FAIL")
+        assert self._events(result) == []
+
+    def test_spawn_metadata_with_mode_and_running_status_does_not_trigger(self):
+        result = ToolResult(
+            output="voidx-subagent [running]\nrun_id: run_1",
+            metadata={"agent": "voidx", "mode": "review", "run_id": "run_1", "status": "running"},
+        )
+        events = self._events(result, tool_name="agent")
+        assert events == []

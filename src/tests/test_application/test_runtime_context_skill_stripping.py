@@ -8,16 +8,17 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from typing_extensions import NotRequired
 
 from voidx.agent.application.runtime_context import (
+
     COMPACTION_GUIDE_MARKER,
     ContextCompilerCache,
     InteractionMode,
     RuntimeContextBuilder,
-    TaskIntent,
     is_goal_resolution_guide_content,
     raw_semantic_messages,
 )
 from voidx.agent.adapters.langgraph.state import AgentState
 from voidx.agent.domain.task.state import GoalSpec, TaskState
+
 from voidx.agent.domain.task.todo import TodoRunState
 from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.config import Config

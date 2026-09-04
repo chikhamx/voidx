@@ -41,12 +41,14 @@ from voidx.agent.adapters.persistence.session_repository import (
 )
 from voidx.presentation.adapters.persistence.transcript_snapshot import load_transcript
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
-from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
-from voidx.agent.domain.task.intent import TaskIntent
+from voidx.agent.domain.task.state import GoalResolution, GoalSpec, PlanResolution
+
+
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.agent.application.automation.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 from voidx.agent.domain.task.state import TaskState, ToolStatePatch
+
 from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import ToolResult
@@ -84,7 +86,6 @@ def _child_goal_resolution(
     leave: str = "verify",
 ) -> GoalResolution:
     return GoalResolution(
-        intent=IntentResolution(type=TaskIntent.CODING),
         goal=GoalSpec(desc=desc),
         plan=PlanResolution(join=join, leave=leave),
     )
@@ -160,7 +161,6 @@ async def test_workflow_non_terminal_transition_keeps_followup_llm_enabled(tmp_p
         "plan_mode": False,
         "interaction_mode": "auto",
         "task_state": _task_state_json(
-            current_intent=TaskIntent.CODING,
             workflow_runs={
                 "tdd": WorkflowRunState(name="tdd", status=WorkflowRunStatus.ACTIVE),
             },
@@ -209,7 +209,6 @@ async def test_auto_review_has_issues_stops_before_feedback_followup(tmp_path):
         "plan_mode": False,
         "interaction_mode": "auto",
         "task_state": _task_state_json(
-            current_intent=TaskIntent.CODING,
             workflow_runs={
                 "review": WorkflowRunState(name="review", status=WorkflowRunStatus.ACTIVE),
             },
@@ -256,7 +255,6 @@ async def test_auto_review_has_issues_review_only_route_stops_without_feedback(t
         "plan_mode": False,
         "interaction_mode": "auto",
         "task_state": _task_state_json(
-            current_intent=TaskIntent.CODING,
             workflow_route={"join": "review", "leave": "review"},
             workflow_runs={
                 "review": WorkflowRunState(name="review", status=WorkflowRunStatus.ACTIVE),
@@ -304,7 +302,6 @@ async def test_auto_review_has_issues_review_and_fix_route_continues_to_feedback
         "plan_mode": False,
         "interaction_mode": "auto",
         "task_state": _task_state_json(
-            current_intent=TaskIntent.CODING,
             workflow_route={"join": "review", "leave": "verify"},
             workflow_runs={
                 "review": WorkflowRunState(name="review", status=WorkflowRunStatus.ACTIVE),

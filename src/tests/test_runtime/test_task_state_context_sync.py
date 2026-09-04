@@ -11,8 +11,9 @@ import asyncio
 
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.adapters.langgraph.runtime.thread_context import bind_thread_execution_context
-from voidx.agent.domain.task.intent import TaskIntent
+
 from voidx.agent.domain.task.state import GoalSpec, TaskState
+
 from voidx.agent.domain.automation.workflow import WorkflowRunState, WorkflowRunStatus
 
 
@@ -46,7 +47,6 @@ class _FakeHost:
 
 def _make_task_state() -> TaskState:
     return TaskState(
-        current_intent=TaskIntent.CODING,
         current_goal=GoalSpec(desc="test goal"),
         workflow_runs={"plan": WorkflowRunState(name="plan", status=WorkflowRunStatus.ACTIVE)},
     )

@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 import voidx.persistence.sqlite as store
 from voidx.persistence.jsonl import append_session_record, read_session_records
 from voidx.persistence.sqlite import execute_commit, fetch_one, now, write_transaction
-from voidx.agent.domain.task.intent import InteractionMode, TaskIntent
+from voidx.agent.domain.task.intent import InteractionMode
 from voidx.agent.domain.task.state import GoalSpec, TaskState
 from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.agent.domain.task.todo import TodoRunState
@@ -27,7 +27,6 @@ class MessageRuntimeSnapshot(BaseModel):
     message_id: int | None
     session_id: str
     interaction_mode: InteractionMode = InteractionMode.AUTO
-    task_intent: TaskIntent = TaskIntent.CODING
     current_goal: GoalSpec | None = None
     workflow_route: WorkflowRoute | None = None
     workflow_runs: dict[str, WorkflowRunState] = Field(default_factory=dict)
@@ -64,16 +63,14 @@ async def save_session_runtime_state(
 ) -> None:
     await execute_commit(
         """INSERT INTO session_runtime_state (
-               session_id, interaction_mode, current_intent, previous_intent,
+               session_id, interaction_mode,
                current_goal_json, workflow_route_json, workflow_runs_json,
                todo_state_json, compaction_summary,
                session_time, updated_at
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(session_id) DO UPDATE SET
                interaction_mode = excluded.interaction_mode,
-               current_intent = excluded.current_intent,
-               previous_intent = excluded.previous_intent,
                current_goal_json = excluded.current_goal_json,
                workflow_route_json = excluded.workflow_route_json,
                workflow_runs_json = excluded.workflow_runs_json,
@@ -84,8 +81,6 @@ async def save_session_runtime_state(
         (
             session_id,
             interaction_mode.value,
-            task_state.current_intent.value,
-            task_state.previous_intent.value if task_state.previous_intent else None,
             _dump_goal(task_state.current_goal),
             _dump_workflow_route(task_state.workflow_route),
             _dump_workflow_runs(task_state.workflow_runs),
@@ -121,8 +116,6 @@ async def load_task_state_with_session_time(session_id: str) -> tuple[TaskState,
         return TaskState(), ""
     return (
         TaskState(
-            current_intent=TaskIntent(row["current_intent"]),
-            previous_intent=TaskIntent(row["previous_intent"]) if row["previous_intent"] else None,
             current_goal=_load_goal(row["current_goal_json"]),
             workflow_route=_load_workflow_route(row["workflow_route_json"]),
             workflow_runs=_load_workflow_runs(row["workflow_runs_json"]),
@@ -230,14 +223,13 @@ def _load_todo_state(raw: str) -> TodoRunState | None:
 async def save_message_runtime_snapshot(snapshot: MessageRuntimeSnapshot) -> None:
     await execute_commit(
         """INSERT INTO session_runtime_state (
-               session_id, interaction_mode, current_intent,
+               session_id, interaction_mode,
                current_goal_json, workflow_route_json, workflow_runs_json,
                session_time, updated_at
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(session_id) DO UPDATE SET
                interaction_mode = excluded.interaction_mode,
-               current_intent = excluded.current_intent,
                current_goal_json = excluded.current_goal_json,
                workflow_route_json = excluded.workflow_route_json,
                workflow_runs_json = excluded.workflow_runs_json,
@@ -245,7 +237,6 @@ async def save_message_runtime_snapshot(snapshot: MessageRuntimeSnapshot) -> Non
         (
             snapshot.session_id,
             snapshot.interaction_mode.value,
-            snapshot.task_intent.value,
             _dump_goal(snapshot.current_goal),
             _dump_workflow_route(snapshot.workflow_route),
             _dump_workflow_runs(snapshot.workflow_runs),
@@ -270,7 +261,6 @@ def _message_runtime_snapshot_record(snapshot: MessageRuntimeSnapshot) -> dict:
         "message_id": snapshot.message_id,
         "session_id": snapshot.session_id,
         "interaction_mode": snapshot.interaction_mode.value,
-        "task_intent": snapshot.task_intent.value,
         "current_goal": _dump_goal(snapshot.current_goal),
         "workflow_route": _dump_workflow_route(snapshot.workflow_route),
         "workflow_runs": _dump_workflow_runs(snapshot.workflow_runs),
@@ -309,7 +299,6 @@ def _message_runtime_snapshot_from_record(record: dict) -> MessageRuntimeSnapsho
             message_id=int(record["message_id"]) if record.get("message_id") is not None else None,
             session_id=str(record["session_id"]),
             interaction_mode=InteractionMode(str(record["interaction_mode"])),
-            task_intent=TaskIntent(str(record["task_intent"])),
             current_goal=_load_goal(str(record.get("current_goal") or "")),
             workflow_route=_load_workflow_route(str(record.get("workflow_route") or "")),
             workflow_runs=_load_workflow_runs(str(record.get("workflow_runs") or "")),

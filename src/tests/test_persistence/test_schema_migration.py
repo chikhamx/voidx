@@ -174,8 +174,6 @@ class TestSchemaMigration:
             CREATE TABLE session_runtime_state (
                 session_id TEXT PRIMARY KEY,
                 interaction_mode TEXT NOT NULL DEFAULT 'auto',
-                current_intent TEXT NOT NULL DEFAULT 'coding',
-                previous_intent TEXT,
                 current_goal_json TEXT,
                 pending_approval_json TEXT,
                 recent_user_texts_json TEXT,

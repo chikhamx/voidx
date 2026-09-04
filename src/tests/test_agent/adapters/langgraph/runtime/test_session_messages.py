@@ -14,8 +14,10 @@ import voidx.persistence.sqlite as store
 import voidx.persistence.jsonl as jsonl_store
 
 from voidx.agent.adapters.persistence.message_rows import message_from_row, messages_from_rows, messages_from_rows_incremental, row_fingerprint
-from voidx.agent.application.runtime_context import InteractionMode, TaskIntent
+from voidx.agent.application.runtime_context import InteractionMode
+
 from voidx.agent.domain.task.state import GoalSpec, TaskState, TurnExchange
+
 from voidx.agent.domain.task.todo import TodoRunState
 from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.agent.adapters.persistence.session_repository import (
@@ -247,7 +249,6 @@ async def test_delete_messages_through_keeps_latest_session_runtime_state():
         await save_runtime_state(session.id, RuntimeStateSnapshot(
             interaction_mode=InteractionMode.GOAL,
             task_state=TaskState(
-                current_intent=TaskIntent.CODING,
                 current_goal=GoalSpec(desc="keep runtime"),
             ),
             compaction_summary="summary",

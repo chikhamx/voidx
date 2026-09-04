@@ -16,11 +16,12 @@ from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.application.agent_service import AgentService
 from voidx.agent.adapters.langgraph.execution import _sanitize_generated_title
-from voidx.agent.application.runtime_context import InteractionMode, TaskIntent
+from voidx.agent.application.runtime_context import InteractionMode
+
 from voidx.agent.domain.task.state import (
+
     GoalResolution,
     GoalSpec,
-    IntentResolution,
     PlanResolution,
     TaskState,
 )

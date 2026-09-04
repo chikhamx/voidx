@@ -4,19 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Literal
+from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, model_validator
 
 from voidx.agent.domain.workflow_utils import active_workflow_names
 from voidx.observability.request_log import log_llm_diagnostic, serialize_llm_message
-from voidx.agent.domain.task.intent import InteractionMode, TaskIntent, contains_any
+from voidx.agent.domain.task.intent import InteractionMode, contains_any
 from enum import Enum
 from voidx.agent.domain.task.state import (
     GoalResolution,
     GoalSpec,
-    IntentResolution,
     PlanResolution,
     TaskState,
     goal_type_from_join,
@@ -49,7 +48,6 @@ class WorkflowName(str, Enum):
 
 
 class ResolverGoal(BaseModel):
-    intent: Literal["coding", "general"] = "general"
     goal: str = Field(description="Stable overall objective for the current task. Keep it short, sharp, and clear.")
     workflow: WorkflowName | None = None
     kind_hint: str | None = None
@@ -71,7 +69,6 @@ def resolve_plan_mode(user_text: str, task_state: TaskState) -> GoalResolution:
         else user_text
     )
     return GoalResolution(
-        intent=IntentResolution(type=TaskIntent.CODING),
         goal=GoalSpec(desc=desc),
         plan=PlanResolution(join=WorkflowName.BRAINSTORM, leave=WorkflowName.BRAINSTORM),
     )
@@ -85,7 +82,6 @@ def build_goal_resolution(user_text: str, task_state: TaskState) -> GoalResoluti
     """
     goal = task_state.current_goal or GoalSpec(desc=user_text)
     return GoalResolution(
-        intent=IntentResolution(type=TaskIntent.CODING),
         goal=goal,
         plan=PlanResolution(join=WorkflowName.PLAN, leave=None),
     )
@@ -110,7 +106,6 @@ async def resolve_goal_for_turn(
 ) -> GoalResolution:
     del interaction_mode
     fallback = GoalResolution(
-        intent=IntentResolution(type=TaskIntent.GENERAL),
         goal=task_state.current_goal,
         plan=None,
     )
@@ -281,7 +276,6 @@ def _log_goal_resolver_decision(
     log_llm_diagnostic(
         "goal_resolver_decision",
         enabled=enabled,
-        intent=resolution.intent.type.value,
         goal_type=goal_type_from_join(plan.join if plan is not None else None),
         goal_desc=goal.desc if goal is not None else "",
         plan_join=plan.join if plan is not None else "",
@@ -347,11 +341,10 @@ def _truncate_error_text(value: str, limit: int = 2000) -> str:
 
 def _resolver_system_prompt(*, json_mode: bool = False) -> str:
     prompt = (
-        "You are a goal resolver. Classify the user's current turn into intent, goal, workflow, and kind_hint.\n"
+        "You are a goal resolver. Classify the user's current turn into goal, workflow, and kind_hint.\n"
         "\n"
         "## Field Rules\n"
         "\n"
-        '- **intent**: "coding" for codebase/workspace work; "general" for non-code conversation.\n'
         "- **goal**: Stable overall objective for the current task. Keep it short, sharp, and clear. Verb-first is preferred. Preserve material constraints while omitting transient execution detail. Never null or empty.\n"
         "- **workflow**: The workflow to enter, or null. Goal is always required regardless.\n"
         "- **kind_hint**: Optional semantic hint. Advisory only; never overrides workflow selection.\n"
@@ -386,7 +379,6 @@ def _resolver_request_markdown(user_text: str, task_state: TaskState) -> str:
     sections = [
         "# Context",
         "",
-        f"- intent: {task_state.current_intent.value}",
         f"- goal: {goal}",
         f"- active workflows: {active}",
         "",
@@ -419,7 +411,7 @@ def _coerce_resolution(value: object) -> ResolverGoal | None:
     if isinstance(value, dict) and "parsed" in value:
         return _coerce_resolution(value.get("parsed"))
     if isinstance(value, dict):
-        if "workflow" not in value and ("plan" in value or isinstance(value.get("goal"), dict) or isinstance(value.get("intent"), dict)):
+        if "workflow" not in value and ("plan" in value or isinstance(value.get("goal"), dict)):
             value = _legacy_dict_to_resolver_dict(value)
         try:
             return ResolverGoal.model_validate(value)
@@ -430,12 +422,10 @@ def _coerce_resolution(value: object) -> ResolverGoal | None:
 
 def _to_goal_resolution(resolver: ResolverGoal, task_state: TaskState) -> GoalResolution:
     del task_state
-    intent_type = TaskIntent(resolver.intent)
     goal = GoalSpec(desc=resolver.goal)
     if resolver.workflow is None:
-        return GoalResolution(intent=IntentResolution(type=intent_type), goal=goal, plan=None)
+        return GoalResolution(goal=goal, plan=None)
     return GoalResolution(
-        intent=IntentResolution(type=intent_type),
         goal=goal,
         plan=PlanResolution(join=resolver.workflow, leave=None),
     )
@@ -447,7 +437,6 @@ def _resolver_goal_from_goal_resolution(resolution: GoalResolution) -> ResolverG
         return None
     plan = resolution.plan
     return ResolverGoal(
-        intent=resolution.intent.type.value,
         goal=goal.desc,
         workflow=plan.join if plan is not None else None,
         kind_hint=None,
@@ -455,8 +444,6 @@ def _resolver_goal_from_goal_resolution(resolution: GoalResolution) -> ResolverG
 
 
 def _legacy_dict_to_resolver_dict(value: dict) -> dict:
-    intent_value = value.get("intent")
-    intent = intent_value.get("type") if isinstance(intent_value, dict) else intent_value
     goal_value = value.get("goal")
     if isinstance(goal_value, dict):
         goal = goal_value.get("desc")
@@ -467,7 +454,6 @@ def _legacy_dict_to_resolver_dict(value: dict) -> dict:
     plan_value = value.get("plan")
     workflow = plan_value.get("join") if isinstance(plan_value, dict) else value.get("workflow")
     return {
-        "intent": intent or "general",
         "goal": goal,
         "workflow": workflow,
         "kind_hint": kind_hint,
@@ -483,7 +469,6 @@ def _normalize_resolution(
 ) -> GoalResolution:
     if _is_short_continuation(user_text) and _has_completed_todos_without_remaining_work(task_state):
         return GoalResolution(
-            intent=IntentResolution(type=TaskIntent.GENERAL),
             goal=task_state.current_goal,
             plan=None,
         )
@@ -495,34 +480,17 @@ def _normalize_resolution(
         elif plan.leave and plan.leave not in {item.value for item in WorkflowName}:
             plan = PlanResolution(join=plan.join, leave=None)
 
-    if resolution.intent.type == TaskIntent.GENERAL:
-        current_join = _current_active_join(task_state)
-        if current_join and task_state.current_goal is not None and is_fallback:
-            return GoalResolution(
-                intent=IntentResolution(type=TaskIntent.CODING),
-                goal=task_state.current_goal,
-                plan=PlanResolution(join=current_join, leave=None),
-            )
-        goal = resolution.goal or task_state.current_goal
-        return GoalResolution(
-            intent=resolution.intent,
-            goal=goal,
-            plan=None,
-        )
-
     goal = resolution.goal or task_state.current_goal
     if plan is None or not plan.join:
         current_join = _current_active_join(task_state)
         if current_join and task_state.current_goal is not None and is_fallback and _is_short_continuation(user_text):
             return GoalResolution(
-                intent=resolution.intent,
                 goal=task_state.current_goal,
                 plan=PlanResolution(join=current_join, leave=None),
             )
         plan = None
 
     return GoalResolution(
-        intent=resolution.intent,
         goal=goal,
         plan=plan,
     )

@@ -203,7 +203,7 @@
       "type": "table",
       "name": "session_runtime_state",
       "tbl_name": "session_runtime_state",
-      "sql": "CREATE TABLE session_runtime_state (\n            session_id TEXT PRIMARY KEY,\n            interaction_mode TEXT NOT NULL DEFAULT 'auto',\n            current_intent TEXT NOT NULL DEFAULT 'coding',\n            previous_intent TEXT,\n            current_goal_json TEXT,\n            workflow_route_json TEXT NOT NULL DEFAULT '',\n            workflow_runs_json TEXT NOT NULL DEFAULT '{}',\n            todo_state_json TEXT NOT NULL DEFAULT '',\n            compaction_summary TEXT NOT NULL DEFAULT '',\n            session_time TEXT NOT NULL,\n            updated_at TEXT NOT NULL,\n            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE\n        )"
+      "sql": "CREATE TABLE session_runtime_state (\n            session_id TEXT PRIMARY KEY,\n            interaction_mode TEXT NOT NULL DEFAULT 'auto',\n            current_goal_json TEXT,\n            workflow_route_json TEXT NOT NULL DEFAULT '',\n            workflow_runs_json TEXT NOT NULL DEFAULT '{}',\n            todo_state_json TEXT NOT NULL DEFAULT '',\n            compaction_summary TEXT NOT NULL DEFAULT '',\n            session_time TEXT NOT NULL,\n            updated_at TEXT NOT NULL,\n            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE\n        )"
     },
     {
       "type": "table",
@@ -1679,22 +1679,6 @@
         },
         {
           "cid": 2,
-          "name": "current_intent",
-          "type": "TEXT",
-          "notnull": 1,
-          "dflt_value": "'coding'",
-          "pk": 0
-        },
-        {
-          "cid": 3,
-          "name": "previous_intent",
-          "type": "TEXT",
-          "notnull": 0,
-          "dflt_value": null,
-          "pk": 0
-        },
-        {
-          "cid": 4,
           "name": "current_goal_json",
           "type": "TEXT",
           "notnull": 0,
@@ -1702,7 +1686,7 @@
           "pk": 0
         },
         {
-          "cid": 5,
+          "cid": 3,
           "name": "workflow_route_json",
           "type": "TEXT",
           "notnull": 1,
@@ -1710,7 +1694,7 @@
           "pk": 0
         },
         {
-          "cid": 6,
+          "cid": 4,
           "name": "workflow_runs_json",
           "type": "TEXT",
           "notnull": 1,
@@ -1718,7 +1702,7 @@
           "pk": 0
         },
         {
-          "cid": 7,
+          "cid": 5,
           "name": "todo_state_json",
           "type": "TEXT",
           "notnull": 1,
@@ -1726,7 +1710,7 @@
           "pk": 0
         },
         {
-          "cid": 8,
+          "cid": 6,
           "name": "compaction_summary",
           "type": "TEXT",
           "notnull": 1,
@@ -1734,7 +1718,7 @@
           "pk": 0
         },
         {
-          "cid": 9,
+          "cid": 7,
           "name": "session_time",
           "type": "TEXT",
           "notnull": 1,
@@ -1742,7 +1726,7 @@
           "pk": 0
         },
         {
-          "cid": 10,
+          "cid": 8,
           "name": "updated_at",
           "type": "TEXT",
           "notnull": 1,

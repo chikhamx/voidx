@@ -19,7 +19,9 @@ from voidx.tooling.adapters.mcp import McpGatewayTool
 from voidx.agent.adapters.langgraph.runtime.convergence import is_step_hint_message
 from voidx.agent.adapters.langgraph.runtime.topology import latest_user_text
 from voidx.agent.application.runtime_context import RuntimeContextBuilder
+
 from voidx.agent.domain.task.state import GoalSpec, TaskState
+
 from voidx.agent.domain.task.todo import TodoRunState
 from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.config import Config
@@ -701,7 +703,6 @@ async def test_call_llm_refreshes_current_task_state_from_latest_state(tmp_path,
 async def test_call_llm_refreshes_current_task_state_after_pressure_rebuild(tmp_path, monkeypatch):
     import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
     from voidx.agent.adapters.langgraph.runtime.context_pressure import ContextPressureDecision
-    from voidx.agent.domain.task.intent import TaskIntent
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     monkeypatch.setattr(
@@ -755,7 +756,6 @@ async def test_call_llm_refreshes_current_task_state_after_pressure_rebuild(tmp_
         ],
     })
     latest_task_state = TaskState(
-        current_intent=TaskIntent.GENERAL,
         current_goal=GoalSpec(desc="new pressure goal"),
         workflow_route=WorkflowRoute(join="tdd", leave="verify"),
         workflow_runs={
@@ -776,7 +776,6 @@ async def test_call_llm_refreshes_current_task_state_after_pressure_rebuild(tmp_
     prompt = "\n".join(str(message.content) for message in graph.model.messages)
     assert prompt.count("## Current Task State") == 1
     assert "Current persona: implement" in prompt
-    assert "Intent: general" in prompt
     assert "Turn state: running" in prompt
     assert "Goal: new pressure goal" in prompt
     assert "Workflow route: tdd -> verify" in prompt

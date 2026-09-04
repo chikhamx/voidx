@@ -17,11 +17,12 @@ from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.application.agent_service import AgentService
 from voidx.agent.adapters.langgraph.execution import _sanitize_generated_title
-from voidx.agent.application.runtime_context import InteractionMode, TaskIntent
+from voidx.agent.application.runtime_context import InteractionMode
+
 from voidx.agent.domain.task.state import (
+
     GoalResolution,
     GoalSpec,
-    IntentResolution,
     PlanResolution,
     TaskState,
 )
@@ -61,7 +62,6 @@ async def test_first_turn_without_goal_uses_temporary_session_title(tmp_path):
         async def ainvoke(self, messages):
             assert "看看这个项目" in messages[1].content
             return GoalResolution(
-                intent=IntentResolution(type=TaskIntent.CODING),
                 goal=None,
                 plan=None,
             )
@@ -122,7 +122,6 @@ async def test_run_turn_uses_general_fallback_when_structured_resolver_fails(tmp
         set_dock(None)
 
     initial = captured["initial"]
-    assert initial["task_state"]["current_intent"] == "coding"
     assert initial["task_state"]["current_goal"] is None
     assert initial["task_state"]["recent_exchanges"] == []
     rows = await load_messages(graph._session.id)

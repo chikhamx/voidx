@@ -9,13 +9,14 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from voidx.agent.application.automation.goal.goal_resolver import ResolverGoal, resolve_goal_for_turn
 from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from voidx.agent.adapters.langgraph.runtime.turn_runner import _turn_exchange_from_final_messages
-from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution, TaskState, TurnExchange
+from voidx.agent.domain.task.state import GoalResolution, GoalSpec, PlanResolution, TaskState, TurnExchange
+
 from voidx.agent.domain.task.todo import TodoRunItem, TodoRunState
 from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.config import Config
 from voidx.llm.usage import UsageStats
 from voidx.agent.adapters.persistence.session_repository import create_session, delete_session, load_messages
-from voidx.agent.domain.task.intent import TaskIntent
+
 from voidx.presentation.output.dock import BottomInputDock, set_dock
 
 
@@ -101,7 +102,7 @@ async def test_goal_resolver_uses_structured_llm_result():
         task_state=task_state,
     )
 
-    assert result.intent.type == TaskIntent.CODING
+    assert result.goal is not None
     assert result.goal is not None
     assert result.goal.desc == "Review the runtime task state file"
     assert result.plan == PlanResolution(join="review", leave=None)
@@ -147,7 +148,7 @@ def test_goal_resolver_prompt_has_strict_workflow_selection_rules():
         )
     )
 
-    assert result.intent.type == TaskIntent.CODING
+    assert result.goal is not None
     prompt = model.messages[0].content
     assert "## Workflow Selection Rules" in prompt
     assert "workflow is null by default" in prompt
@@ -185,7 +186,7 @@ def test_goal_resolver_prompt_keeps_goal_as_stable_task_objective():
 def test_goal_resolution_schema_excludes_removed_fields():
     properties = GoalResolution.model_json_schema()["properties"]
 
-    assert set(properties) == {"intent", "goal", "plan"}
+    assert set(properties) == {"goal", "plan"}
     assert "confirmed_approval" not in properties
     assert "title" not in properties
     assert "workflow_start" not in properties
@@ -201,23 +202,23 @@ def test_goal_spec_schema_excludes_type():
 
 def test_resolver_goal_requires_goal():
     with pytest.raises(ValueError):
-        ResolverGoal(intent="general", goal=None)
+        ResolverGoal(goal=None)
 
     with pytest.raises(ValueError):
-        ResolverGoal(intent="general", goal="")
+        ResolverGoal(goal="")
 
     with pytest.raises(ValueError):
-        ResolverGoal(intent="general", goal="   ")
+        ResolverGoal(goal="   ")
 
 
 def test_resolver_goal_allows_goal_without_workflow():
-    goal_only = ResolverGoal(intent="general", goal="chat about weather")
+    goal_only = ResolverGoal(goal="chat about weather")
     assert goal_only.goal == "chat about weather"
     assert goal_only.workflow is None
 
 
 def test_resolver_goal_allows_goal_with_workflow():
-    paired = ResolverGoal(intent="coding", goal="fix bug", workflow="debug")
+    paired = ResolverGoal(goal="fix bug", workflow="debug")
     assert paired.goal == "fix bug"
     assert paired.workflow == "debug"
 
@@ -428,7 +429,7 @@ async def test_goal_resolver_treats_short_continue_after_completed_todos_as_gene
         task_state=task_state,
     )
 
-    assert result.intent.type == TaskIntent.GENERAL
+    assert result.goal is not None
     assert result.goal == task_state.current_goal
     assert result.plan is None
 
@@ -493,7 +494,7 @@ async def test_goal_resolver_plan_mode_forces_design_goal():
         task_state=TaskState(),
     )
 
-    assert result.intent.type == TaskIntent.CODING
+    assert result.goal is not None
     assert result.goal == GoalSpec(desc="implement login")
     assert result.plan == PlanResolution(join="tdd", leave=None)
 
@@ -516,7 +517,7 @@ async def test_goal_resolver_goal_mode_keeps_current_goal():
         task_state=TaskState(current_goal=current_goal),
     )
 
-    assert result.intent.type == TaskIntent.GENERAL
+    assert result.goal is not None
     assert result.goal is not None
     assert result.plan is None
 
@@ -534,7 +535,6 @@ async def test_goal_resolver_falls_back_to_general_when_structured_output_fails(
         task_state=TaskState(),
     )
 
-    assert result.intent.type == TaskIntent.GENERAL
     assert result.goal is None
     assert result.plan is None
 
@@ -562,7 +562,6 @@ async def test_goal_resolver_logs_fallback_decision(tmp_path, monkeypatch):
     ]
     entry = next(item for item in entries if item.get("event") == "goal_resolver_decision")
     assert entry["event"] == "goal_resolver_decision"
-    assert entry["intent"] == "general"
     assert entry["goal_type"] == ""
     assert entry["plan_join"] == ""
     assert entry["fallback_reason"] == "structured_output_error"
@@ -641,7 +640,7 @@ async def test_goal_resolver_uses_function_calling_for_deepseek_protocol():
     )
 
     assert FakeDeepSeekModel._structured_method == "function_calling"
-    assert result.intent.type == TaskIntent.CODING
+    assert result.goal is not None
     assert result.goal is not None
     assert result.goal.desc == "fix a bug"
     assert result.plan == PlanResolution(join="debug", leave=None)
@@ -684,7 +683,7 @@ async def test_goal_resolver_uses_json_mode_for_deepseek_with_reasoning():
     )
 
     assert FakeDeepSeekReasoningModel._structured_method == "json_mode"
-    assert result.intent.type == TaskIntent.CODING
+    assert result.goal is not None
     assert result.goal is not None
     assert result.goal.desc == "review the diff"
 
@@ -749,4 +748,4 @@ async def test_goal_resolver_uses_injected_factory_for_model_config() -> None:
     )
 
     assert calls and calls[0][1] == "config"
-    assert result.intent.type.value == "general"
+    assert result.goal is None

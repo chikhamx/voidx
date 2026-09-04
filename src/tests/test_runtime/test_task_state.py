@@ -2,26 +2,32 @@ import sys
 from pathlib import Path
 
 
-from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution, TaskState, TurnExchange
+from voidx.agent.domain.task.state import (
+
+    GoalResolution,
+    GoalSpec,
+    PlanResolution,
+    TaskState,
+    TurnExchange,
+    WorkflowContextMode,
+)
 from voidx.agent.domain.automation.workflow import WorkflowRoute
-from voidx.agent.domain.task.intent import TaskIntent
+
 from voidx.agent.domain.automation.workflow import WorkflowRunState, WorkflowRunStatus
 
 
 def _resolution(
     *,
-    intent: TaskIntent = TaskIntent.CODING,
     goal: GoalSpec | None = None,
     plan: PlanResolution | None = None,
 ) -> GoalResolution:
     return GoalResolution(
-        intent=IntentResolution(type=intent),
         goal=goal,
         plan=plan,
     )
 
 
-def test_update_after_turn_records_intent_goal_and_route():
+def test_update_after_turn_records_goal_and_route():
     state = TaskState(recent_exchanges=[TurnExchange(user_text="之前", assistant_text="已处理")])
     goal = GoalSpec(desc="review diff")
     resolution = _resolution(
@@ -29,16 +35,14 @@ def test_update_after_turn_records_intent_goal_and_route():
         plan=PlanResolution(join="review", leave="review"),
     )
 
-    state.update_after_turn(resolution, "review this")
+    state.update_after_turn(resolution)
 
-    assert state.previous_intent == TaskIntent.CODING
-    assert state.current_intent == TaskIntent.CODING
     assert state.current_goal == goal
     assert state.workflow_route == WorkflowRoute(join="review", leave="review")
     assert state.recent_exchanges[-1] == TurnExchange(user_text="之前", assistant_text="已处理")
 
 
-def test_general_turn_preserves_active_workflow():
+def test_turn_without_goal_keeps_active_workflow_running():
     state = TaskState(
         current_goal=GoalSpec(desc="build feature"),
         workflow_route=WorkflowRoute(join="tdd", leave="verify"),
@@ -47,15 +51,16 @@ def test_general_turn_preserves_active_workflow():
         },
     )
 
-    state.update_after_turn(_resolution(intent=TaskIntent.GENERAL), "thanks")
+    state.update_after_turn(_resolution())
 
-    assert state.current_intent == TaskIntent.GENERAL
     assert state.current_goal is not None
-    assert state.workflow_route is not None
+    assert state.workflow_context_mode == WorkflowContextMode.ACTIVE
+    assert state.workflow_route is None
     assert "tdd" in state.workflow_runs
+    assert state.workflow_runs["tdd"].status == WorkflowRunStatus.ACTIVE
 
 
-def test_general_turn_keeps_goal_when_no_active_workflow():
+def test_turn_without_goal_clears_route_and_keeps_runs():
     state = TaskState(
         current_goal=GoalSpec(desc="build feature"),
         workflow_route=WorkflowRoute(join="tdd", leave="verify"),
@@ -64,12 +69,11 @@ def test_general_turn_keeps_goal_when_no_active_workflow():
         },
     )
 
-    state.update_after_turn(_resolution(intent=TaskIntent.GENERAL), "thanks")
+    state.update_after_turn(_resolution())
 
-    assert state.current_intent == TaskIntent.GENERAL
     assert state.current_goal is not None
     assert state.workflow_route is None
-    assert state.workflow_runs == {}
+    assert state.workflow_runs["tdd"].status == WorkflowRunStatus.SATISFIED
 
 
 def test_update_after_turn_clears_workflow_when_goal_changes():
@@ -88,7 +92,6 @@ def test_update_after_turn_clears_workflow_when_goal_changes():
             goal=new_goal,
             plan=PlanResolution(join="review", leave="review"),
         ),
-        "review this",
     )
 
     assert state.current_goal == new_goal
@@ -110,7 +113,6 @@ def test_update_after_turn_preserves_workflow_for_same_goal():
             goal=GoalSpec(desc="build feature"),
             plan=PlanResolution(join="tdd", leave="verify"),
         ),
-        "continue",
     )
 
     assert state.current_goal == goal
@@ -118,50 +120,25 @@ def test_update_after_turn_preserves_workflow_for_same_goal():
     assert state.workflow_runs == {"tdd": active}
 
 
-def test_coding_turn_without_goal_keeps_existing_goal_but_clears_route():
+def test_turn_without_goal_keeps_existing_goal_but_clears_route():
     goal = GoalSpec(desc="build feature")
     state = TaskState(
         current_goal=goal,
         workflow_route=WorkflowRoute(join="brainstorm", leave="verify"),
     )
 
-    state.update_after_turn(_resolution(intent=TaskIntent.CODING), "what next?")
+    state.update_after_turn(_resolution())
 
     assert state.current_goal == goal
     assert state.workflow_route is None
 
 
-def test_intent_window_keeps_recent_user_inputs():
-    state = TaskState(
-        recent_exchanges=[
-            TurnExchange(user_text="first", assistant_text=""),
-            TurnExchange(user_text="second", assistant_text="reply"),
-            TurnExchange(user_text="third", assistant_text="reply"),
-        ]
-    )
 
-    assert state.intent_window_text("fourth") == "first [SEP] second [SEP] third [SEP] fourth"
 
-    state2 = TaskState(
-        recent_exchanges=[
-            TurnExchange(user_text="first", assistant_text=""),
-            TurnExchange(user_text="second", assistant_text="reply"),
-        ]
-    )
+def test_legacy_paused_workflow_state_maps_to_none():
+    state = TaskState.model_validate({"workflow_context_mode": "paused"})
 
-    assert state2.intent_window_text("third") == "first [SEP] second [SEP] third"
-
-    # window size 4: 5 exchanges should truncate to last 4
-    state3 = TaskState(
-        recent_exchanges=[
-            TurnExchange(user_text="a", assistant_text=""),
-            TurnExchange(user_text="b", assistant_text=""),
-            TurnExchange(user_text="c", assistant_text=""),
-            TurnExchange(user_text="d", assistant_text=""),
-        ]
-    )
-
-    assert state3.intent_window_text("e") == "b [SEP] c [SEP] d [SEP] e"
+    assert state.workflow_context_mode == WorkflowContextMode.NONE
 
 
 def test_set_goal_from_string_sets_goal_and_resets_workflow_context():
@@ -193,7 +170,6 @@ def test_set_goal_accepts_goal_spec_and_resets_workflow_context():
     state.set_goal(goal)
 
     assert state.current_goal == goal
-    assert state.current_intent == TaskIntent.CODING
     assert state.workflow_route is None
     assert state.workflow_runs == {}
 

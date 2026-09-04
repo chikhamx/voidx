@@ -51,7 +51,6 @@ async def test_no_start_call_falls_back_to_coding_none_goal(tmp_path, monkeypatc
     })
 
     assert result["turn_state"] == "committed"
-    assert result["task_state"]["current_intent"] == "coding"
     assert result["task_state"]["current_goal"] is None
 
 

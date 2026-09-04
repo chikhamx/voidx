@@ -1,14 +1,15 @@
 from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.domain.turn.state import TurnPhase, advance_turn
 from voidx.agent.domain.task.state import GoalSpec, TaskState
-from voidx.agent.domain.task.intent import InteractionMode, TaskIntent
+
+from voidx.agent.domain.task.intent import InteractionMode
+
 
 
 def test_agent_runtime_owns_domain_state_without_graph() -> None:
     runtime = SessionRuntimeState(
         interaction_mode=InteractionMode.GOAL,
         task_state=TaskState(
-            current_intent=TaskIntent.CODING,
             current_goal=GoalSpec(desc="unify agent state"),
         ),
         compaction_summary="existing summary",

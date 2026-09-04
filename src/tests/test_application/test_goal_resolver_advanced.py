@@ -11,11 +11,12 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from voidx.agent.application.automation.goal.goal_resolver import ResolverGoal, resolve_goal_for_turn
 from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from voidx.agent.adapters.langgraph.runtime.turn_runner import _turn_exchange_from_final_messages
-from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution, TaskState, TurnExchange
+from voidx.agent.domain.task.state import GoalResolution, GoalSpec, PlanResolution, TaskState, TurnExchange
+
 from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.config import Config
 from voidx.agent.adapters.persistence.session_repository import create_session, delete_session, load_messages
-from voidx.agent.domain.task.intent import TaskIntent
+
 from voidx.presentation.output.dock import BottomInputDock, set_dock
 
 
@@ -46,7 +47,6 @@ async def test_goal_resolver_validation_error_falls_back_to_general(tmp_path, mo
 
         async def ainvoke(self, _messages):
             return {
-                "intent": "coding",
                 "goal": "帮我修一个 bug",
                 "workflow": "unknown",
                 "kind_hint": "bug",
@@ -59,7 +59,6 @@ async def test_goal_resolver_validation_error_falls_back_to_general(tmp_path, mo
         task_state=TaskState(),
     )
 
-    assert result.intent.type == TaskIntent.GENERAL
     assert result.goal is None
     assert result.plan is None
 
@@ -117,7 +116,6 @@ async def test_run_turn_auto_mode_skips_goal_resolver_and_initializes_turn_state
         assert resolver_model.called is False
         assert captured_initial.get("turn_state") == "initial"
         ts = captured_initial.get("task_state", {})
-        assert ts.get("current_intent") == "coding"
         assert ts.get("current_goal") is None
         assert ts.get("workflow_route") is None
         assert ts.get("recent_exchanges") == []
@@ -138,7 +136,6 @@ async def test_run_turn_auto_mode_skips_goal_resolver_and_initializes_turn_state
 async def test_goal_resolver_normal_request_returns_no_workflow_route():
     model = StructuredModel(
         GoalResolution(
-            intent=IntentResolution(type=TaskIntent.CODING),
             goal=GoalSpec(desc="runtime state"),
             plan=None,
         )
@@ -161,14 +158,12 @@ async def test_general_intent_with_active_workflow_preserves_coding():
     from voidx.agent.domain.automation.workflow import WorkflowRunState
 
     task_state = TaskState(
-        current_intent=TaskIntent.CODING,
         current_goal=GoalSpec(desc="implement edit tool"),
         workflow_route=WorkflowRoute(join="tdd"),
         workflow_runs={"tdd": WorkflowRunState(name="tdd", status="active")},
     )
     model = StructuredModel(
         GoalResolution(
-            intent=IntentResolution(type=TaskIntent.GENERAL),
             goal=None,
             plan=None,
         )
@@ -181,7 +176,7 @@ async def test_general_intent_with_active_workflow_preserves_coding():
         task_state=task_state,
     )
 
-    assert result.intent.type == TaskIntent.CODING
+    assert result.goal is not None
     assert result.goal is not None
     assert result.goal.desc == "implement edit tool"
     assert result.plan is not None
@@ -193,7 +188,6 @@ async def test_general_intent_without_active_workflow_falls_back():
     """GENERAL intent + no active workflow + no current_goal → stays GENERAL, goal is None."""
     model = StructuredModel(
         GoalResolution(
-            intent=IntentResolution(type=TaskIntent.GENERAL),
             goal=None,
             plan=None,
         )
@@ -206,7 +200,6 @@ async def test_general_intent_without_active_workflow_falls_back():
         task_state=TaskState(),
     )
 
-    assert result.intent.type == TaskIntent.GENERAL
     assert result.goal is None
     assert result.plan is None
 
@@ -222,7 +215,6 @@ async def test_general_intent_with_workflow_route_but_no_goal_falls_back():
     )
     model = StructuredModel(
         GoalResolution(
-            intent=IntentResolution(type=TaskIntent.GENERAL),
             goal=None,
             plan=None,
         )
@@ -235,7 +227,6 @@ async def test_general_intent_with_workflow_route_but_no_goal_falls_back():
         task_state=task_state,
     )
 
-    assert result.intent.type == TaskIntent.GENERAL
     assert result.goal is None
     assert result.plan is None
 
@@ -246,13 +237,11 @@ async def test_general_intent_with_active_workflow_from_runs():
     from voidx.agent.domain.automation.workflow import WorkflowRunState
 
     task_state = TaskState(
-        current_intent=TaskIntent.CODING,
         current_goal=GoalSpec(desc="fix resolver crash"),
         workflow_runs={"debug": WorkflowRunState(name="debug", status="active")},
     )
     model = StructuredModel(
         GoalResolution(
-            intent=IntentResolution(type=TaskIntent.GENERAL),
             goal=None,
             plan=None,
         )
@@ -265,7 +254,6 @@ async def test_general_intent_with_active_workflow_from_runs():
         task_state=task_state,
     )
 
-    assert result.intent.type == TaskIntent.CODING
     assert result.goal is not None
     assert result.goal.desc == "fix resolver crash"
     assert result.plan is not None
@@ -278,14 +266,12 @@ async def test_resolver_prompt_includes_active_workflow_state():
     from voidx.agent.domain.automation.workflow import WorkflowRunState
 
     task_state = TaskState(
-        current_intent=TaskIntent.CODING,
         current_goal=GoalSpec(desc="implement edit tool"),
         workflow_route=WorkflowRoute(join="tdd"),
         workflow_runs={"tdd": WorkflowRunState(name="tdd", status="active")},
     )
     model = StructuredModel(
         GoalResolution(
-            intent=IntentResolution(type=TaskIntent.CODING),
             goal=GoalSpec(desc="implement edit tool"),
             plan=PlanResolution(join="tdd", leave="verify"),
         )
@@ -301,7 +287,6 @@ async def test_resolver_prompt_includes_active_workflow_state():
     assert model.messages is not None
     request = model.messages[1].content
     assert "# Context" in request
-    assert "intent: coding" in request
     assert "goal: implement edit tool" in request
     assert "active workflows: tdd" in request
 
@@ -311,7 +296,6 @@ async def test_resolver_prompt_no_current_state_when_no_goal():
     """When no current_goal, the system prompt omits current state section."""
     model = StructuredModel(
         GoalResolution(
-            intent=IntentResolution(type=TaskIntent.CODING),
             goal=GoalSpec(desc="review code"),
             plan=PlanResolution(join="review", leave="review"),
         )
@@ -336,7 +320,6 @@ async def test_resolver_prompt_omits_short_continuation_rule():
     """Short continuation handling is runtime fallback, not a prompt rule."""
     model = StructuredModel(
         GoalResolution(
-            intent=IntentResolution(type=TaskIntent.CODING),
             goal=GoalSpec(desc="review code"),
             plan=PlanResolution(join="review", leave="review"),
         )
@@ -356,8 +339,8 @@ async def test_resolver_prompt_omits_short_continuation_rule():
 
 
 @pytest.mark.asyncio
-async def test_intent_window_size_4_includes_more_context():
-    """With _INTENT_WINDOW_SIZE=4, the resolver sees up to 3 previous exchanges."""
+async def test_recent_exchanges_include_more_context():
+    """The resolver includes recent exchanges in its context."""
     exchanges = [
         TurnExchange(user_text="实现一个 edit tool", assistant_text="好的，开始实现"),
         TurnExchange(user_text="先写测试", assistant_text="测试已写好"),
@@ -366,7 +349,6 @@ async def test_intent_window_size_4_includes_more_context():
     task_state = TaskState(recent_exchanges=exchanges)
     model = StructuredModel(
         GoalResolution(
-            intent=IntentResolution(type=TaskIntent.CODING),
             goal=GoalSpec(desc="implement edit tool"),
             plan=PlanResolution(join="tdd", leave="verify"),
         )
@@ -396,14 +378,12 @@ async def test_resolver_success_with_new_goal_preserves_new_goal_over_old():
     from voidx.agent.domain.automation.workflow import WorkflowRunState
 
     task_state = TaskState(
-        current_intent=TaskIntent.CODING,
         current_goal=GoalSpec(desc="implement edit tool"),
         workflow_route=WorkflowRoute(join="tdd"),
         workflow_runs={"tdd": WorkflowRunState(name="tdd", status="active")},
     )
     model = StructuredModel(
         GoalResolution(
-            intent=IntentResolution(type=TaskIntent.GENERAL),
             goal=GoalSpec(desc="fix memory leak in resolver"),
             plan=None,
         )
@@ -426,14 +406,12 @@ async def test_resolver_success_coding_with_new_goal_short_continuation_preserve
     from voidx.agent.domain.automation.workflow import WorkflowRunState
 
     task_state = TaskState(
-        current_intent=TaskIntent.CODING,
         current_goal=GoalSpec(desc="implement edit tool"),
         workflow_route=WorkflowRoute(join="tdd"),
         workflow_runs={"tdd": WorkflowRunState(name="tdd", status="active")},
     )
     model = StructuredModel(
         GoalResolution(
-            intent=IntentResolution(type=TaskIntent.CODING),
             goal=GoalSpec(desc="fix memory leak"),
             plan=None,
         )

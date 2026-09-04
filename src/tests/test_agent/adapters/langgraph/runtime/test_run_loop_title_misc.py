@@ -17,12 +17,13 @@ from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.application.agent_service import AgentService
 from voidx.agent.adapters.langgraph.execution import _sanitize_generated_title
-from voidx.agent.application.runtime_context import InteractionMode, TaskIntent
+from voidx.agent.application.runtime_context import InteractionMode
+
 from voidx.agent.application.automation.goal.goal_resolver import ResolverGoal
 from voidx.agent.domain.task.state import (
+
     GoalResolution,
     GoalSpec,
-    IntentResolution,
     PlanResolution,
     TaskState,
 )
@@ -82,7 +83,6 @@ async def test_smart_title_generation_failure_keeps_temporary_title(tmp_path, mo
 
     def _fake_build_goal_resolution(user_text, task_state):
         return GoalResolution(
-            intent=IntentResolution(type=TaskIntent.CODING),
             goal=GoalSpec(desc="分析启动流程"),
             plan=None,
         )

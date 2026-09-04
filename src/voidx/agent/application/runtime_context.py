@@ -14,12 +14,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from voidx.agent.application.prompts import BaseSystemPrompt, WorkflowRuntimePrompt
 from voidx.agent.domain.prompt_contracts import ContextSection
-from voidx.agent.domain.task.state import GoalSpec
+from voidx.agent.domain.task.state import GoalSpec, TaskState, WorkflowContextMode
 from voidx.agent.domain.subagent import AgentRun
 from voidx.agent.application.subagent_status import render_child_run_lines
 from voidx.agent.domain.task.todo import TodoRunState
 from voidx.agent.domain.user_profile import UserProfile
-from voidx.agent.domain.task.intent import InteractionMode, TaskIntent
+from voidx.agent.domain.task.intent import InteractionMode
 from voidx.agent.domain.task.todo import TodoStatus
 from voidx.agent.ports.context_sanitization import ContextStripper, strip_known_external_context
 from voidx.agent.application.automation.workflow.service import (
@@ -198,6 +198,7 @@ class RuntimeContextBuilder:
         from voidx.agent.domain.task.state import TaskState as _TaskState
 
         ts = task_state if isinstance(task_state, _TaskState) else _TaskState()
+        self.task_state = ts
         self._suppress_sections = set(suppress_sections)
         self._historical_tool_context_stripper = historical_tool_context_stripper
         self.config = config
@@ -214,15 +215,27 @@ class RuntimeContextBuilder:
         self.active_workflow_summaries = [item for item in active_workflow_summaries if item.strip()]
         self.show_workflow_transitions = show_workflow_transitions
         self.summary = summary.strip() if summary else ""
-        self.task_intent = ts.current_intent
         self.current_goal = ts.current_goal
         self.workflow_route = ts.workflow_route
+        self.workflow_context_mode = ts.workflow_context_mode
         self.todo_state = ts.todo_state
         self.user_profile = config.user_profile
         self.turn_state = turn_state.strip() or "initial"
         self.profile_sections = list(profile_sections)
         self.child_runs = list(child_runs)
         self.child_runs_sampled_at = child_runs_sampled_at
+        typed_workflow_context = "workflow_context_mode" in ts.model_fields_set
+        if self.workflow_context_mode == WorkflowContextMode.NONE:
+            if not typed_workflow_context and (
+                any(run.status == WorkflowRunStatus.ACTIVE for run in self.workflow_runs)
+                or self.active_workflow_summaries
+            ):
+                self.workflow_context_mode = WorkflowContextMode.ACTIVE
+            else:
+                self.workflow_runs = []
+                self.active_workflow_summaries = []
+        if self.workflow_context_mode == WorkflowContextMode.ACTIVE and not self.workflow_runs:
+            self.workflow_runs = list(ts.visible_workflow_runs())
         now = datetime.now().astimezone()
         self.session_date = (session_date or now.strftime("%Y-%m-%d %Z")).strip()
 
@@ -310,25 +323,28 @@ class RuntimeContextBuilder:
     def _current_task_state(self) -> str:
         lines = [
             f"- Current persona: {self.persona}",
-            f"- Intent: {self.task_intent.value}",
             f"- Turn state: {self.turn_state}",
+            f"- Workflow context: {self.workflow_context_mode.value}",
         ]
         if self.current_goal is not None and self.interaction_mode != InteractionMode.GOAL:
             lines.append(f"- Goal: {self.current_goal.desc or 'not set'}")
-        if self.active_workflow_summaries:
-            lines.append(f"- Active workflow nodes: {'; '.join(self.active_workflow_summaries)}")
-        if self.workflow_route is not None and (self.workflow_route.join or self.workflow_route.leave):
-            join = self.workflow_route.join or "not set"
-            leave = self.workflow_route.leave or "not set"
-            lines.append(f"- Workflow route: {join} -> {leave}")
-        active_workflow_names = self._active_workflow_node_names()
-        if active_workflow_names:
-            lines.append(f"- Active workflows: {'; '.join(active_workflow_names)}")
-        if self.show_workflow_transitions:
-            for workflow_name in active_workflow_names:
-                exits = workflow_exit_summaries(workflow_name, self.workflow_dag) if self.workflow_dag is not None else []
-                if exits:
-                    lines.append(f"- Workflow transitions [{workflow_name}]: {'; '.join(exits)}")
+
+        if self.workflow_context_mode == WorkflowContextMode.ACTIVE:
+            if self.active_workflow_summaries:
+                lines.append(f"- Active workflow nodes: {'; '.join(self.active_workflow_summaries)}")
+            if self.workflow_route is not None and (self.workflow_route.join or self.workflow_route.leave):
+                join = self.workflow_route.join or "not set"
+                leave = self.workflow_route.leave or "not set"
+                lines.append(f"- Workflow route: {join} -> {leave}")
+            active_workflow_names = self._active_workflow_node_names()
+            if active_workflow_names:
+                lines.append(f"- Active workflows: {'; '.join(active_workflow_names)}")
+            if self.show_workflow_transitions:
+                for workflow_name in active_workflow_names:
+                    exits = workflow_exit_summaries(workflow_name, self.workflow_dag) if self.workflow_dag is not None else []
+                    if exits:
+                        lines.append(f"- Workflow transitions [{workflow_name}]: {'; '.join(exits)}")
+
         todo_lines = _render_task_state_todo_lines(self.todo_state)
         if todo_lines:
             lines.extend(todo_lines)
@@ -342,6 +358,8 @@ class RuntimeContextBuilder:
         return "\n".join(lines)
 
     def _active_workflow_node_names(self) -> list[str]:
+        if self.workflow_context_mode != WorkflowContextMode.ACTIVE:
+            return []
         names: list[str] = []
         for run in self.workflow_runs:
             if run.status == WorkflowRunStatus.ACTIVE and run.name.strip():
