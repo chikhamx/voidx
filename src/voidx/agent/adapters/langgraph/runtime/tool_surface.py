@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from voidx.agent.application.subagent_policy import CHILD_BLOCKED_TOOL_IDS
 from voidx.agent.application.tool_filters import (
     filter_unavailable_lsp_tools,
     strip_gemini_unsupported_schema_keys,
@@ -22,7 +23,7 @@ from voidx.agent.adapters.langgraph.runtime.control_protocol import (
 )
 
 EXECUTION_ONLY_TOOLS = frozenset({"git", "lsp_format", "compact"})
-CHILD_BLOCKED_TOOLS = frozenset({"agent", "clarify", "checkpoint"})
+CHILD_BLOCKED_TOOLS = CHILD_BLOCKED_TOOL_IDS
 LIFECYCLE_TOOLS = frozenset({"turn", "goal", "goal_init", "goal_checkpoint", "goal_decision", "loop"})
 
 _GOAL_PHASES = frozenset({"idle", "intake", "work", "evaluator"})

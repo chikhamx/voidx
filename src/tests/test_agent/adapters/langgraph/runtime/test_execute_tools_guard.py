@@ -41,12 +41,14 @@ from voidx.agent.adapters.persistence.session_repository import (
 )
 from voidx.presentation.adapters.persistence.transcript_snapshot import load_transcript
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
-from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
-from voidx.agent.domain.task.intent import TaskIntent
+from voidx.agent.domain.task.state import GoalResolution, GoalSpec, PlanResolution
+
+
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.agent.application.automation.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 from voidx.agent.domain.task.state import TaskState, ToolStatePatch, WorkflowRoute
+
 from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import ToolResult
 from voidx.agent.adapters.tools.subagent import AgentResultContract, AgentTool
@@ -129,7 +131,6 @@ def _child_goal_resolution(
     leave: str = "verify",
 ) -> GoalResolution:
     return GoalResolution(
-        intent=IntentResolution(type=TaskIntent.CODING),
         goal=GoalSpec(desc=desc),
         plan=PlanResolution(join=join, leave=leave),
     )
@@ -2161,6 +2162,7 @@ async def test_execute_tools_skips_calls_after_loop_commit_in_same_batch(tmp_pat
         executed = []
 
         class FakeMcpTool:
+            child_shareable = True
             id = "mcp"
             description = "fake mcp"
 
@@ -2255,6 +2257,7 @@ async def test_execute_tools_stops_turn_after_goal_intake_init(tmp_path):
         executed = []
 
         class FakeMcpTool:
+            child_shareable = True
             id = "mcp"
             description = "fake mcp"
 
@@ -2350,6 +2353,7 @@ async def test_execute_tools_stops_turn_after_goal_intake_cancel(tmp_path):
         executed = []
 
         class FakeMcpTool:
+            child_shareable = True
             id = "mcp"
             description = "fake mcp"
 
@@ -2436,6 +2440,7 @@ async def test_execute_tools_continues_to_final_text_after_goal_evaluator_decisi
         executed = []
 
         class FakeMcpTool:
+            child_shareable = True
             id = "mcp"
             description = "fake mcp"
 

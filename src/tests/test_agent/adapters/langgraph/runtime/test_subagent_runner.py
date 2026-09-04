@@ -43,12 +43,14 @@ from voidx.agent.adapters.persistence.session_repository import (
 )
 from voidx.presentation.adapters.persistence.transcript_snapshot import load_transcript
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
-from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
-from voidx.agent.domain.task.intent import TaskIntent
+from voidx.agent.domain.task.state import GoalResolution, GoalSpec, PlanResolution
+
+
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.agent.application.automation.workflow.context import WORKFLOW_CONTEXT_MARKER
 from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 from voidx.agent.domain.task.state import TaskState, ToolStatePatch
+
 from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import ToolResult
@@ -91,7 +93,6 @@ def _child_goal_resolution(
     leave: str = "verify",
 ) -> GoalResolution:
     return GoalResolution(
-        intent=IntentResolution(type=TaskIntent.CODING),
         goal=GoalSpec(desc=desc),
         plan=PlanResolution(join=join, leave=leave),
     )
@@ -225,7 +226,6 @@ async def test_subagent_runner_passes_main_workflow_runtime_context(tmp_path, mo
     assert emitted[-1].calls == 2
     assert emitted[-1].tokens == 1234
     assert "agent" not in calls[0]["kwargs"]
-    assert "task_intent" not in calls[0]["kwargs"]
     assert calls[0]["kwargs"]["goal_type"] == "feature"
     assert calls[0]["kwargs"]["scope"] == "Implement the feature"
     assert calls[0]["kwargs"]["workflow_start"] == "tdd"
@@ -543,7 +543,8 @@ async def test_subagent_tool_result_injects_next_step_hint_into_followup_message
     calls = 0
 
     class HintTool:
-        id = "hint_tool"
+        child_shareable = True
+        id = "search"
         description = "Returns a next step hint."
 
         def parameters_schema(self):
@@ -562,7 +563,7 @@ async def test_subagent_tool_result_injects_next_step_hint_into_followup_message
         if calls == 1:
             return AIMessage(
                 content="",
-                tool_calls=[{"name": "hint_tool", "args": {}, "id": "call-hint"}],
+                tool_calls=[{"name": "search", "args": {}, "id": "call-hint"}],
             )
         return AIMessage(
             content=(
@@ -578,13 +579,7 @@ async def test_subagent_tool_result_injects_next_step_hint_into_followup_message
 
     parent_tools = build_registry()
     tool = HintTool()
-    parent_tools.register(
-        tool.id,
-        tool,
-        tool.description,
-        tool.parameters_schema(),
-        capability=ToolCapability.ORCHESTRATION,
-    )
+    parent_tools.replace("search", tool, tool.description, tool.parameters_schema())
 
     from voidx.agent.adapters.langgraph.runtime.subagent import run_subagent
 
@@ -619,7 +614,8 @@ async def test_subagent_state_patch_is_applied_to_next_turn_context(tmp_path, mo
     calls = 0
 
     class StatePatchTool:
-        id = "state_patch_tool"
+        child_shareable = True
+        id = "search"
         description = "Updates workflow state."
 
         def parameters_schema(self):
@@ -651,7 +647,7 @@ async def test_subagent_state_patch_is_applied_to_next_turn_context(tmp_path, mo
         if calls == 1:
             return AIMessage(
                 content="",
-                tool_calls=[{"name": "state_patch_tool", "args": {}, "id": "call-state-patch"}],
+                tool_calls=[{"name": "search", "args": {}, "id": "call-state-patch"}],
             )
         return AIMessage(
             content=(
@@ -667,14 +663,7 @@ async def test_subagent_state_patch_is_applied_to_next_turn_context(tmp_path, mo
 
     parent_tools = build_registry()
     tool = StatePatchTool()
-    parent_tools.register(
-        tool.id,
-        tool,
-        tool.description,
-        tool.parameters_schema(),
-        capability=ToolCapability.ORCHESTRATION,
-    )
-    parent_tools.replace(tool.id, tool, tool.description, tool.parameters_schema())
+    parent_tools.replace("search", tool, tool.description, tool.parameters_schema())
 
     from voidx.agent.adapters.langgraph.runtime.subagent import run_subagent
 
@@ -714,7 +703,8 @@ async def test_subagent_refreshes_workflow_runtime_after_route_patch(tmp_path, m
     calls = 0
 
     class RouteTool:
-        id = "route_tool"
+        child_shareable = True
+        id = "search"
         description = "Changes the child workflow route."
 
         def parameters_schema(self):
@@ -737,7 +727,7 @@ async def test_subagent_refreshes_workflow_runtime_after_route_patch(tmp_path, m
         if calls == 1:
             return AIMessage(
                 content="",
-                tool_calls=[{"name": "route_tool", "args": {}, "id": "call-route"}],
+                tool_calls=[{"name": "search", "args": {}, "id": "call-route"}],
             )
         return AIMessage(
             content=(
@@ -753,13 +743,7 @@ async def test_subagent_refreshes_workflow_runtime_after_route_patch(tmp_path, m
 
     parent_tools = build_registry()
     tool = RouteTool()
-    parent_tools.register(
-        tool.id,
-        tool,
-        tool.description,
-        tool.parameters_schema(),
-        capability=ToolCapability.ORCHESTRATION,
-    )
+    parent_tools.replace("search", tool, tool.description, tool.parameters_schema())
 
     from voidx.agent.adapters.langgraph.runtime.subagent import run_subagent
 
@@ -800,7 +784,8 @@ async def test_subagent_removes_completed_workflow_from_active_summaries(tmp_pat
     calls = 0
 
     class CompleteWorkflowTool:
-        id = "complete_workflow"
+        child_shareable = True
+        id = "search"
         description = "Completes the current workflow."
 
         def parameters_schema(self):
@@ -832,7 +817,7 @@ async def test_subagent_removes_completed_workflow_from_active_summaries(tmp_pat
             return AIMessage(
                 content="",
                 tool_calls=[
-                    {"name": "complete_workflow", "args": {}, "id": "call-complete"}
+                    {"name": "search", "args": {}, "id": "call-complete"}
                 ],
             )
         return AIMessage(
@@ -849,13 +834,7 @@ async def test_subagent_removes_completed_workflow_from_active_summaries(tmp_pat
 
     parent_tools = build_registry()
     tool = CompleteWorkflowTool()
-    parent_tools.register(
-        tool.id,
-        tool,
-        tool.description,
-        tool.parameters_schema(),
-        capability=ToolCapability.ORCHESTRATION,
-    )
+    parent_tools.replace("search", tool, tool.description, tool.parameters_schema())
     initial_run = WorkflowRunState(
         name="tdd",
         status=WorkflowRunStatus.ACTIVE,
@@ -906,7 +885,8 @@ async def test_subagent_route_patch_counts_as_progress_for_runtime_guard(tmp_pat
     summaries = []
 
     class RouteTool:
-        id = "route_tool"
+        child_shareable = True
+        id = "search"
         description = "Changes the child workflow route."
 
         def parameters_schema(self):
@@ -937,7 +917,7 @@ async def test_subagent_route_patch_counts_as_progress_for_runtime_guard(tmp_pat
         if calls == 1:
             return AIMessage(
                 content="",
-                tool_calls=[{"name": "route_tool", "args": {}, "id": "call-route"}],
+                tool_calls=[{"name": "search", "args": {}, "id": "call-route"}],
             )
         return AIMessage(
             content=(
@@ -954,13 +934,7 @@ async def test_subagent_route_patch_counts_as_progress_for_runtime_guard(tmp_pat
 
     parent_tools = build_registry()
     tool = RouteTool()
-    parent_tools.register(
-        tool.id,
-        tool,
-        tool.description,
-        tool.parameters_schema(),
-        capability=ToolCapability.ORCHESTRATION,
-    )
+    parent_tools.replace("search", tool, tool.description, tool.parameters_schema())
 
     from voidx.agent.adapters.langgraph.runtime.subagent import run_subagent
 
@@ -1005,10 +979,11 @@ async def test_subagent_applies_state_patch_before_terminal_message_result(tmp_p
     monkeypatch.setattr(subagent_module, "RuntimeContextBuilder", RecordingBuilder)
 
     class ResultMessageTool:
+        child_shareable = True
         id = "message"
         description = "Returns a terminal result with a state patch."
 
-        def __init__(self, description=None):
+        def __init__(self, description=None, **_kwargs):
             if description:
                 self.description = description
 
@@ -1172,3 +1147,208 @@ async def test_subagent_passes_approved_risk_to_bash_execution(tmp_path, monkeyp
     assert tool_results[0].status == "success"
     assert json.loads(tool_results[0].content)["ok"] is True
     assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_subagent_runner_builds_explicit_context_handoff(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.execution as core_module
+
+    from voidx.agent.application.context_handoff import ChildContextHandoff
+    from voidx.agent.domain.prompt_contracts import ContextSection
+    from voidx.agent.domain.profile import RuntimeProfile
+    from voidx.agent.domain.turn_context import TurnExecutionContext
+
+    graph = _graph(tmp_path)
+    goal_resolution = _child_goal_resolution()
+    result_contract = _child_result_contract()
+    captured: dict[str, object] = {}
+
+    class ParentPromptPolicy:
+        def profile_sections(self, _turn_context):
+            return [ContextSection(name="Profile Directive", content="Use the parent profile rule.")]
+
+    turn_context = TurnExecutionContext(
+        thread_id="parent-thread",
+        session_id="parent-session",
+        workspace=str(tmp_path),
+        runtime_profile=RuntimeProfile(
+            profile_id="coding",
+            revision=1,
+            name="Coding",
+            prompt_policy=ParentPromptPolicy(),
+        ),
+    )
+    parent_state = SimpleNamespace(
+        turn_context=turn_context,
+        pending_summary=None,
+        compaction_summary="",
+    )
+    monkeypatch.setattr(
+        core_module,
+        "current_thread_execution_state",
+        lambda: parent_state,
+    )
+
+    async def fake_instruction_system(*, include_files=True):
+        assert include_files is True
+        return [
+            "Instructions from: /repo/AGENTS.md\nAlways run the focused test.",
+            "## Available Skills\n- private skill summary",
+        ]
+
+    async def fake_instruction_paths():
+        return ["/repo/AGENTS.md"]
+
+    async def fake_workflow_context_for(*_args, **_kwargs):
+        return WorkflowRuntimeContext(instructions=[], active=[], content="", runs=[])
+
+    async def fake_run_subagent(*_args, **kwargs):
+        captured.update(kwargs)
+        return "child result"
+
+    graph._instruction.system = fake_instruction_system
+    graph._instruction.system_paths = fake_instruction_paths
+    graph._workflow_context_for = fake_workflow_context_for
+    graph._pending_summary = "Parent verified the delegated task boundary."
+    graph._current_messages = [HumanMessage(content="parent private transcript")]
+    monkeypatch.setattr(core_module, "_run_subagent", fake_run_subagent)
+
+    result = await graph._subagent_runner(
+        get_agent("voidx"),
+        "Implement the feature",
+        goal_resolution,
+        result_contract,
+    )
+
+    handoff = captured["context_handoff"]
+    assert result == "child result"
+    assert isinstance(handoff, ChildContextHandoff)
+    assert handoff.instructions == (
+        "Instructions from: /repo/AGENTS.md\nAlways run the focused test.",
+    )
+    assert handoff.profile_sections == (
+        ContextSection(name="Profile Directive", content="Use the parent profile rule."),
+    )
+    assert handoff.summary == "Parent verified the delegated task boundary."
+    assert handoff.source_paths == ("/repo/AGENTS.md",)
+    assert "parent private transcript" not in repr(handoff)
+    assert "context_handoff" in captured
+
+
+@pytest.mark.asyncio
+async def test_subagent_runner_passes_profile_scoped_registry_to_child(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.execution as core_module
+    from voidx.agent.adapters.langgraph.runtime.thread_context import ThreadExecutionState
+
+    graph = _graph(tmp_path)
+    profile_registry = build_registry().child_copy({"read"})
+    state = ThreadExecutionState(tool_registry=profile_registry)
+    captured: dict[str, object] = {}
+
+    async def fake_workflow_context_for(*_args, **_kwargs):
+        return WorkflowRuntimeContext(instructions=[], active=[], content="", runs=[])
+
+    async def fake_run_subagent(*_args, **kwargs):
+        captured.update(kwargs)
+        return "child result"
+
+    graph._workflow_context_for = fake_workflow_context_for
+    monkeypatch.setattr(core_module, "current_thread_execution_state", lambda: state)
+    monkeypatch.setattr(core_module, "_run_subagent", fake_run_subagent)
+
+    result = await graph._subagent_runner(
+        get_agent("voidx"),
+        "Inspect the profile registry",
+        _child_goal_resolution("inspect", join="review", leave="review"),
+        _child_result_contract("inspection_result"),
+    )
+
+    assert result == "child result"
+    assert captured["parent_tools"] is profile_registry
+
+
+@pytest.mark.asyncio
+async def test_run_subagent_passes_parent_process_sandbox_to_scoped_binder(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
+
+    class Model:
+        def bind_tools(self, _tool_defs):
+            return self
+
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol, **_kwargs):
+        return AIMessage(content="done")
+
+    bound: dict[str, object] = {}
+
+    def scoped_binder(_registry, **kwargs):
+        bound.update(kwargs)
+
+    sandbox = object()
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_a, **_k: Model())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    result = await subagent_module.run_subagent(
+        get_agent("voidx"),
+        "Run with the parent sandbox",
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        goal_resolution=_child_goal_resolution(),
+        result_contract=_child_result_contract(),
+        parent_tools=build_registry(),
+        process_sandbox=sandbox,
+        scoped_tools_binder=scoped_binder,
+        debug=False,
+        ui_port=SimpleNamespace(
+            ui=SimpleNamespace(step_header=lambda *_a: None, print=lambda *_a: None),
+            console=object(),
+            via_events=lambda: False,
+        ),
+    )
+
+    assert result == "done"
+    assert bound["process_sandbox"] is sandbox
+
+
+@pytest.mark.asyncio
+async def test_implement_child_does_not_expose_external_write_capabilities(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
+
+    class Model:
+        def __init__(self):
+            self.tool_names: list[str] = []
+
+        def bind_tools(self, tool_defs):
+            self.tool_names = [
+                item["function"]["name"]
+                for item in tool_defs
+                if isinstance(item, dict) and "function" in item
+            ]
+            return self
+
+    model = Model()
+
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol, **_kwargs):
+        return AIMessage(content="done")
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_a, **_k: model)
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    result = await subagent_module.run_subagent(
+        get_agent("voidx"),
+        "Inspect the child external capability boundary",
+        "test-key",
+        Config(workspace=str(tmp_path)),
+        goal_resolution=_child_goal_resolution(join="tdd", leave="tdd"),
+        result_contract=_child_result_contract(),
+        parent_tools=build_registry(),
+        debug=False,
+        ui_port=SimpleNamespace(
+            ui=SimpleNamespace(step_header=lambda *_a: None, print=lambda *_a: None),
+            console=object(),
+            via_events=lambda: False,
+        ),
+    )
+
+    assert result == "done"
+    assert "skill" not in model.tool_names
+    assert "mcp" not in model.tool_names

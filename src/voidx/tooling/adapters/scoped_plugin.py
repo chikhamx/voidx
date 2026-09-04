@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from voidx.tooling.application.execution import (
@@ -50,6 +50,14 @@ class FileScopedPlugin:
             post_edit_formatter=self.formatter,
         )
         return await self.tool.execute(args, scoped)
+    def clone_for_child(self) -> "FileScopedPlugin":
+        """New wrapper instance for a child run; the child rebinds scoped services."""
+        tool = self.tool
+        clone_for_child = getattr(tool, "clone_for_child", None)
+        if callable(clone_for_child):
+            tool = clone_for_child()
+        return replace(self, tool=tool)
+
 
 
 @dataclass
@@ -77,6 +85,46 @@ class ShellScopedPlugin(FileScopedPlugin):
             tool_invoker=self.invoker,
         )
         return await self.tool.execute(args, scoped)
+
+    def as_read_only(self) -> "ShellScopedPlugin":
+        return ReadOnlyShellPlugin(
+            tool=self.tool,
+            authorization=self.authorization,
+            files=self.files,
+            formatter=self.formatter,
+            process_sandbox=self.process_sandbox,
+            invoker=self.invoker,
+        )
+
+
+class ReadOnlyShellPlugin(ShellScopedPlugin):
+    """Shell plugin that hard-rejects anything beyond a classified safe read.
+
+    Used for debug-mode child agents: the shell stays visible for read-only
+    verification commands, but the guard — not the model — enforces the
+    boundary, so forged or speculative write commands never execute.
+    """
+
+    def as_read_only(self) -> "ReadOnlyShellPlugin":
+        return self
+
+    async def execute(self, args: dict[str, Any], ctx: ToolExecutionContext) -> ToolResult:
+        from voidx.tooling.domain.risk import RiskLevel, RiskTag
+        from voidx.tooling.policy.shell.policy import classify_shell_risk
+
+        command = str(args.get("command", "")) if isinstance(args, dict) else ""
+        shell = "powershell" if self.id == "powershell" else "bash"
+        risk = classify_shell_risk(command, shell=shell, workspace=getattr(ctx, "workspace", None))
+        if risk.level is not RiskLevel.NORMAL or set(risk.tags) - {RiskTag.SAFE_READ}:
+            return ToolResult(
+                output=(
+                    "Command rejected: this debug agent may only run read-only shell "
+                    f"commands (classified: {risk.reason}). Use read/search/lsp tools instead."
+                ),
+                metadata={"error": True, "reason": "read_only_shell", "command": command[:120]},
+            )
+        return await super().execute(args, ctx)
+
 
 
 def bind_scoped_plugins(

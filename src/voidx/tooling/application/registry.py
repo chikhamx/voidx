@@ -130,6 +130,23 @@ class ToolRegistry:
         clone._instances = {tool_id: instance for tool_id, instance in self._instances.items() if tool_id in allowed}
         return clone
 
+    def child_copy(self, allowed_ids: Iterable[str] | None = None) -> "ToolRegistry":
+        """Copy for a child agent run: clone mutable plugins, share proven-immutable ones.
+
+        A plugin crosses the parent/child boundary only through an explicit
+        classification: ``clone_for_child()`` for runtime-bound/mutable plugins,
+        or ``child_shareable = True`` for audited stateless ones. Anything else
+        fails closed so new plugins cannot silently leak shared state.
+        """
+        allowed = set(self._tools) if allowed_ids is None else set(allowed_ids)
+        clone = ToolRegistry()
+        for tool_id, tool_def in self._tools.items():
+            if tool_id not in allowed:
+                continue
+            clone._tools[tool_id] = tool_def
+            clone._instances[tool_id] = _child_instance_for(tool_id, self._instances[tool_id])
+        return clone
+
     def loop_filtered_copy(self, *, workflow_enabled: bool = False) -> "ToolRegistry":
         allowed = {
             "read", "find", "search", "lsp", "document", "websearch", "webfetch",
@@ -165,3 +182,16 @@ class ToolRegistry:
         if not tool:
             return ToolResult(output=f"Unknown tool: {tool_id}. Available: {self.ids()}")
         return await tool.execute(args, ctx)
+
+
+def _child_instance_for(tool_id: str, instance: ToolPlugin) -> ToolPlugin:
+    """Resolve the child-run instance for a plugin under the classification rule."""
+    clone_for_child = getattr(instance, "clone_for_child", None)
+    if callable(clone_for_child):
+        return clone_for_child()
+    if getattr(instance, "child_shareable", False) is True:
+        return instance
+    raise TypeError(
+        f"Plugin '{tool_id}' ({type(instance).__name__}) has no child classification: "
+        "implement clone_for_child() or mark child_shareable = True after audit."
+    )

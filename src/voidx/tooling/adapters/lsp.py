@@ -21,6 +21,7 @@ from voidx.lsp.ports.operations import LspOperations
 from voidx.tooling.domain.grants import AccessGrants
 from voidx.tooling.policy.filesystem.grants import resolve_access
 from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
+from voidx.tooling.application.execution import FileToolContext
 from voidx.tooling.domain.result import (
     ToolResult,
     tool_timeout_metadata,
@@ -119,10 +120,10 @@ class LspTool:
 
         try:
             if inp.operation == "diagnostics":
-                if inp.file_path is not None and not _is_read_allowed(ctx, self._authorization, inp.file_path, require_exists=True):
+                if inp.file_path is not None and not _is_read_allowed(ctx, _scoped_authorization(ctx, self._authorization), inp.file_path, require_exists=True):
                     return _unauthorized_lsp_input()
                 diagnostics = await operations.diagnostics(inp.file_path)
-                allowed = [item for item in diagnostics if _is_read_allowed(ctx, self._authorization, item.path, require_exists=False)]
+                allowed = [item for item in diagnostics if _is_read_allowed(ctx, _scoped_authorization(ctx, self._authorization), item.path, require_exists=False)]
                 if not allowed:
                     target = inp.file_path or "opened files"
                     return ToolResult(title="LSP diagnostics", output=f"No LSP diagnostics for {target}.", summary="diagnostics")
@@ -132,25 +133,25 @@ class LspTool:
                 if inp.file_path is None:
                     output = "Provide file_path for document symbols or query for workspace symbols."
                     return ToolResult(title="LSP symbols", output=output, summary="symbols")
-                if not _is_read_allowed(ctx, self._authorization, inp.file_path, require_exists=True):
+                if not _is_read_allowed(ctx, _scoped_authorization(ctx, self._authorization), inp.file_path, require_exists=True):
                     return _unauthorized_lsp_input()
                 symbols = await operations.document_symbols(inp.file_path)
-                allowed = [item for item in symbols if not item.path or _is_read_allowed(ctx, self._authorization, item.path, require_exists=False)]
+                allowed = [item for item in symbols if not item.path or _is_read_allowed(ctx, _scoped_authorization(ctx, self._authorization), item.path, require_exists=False)]
                 output = "No LSP symbols found." if not allowed else "\n".join(_format_symbol(item, workspace) for item in allowed[:200])
                 return ToolResult(title="LSP symbols", output=output, summary="symbols")
             if inp.operation == "definition":
                 if inp.file_path is None:
                     return ToolResult(output="file_path is required for definition operation.", metadata={"error": True})
-                if not _is_read_allowed(ctx, self._authorization, inp.file_path, require_exists=True):
+                if not _is_read_allowed(ctx, _scoped_authorization(ctx, self._authorization), inp.file_path, require_exists=True):
                     return _unauthorized_lsp_input()
                 locations = await operations.definition(inp.file_path, inp.line, inp.character)
-                allowed = [item for item in locations if _is_read_allowed(ctx, self._authorization, item.path, require_exists=False)]
+                allowed = [item for item in locations if _is_read_allowed(ctx, _scoped_authorization(ctx, self._authorization), item.path, require_exists=False)]
                 output = "No definition found." if not allowed else "\n".join(_format_location(item, workspace) for item in allowed)
                 return ToolResult(title="LSP definition", output=output, summary=f"definition at line {inp.line}")
             if inp.operation == "references":
                 if inp.file_path is None:
                     return ToolResult(output="file_path is required for references operation.", metadata={"error": True})
-                if not _is_read_allowed(ctx, self._authorization, inp.file_path, require_exists=True):
+                if not _is_read_allowed(ctx, _scoped_authorization(ctx, self._authorization), inp.file_path, require_exists=True):
                     return _unauthorized_lsp_input()
                 locations = await operations.references(
                     inp.file_path,
@@ -158,7 +159,7 @@ class LspTool:
                     inp.character,
                     include_declaration=inp.include_declaration,
                 )
-                allowed = [item for item in locations if _is_read_allowed(ctx, self._authorization, item.path, require_exists=False)]
+                allowed = [item for item in locations if _is_read_allowed(ctx, _scoped_authorization(ctx, self._authorization), item.path, require_exists=False)]
                 output = "No references found." if not allowed else "\n".join(_format_location(item, workspace) for item in allowed)
                 return ToolResult(title="LSP references", output=output, summary=f"references at line {inp.line}")
             return ToolResult(output=f"Unknown LSP operation: {inp.operation}", metadata={"error": True})
@@ -347,6 +348,12 @@ def _access_grants(authorization=None) -> AccessGrants:
     if authorization is None:
         return AccessGrants.from_parts()
     return authorization.access_grants()
+
+
+def _scoped_authorization(ctx: ToolContext, fallback):
+    if isinstance(ctx, FileToolContext):
+        return ctx.authorization_service
+    return fallback
 
 
 def _is_read_allowed(ctx: ToolContext, authorization, file_path: str, *, require_exists: bool) -> bool:

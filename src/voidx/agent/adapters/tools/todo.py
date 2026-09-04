@@ -85,6 +85,12 @@ class TodoWriteTool:
     def __init__(self, tracker=None):
         super().__init__()
         self._tracker = tracker
+    def clone_for_child(self) -> "TodoWriteTool":
+        """Child runs get an isolated tracker so child todos never touch the parent's."""
+        from voidx.agent.application.runtime.task_tracker import TaskTracker
+
+        return TodoWriteTool(tracker=TaskTracker())
+
 
     def parameters_schema(self) -> dict:
         return model_to_json_schema(TodoInput)

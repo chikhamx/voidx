@@ -135,6 +135,8 @@ class _FetchResponse:
 
 
 class WebFetchTool:
+    # Audited: config-only client wrapper; no per-run mutable state.
+    child_shareable = True
     id = "webfetch"
     description = "Fetch content from a URL and convert to readable text."
 

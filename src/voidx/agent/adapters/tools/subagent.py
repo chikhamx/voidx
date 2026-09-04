@@ -11,11 +11,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, ValidationError
 
 from voidx.tooling.application.permission_service import SubagentPermissionSnapshot
-from voidx.agent.domain.task.intent import TaskIntent
 from voidx.agent.domain.task.state import (
     GoalResolution,
     GoalSpec,
-    IntentResolution,
     PlanResolution,
 )
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext
@@ -213,9 +211,11 @@ class AgentTool:
                 agent_name=agent_def_name,
                 description=normalized.description,
                 runner=gateway_runner,
+                mode=inp.mode,
             )
             metadata = {
                 "agent": agent_def_name,
+                "mode": inp.mode,
                 "run_id": run.run_id,
                 "status": run.status,
             }
@@ -273,11 +273,17 @@ def _runner_kwargs(
         params = inspect.signature(runner).parameters
     except (TypeError, ValueError):
         return kwargs
-    if agent_run_id is not None and "agent_run_id" in params:
+    accepts_kwargs = any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in params.values()
+    )
+    if agent_run_id is not None and ("agent_run_id" in params or accepts_kwargs):
         kwargs["agent_run_id"] = agent_run_id
-    if ctx.runtime.subagent_transport is not None and "agent_gateway" in params:
+    if ctx.runtime.subagent_transport is not None and (
+        "agent_gateway" in params or accepts_kwargs
+    ):
         kwargs["agent_gateway"] = ctx.runtime.subagent_transport
-    if run_metadata is not None and "run_metadata" in params:
+    if run_metadata is not None and ("run_metadata" in params or accepts_kwargs):
         kwargs["run_metadata"] = run_metadata
     return kwargs
 
@@ -304,7 +310,6 @@ def normalize_agent_input(inp: AgentInput) -> NormalizedAgentDelegation:
     return NormalizedAgentDelegation(
         description=_description_for_child(inp),
         goal_resolution=GoalResolution(
-            intent=IntentResolution(type=TaskIntent.CODING),
             goal=GoalSpec(desc=inp.goal.strip()),
             plan=PlanResolution(join=join, leave=leave),
         ),

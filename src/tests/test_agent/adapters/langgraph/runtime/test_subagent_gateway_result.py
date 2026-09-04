@@ -7,8 +7,9 @@ from voidx.agent.application.agents import AgentDef
 from voidx.agent.adapters.subagent import InProcessSubagentGateway
 from voidx.agent.adapters.langgraph.runtime.subagent import run_subagent
 from voidx.config import Config
-from voidx.agent.domain.task.state import GoalResolution, GoalSpec, IntentResolution, PlanResolution
-from voidx.agent.domain.task.intent import TaskIntent
+from voidx.agent.domain.task.state import GoalResolution, GoalSpec, PlanResolution
+
+
 from voidx.agent.adapters.tools.subagent import AgentResultContract
 from voidx.tooling.domain.result import ToolResult
 from voidx.tooling.domain.capability import ToolCapability
@@ -44,11 +45,10 @@ class FakeUiPort:
         return False
 
 
-def _goal_resolution() -> GoalResolution:
+def _goal_resolution(join: str = "review") -> GoalResolution:
     return GoalResolution(
-        intent=IntentResolution(type=TaskIntent.CODING),
         goal=GoalSpec(desc="Gateway result channel"),
-        plan=PlanResolution(join="review", leave="review"),
+        plan=PlanResolution(join=join, leave=join),
     )
 
 
@@ -237,9 +237,9 @@ async def test_run_subagent_wraps_final_text_as_result_message(tmp_path, monkeyp
     messages = await gateway.receive(run_id=root_id, limit=10, timeout=0)
 
     assert run.status == "completed"
-    assert run.result == {"result": "fallback final result"}
+    assert run.result == {"result": "fallback final result", "mode": "review"}
     assert [(message.type, message.payload) for message in messages] == [
-        ("result", {"result": "fallback final result"}),
+        ("result", {"result": "fallback final result", "mode": "review"}),
         ("completed", {"run_id": run.run_id}),
     ]
 
@@ -364,6 +364,7 @@ async def test_run_subagent_guard_terminated_returns_findings_fallback(tmp_path,
     from voidx.tooling.application.registry import ToolRegistry
 
     class FakeBashTool:
+        child_shareable = True
         id = "bash"
         description = "fake bash that is always policy-blocked"
 
@@ -410,7 +411,7 @@ async def test_run_subagent_guard_terminated_returns_findings_fallback(tmp_path,
             "test-key",
             Config(workspace=str(tmp_path)),
             runtime_persona="review",
-            goal_resolution=_goal_resolution(),
+            goal_resolution=_goal_resolution(join="tdd"),
             result_contract=_result_contract(),
             debug=False,
             agent_gateway=gateway,
@@ -477,7 +478,8 @@ async def test_run_subagent_reports_tool_activity_and_refreshes_child_context_ea
     monkeypatch.setattr(gateway, "start_tool_activity", start_tool)
 
     class BlockingTool:
-        id = "blocking"
+        child_shareable = True
+        id = "search"
         description = "Block until the test releases the tool."
 
         def parameters_schema(self):
@@ -491,9 +493,8 @@ async def test_run_subagent_reports_tool_activity_and_refreshes_child_context_ea
     parent_tools = build_registry()
     from voidx.tooling.domain.capability import ToolCapability
 
-    parent_tools.register_plugin(
-        BlockingTool(), capability=ToolCapability.ORCHESTRATION
-    )
+    blocking_tool = BlockingTool()
+    parent_tools.replace("search", blocking_tool, blocking_tool.description, blocking_tool.parameters_schema())
     calls = 0
 
     async def fake_stream_llm(_model, messages, _renderer, _protocol, **kwargs):
@@ -506,7 +507,7 @@ async def test_run_subagent_reports_tool_activity_and_refreshes_child_context_ea
         if calls == 1:
             return AIMessage(
                 content="",
-                tool_calls=[{"name": "blocking", "args": {}, "id": "call-blocking"}],
+                tool_calls=[{"name": "search", "args": {}, "id": "call-blocking"}],
             )
         assert child_created.is_set()
         return AIMessage(content="final result")
@@ -541,7 +542,7 @@ async def test_run_subagent_reports_tool_activity_and_refreshes_child_context_ea
     running = gateway.lookup_run(parent.run_id)
     assert running is not None
     assert [(item.tool_name, item.status) for item in running.active_tools] == [
-        ("blocking", "running"),
+        ("search", "running"),
     ]
 
     nested_release = asyncio.Event()
@@ -564,7 +565,7 @@ async def test_run_subagent_reports_tool_activity_and_refreshes_child_context_ea
     assert parent.status == "completed"
     assert parent.active_tools == []
     assert parent.last_tool is not None
-    assert parent.last_tool.tool_name == "blocking"
+    assert parent.last_tool.tool_name == "search"
     assert parent.last_tool.status == "succeeded"
     assert "Child agents: 1 running · 0 recent terminal" in captured_prompts[1]
     assert f"{nested.run_id} [running] Goal: nested review" in captured_prompts[1]
@@ -583,7 +584,7 @@ async def test_run_subagent_reports_tool_activity_and_refreshes_child_context_ea
         (
             parent.run_id,
             {
-                "tool_name": "blocking",
+                "tool_name": "search",
                 "tool_call_id": "call-blocking",
                 "args": {},
                 "workspace": str(tmp_path),

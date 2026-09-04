@@ -72,6 +72,8 @@ def _normalize_skill_args(args):
 
 
 class SkillsTool:
+    # Audited: holds only the shared skills API provider; no per-run mutable state.
+    child_shareable = True
     id = "skill"
     description = (
         "Load skill instructions, create a new SKILL.md, or list discovered skills. "

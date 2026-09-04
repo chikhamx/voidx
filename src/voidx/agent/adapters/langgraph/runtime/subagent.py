@@ -42,7 +42,7 @@ from voidx.agent.adapters.langgraph.runtime.tool_executor.types import _Executed
 from voidx.agent.adapters.langgraph.runtime.tool_executor.workflow import (
     _state_update_from_executed_tools,
 )
-from voidx.agent.domain.task.intent import PersonaName, TaskIntent
+from voidx.agent.domain.task.intent import PersonaName
 from voidx.llm.message_markers import GUIDANCE_MARKER
 from voidx.agent.application.runtime_context import (
     ContextCompiler,
@@ -82,8 +82,12 @@ from voidx.tooling.application.registry import ToolRegistry
 from voidx.agent.application.runtime.task_tracker import TaskTracker
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext, AgentToolRuntime
 from voidx.agent.adapters.tools.plugins import AgentToolPlugin, bind_agent_tool_runtime
-from voidx.agent.adapters.tools.todo import TodoWriteTool
 from voidx.agent.adapters.tools.subagent_message import MessageTool
+from voidx.agent.application.subagent_policy import (
+    CHILD_BLOCKED_TOOL_IDS,
+    child_allowed_tool_ids,
+    mode_allows_guarded_shell,
+)
 from voidx.agent.ports.ui import AgentUiPort, NullAgentUiPort
 
 
@@ -92,7 +96,7 @@ bind_scoped_tools = None
 
 
 _RESULT_CONTRACT_RETRY_LIMIT = 2
-_BLOCKED_CHILD_TOOLS = {"agent", "clarify", "checkpoint", "workflow"}
+_BLOCKED_CHILD_TOOLS = CHILD_BLOCKED_TOOL_IDS
 _CHILD_WORKFLOW_MODE_BY_JOIN = {
     "review": "review",
     "debug": "debug",
@@ -103,6 +107,32 @@ _CHILD_WORKFLOW_MODE_BY_JOIN = {
 def _child_workflow_mode(route: WorkflowRoute | None) -> str:
     join = route.join.strip().lower() if route is not None else ""
     return _CHILD_WORKFLOW_MODE_BY_JOIN.get(join, "review")
+
+
+def _install_read_only_shell_guard(registry: ToolRegistry) -> None:
+    """Wrap child shell plugins so only classified read-only commands execute."""
+    for shell_id in ("bash", "powershell"):
+        plugin = registry.get(shell_id)
+        if plugin is None:
+            continue
+        as_read_only = getattr(plugin, "as_read_only", None)
+        if not callable(as_read_only):
+            continue
+        guarded = as_read_only()
+        if guarded is plugin:
+            continue
+        registry.replace(shell_id, guarded, guarded.description, guarded.parameters_schema())
+
+
+_REVIEW_VERDICT_EXTRACT_RE = re.compile(
+    r"^verdict\s*[:=]\s*(PASS|FAIL|NEEDS_CHANGE)\b", re.IGNORECASE | re.MULTILINE
+)
+
+
+def _extract_review_verdict(text: str) -> str | None:
+    """Extract the structured verdict a review-mode child declares in its result."""
+    match = _REVIEW_VERDICT_EXTRACT_RE.search(text or "")
+    return match.group(1).upper() if match else None
 
 
 def _workflow_summary_name(summary: str) -> str:
@@ -147,11 +177,13 @@ async def run_subagent(
     workflow_runtime_context: WorkflowRuntimeContext | None = None,
     todo_state_sink=None,
     permission_snapshot=None,
+    process_sandbox=None,
     agent_run_id: str | None = None,
     agent_gateway=None,
     ui_port: AgentUiPort | None = None,
     model_factory=None,
     scoped_tools_binder=None,
+    context_handoff=None,
 ) -> str:
     """Run a child agent in its own message context."""
     ui_port = ui_port or NullAgentUiPort()
@@ -163,18 +195,28 @@ async def run_subagent(
     if agent_def.model:
         model_cfg.model = agent_def.model
 
-    # Child agents inherit the parent registry through a copy so child-only tools
-    # do not leak back into the main agent registry.
+    # Child agents inherit the parent registry through an isolating copy: mutable
+    # plugins are cloned so child runtime/scoped bindings never touch parent
+    # instances, and child-only tools do not leak back into the parent registry.
+    # The mode capability policy physically reduces the child registry, so the
+    # LLM-visible surface and the executable catalog stay identical.
+    plan = goal_resolution.plan
+    child_mode = _child_workflow_mode(
+        WorkflowRoute(join=plan.join, leave=plan.leave) if plan is not None else None
+    )
     if parent_tools is not None:
-        agent_tools = parent_tools.filtered_copy(set(parent_tools.ids()))
+        agent_tools = parent_tools.child_copy(
+            child_allowed_tool_ids(child_mode, parent_tools.ids())
+        )
     else:
         agent_tools = ToolRegistry()
     if hasattr(agent_tools, "register"):
         message_tool = MessageTool(
             description=(
-                "Send a message, question, answer, or final result to your parent agent, "
-                "or read messages from your parent."
-            )
+                "Send your final result to the parent agent and end this run. "
+                "This is the only message action available to child agents."
+            ),
+            result_only=True,
         )
         if agent_tools.get(message_tool.id) is None:
             agent_tools.register_plugin(
@@ -182,23 +224,8 @@ async def run_subagent(
             )
         else:
             agent_tools.replace(message_tool.id, message_tool, message_tool.description, message_tool.parameters_schema())
-    # Child constraints are fixed: delegation/interaction tools never reach a child,
-    # regardless of AgentDef.can_delegate.
-    agent_tools = agent_tools.filtered_copy(set(agent_tools.ids()) - _BLOCKED_CHILD_TOOLS)
-    copied_todo_plugin = agent_tools.get("todo") if hasattr(agent_tools, "get") else None
-    if copied_todo_plugin is not None:
-        if not isinstance(copied_todo_plugin, AgentToolPlugin):
-            raise RuntimeError("child todo tool must use AgentToolPlugin")
-        wrapped_todo_plugin = AgentToolPlugin(
-            TodoWriteTool(tracker=TaskTracker()),
-            copied_todo_plugin.runtime,
-        )
-        agent_tools.replace(
-            "todo",
-            wrapped_todo_plugin,
-            wrapped_todo_plugin.description,
-            wrapped_todo_plugin.parameters_schema(),
-        )
+    if mode_allows_guarded_shell(child_mode):
+        _install_read_only_shell_guard(agent_tools)
     resolved_model_factory = model_factory or create_chat_model
     if resolved_model_factory is None:
         raise RuntimeError("model_factory is required")
@@ -216,7 +243,7 @@ async def run_subagent(
     if sub_messages is None:
         sub_messages = []
 
-    messages = [HumanMessage(content=_task_payload(task_description, result_contract))]
+    messages = [HumanMessage(content=_task_payload(task_description, result_contract, context_handoff))]
 
     context_config = config.model_copy(deep=True)
     context_config.model = model_cfg
@@ -226,7 +253,6 @@ async def run_subagent(
     context_cache = ContextCompilerCache()
     plan = goal_resolution.plan
     sub_task_state = TaskState(
-        current_intent=goal_resolution.intent.type,
         current_goal=goal_resolution.goal,
         workflow_route=WorkflowRoute(join=plan.join, leave=plan.leave) if plan is not None else None,
         workflow_runs={run.name: run for run in workflow_context.runs},
@@ -396,6 +422,9 @@ async def run_subagent(
             task_state=sub_task_state,
             child_runs=child_runs,
             child_runs_sampled_at=child_runs_sampled_at,
+            instructions=list(context_handoff.instructions) if context_handoff is not None else (),
+            profile_sections=list(context_handoff.profile_sections) if context_handoff is not None else (),
+            summary=(context_handoff.summary or None) if context_handoff is not None else None,
         ).build_incremental(context_cache)
         return ContextCompiler(context).compile_messages(source_messages)
 
@@ -405,11 +434,6 @@ async def run_subagent(
             return False
         if "persona" in update and update.get("persona"):
             persona = str(update["persona"])
-        if "task_intent" in update:
-            try:
-                sub_task_state.current_intent = TaskIntent(update["task_intent"])
-            except (TypeError, ValueError):
-                pass
         if "current_goal" in update:
             raw_goal = update.get("current_goal")
             sub_task_state.current_goal = (
@@ -432,7 +456,6 @@ async def run_subagent(
                 TodoRunState.model_validate(raw_todo) if raw_todo is not None else None
             )
         ctx = ctx.model_copy(update={"persona": persona, "turn_count": step})
-        ctx.runtime.task_intent = sub_task_state.current_intent.value
         ctx.runtime.goal_type = (
             sub_task_state.workflow_route.join
             if sub_task_state.workflow_route is not None
@@ -451,7 +474,6 @@ async def run_subagent(
             field in update
             for field in (
                 "persona",
-                "task_intent",
                 "current_goal",
                 "workflow_route",
                 "workflow_runs",
@@ -477,7 +499,6 @@ async def run_subagent(
             if permission_snapshot is not None
             else None
         ),
-        task_intent=sub_task_state.current_intent.value,
         goal_type=(
             sub_task_state.workflow_route.join
             if sub_task_state.workflow_route is not None
@@ -523,7 +544,7 @@ async def run_subagent(
             ),
         ),
         files=FileStateStore(),
-        process_sandbox=None,
+        process_sandbox=process_sandbox,
         lsp_operations=lsp_operations,
         format_after_edit_enabled=config.lsp_format_after_edit,
     )
@@ -550,7 +571,11 @@ async def run_subagent(
         parent_run_id = current.parent_run_id
         if not parent_run_id:
             return
-        payload: dict[str, object] = {"result": text}
+        payload: dict[str, object] = {"result": text, "mode": child_mode}
+        if child_mode == "review":
+            verdict = _extract_review_verdict(text)
+            if verdict:
+                payload["verdict"] = verdict
         if finish_reason and finish_reason != "final_answer":
             payload["finish_reason"] = finish_reason
         await agent_gateway.send(
@@ -1096,9 +1121,15 @@ async def run_subagent(
 
 
 
-def _task_payload(task_description: str, result_contract) -> str:
+def _task_payload(task_description: str, result_contract, handoff=None) -> str:
     result_format = str(getattr(result_contract, "format", "") or "").strip()
     parts = [task_description]
+    if handoff is None:
+        parts.append(
+            "Context handoff: none — no parent project instructions were provided for this run. "
+            "Do not claim compliance with project rules you have not read; use the read tool "
+            "to discover AGENTS.md files before relying on them."
+        )
     if result_format:
         parts.append(
             "Result contract:\n"

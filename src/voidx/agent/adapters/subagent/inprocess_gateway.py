@@ -97,6 +97,7 @@ class InProcessSubagentGateway:
         agent_name: str,
         description: str,
         runner: Callable[[str], Awaitable[str | dict[str, Any]]],
+        mode: str = "",
     ) -> AgentRun:
         parent = self._require_run(parent_run_id)
         if parent.run.session_id != session_id:
@@ -109,6 +110,7 @@ class InProcessSubagentGateway:
             parent_run_id=parent_run_id,
             agent_type="sub",
             agent_name=agent_name,
+            mode=mode,
             description=description,
             status="running",
             created_at=now,
@@ -129,6 +131,8 @@ class InProcessSubagentGateway:
             except asyncio.CancelledError:
                 await self._finish(run_id, status="cancelled")
                 raise
+            except TimeoutError as exc:
+                await self._finish(run_id, status="failed", error=f"timeout: {exc}")
             except Exception as exc:
                 await self._finish(run_id, status="failed", error=str(exc)[:500])
             else:
@@ -510,6 +514,8 @@ class InProcessSubagentGateway:
         if parent is None:
             return
         payload: dict[str, Any] = {"run_id": record.run.run_id}
+        if record.run.mode:
+            payload["result"] = record.run.result
         if record.run.error is not None:
             payload["error"] = record.run.error
         message = AgentMessage(

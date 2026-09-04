@@ -83,6 +83,8 @@ def _normalize_mcp_args(args: Any) -> Any:
 
 
 class McpGatewayTool:
+    # Audited: wraps the shared MCP gateway connection; no per-run mutable state.
+    child_shareable = True
     id = "mcp"
     description = (
         "Discover and use Model Context Protocol (MCP) servers through a stable gateway.\n\n"

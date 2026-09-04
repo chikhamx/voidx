@@ -223,7 +223,11 @@ def _render_item(item: dict) -> str:
         return f"{name} [error]\nError: {item['detail']}"
     run = item["run"]
     finish_reason = item.get("finish_reason") or ""
-    suffix = f"; finish_reason={finish_reason}" if finish_reason else ""
+    suffix = (
+        f"; finish_reason={finish_reason}"
+        if finish_reason and status != "failed"
+        else ""
+    )
     lines = [f"{name} [{status}{suffix}]"]
     result_text = _result_output(run.get("result"))
     if status == "failed":

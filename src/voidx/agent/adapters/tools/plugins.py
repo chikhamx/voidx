@@ -51,6 +51,14 @@ class AgentToolPlugin:
         agent_ctx = AgentToolExecutionContext(**values, runtime=self.runtime)
         return await self.tool.execute(args, agent_ctx)
 
+    def clone_for_child(self) -> "AgentToolPlugin":
+        """New wrapper with a fresh runtime slot; parent runtime stays untouched."""
+        tool = self.tool
+        clone_for_child = getattr(tool, "clone_for_child", None)
+        if callable(clone_for_child):
+            tool = clone_for_child()
+        return AgentToolPlugin(tool, AgentToolRuntime())
+
 
 def bind_agent_tool_runtime(registry: Any, runtime: AgentToolRuntime) -> None:
     if not hasattr(registry, "list") or not hasattr(registry, "get"):

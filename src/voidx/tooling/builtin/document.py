@@ -39,6 +39,8 @@ def _normalize_document_args(args):
 
 
 class DocumentTool:
+    # Audited stateless reader over built-in docs; safe to share with child runs.
+    child_shareable = True
     id = "document"
     description = (
         'Read built-in documents only. action="list" reads a directory README index; '

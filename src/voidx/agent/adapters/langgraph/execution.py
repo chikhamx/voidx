@@ -71,6 +71,7 @@ from voidx.agent.adapters.langgraph.runtime.wiring import build_compaction_servi
 from voidx.agent.domain.task.state import GoalResolution, TaskState, goal_type_from_join
 from voidx.tooling.application.ai_approval import AiApprovalService
 from voidx.agent.application.instruction import InstructionService
+from voidx.agent.application.context_handoff import ChildContextHandoff
 from voidx.llm.message_markers import GUIDANCE_MARKER
 from voidx.llm.structured import ainvoke_structured
 from voidx.agent.adapters.persistence.session_repository import SessionInfo
@@ -1058,6 +1059,47 @@ class LangGraphExecution:
         await update_title(self._session.id, title)
         self._session = self._session.model_copy(update={"title": title})
 
+    async def _child_context_handoff(self, turn_context: Any | None) -> ChildContextHandoff:
+        runtime_profile = getattr(turn_context, "runtime_profile", None)
+        profile_id = str(getattr(runtime_profile, "profile_id", "coding") or "coding")
+        raw_instructions = await self._instruction.system(
+            include_files=profile_id != "chat",
+        )
+        instructions: list[str] = []
+        source_paths: list[str] = []
+        instruction_prefix = "Instructions from:"
+        for item in raw_instructions:
+            if not isinstance(item, str):
+                continue
+            first_line, separator, _ = item.partition("\n")
+            if not separator or not first_line.startswith(instruction_prefix):
+                continue
+            source_path = first_line[len(instruction_prefix):].strip()
+            if not source_path or item in instructions:
+                continue
+            instructions.append(item)
+            if source_path not in source_paths:
+                source_paths.append(source_path)
+
+        profile_sections: tuple[Any, ...] = ()
+        prompt_policy = getattr(runtime_profile, "prompt_policy", None)
+        profile_sections_for = getattr(prompt_policy, "profile_sections", None)
+        if callable(profile_sections_for):
+            profile_sections = tuple(
+                section
+                for section in (profile_sections_for(turn_context) or ())
+                if str(getattr(section, "name", "") or "").strip()
+                and str(getattr(section, "content", "") or "").strip()
+            )
+
+        summary = str(self._pending_summary or self._compaction_summary or "").strip()
+        return ChildContextHandoff(
+            instructions=tuple(instructions),
+            profile_sections=profile_sections,
+            summary=summary[:4000],
+            source_paths=tuple(source_paths),
+        )
+
     async def _subagent_runner(
         self,
         agent_def: AgentDef,
@@ -1066,6 +1108,7 @@ class LangGraphExecution:
         result_contract: Any,
         *,
         permission_snapshot=None,
+        process_sandbox=None,
         agent_run_id: str | None = None,
         agent_gateway=None,
         run_metadata: dict[str, object] | None = None,
@@ -1100,6 +1143,9 @@ class LangGraphExecution:
                 workflow_dag,
             )
             interaction_mode = _interaction_mode_for_persona(runtime_persona)
+            context_handoff = await self._child_context_handoff(turn_context)
+            if process_sandbox is None:
+                process_sandbox = getattr(self._permission, "process_sandbox", None)
         except Exception as exc:
             error = str(exc).strip()[:500] or exc.__class__.__name__
             if self._ui.via_events():
@@ -1164,14 +1210,20 @@ class LangGraphExecution:
                 "session_id": session_id if self._session else None,
                 "usage_stats": self._usage_stats,
                 "lsp_manager": getattr(self, "_lsp_manager", None),
-                "parent_tools": self.tools,
+                "parent_tools": (
+                    getattr(thread_state, "tool_registry", None)
+                    if thread_state is not None and getattr(thread_state, "tool_registry", None) is not None
+                    else self.tools
+                ),
                 "workflow_runtime_context": workflow_runtime_context,
                 "run_metadata": run_metadata,
                 "permission_snapshot": permission_snapshot,
+                "process_sandbox": process_sandbox,
                 "agent_run_id": agent_run_id,
                 "agent_gateway": agent_gateway,
                 "model_factory": self._model_factory,
                 "scoped_tools_binder": self._scoped_tools_binder,
+                "context_handoff": context_handoff,
             }
             if self._current_tree and self._turn_node:
                 kwargs.update({

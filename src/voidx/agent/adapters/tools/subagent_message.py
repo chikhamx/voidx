@@ -22,21 +22,46 @@ class MessageInput(BaseModel):
     timeout: float = 0
 
 
+class ChildMessageInput(BaseModel):
+    action: Literal["send"] = "send"
+    message_type: Literal["result"] = "result"
+    payload: str = Field(
+        default="{}",
+        description="JSON object string containing the final result payload, for example {\"result\": \"...\"}.",
+    )
+    target_run_id: str | None = None
+
+
 class MessageTool:
     id = "message"
     description = "Send or receive structured messages between a child agent and its parent."
 
-    def __init__(self, *, description: str | None = None) -> None:
+    def __init__(self, *, description: str | None = None, result_only: bool = False) -> None:
         if description is not None:
             self.description = description
+        self._result_only = result_only
 
     def parameters_schema(self) -> dict:
+        if self._result_only:
+            return model_to_json_schema(ChildMessageInput)
         return model_to_json_schema(MessageInput)
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
         raw_args = args if isinstance(args, dict) else {}
         if isinstance(raw_args.get("payload"), dict):
             raw_args = {**raw_args, "payload": json.dumps(raw_args["payload"])}
+        if self._result_only:
+            requested_action = raw_args.get("action", "send")
+            requested_type = raw_args.get("message_type", "result")
+            if requested_action != "send" or requested_type != "result":
+                return ToolResult(
+                    output=(
+                        "Only the terminal result message is available to child agents: "
+                        "finish with message(result) or a final answer."
+                    ),
+                    metadata={"error": True, "reason": "result_only"},
+                )
+            raw_args = {**raw_args, "action": "send", "message_type": "result"}
         try:
             inp = MessageInput.model_validate(raw_args)
         except ValidationError as exc:

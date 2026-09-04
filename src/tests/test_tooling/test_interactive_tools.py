@@ -40,12 +40,12 @@ from voidx.agent.adapters.subagent import InProcessSubagentGateway
 from voidx.agent.application.runtime.task_tracker import TaskTracker
 from voidx.agent.adapters.tools.todo import TodoInput, TodoWriteTool
 from voidx.tooling.application.registry import ToolRegistry
-from voidx.agent.adapters.tools.interaction.clarify import ClarifyTool, ClarifyInput, _infer_state_patch
+from voidx.agent.adapters.tools.interaction.clarify import ClarifyTool, ClarifyInput
 from voidx.tooling.adapters.skills import SkillsTool
 from voidx.tooling.builtin.document import DocumentTool, DocumentInput
 from voidx.agent.adapters.tools.interaction.checkpoint import PlanCheckpointTool
-from voidx.agent.domain.task.state import GoalSpec, GoalResolution, IntentResolution, PlanResolution, ToolStatePatch
-from voidx.agent.application.runtime_context import TaskIntent
+from voidx.agent.domain.task.state import GoalSpec, GoalResolution, PlanResolution, ToolStatePatch
+
 from voidx.skills.context import SKILL_TOOL_CONTEXT_MARKER
 from voidx.agent.application.automation.workflow.runtime import WorkflowRunState, WorkflowRunStatus
 from voidx.agent.domain.automation.workflow import WorkflowStateEventKind
@@ -216,7 +216,7 @@ class TestInteractiveTools:
 
         assert "[completed]" in wait_result.output
         assert "Result:\nchild result" in wait_result.output
-        assert set(spawn_result.metadata) == {"agent", "run_id", "status"}
+        assert set(spawn_result.metadata) == {"agent", "mode", "run_id", "status"}
         assert "Scope: src/voidx/tools/agent.py" in captured["description"]
         assert "Result contract:" not in captured["description"]
         assert captured["goal_resolution"].goal.desc == "审查 agent 工具"
@@ -350,7 +350,13 @@ async def test_agent_tool_spawn_uses_gateway_when_available(tmp_path):
     assert gateway.get_run(
         requester_run_id=root_id,
         target_run_id=str(captured["agent_run_id"]),
-    ).result == {"result": "gateway child result"}
+    ).result == {
+        "result": "gateway child result",
+        "output": "gateway child result",
+        "mode": "review",
+        "status": "completed",
+        "finish_reason": "final_answer",
+    }
 
 
 @pytest.mark.asyncio
@@ -550,7 +556,7 @@ async def test_agent_spawn_result_uses_stable_display_name_contract(tmp_path):
     assert result.title == f"{display_name}: Review spawn contract"
     assert result.summary == f"{display_name} spawned"
     assert result.display == ""
-    assert result.metadata == {"agent": "voidx", "run_id": run_id, "status": "running"}
+    assert result.metadata == {"agent": "voidx", "mode": "review", "run_id": run_id, "status": "running"}
     assert result.next_step_hint == (
         "Use agent_control(action='wait') when the result is needed, "
         "or continue with other independent work."

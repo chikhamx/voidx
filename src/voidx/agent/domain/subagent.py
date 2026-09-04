@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -87,6 +89,7 @@ class AgentRun(BaseModel):
     parent_run_id: str
     agent_type: AgentType
     agent_name: str
+    mode: str = ""
     description: str
     status: AgentRunStatus
     result: dict[str, Any] | None = None
@@ -135,7 +138,14 @@ def finish_run(
 ) -> AgentRun:
     if run.status in TERMINAL_STATUSES:
         return run
-    result_payload = _result_payload(result) if result is not None else None
+    if run.mode:
+        result_payload = (
+            _terminal_result(run, status=status, result=result, error=error)
+            if result is not None or status in {"failed", "cancelled"}
+            else None
+        )
+    else:
+        result_payload = _result_payload(result) if result is not None else None
     return run.model_copy(
         update={
             "status": status,
@@ -144,6 +154,54 @@ def finish_run(
             "updated_at": now,
         }
     )
+
+
+def _terminal_result(
+    run: AgentRun,
+    *,
+    status: AgentRunStatus,
+    result: dict[str, Any] | str | None,
+    error: str | None,
+) -> dict[str, Any]:
+    raw = dict(result) if isinstance(result, dict) else {"result": result or ""}
+    output = raw.get("output")
+    if output is None:
+        value = raw.get("result", "")
+        output = (
+            json.dumps(value, ensure_ascii=False, default=str)
+            if isinstance(value, (dict, list))
+            else str(value or "")
+        )
+    finish_reason = str(raw.get("finish_reason") or "")
+    if status == "failed" and not finish_reason:
+        finish_reason = "timeout" if "timeout" in str(error or "").lower() else "failed"
+    envelope_status = "completed"
+    if status == "cancelled":
+        envelope_status = "cancelled"
+        finish_reason = finish_reason or "cancelled"
+    elif finish_reason in {"contract_unsatisfied", "context_limit", "guard_terminated"}:
+        envelope_status = "incomplete"
+    elif finish_reason == "timeout":
+        envelope_status = "timeout"
+    elif status == "failed":
+        envelope_status = "failed"
+    envelope: dict[str, Any] = {
+        "result": raw.get("result", output),
+        "output": str(output),
+        "mode": run.mode,
+        "status": envelope_status,
+        "finish_reason": finish_reason or "final_answer",
+    }
+    verdict = raw.get("verdict")
+    if verdict is None and run.mode == "review":
+        match = re.search(
+            r"(?im)^\s*verdict\s*[:=]\s*(PASS|FAIL|NEEDS_CHANGE)\b",
+            str(output),
+        )
+        verdict = match.group(1) if match else None
+    if verdict is not None:
+        envelope["verdict"] = str(verdict).upper()
+    return envelope
 
 
 def _ensure_same_session(source: AgentRun, target: AgentRun) -> None:

@@ -296,6 +296,8 @@ async def _search_duckduckgo(
 # ── Tool ────────────────────────────────────────────────────────────────
 
 class WebSearchTool:
+    # Audited: config-only client wrapper; no per-run mutable state.
+    child_shareable = True
     id = "websearch"
     description = "Search the web. Returns titles, URLs, and snippets."
 
