@@ -464,7 +464,6 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
 
     def ensure_agent(self) -> OutputNode:
         if self._current_agent is None:
-            self._append_root_spacer()
             self._current_agent = self._tree.new_node(
                 parent=self._tree.root,
                 node_type="assistant",

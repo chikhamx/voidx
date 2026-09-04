@@ -164,6 +164,31 @@ async def test_todo_cleared_removes_pinned_todo_without_transcript_node(isolated
         await bus.stop()
 
 
+@pytest.mark.asyncio
+async def test_empty_todo_update_clears_pinned_state(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.emit(TodoUpdated(
+            items=[TodoItemPayload(id="temp", content="temporary task", status="active")],
+            summary="0/1 done · 1 active · 0 pending",
+        ))
+        await bus.drain()
+        assert isolated_dock.todo_state() is not None
+
+        await bus.emit(TodoUpdated(
+            items=[],
+            summary="0/0 done · 0 active · 0 pending",
+        ))
+        await bus.drain()
+
+        assert isolated_dock.todo_state() is None
+        assert not any(node.node_type == "todo" for node in isolated_dock.tree.root.children)
+    finally:
+        await bus.stop()
+
+
 def test_restore_tree_does_not_hydrate_committed_todo_state(isolated_dock):
     tree = OutputTree()
     tree.new_node(

@@ -129,7 +129,9 @@ async def test_checkpoint_prompt_event_renders_voidx_plan_and_decision(isolated_
         assert any("Do not duplicate hidden JSON result" in line and "#E06C75" in line for line in checkpoint.body_lines)
         assert checkpoint.status == "running"
         assert checkpoint.payload["checkpoint_id"] == "cp_1"
-        assert isolated_dock.safe_flush_line_count(120, 0) == len(isolated_dock.tree.render(120))
+        assert isolated_dock.safe_flush_line_count(120, 0) < len(
+            isolated_dock.tree.render(120)
+        )
 
         await bus.emit(CheckpointDecisionSubmitted(
             checkpoint_id="cp_1",
@@ -147,12 +149,15 @@ async def test_checkpoint_prompt_event_renders_voidx_plan_and_decision(isolated_
         assert "User: Implement directly" not in rendered
         assert checkpoint.payload["decision"] == "approved"
         assert checkpoint.payload["response"] == "Implement directly"
+        assert isolated_dock.safe_flush_line_count(120, 0) == len(
+            isolated_dock.tree.render(120)
+        )
     finally:
         await bus.stop()
 
 
 @pytest.mark.asyncio
-async def test_checkpoint_decision_renders_as_full_width_user_row_with_following_gap(isolated_dock):
+async def test_checkpoint_decision_renders_as_full_width_user_row_with_adjacent_reply(isolated_dock):
     isolated_dock.begin_capture()
     bus = UiEventBus()
     bus.start(DockEventConsumer(isolated_dock))
@@ -196,8 +201,7 @@ async def test_checkpoint_decision_renders_as_full_width_user_row_with_following
             for span in Text.from_markup(lines[user_index]).spans
         )
         assert plan_line.index("Plan:") == decision_line.index("Decision:")
-        assert plain_lines[user_index + 1] == ""
-        assert plain_lines[user_index + 2].startswith("● 先删除临时文件")
+        assert plain_lines[user_index + 1].startswith("● 先删除临时文件")
     finally:
         await bus.stop()
 
@@ -280,7 +284,9 @@ async def test_clarify_prompt_event_renders_voidx_clarify_and_answer(isolated_do
         assert clarify.payload["clarify_id"] == "cl_1"
         assert clarify.payload["question"] == "Which approach should I take?"
         assert clarify.payload["options"] == ["implement directly", "document first"]
-        assert isolated_dock.safe_flush_line_count(120, 0) == len(isolated_dock.tree.render(120))
+        assert isolated_dock.safe_flush_line_count(120, 0) < len(
+            isolated_dock.tree.render(120)
+        )
 
         await bus.emit(ClarifyAnswerSubmitted(
             clarify_id="cl_1",
@@ -297,12 +303,15 @@ async def test_clarify_prompt_event_renders_voidx_clarify_and_answer(isolated_do
         assert clarify.payload["answer"] == "implement directly"
         assert clarify.payload["cancelled"] is False
         assert clarify.payload["was_custom_input"] is True
+        assert isolated_dock.safe_flush_line_count(120, 0) == len(
+            isolated_dock.tree.render(120)
+        )
     finally:
         await bus.stop()
 
 
 @pytest.mark.asyncio
-async def test_clarify_answer_renders_as_full_width_user_row_with_following_gap(isolated_dock):
+async def test_clarify_answer_renders_as_full_width_user_row_with_adjacent_reply(isolated_dock):
     isolated_dock.begin_capture()
     bus = UiEventBus()
     bus.start(DockEventConsumer(isolated_dock))
@@ -335,8 +344,7 @@ async def test_clarify_answer_renders_as_full_width_user_row_with_following_gap(
             for span in Text.from_markup(lines[user_index]).spans
         )
         assert question_line.index("Question:") == answer_line.index("Answer:")
-        assert plain_lines[user_index + 1] == ""
-        assert plain_lines[user_index + 2].startswith("● 开始实现方案")
+        assert plain_lines[user_index + 1].startswith("● 开始实现方案")
     finally:
         await bus.stop()
 

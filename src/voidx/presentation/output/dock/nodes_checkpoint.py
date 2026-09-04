@@ -34,7 +34,6 @@ class DockCheckpointNodeMixin:
             },
         )
         self._checkpoint_nodes[checkpoint_id] = node
-        self._mark_subtree_settled(node)
         self.refresh()
         return node
 

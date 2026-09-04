@@ -32,7 +32,6 @@ class DockClarifyNodeMixin:
             },
         )
         self._clarify_nodes[clarify_id] = node
-        self._mark_subtree_settled(node)
         self.refresh()
         return node
 

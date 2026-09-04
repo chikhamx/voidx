@@ -165,7 +165,32 @@ def test_agent_subagent_render_flattens_wrapper_node():
     assert "│" not in map_line.partition("Map")[0]
 
 
-def test_transparent_subagent_spaces_ai_message_after_tools():
+def test_ai_message_and_tool_call_render_without_blank_line():
+    tree = OutputTree()
+    agent = tree.new_node(tree.root, node_type="assistant", header="")
+    tree.new_node(agent, node_type="assistant", header="● I will inspect the file.")
+    tree.new_node(agent, node_type="tool_call", header='● Read("core.py")')
+
+    lines = [_plain(line) for line in tree.render(120)]
+    message_index = next(index for index, line in enumerate(lines) if "inspect the file" in line)
+    tool_index = next(index for index, line in enumerate(lines) if 'Read("core.py")' in line)
+
+    assert tool_index == message_index + 1
+
+
+def test_non_ai_tool_blocks_have_exactly_one_blank_line():
+    tree = OutputTree()
+    tree.new_node(tree.root, node_type="assistant", header="● First response")
+    tree.new_node(tree.root, node_type="clarify", header="● Clarification")
+    tree.new_node(tree.root, node_type="message", header="")
+    tree.new_node(tree.root, node_type="checkpoint", header="● Plan")
+
+    lines = [_plain(line) for line in tree.render(120)]
+
+    assert lines == ["● First response", "", "● Clarification", "", "● Plan"]
+
+
+def test_transparent_subagent_keeps_ai_and_tool_messages_adjacent():
     tree = OutputTree()
     assistant = tree.new_node(tree.root, node_type="assistant", header="● Working")
     agent_tool = tree.new_node(
@@ -190,8 +215,7 @@ def test_transparent_subagent_spaces_ai_message_after_tools():
     message_index = next(index for index, line in enumerate(lines) if "审查报告引用" in line)
     search_index = next(index for index, line in enumerate(lines) if 'Search("while True")' in line)
 
-    assert lines[provider_index + 1] == ""
-    assert message_index == provider_index + 2
+    assert message_index == provider_index + 1
     assert search_index == message_index + 1
 
 

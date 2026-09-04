@@ -399,9 +399,11 @@ class DockEventConsumer:
                     tool_call_id=e.tool_call_id or None,
                 )
             case TodoUpdated() as e:
-                if e.agent_id >= 0:
-                    if not e.items:
+                if not e.items:
+                    if e.agent_id >= 0:
                         return self._clear_subagent_todo_node(e.agent_id)
+                    return self._dock.clear_todo_state()
+                if e.agent_id >= 0:
                     return self._upsert_subagent_todo_node(e)
                 return self._dock.set_todo_state(e.summary, e.items)
             case TodoCommitted():
