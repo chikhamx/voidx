@@ -37,7 +37,7 @@ from voidx.agent.application.prompts import (
 )
 from voidx.agent.application.runtime_context import InteractionMode, RuntimeContextBuilder
 from voidx.agent.adapters.langgraph.state import AgentState
-from voidx.agent.domain.task.state import TaskState, WorkflowContextMode, goal_label, goal_type_from_join
+from voidx.agent.domain.task.state import TaskState, goal_label, goal_type_from_join
 from voidx.agent.domain.task.todo import TodoRunState
 from voidx.agent.adapters.langgraph.runtime.tool_surface import (
     ToolSurfaceContext,
@@ -758,17 +758,19 @@ class LlmTurn:
         current_goal = task_state.current_goal
         workflow_runs = []
         workflow_active: list[str] = []
-        if task_state.workflow_context_mode == WorkflowContextMode.ACTIVE:
-            existing_workflow_runs = task_state.visible_workflow_runs()
-            workflow_start = (
-                task_state.workflow_route.join
-                if task_state.workflow_route and task_state.workflow_route.join
-                else None
-            )
+        existing_workflow_runs = list(task_state.workflow_runs.values())
+        workflow_start = (
+            task_state.workflow_route.join
+            if task_state.workflow_route and task_state.workflow_route.join
+            else None
+        )
+        active_names = active_workflow_names(existing_workflow_runs)
+        workflow_context = None
+        if active_names or workflow_start:
             workflow_context = await host._workflow_context_for(
                 goal_type=goal_type_from_join(workflow_start),
                 scope=goal_label(current_goal) or current_user_text,
-                active_names=active_workflow_names(existing_workflow_runs),
+                active_names=active_names,
                 workflow_start=workflow_start,
                 workflow_dag=workflow_dag,
             )
@@ -816,7 +818,7 @@ class LlmTurn:
         context, host._context_cache = host._last_context_builder.build_incremental(host._context_cache)
         context.apply_to_messages(state.get("messages", []))
 
-        if task_state.workflow_context_mode == WorkflowContextMode.ACTIVE:
+        if workflow_context is not None:
             task_state.workflow_runs = {run.name: run for run in workflow_runs}
         host._task_state = task_state.model_copy(deep=True)
         _invalidate_tui(host)

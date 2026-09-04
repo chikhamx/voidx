@@ -19,10 +19,7 @@ def active_workflow_names(value: object) -> list[str]:
     items: list[WorkflowRunState] = []
     raw = value
 
-    visible_runs = getattr(value, "visible_workflow_runs", None)
-    if callable(visible_runs):
-        raw = visible_runs()
-    elif hasattr(value, "workflow_runs"):
+    if hasattr(value, "workflow_runs"):
         raw = getattr(value, "workflow_runs", None) or {}
 
     iterable = raw.values() if isinstance(raw, dict) else raw or []

@@ -6,8 +6,7 @@
       "workflow_route": null,
       "workflow_runs": {},
       "recent_exchanges": [],
-      "todo_state": null,
-      "workflow_context_mode": "none"
+      "todo_state": null
     },
     "compaction_summary": "",
     "session_time": "2026-08-05 UTC",

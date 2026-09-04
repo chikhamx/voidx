@@ -62,7 +62,7 @@ def _resolve_recursion_limit(*_args, **_kwargs) -> int:
 
 def _initial_persona_for_goal(task_state: TaskState) -> str:
     personas: list[str] = []
-    visible_runs = task_state.visible_workflow_runs()
+    visible_runs = list(task_state.workflow_runs.values())
     for run in visible_runs:
         if run.status == WorkflowRunStatus.ACTIVE:
             personas.extend(persona for persona in run.personas if persona)

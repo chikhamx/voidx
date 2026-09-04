@@ -262,7 +262,7 @@ class ToolExecutorAdapter:
             fallback=getattr(host, "_task_state", None),
         )
         runtime_goal = runtime_task_state.current_goal
-        runtime_workflow_runs = runtime_task_state.visible_workflow_runs()
+        runtime_workflow_runs = list(runtime_task_state.workflow_runs.values())
         turn_count = int(state.get("step_count", 0) or 0)
         state_update: dict = {}
         display_policy = getattr(host, "_display_policy", None) or ToolDisplayPolicy(rules=DEFAULT_DISPLAY_RULES)

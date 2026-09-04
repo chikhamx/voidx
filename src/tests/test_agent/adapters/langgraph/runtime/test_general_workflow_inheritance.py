@@ -1,4 +1,4 @@
-"""Workflow context changes only through explicit state."""
+"""Workflow context follows active workflow runs directly."""
 
 from voidx.agent.application.runtime_context import RuntimeContextBuilder
 from voidx.agent.domain.automation.workflow import (
@@ -7,7 +7,7 @@ from voidx.agent.domain.automation.workflow import (
     WorkflowRunStatus,
 )
 from voidx.agent.domain.automation.workflow_dag import DEFAULT_WORKFLOW_DAG
-from voidx.agent.domain.task.state import GoalResolution, GoalSpec, TaskState, WorkflowContextMode
+from voidx.agent.domain.task.state import GoalResolution, GoalSpec, TaskState
 from voidx.config import Config
 
 
@@ -29,7 +29,6 @@ def test_goal_changing_turn_clears_workflow_context(tmp_path):
 
     state.update_after_turn(GoalResolution(goal=GoalSpec(desc="Explain the review process")))
 
-    assert state.workflow_context_mode == WorkflowContextMode.NONE
     assert state.workflow_runs == {}
     assert state.workflow_route is None
 
@@ -44,21 +43,21 @@ def test_goal_changing_turn_clears_workflow_context(tmp_path):
         task_state=state,
     ).build()
     rendered = context.render_task_context()
-    assert "Workflow context: none" in rendered
+    assert "Workflow context:" not in rendered
     assert "Background workflows:" not in rendered
     assert "Active workflows:" not in rendered
     assert "Workflow route:" not in rendered
     assert "Workflow transitions [feedback]" not in rendered
 
 
-def test_legacy_task_state_with_active_runs_defaults_to_active():
+def test_task_state_with_active_runs_is_available_to_context_builder():
     state = TaskState.model_validate({
         "current_goal": {"desc": "legacy"},
         "workflow_runs": {"feedback": _active_feedback().model_dump(mode="json")},
     })
 
-    assert state.workflow_context_mode == WorkflowContextMode.ACTIVE
+    assert [run.name for run in state.workflow_runs.values()] == ["feedback"]
 
 
-def test_task_state_without_workflow_defaults_to_none():
-    assert TaskState().workflow_context_mode == WorkflowContextMode.NONE
+def test_task_state_without_workflow_has_no_workflow_runs():
+    assert TaskState().workflow_runs == {}

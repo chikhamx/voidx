@@ -9,7 +9,6 @@ from voidx.agent.domain.task.state import (
     PlanResolution,
     TaskState,
     TurnExchange,
-    WorkflowContextMode,
 )
 from voidx.agent.domain.automation.workflow import WorkflowRoute
 
@@ -54,7 +53,7 @@ def test_turn_without_goal_keeps_active_workflow_running():
     state.update_after_turn(_resolution())
 
     assert state.current_goal is not None
-    assert state.workflow_context_mode == WorkflowContextMode.ACTIVE
+    assert [run.name for run in state.workflow_runs.values()] == ["tdd"]
     assert state.workflow_route is None
     assert "tdd" in state.workflow_runs
     assert state.workflow_runs["tdd"].status == WorkflowRunStatus.ACTIVE
@@ -135,10 +134,6 @@ def test_turn_without_goal_keeps_existing_goal_but_clears_route():
 
 
 
-def test_legacy_paused_workflow_state_maps_to_none():
-    state = TaskState.model_validate({"workflow_context_mode": "paused"})
-
-    assert state.workflow_context_mode == WorkflowContextMode.NONE
 
 
 def test_set_goal_from_string_sets_goal_and_resets_workflow_context():
@@ -194,8 +189,9 @@ def test_goal_spec_normalizes_and_truncates():
     assert len(goal.desc) == 120
 
 
-def test_active_workflow_runs_are_visible_without_context_mode():
+def test_active_workflow_runs_ignore_legacy_context_mode():
     state = TaskState.model_validate({
+        "workflow_context_mode": "none",
         "workflow_runs": {
             "debug": WorkflowRunState(
                 name="debug",
@@ -204,5 +200,5 @@ def test_active_workflow_runs_are_visible_without_context_mode():
         },
     })
 
-    assert state.workflow_context_mode == WorkflowContextMode.ACTIVE
-    assert [run.name for run in state.visible_workflow_runs()] == ["debug"]
+    assert [run.name for run in state.workflow_runs.values()] == ["debug"]
+    assert "workflow_context_mode" not in state.model_dump()
