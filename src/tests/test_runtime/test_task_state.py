@@ -192,3 +192,17 @@ def test_goal_spec_normalizes_and_truncates():
 
     assert goal.desc == ("修复 workflow goal 参数改造 " + "x" * 160)[:120]
     assert len(goal.desc) == 120
+
+
+def test_active_workflow_runs_are_visible_without_context_mode():
+    state = TaskState.model_validate({
+        "workflow_runs": {
+            "debug": WorkflowRunState(
+                name="debug",
+                status=WorkflowRunStatus.ACTIVE,
+            ).model_dump(mode="json"),
+        },
+    })
+
+    assert state.workflow_context_mode == WorkflowContextMode.ACTIVE
+    assert [run.name for run in state.visible_workflow_runs()] == ["debug"]
