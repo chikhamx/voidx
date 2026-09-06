@@ -30,6 +30,7 @@ CHAT_PROFILE_SPEC = BaseSystemProfile(
     ],
     global_section_names={
         "Verification Rules": ["fresh_verification"],
+        "Trust Rules": ["external_content"],
         "Collaboration Rules": ["min_questions", "follow_requests"],
     },
 )

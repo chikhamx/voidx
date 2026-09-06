@@ -63,6 +63,7 @@ def test_base_system_prompt_has_canonical_rules():
         "smallest_change",
         "preserve_dirty",
         "fresh_verification",
+        "external_content",
         "min_questions",
         "follow_requests",
     ]

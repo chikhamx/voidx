@@ -36,6 +36,7 @@ def test_coding_profile_spec_assembles_full_base_system_without_capability_filte
         "smallest_change",
         "preserve_dirty",
         "fresh_verification",
+        "external_content",
         "min_questions",
         "follow_requests",
     ]

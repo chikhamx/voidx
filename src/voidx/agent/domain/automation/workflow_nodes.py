@@ -194,18 +194,14 @@ VERIFICATION_BEFORE_COMPLETION = WorkflowNode(
         },
     ),
     gate=NodeGate(
-        description="Before claiming any status, identify the proving command, run it in this turn, read the output, and report the evidence.",
-        required_before_transition="verification command run with evidence",
+        description="Apply the global Verification Rules to establish evidence for the claimed scope.",
+        required_before_transition="verification evidence valid for current state and claimed scope",
     ),
     workflow=[
-        WorkflowStep(order=1, action="Identify proving commands"),
-        WorkflowStep(order=2, action="Run fresh verification"),
-        WorkflowStep(order=3, action="Read output and classify result"),
-        WorkflowStep(order=4, action="Report evidence"),
-    ],
-    rules=[
-        "Evidence before completion claims.",
-        "Do not rely on earlier runs or partial checks.",
+        WorkflowStep(order=1, action="Identify claimed scope and proving checks"),
+        WorkflowStep(order=2, action="Assess existing evidence validity"),
+        WorkflowStep(order=3, action="Run only missing or invalidated checks"),
+        WorkflowStep(order=4, action="Report evidence and limitations"),
     ],
 )
 
@@ -278,10 +274,9 @@ RECEIVING_CODE_REVIEW = WorkflowNode(
         WorkflowStep(order=4, action="Decide correctness", description="For this codebase."),
         WorkflowStep(order=5, action="Push back when wrong", description="With technical reasons."),
         WorkflowStep(order=6, action="Implement valid feedback", description="One coherent item at a time. Route items needing design to needs_design; items needing planning to needs_plan."),
-        WorkflowStep(order=7, action="Verify", description="Run targeted tests or commands before reporting."),
+        WorkflowStep(order=7, action="Verify", description="Establish targeted evidence under the global Verification Rules before reporting."),
     ],
     rules=[
-        "Verify feedback against the codebase before changing code.",
         "Clarify unclear feedback before implementing the batch.",
         "If feedback asks for a proper feature, search for actual usage before expanding the code.",
         "If some feedback items need design or analysis rather than direct implementation, implement the actionable items first, then use needs_design to route the remaining items to brainstorm.",

@@ -45,5 +45,4 @@ Each subdirectory has its own `AGENTS.md` for directory-specific details only; g
 
 ## Safety
 - Do not commit `.voidx/`, `.env*`, or local credentials.
-- Preserve user work in a dirty tree; never revert unrelated changes.
 - Run the relevant focused tests before broad test runs.
