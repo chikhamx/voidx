@@ -98,6 +98,7 @@ _OPENAI_TO_MAX: tuple[ReasoningEffort, ...] = (
 _MODEL_EFFORT_TABLE: tuple[tuple[str | None, str, tuple[ReasoningEffort, ...]], ...] = (
     (None, "gpt-5.6-sol", _OPENAI_TO_MAX),
     (None, "gpt-5.6-terra", _OPENAI_TO_MAX),
+    (None, "gpt-6-astra", _OPENAI_TO_MAX),
     (None, "gpt-5.6", _OPENAI_TO_MAX),
     (None, "gpt-5.5", _OPENAI_GENERIC),
     (None, "claude-opus-5", _CLAUDE_ADAPTIVE),
@@ -191,13 +192,24 @@ def map_effort(
 
 
 def _normalize_model_name(model: str) -> str:
-    """Normalize model ids like ``openai/gpt-5.6-sol`` or ``models/gemini-3``."""
+    """Normalize a model id to its final, case-insensitive path component."""
     name = (model or "").lower().strip()
     if name.startswith("models/"):
         name = name[len("models/"):]
     if "/" in name:
         name = name.rsplit("/", 1)[-1]
     return name
+
+
+def model_name_matches(model: str, prefix: str) -> bool:
+    """Match a model family without accepting an unbounded substring."""
+    name = _normalize_model_name(model)
+    family = prefix.lower().strip()
+    if not family:
+        return False
+    return name == family or any(
+        name.startswith(f"{family}{separator}") for separator in ("-", ".", ":")
+    )
 
 
 def supported_efforts(provider: str, model: str) -> tuple[ReasoningEffort, ...]:
@@ -208,13 +220,11 @@ def supported_efforts(provider: str, model: str) -> tuple[ReasoningEffort, ...]:
     names. Provider-scoped entries still win when present.
     """
     name = _normalize_model_name(model)
-    raw_name = (model or "").lower()
     prov = (provider or "").lower()
     for table_provider, prefix, supported in _MODEL_EFFORT_TABLE:
         if table_provider is not None and table_provider != prov:
             continue
-        # Prefer normalized bare model id; also allow raw path matches.
-        if prefix in name or prefix in raw_name:
+        if model_name_matches(name, prefix):
             return supported
     if prov in _PROVIDER_EFFORT_DEFAULTS:
         return _PROVIDER_EFFORT_DEFAULTS[prov]

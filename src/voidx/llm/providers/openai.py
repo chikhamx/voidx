@@ -13,8 +13,7 @@ from langchain_core.outputs import ChatGenerationChunk
 
 from voidx.llm.domain.model import ModelConfig
 from voidx.llm.providers.base import ProviderSpec
-from voidx.llm.domain.model import ReasoningEffort
-from voidx.llm.providers.common import openai_effort, preserve_reasoning_delta, resolve_effort
+from voidx.llm.providers.common import model_name_matches, openai_effort, preserve_reasoning_delta
 
 OFFICIAL_OPENAI_PROVIDERS = {"openai", "openrouter"}
 
@@ -45,6 +44,7 @@ def strip_stainless_headers() -> dict[str, str]:
 
 
 _REASONING_PREFIXES = (
+    "gpt-6-astra",
     "gpt-5",
     "o1",
     "o3",
@@ -53,8 +53,7 @@ _REASONING_PREFIXES = (
 
 
 def supports_openai_reasoning(model: str) -> bool:
-    name = model.lower()
-    return name.startswith(_REASONING_PREFIXES)
+    return any(model_name_matches(model, prefix) for prefix in _REASONING_PREFIXES)
 
 
 def openai_reasoning(config: ModelConfig) -> dict:
@@ -70,8 +69,6 @@ def openai_reasoning(config: ModelConfig) -> dict:
         provider=config.provider,
         model=config.model,
     )
-    if effort == ReasoningEffort.NONE.value and not config.model.lower().startswith("gpt-5"):
-        effort = ReasoningEffort.LOW.value
     return {"reasoning_effort": effort}
 
 

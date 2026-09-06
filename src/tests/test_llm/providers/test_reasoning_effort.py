@@ -17,7 +17,7 @@ from voidx.llm.providers.deepseek import _reasoning as deepseek_reasoning
 from voidx.llm.providers.gemini import gemini_reasoning
 from voidx.llm.providers.kimi import _reasoning as kimi_reasoning
 from voidx.llm.providers.anthropic import anthropic_reasoning
-from voidx.llm.providers.openai import openai_reasoning
+from voidx.llm.providers.openai import openai_reasoning, supports_openai_reasoning
 
 
 def test_reasoning_effort_values_and_default():
@@ -113,6 +113,9 @@ def test_openai_reasoning_maps_by_model():
     off = openai_reasoning(ModelConfig(provider="openai", model="gpt-5.6-sol", reasoning_effort="none"))
     assert off == {"reasoning_effort": "none"}
 
+    o3_off = openai_reasoning(ModelConfig(provider="openai", model="o3", reasoning_effort="none"))
+    assert o3_off == {"reasoning_effort": "none"}
+
 
 def test_deepseek_and_kimi_and_toggle_hooks():
     assert deepseek_reasoning(ModelConfig(provider="deepseek", model="deepseek-v4-pro", reasoning_effort="low")) == {
@@ -179,3 +182,60 @@ def test_gemini_and_nested_openai_fallback():
 
     assert openai_effort("max", provider="openai", model="gpt-5.5") == "xhigh"
     assert openai_effort("max", provider="openai", model="gpt-5.6-sol") == "max"
+
+
+def test_gpt6_astra_uses_full_openai_effort_vocabulary():
+    astra_efforts = supported_efforts("openai", "gpt-6-astra")
+    assert ReasoningEffort.MAX in astra_efforts
+
+    assert openai_reasoning(
+        ModelConfig(provider="openai", model="gpt-6-astra", reasoning_effort="max")
+    ) == {"reasoning_effort": "max"}
+    assert openai_reasoning(
+        ModelConfig(provider="openai", model="gpt-6-astra", reasoning_effort="none")
+    ) == {"reasoning_effort": "none"}
+    assert openai_reasoning(
+        ModelConfig(provider="openai", model="gpt-6-astra-pro", reasoning_effort="max")
+    ) == {"reasoning_effort": "max"}
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "gpt-6-astra",
+        "gpt-6-astra-pro",
+        "openai/gpt-6-astra",
+        "models/gpt-6-astra",
+        " OPENAI/GPT-6-ASTRA-PRO ",
+    ],
+)
+def test_openai_reasoning_normalizes_astra_model_ids(model):
+    assert supports_openai_reasoning(model)
+    assert ReasoningEffort.MAX in supported_efforts("openai", model)
+    assert openai_reasoning(
+        ModelConfig(provider="openai", model=model, reasoning_effort="max")
+    ) == {"reasoning_effort": "max"}
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "gpt-6-astral",
+        "gpt-6-astra2",
+        "vendor-gpt-6-astra",
+        "openai/gpt-6-astral",
+    ],
+)
+def test_openai_reasoning_rejects_similar_non_astra_model_ids(model):
+    assert not supports_openai_reasoning(model)
+    assert ReasoningEffort.MAX not in supported_efforts("openai", model)
+    assert openai_reasoning(
+        ModelConfig(provider="openai", model=model, reasoning_effort="max")
+    ) == {}
+
+
+@pytest.mark.parametrize("effort", [item.value for item in ReasoningEffort])
+def test_gpt6_astra_preserves_every_reasoning_effort(effort):
+    assert openai_reasoning(
+        ModelConfig(provider="openai", model="gpt-6-astra", reasoning_effort=effort)
+    ) == {"reasoning_effort": effort}

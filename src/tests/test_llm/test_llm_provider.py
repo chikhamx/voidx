@@ -171,7 +171,7 @@ def test_reasoning_kwargs_are_provider_specific():
     assert deepseek_xhigh.reasoning_effort == "max"
 
 
-def test_create_resolver_model_uses_provider_minimum_reasoning():
+def test_create_resolver_model_disables_reasoning():
     anthropic_config = ModelConfig(
         provider="anthropic",
         model="claude-sonnet-4-6",
@@ -191,7 +191,7 @@ def test_create_resolver_model_uses_provider_minimum_reasoning():
     openai_resolver = create_resolver_model(openai, openai_config)
     assert openai.reasoning_effort == "high"
     assert openai.extra_body is None
-    assert openai_resolver.reasoning_effort == "low"
+    assert openai_resolver.reasoning_effort == "none"
     assert openai_resolver.extra_body is None
 
     qwen_config = ModelConfig(
@@ -255,8 +255,25 @@ def test_openai_reasoning_uses_top_level_format():
         "test-key",
         ModelConfig(provider="openai", model="o3", reasoning_effort="none"),
     )
-    assert o3_off.reasoning_effort == "low"
+    assert o3_off.reasoning_effort == "none"
     assert o3_off.extra_body is None
+
+    astra = create_chat_model(
+        "test-key",
+        ModelConfig(provider="openai", model="openai/gpt-6-astra", reasoning_effort="max"),
+    )
+    assert astra.reasoning_effort == "max"
+    assert astra.extra_body is None
+    astra_payload = astra._get_request_payload([HumanMessage(content="hello")])
+    assert astra_payload["reasoning_effort"] == "max"
+    assert "extra_body" not in astra_payload
+
+    astra_off = create_chat_model(
+        "test-key",
+        ModelConfig(provider="openai", model="models/gpt-6-astra-pro", reasoning_effort="none"),
+    )
+    assert astra_off.reasoning_effort == "none"
+    assert astra_off.extra_body is None
 
     o4 = create_chat_model(
         "test-key",
@@ -313,7 +330,7 @@ def test_reasoning_stream_timeout_applies_only_when_reasoning_is_active(monkeypa
     assert openai_reasoning.stream_chunk_timeout == 600
     assert openai_plain.stream_chunk_timeout == 120
     assert openai_disabled.stream_chunk_timeout == 120
-    assert openai_minimum.stream_chunk_timeout == 600
+    assert openai_minimum.stream_chunk_timeout == 120
     assert qwen_reasoning.stream_chunk_timeout == 600
     assert qwen_disabled.stream_chunk_timeout == 120
     assert qwen_plain.stream_chunk_timeout == 120
@@ -593,6 +610,12 @@ def test_model_temperature_overrides():
         ModelConfig(provider="openai", model="o3-mini", temperature=0.3),
     )
     assert getattr(o3_model, "temperature", None) == 1.0
+
+    astra_model = create_chat_model(
+        "test-key",
+        ModelConfig(provider="openai", model="openai/gpt-6-astra", temperature=0.3),
+    )
+    assert getattr(astra_model, "temperature", None) == 1.0
 
     # 3. Kimi models should override temperature to 1.0
     kimi_model = create_chat_model(
