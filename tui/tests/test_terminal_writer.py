@@ -14,6 +14,7 @@ import pytest
 
 import voidx_cli.terminal_writer as terminal_writer_module
 from voidx_cli.terminal_writer import TerminalWriter
+from voidx_cli.helpers import _END_SYNCHRONIZED_OUTPUT, _EXIT_TERMINAL_SEQUENCE
 
 
 class _ZeroProgressStream:
@@ -636,6 +637,103 @@ class _BrokenPipeGateStream:
         pass
 
 
+
+
+class _FailingFrameStream:
+    def __init__(self, recovery_error=None) -> None:
+        self.value = ""
+        self._mode = "normal"
+        self._original_error = BrokenPipeError(errno.EPIPE, "frame write failed")
+        self._recovery_error = recovery_error
+
+    def arm_failure(self) -> None:
+        self._mode = "original"
+
+    def write(self, value: str) -> int:
+        if self._mode == "original":
+            self._mode = "recovery"
+            raise self._original_error
+        if self._mode == "recovery":
+            if self._recovery_error is not None:
+                raise self._recovery_error
+            self._mode = "normal"
+        self.value += value
+        return len(value)
+
+    def flush(self) -> None:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_worker_failure_invalidates_baseline_and_recovers_terminal_state():
+    stream = _FailingFrameStream()
+    errors: list[Exception] = []
+    error_event = asyncio.Event()
+
+    def on_error(exc: Exception) -> None:
+        errors.append(exc)
+        error_event.set()
+
+    writer = TerminalWriter(stream)
+    writer.start(
+        loop=asyncio.get_running_loop(),
+        on_frame_result=lambda _result: None,
+        on_error=on_error,
+    )
+    frame_type = terminal_writer_module.FrameBatch
+    try:
+        writer.submit_frame(frame_type(1, 1, ("baseline",), ""))
+        await asyncio.wait_for(writer.drain_async(), timeout=1)
+        assert writer._baseline_valid is True
+
+        stream.arm_failure()
+        writer.submit_frame(frame_type(2, 1, ("changed",), ""))
+        await asyncio.wait_for(error_event.wait(), timeout=1)
+
+        expected_recovery = (
+            "\x18"
+            + _END_SYNCHRONIZED_OUTPUT
+            + _EXIT_TERMINAL_SEQUENCE
+        )
+        assert errors == [stream._original_error]
+        assert writer._baseline_valid is False
+        assert stream.value.endswith(expected_recovery)
+    finally:
+        await asyncio.wait_for(writer.shutdown_async(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_worker_recovery_failure_preserves_original_error_and_records_recovery_error():
+    recovery_error = OSError("terminal recovery failed")
+    stream = _FailingFrameStream(recovery_error)
+    errors: list[Exception] = []
+    error_event = asyncio.Event()
+
+    def on_error(exc: Exception) -> None:
+        errors.append(exc)
+        error_event.set()
+
+    writer = TerminalWriter(stream)
+    writer.start(
+        loop=asyncio.get_running_loop(),
+        on_frame_result=lambda _result: None,
+        on_error=on_error,
+    )
+    frame_type = terminal_writer_module.FrameBatch
+    try:
+        writer.submit_frame(frame_type(1, 1, ("baseline",), ""))
+        await asyncio.wait_for(writer.drain_async(), timeout=1)
+
+        stream.arm_failure()
+        writer.submit_frame(frame_type(2, 1, ("changed",), ""))
+        await asyncio.wait_for(error_event.wait(), timeout=1)
+
+        assert errors == [stream._original_error]
+        assert writer._worker_error is stream._original_error
+        assert writer._recovery_error is recovery_error
+        assert writer._baseline_valid is False
+    finally:
+        await asyncio.wait_for(writer.shutdown_async(), timeout=1)
 @pytest.mark.asyncio
 async def test_worker_epipe_fails_all_tokens_once_and_rejects_new_batches():
     stream = _BrokenPipeGateStream()
@@ -772,7 +870,7 @@ async def test_worker_zero_progress_reports_one_error_and_fails_all_tokens():
     await asyncio.wait_for(error_event.wait(), timeout=1)
     await asyncio.sleep(0)
 
-    assert stream.calls == writer.MAX_ZERO_PROGRESS_WRITES
+    assert stream.calls == writer.MAX_ZERO_PROGRESS_WRITES * 2
     assert len(errors) == 1
     assert isinstance(errors[0], BlockingIOError)
     await asyncio.wait_for(writer.shutdown_async(), timeout=1)
@@ -1249,4 +1347,191 @@ async def test_diff_frame_is_synchronized_and_erases_after_replacement_text():
         assert "\x1b[3;1Hnew status\x1b[K" in delta
         assert "\x1b[2;1H\x1b[Knew input" not in delta
     finally:
+        await asyncio.wait_for(writer.shutdown_async(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_high_change_ratio_uses_line_diff_without_erase_to_end_of_screen():
+    stream = _ThreadRecordingStream()
+    results: list[object] = []
+    writer = TerminalWriter(stream)
+    writer.start(
+        loop=asyncio.get_running_loop(),
+        on_frame_result=results.append,
+        on_error=lambda exc: pytest.fail(f"unexpected writer error: {exc}"),
+    )
+    frame_type = terminal_writer_module.FrameBatch
+    try:
+        writer.submit_frame(
+            frame_type(
+                generation=1,
+                start_row=1,
+                target_lines=("old-1", "old-2", "old-3", "old-4", "old-5"),
+                cursor_ansi="",
+            )
+        )
+        await asyncio.wait_for(writer.drain_async(), timeout=1)
+        offset = len(stream.value)
+
+        writer.submit_frame(
+            frame_type(
+                generation=2,
+                start_row=1,
+                target_lines=("new-1", "new-2", "new-3", "new-4", "new-5"),
+                cursor_ansi="",
+            )
+        )
+        await asyncio.wait_for(writer.drain_async(), timeout=1)
+        delta = stream.value[offset:]
+
+        assert "\x1b[J" not in delta
+        for row, value in enumerate(("new-1", "new-2", "new-3", "new-4", "new-5"), 1):
+            assert f"\x1b[{row};1H{value}\x1b[K" in delta
+        assert results[-1].changed_lines == 5
+        assert results[-1].strategy == "diff"
+    finally:
+        await asyncio.wait_for(writer.shutdown_async(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_shorter_frame_clears_every_old_tail_row_with_line_erase():
+    stream = _ThreadRecordingStream()
+    results: list[object] = []
+    writer = TerminalWriter(stream)
+    writer.start(
+        loop=asyncio.get_running_loop(),
+        on_frame_result=results.append,
+        on_error=lambda exc: pytest.fail(f"unexpected writer error: {exc}"),
+    )
+    frame_type = terminal_writer_module.FrameBatch
+    try:
+        writer.submit_frame(
+            frame_type(
+                generation=1,
+                start_row=1,
+                target_lines=("line-1", "line-2", "line-3", "line-4", "line-5"),
+                cursor_ansi="",
+            )
+        )
+        await asyncio.wait_for(writer.drain_async(), timeout=1)
+        offset = len(stream.value)
+
+        writer.submit_frame(
+            frame_type(
+                generation=2,
+                start_row=1,
+                target_lines=("line-1", "line-2"),
+                cursor_ansi="",
+            )
+        )
+        await asyncio.wait_for(writer.drain_async(), timeout=1)
+        delta = stream.value[offset:]
+
+        assert "\x1b[J" not in delta
+        assert "\x1b[3;1H\x1b[K" in delta
+        assert "\x1b[4;1H\x1b[K" in delta
+        assert "\x1b[5;1H\x1b[K" in delta
+        assert results[-1].changed_lines == 3
+        assert results[-1].strategy == "diff-tail-clear"
+    finally:
+        await asyncio.wait_for(writer.shutdown_async(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_restore_barrier_invalidates_worker_baseline_before_next_frame():
+    stream = _ThreadRecordingStream()
+    results: list[object] = []
+    writer = TerminalWriter(stream)
+    writer.start(
+        loop=asyncio.get_running_loop(),
+        on_frame_result=results.append,
+        on_error=lambda exc: pytest.fail(f"unexpected writer error: {exc}"),
+    )
+    frame_type = terminal_writer_module.FrameBatch
+    try:
+        writer.submit_frame(frame_type(1, 2, ("old",), ""))
+        await asyncio.wait_for(writer.drain_async(), timeout=1)
+        offset = len(stream.value)
+
+        restore = writer.submit_barrier(kind="restore", ansi="<restore>")
+        await asyncio.wait_for(writer.wait(restore), timeout=1)
+        writer.submit_frame(frame_type(2, 2, ("new",), ""))
+        await asyncio.wait_for(writer.drain_async(), timeout=1)
+
+        delta = stream.value[offset:]
+        assert results[-1].strategy == "full"
+        assert "<restore>" in delta
+        assert "\x1b[2;1H\x1b[Jnew" in delta
+    finally:
+        await asyncio.wait_for(writer.shutdown_async(), timeout=1)
+
+
+def test_sync_failure_recovery_discards_pending_output_and_latches_error():
+    class FailingSyncStream:
+        def __init__(self):
+            self.value = ""
+            self.fail = True
+
+        def write(self, value: str) -> int:
+            if self.fail:
+                self.fail = False
+                raise BrokenPipeError(errno.EPIPE, "sync output failed")
+            self.value += value
+            return len(value)
+
+        def flush(self) -> None:
+            pass
+
+    stream = FailingSyncStream()
+    writer = TerminalWriter(stream, byte_budget=64)
+    writer.write("stale buffered output")
+    error = BrokenPipeError(errno.EPIPE, "sync output failed")
+
+    with pytest.raises(BrokenPipeError):
+        writer.drain()
+    writer._recover_sync_failure(error)
+
+    assert writer.pending_bytes == 0
+    assert stream.value.endswith(
+        "\x18" + _END_SYNCHRONIZED_OUTPUT + _EXIT_TERMINAL_SEQUENCE
+    )
+    with pytest.raises(BrokenPipeError) as repeated:
+        writer.write("blocked after failure")
+    assert repeated.value is error
+
+
+@pytest.mark.asyncio
+async def test_worker_failure_result_callback_delay_does_not_change_private_baseline():
+    stream = _GateStream()
+    callback_release = asyncio.Event()
+    results: list[object] = []
+
+    def on_frame_result(result: object) -> None:
+        results.append(result)
+        if len(results) == 1:
+            callback_release.set()
+
+    writer = TerminalWriter(stream)
+    writer.start(
+        loop=asyncio.get_running_loop(),
+        on_frame_result=on_frame_result,
+        on_error=lambda exc: pytest.fail(f"unexpected writer error: {exc}"),
+    )
+    frame_type = terminal_writer_module.FrameBatch
+    try:
+        writer.submit_frame(frame_type(1, 1, ("same", "old"), ""))
+        await asyncio.wait_for(writer.drain_async(), timeout=1)
+        stream.block_on = "<gate>"
+        gate = writer.submit_barrier(kind="startup", ansi="<gate>")
+        await asyncio.wait_for(asyncio.to_thread(stream.blocked.wait, 1), timeout=2)
+        writer.submit_frame(frame_type(2, 1, ("same", "new"), ""))
+        stream.release.set()
+        await asyncio.wait_for(writer.wait(gate), timeout=1)
+        await asyncio.wait_for(writer.drain_async(), timeout=1)
+
+        assert await asyncio.wait_for(callback_release.wait(), timeout=1)
+        assert results[-1].strategy == "diff"
+        assert results[-1].changed_lines == 1
+    finally:
+        stream.release.set()
         await asyncio.wait_for(writer.shutdown_async(), timeout=1)

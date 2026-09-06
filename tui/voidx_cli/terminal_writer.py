@@ -12,7 +12,11 @@ from tempfile import SpooledTemporaryFile
 from typing import Callable, Iterator, Literal, TextIO
 
 from .async_utils import await_cancellation_safe
-from .helpers import _BEGIN_SYNCHRONIZED_OUTPUT, _END_SYNCHRONIZED_OUTPUT
+from .helpers import (
+    _BEGIN_SYNCHRONIZED_OUTPUT,
+    _END_SYNCHRONIZED_OUTPUT,
+    _EXIT_TERMINAL_SEQUENCE,
+)
 
 
 BarrierKind = Literal[
@@ -148,11 +152,15 @@ class TerminalWriter:
         self._on_frame_result: Callable[[FrameResult], None] | None = None
         self._on_error: Callable[[Exception], None] | None = None
         self._worker_error: Exception | None = None
+        self._recovery_error: Exception | None = None
         self._shutdown_token: BatchToken | None = None
         self._applied_generation = 0
         self._applied_start_row = 1
         self._applied_lines: tuple[str, ...] = ()
         self._baseline_valid = False
+        self._sync_error: BaseException | None = None
+        self._sync_recovery_error: BaseException | None = None
+        self._sync_recovery_attempted = False
         self._pending_commit_bytes = 0
         self._spooled_commits = 0
         self._spooled_bytes = 0
@@ -208,6 +216,8 @@ class TerminalWriter:
     def _require_sync_mode(self) -> None:
         if self._started:
             raise RuntimeError("synchronous terminal writes are disabled after start()")
+        if self._sync_error is not None:
+            raise self._sync_error
 
     def write(self, value: str) -> int:
         self._require_sync_mode()
@@ -317,6 +327,39 @@ class TerminalWriter:
         if callable(flush):
             flush()
 
+    def _recover_sync_failure(self, error: BaseException) -> None:
+        """Abort a failed synchronous terminal transaction once."""
+        if self._sync_error is None:
+            self._sync_error = error
+        self._pending.clear()
+        self._pending_bytes = 0
+        self._zero_progress_writes = 0
+        if self._sync_recovery_attempted:
+            return
+        self._sync_recovery_attempted = True
+        recovery = "\x18" + _END_SYNCHRONIZED_OUTPUT + _EXIT_TERMINAL_SEQUENCE
+        try:
+            remaining = recovery
+            zero_progress = 0
+            while remaining:
+                chunk, suffix = self._split_prefix(remaining, self.byte_budget)
+                if not chunk:
+                    chunk, suffix = remaining[0], remaining[1:]
+                while chunk:
+                    written, zero_progress = self._write_some(
+                        self._target(),
+                        chunk,
+                        zero_progress,
+                    )
+                    chunk = chunk[written:]
+                remaining = suffix
+            flush = getattr(self._target(), "flush", None)
+            if callable(flush):
+                flush()
+        except BaseException as recovery_error:
+            self._sync_recovery_error = recovery_error
+
+
     def start(
         self,
         *,
@@ -424,7 +467,7 @@ class TerminalWriter:
             raise ValueError("use shutdown_async() for the shutdown barrier")
         if kind == "drain" and invalidate_frame:
             raise ValueError("drain barrier cannot invalidate the frame")
-        invalidates = invalidate_frame or kind in {"clear", "scroll", "resize"}
+        invalidates = invalidate_frame or kind in {"clear", "scroll", "resize", "restore"}
         with self._condition:
             self._check_submit_locked()
             if invalidates:
@@ -644,26 +687,38 @@ class TerminalWriter:
             return
 
         self._worker_write(_BEGIN_SYNCHRONIZED_OUTPUT)
+        frame_error: Exception | None = None
         try:
-            if (
-                self._baseline_valid
-                and not batch.force_full
-                and self._applied_start_row == batch.start_row
-            ):
-                changed_lines, strategy = self._write_frame_diff(
-                    batch.start_row,
-                    self._applied_lines,
-                    batch.target_lines,
-                )
-            else:
-                changed_lines, strategy = self._write_frame_full(
-                    batch.start_row,
-                    batch.target_lines,
-                )
-            if batch.cursor_ansi:
-                self._worker_write(batch.cursor_ansi)
-        finally:
-            self._worker_write(_END_SYNCHRONIZED_OUTPUT)
+            try:
+                if (
+                    self._baseline_valid
+                    and not batch.force_full
+                    and self._applied_start_row == batch.start_row
+                ):
+                    changed_lines, strategy = self._write_frame_diff(
+                        batch.start_row,
+                        self._applied_lines,
+                        batch.target_lines,
+                    )
+                else:
+                    changed_lines, strategy = self._write_frame_full(
+                        batch.start_row,
+                        batch.target_lines,
+                    )
+                if batch.cursor_ansi:
+                    self._worker_write(batch.cursor_ansi)
+            except Exception as exc:
+                frame_error = exc
+            finally:
+                try:
+                    self._worker_write(_END_SYNCHRONIZED_OUTPUT)
+                except Exception as end_error:
+                    if frame_error is None:
+                        frame_error = end_error
+        except Exception as exc:
+            frame_error = frame_error or exc
+        if frame_error is not None:
+            raise frame_error
         self._worker_flush()
 
         self._applied_generation = batch.generation
@@ -705,16 +760,13 @@ class TerminalWriter:
             or index >= len(current)
             or previous[index] != current[index]
         ]
-        if total and len(changed) / total > 0.8:
-            return self._write_frame_full(start_row, current)
-
         wrote_tail_clear = False
         for index in changed:
             self._worker_write(f"\x1b[{start_row + index};1H")
             if index >= len(current):
-                self._worker_write("\x1b[J")
+                self._worker_write("\x1b[K")
                 wrote_tail_clear = True
-                break
+                continue
             self._worker_write(current[index])
             self._worker_write("\x1b[K")
         strategy = "diff-tail-clear" if wrote_tail_clear else "diff"
@@ -780,14 +832,24 @@ class TerminalWriter:
         if callback is not None:
             self._call_soon_threadsafe(callback, result)
 
+    def _recover_after_worker_error(self) -> None:
+        recovery = "\x18" + _END_SYNCHRONIZED_OUTPUT + _EXIT_TERMINAL_SEQUENCE
+        try:
+            self._worker_write(recovery)
+            self._worker_flush()
+        except Exception as exc:
+            self._recovery_error = exc
+
     def _handle_worker_error(self, error: Exception) -> None:
         with self._condition:
             if self._worker_error is not None:
                 return
             self._worker_error = error
             self._accepting = False
+            self._baseline_valid = False
             entries = list(self._queue)
             self._queue.clear()
+        self._recover_after_worker_error()
         for entry in entries:
             if isinstance(entry.batch, _CommitBatch):
                 try:
