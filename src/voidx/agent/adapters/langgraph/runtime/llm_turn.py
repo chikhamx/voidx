@@ -52,6 +52,7 @@ from voidx.agent.adapters.langgraph.runtime.topology import latest_user_text, pr
 from voidx.agent.domain.workflow_utils import active_workflow_names
 from voidx.observability.request_log import log_llm_exchange
 from voidx.llm.domain.provider import resolve_protocol
+from voidx.llm.cache_key import bind_prompt_cache_key, prompt_cache_key_for
 from voidx.llm.usage import estimate_context_tokens_with_tools, estimate_message_tokens, extract_token_usage
 from voidx.agent.adapters.langgraph.runtime.control_protocol import (
     ControlContext,
@@ -164,6 +165,12 @@ class LlmTurn:
             ),
         ).definitions
         tool_defs = [] if final_response_prompt else resolved_tool_defs
+        model_protocol = resolve_protocol(host.config.model)
+        prompt_cache_key = prompt_cache_key_for(
+            host._session.id if host._session is not None else None,
+            host.config.model.provider,
+            host.config.model.model,
+        )
         runtime_task_state = _task_state_for_context(
             state.get("task_state"),
             getattr(host, "_task_state", None),
@@ -493,11 +500,16 @@ class LlmTurn:
                         model_with_tools = host.model.bind_tools(active_tool_defs)
                 else:
                     model_with_tools = host.model
+                model_with_tools = bind_prompt_cache_key(
+                    model_with_tools,
+                    prompt_cache_key,
+                    protocol=model_protocol,
+                )
                 assistant_msg = await _stream_llm(
                     model_with_tools,
                     request_llm_messages,
                     renderer,
-                    resolve_protocol(host.config.model),
+                    model_protocol,
                     ui_port=host._ui,
                 )
                 log_llm_exchange(

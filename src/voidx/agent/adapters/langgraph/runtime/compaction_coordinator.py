@@ -31,6 +31,7 @@ from voidx.llm.domain.model import ModelConfig, ReasoningEffort
 from voidx.llm.domain.provider import resolve_protocol
 from voidx.observability.tool_log import log_tool_event
 from voidx.observability.request_log import log_llm_exchange
+from voidx.llm.cache_key import bind_prompt_cache_key, prompt_cache_key_for
 from voidx.llm.usage import estimate_context_tokens, estimate_message_tokens, extract_token_usage
 from voidx.agent.adapters.persistence.context_frame_repository import gc_context_frames, save_context_frame_from_messages
 from voidx.agent.application.automation.workflow.service import is_workflow_context_content
@@ -637,6 +638,18 @@ class CompactionCoordinator:
             )
         model = resolved.model
         model_config = resolved.model_config
+        model_protocol = resolve_protocol(model_config)
+        prompt_cache_key = prompt_cache_key_for(
+            host._session.id if host._session is not None else None,
+            model_config.provider,
+            model_config.model,
+            scope="compaction",
+        )
+        model = bind_prompt_cache_key(
+            model,
+            prompt_cache_key,
+            protocol=model_protocol,
+        )
 
         ui_factories = host._ui if hasattr(host._ui, "streaming_renderer") else NullAgentUiPort()
         renderer_factory = StreamingRenderer or ui_factories.streaming_renderer
@@ -688,7 +701,13 @@ class CompactionCoordinator:
                     **(attempt_metadata or {}),
                 },
             )
-        assistant_msg = await stream_llm(model, messages, renderer, resolve_protocol(model_config), ui_port=host._ui)
+        assistant_msg = await stream_llm(
+            model,
+            messages,
+            renderer,
+            model_protocol,
+            ui_port=host._ui,
+        )
         log_llm_exchange(
             messages,
             assistant_msg,

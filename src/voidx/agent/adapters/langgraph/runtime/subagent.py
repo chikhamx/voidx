@@ -66,6 +66,7 @@ from voidx.agent.adapters.langgraph.runtime.tool_surface import (
 )
 from voidx.llm.domain.provider import get_context_limit, resolve_protocol
 from voidx.agent.application.instruction import WorkflowRuntimeContext
+from voidx.llm.cache_key import bind_prompt_cache_key, prompt_cache_key_for
 from voidx.llm.usage import (
     UsageStats,
     estimate_context_tokens_with_tools,
@@ -239,6 +240,14 @@ async def run_subagent(
             model_protocol=resolve_protocol(model_cfg),
         ),
     ).definitions
+
+    model_protocol = resolve_protocol(model_cfg)
+    prompt_cache_key = prompt_cache_key_for(
+        session_id,
+        model_cfg.provider,
+        model_cfg.model,
+        scope=f"subagent:{run_identity}",
+    )
 
     if sub_messages is None:
         sub_messages = []
@@ -669,7 +678,12 @@ async def run_subagent(
         async def stream_final_attempt():
             nonlocal final_messages
             final_messages = compile_context([*messages, guidance])
-            return await stream_child_llm(model, final_messages, renderer)
+            final_model = bind_prompt_cache_key(
+                model,
+                prompt_cache_key,
+                protocol=model_protocol,
+            )
+            return await stream_child_llm(final_model, final_messages, renderer)
 
         try:
             assistant_msg = await stream_child_llm_with_retry(stream_final_attempt)
@@ -782,6 +796,11 @@ async def run_subagent(
                         return await finalize("context_limit")
             step = next_step
             model_with_tools = model.bind_tools(tool_defs) if tool_defs else model
+            model_with_tools = bind_prompt_cache_key(
+                model_with_tools,
+                prompt_cache_key,
+                protocol=model_protocol,
+            )
             async def stream_step_attempt():
                 nonlocal llm_messages, context_tokens
                 llm_messages = compile_context(llm_messages)
