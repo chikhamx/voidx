@@ -1,3 +1,6 @@
+
+
+
 from tui_helpers import *  # noqa: F403
 
 import asyncio
@@ -1107,8 +1110,7 @@ def test_worker_render_enqueues_atomic_frame_and_accepts_only_latest_stats(
     assert batch.generation == 1
     assert isinstance(batch.target_lines, tuple)
     assert batch.target_lines
-    assert batch.cursor_ansi.startswith("\x1b[")
-    assert batch.cursor_ansi.endswith("G")
+    assert re.fullmatch(r"\x1b\[\d+;\d+H", batch.cursor_ansi)
     assert batch.render_ms >= 0
     assert tui._render_stats is None
 
@@ -1177,6 +1179,37 @@ def _worker_render_tui(tmp_path, monkeypatch):
     return tui, writer
 
 
+def test_worker_frame_projects_oversized_bottom_into_physical_viewport(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 6)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=6, _environ={})
+    writer = _WorkerFrameWriter()
+    tui._terminal_writer = writer
+    tui._input_lines = [f"input {index}" for index in range(10)]
+    tui._cursor_row = 9
+    tui._cursor_col = len(tui._input_lines[-1])
+
+    tui._render_frame()
+
+    assert len(writer.frames) == 1
+    batch = writer.frames[0]
+    assert len(batch.target_lines) <= 6
+    assert batch.start_row >= 1
+    assert batch.start_row + len(batch.target_lines) - 1 <= 6
+    snapshot = tui._pending_layout_snapshots[batch.generation]
+    assert snapshot.frame_rows == len(batch.target_lines)
+    assert 1 <= snapshot.cursor_row <= 6
+    assert snapshot.bottom.region.start_row <= snapshot.cursor_row
+    assert snapshot.bottom.region.start_row + snapshot.bottom.region.visual_rows - 1 <= 6
+
+
 def test_worker_clear_request_submits_barrier_before_forced_frame(tmp_path, monkeypatch):
     tui, writer = _worker_render_tui(tmp_path, monkeypatch)
     dock.reset()
@@ -1219,6 +1252,65 @@ def test_worker_scroll_submits_barrier_without_synchronous_write(tmp_path):
     assert tui._visible_committed_rows == 2
 
 
+
+
+@pytest.mark.parametrize("boundary", ["resize", "clear", "scroll"])
+def test_worker_terminal_boundaries_invalidate_layout_snapshot(
+    tmp_path, monkeypatch, boundary
+):
+    if boundary == "scroll":
+        tui = _tui(tmp_path)
+        tui._tty = True
+        writer = _WorkerFrameWriter()
+        tui._terminal_writer = writer
+        tui._visible_committed_rows = 5
+    else:
+        tui, writer = _worker_render_tui(tmp_path, monkeypatch)
+        if boundary == "resize":
+            tui._prev_frame_width = 60
+            tui._prev_frame_term_height = 24
+        else:
+            dock.request_clear_screen()
+
+    sentinel = object()
+    tui._applied_layout_snapshot = sentinel
+    tui._pending_layout_snapshots[999] = sentinel
+    tui._pending_layout_force_full[999] = False
+    original_epoch = tui._scroll_epoch
+
+    if boundary == "scroll":
+        assert tui._make_room_for_frame(frame_rows=8, term_height=10) is True
+    else:
+        tui._render_frame()
+
+    assert tui._scroll_epoch == original_epoch + 1
+    assert tui._applied_layout_snapshot is None
+    assert 999 not in tui._pending_layout_snapshots
+    assert 999 not in tui._pending_layout_force_full
+
+def test_worker_make_room_without_scroll_preserves_layout_snapshot(tmp_path):
+    tui = _tui(tmp_path)
+    tui._tty = True
+    writer = _WorkerFrameWriter()
+    tui._terminal_writer = writer
+    tui._visible_committed_rows = 1
+
+    sentinel = object()
+    tui._applied_layout_snapshot = sentinel
+    tui._pending_layout_snapshots[999] = sentinel
+    tui._pending_layout_force_full[999] = False
+    original_epoch = tui._scroll_epoch
+
+    assert tui._make_room_for_frame(frame_rows=2, term_height=10) is False
+
+    assert tui._scroll_epoch == original_epoch
+    assert tui._applied_layout_snapshot is sentinel
+    assert tui._pending_layout_snapshots[999] is sentinel
+    assert tui._pending_layout_force_full[999] is False
+    assert writer.barriers == []
+
+
+
 def test_worker_frame_generation_advances_only_after_successful_submit(
     tmp_path, monkeypatch
 ):
@@ -1230,6 +1322,52 @@ def test_worker_frame_generation_advances_only_after_successful_submit(
 
     assert tui._terminal_frame_generation == 0
     assert writer.frames == []
+
+
+
+def test_worker_layout_snapshot_promotes_only_after_matching_applied_result(
+    tmp_path, monkeypatch
+):
+    from voidx_cli.layout import LayoutSnapshot
+    from voidx_cli.terminal_writer import FrameResult
+
+    tui, writer = _worker_render_tui(tmp_path, monkeypatch)
+
+    tui._render_frame()
+
+    assert tui._submitted_generation == 1
+    assert tui._layout_generation == 1
+    assert tui._applied_layout_snapshot is None
+    assert set(tui._pending_layout_snapshots) == {1}
+    assert isinstance(tui._pending_layout_snapshots[1], LayoutSnapshot)
+
+    tui._handle_terminal_frame_result(FrameResult(1, 1, 1, 0.1, "diff", False))
+    assert tui._applied_layout_snapshot is None
+    assert set(tui._pending_layout_snapshots) == {1}
+
+    tui._handle_terminal_frame_result(FrameResult(0, 1, 1, 0.1, "stale", True))
+    assert tui._applied_layout_snapshot is None
+    assert set(tui._pending_layout_snapshots) == {1}
+
+    tui._handle_terminal_frame_result(FrameResult(1, 1, 1, 0.1, "full", True))
+    assert tui._applied_layout_snapshot is not None
+    assert tui._applied_layout_snapshot.generation == 1
+    assert tui._pending_layout_snapshots == {}
+
+
+def test_worker_frame_submit_failure_invalidates_pending_layout_snapshot(
+    tmp_path, monkeypatch
+):
+    tui, writer = _worker_render_tui(tmp_path, monkeypatch)
+    writer.frame_error = RuntimeError("enqueue failed")
+
+    with pytest.raises(RuntimeError, match="enqueue failed"):
+        tui._render_frame()
+
+    assert tui._submitted_generation == 0
+    assert tui._pending_layout_snapshots == {}
+    assert tui._terminal_submission_failed is True
+    assert tui._full_layout_invalidated is True
 
 
 def test_input_cursor_sequence_is_pure_in_worker_mode(tmp_path):
@@ -1783,6 +1921,83 @@ async def test_worker_commit_watermark_waits_for_completed_writer_token(
     assert tui._visible_committed_rows > 0
 
 
+
+
+@pytest.mark.asyncio
+async def test_worker_commit_registers_pending_operation_and_invalidates_layout(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitWriter()
+    tui._terminal_writer = writer
+    dock.append_message("commit operation")
+
+    sentinel = object()
+    tui._applied_layout_snapshot = sentinel
+    tui._pending_layout_snapshots[7] = sentinel
+    tui._pending_layout_force_full[7] = False
+    original_epoch = tui._scroll_epoch
+
+    token = tui._flush_committed(force=True)
+
+    assert token is writer.tokens[0]
+    assert tui._scroll_epoch == original_epoch + 1
+    assert tui._applied_layout_snapshot is None
+    assert tui._pending_layout_snapshots == {}
+    assert tui._pending_layout_force_full == {}
+    assert tui._full_layout_invalidated is True
+    operation = tui._pending_terminal_operations[id(token)]
+    assert operation["kind"] == "commit"
+    assert operation["token"] is token
+    assert operation["scroll_epoch"] == tui._scroll_epoch
+
+    token.future.set_result(None)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert tui._pending_terminal_operations == {}
+
+
+@pytest.mark.asyncio
+async def test_worker_commit_failure_clears_pending_operation_without_applying_state(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitWriter()
+    tui._terminal_writer = writer
+    dock.append_message("failed commit operation")
+    tui._committed_line_count = 0
+    original_epoch = tui._scroll_epoch
+
+    token = tui._flush_committed(force=True)
+    assert token is writer.tokens[0]
+    assert tui._pending_terminal_operations
+
+    token.future.set_exception(RuntimeError("commit operation failed"))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert tui._pending_terminal_operations == {}
+    assert tui._committed_line_count == 0
+    assert tui._visible_committed_rows == 0
+    assert tui._scroll_epoch == original_epoch + 1
+    assert tui._full_layout_invalidated is True
 @pytest.mark.asyncio
 async def test_worker_commit_token_failure_preserves_state_and_output_requests(
     tmp_path,
@@ -1998,3 +2213,475 @@ async def test_drain_committed_output_flushes_tail_added_while_token_pending(
     assert tui._pending_commit_tokens == []
     assert tui._pending_commit_updates == {}
     assert tui._pending_commit_tasks == {}
+
+
+
+def test_invalidate_layout_clears_snapshots_and_rejects_old_callback(
+    tmp_path, monkeypatch
+):
+    from voidx_cli.terminal_writer import FrameResult
+
+    tui, writer = _worker_render_tui(tmp_path, monkeypatch)
+    tui._render_frame()
+    pending = tui._pending_layout_snapshots[1]
+    tui._applied_layout_snapshot = pending
+    original_epoch = tui._scroll_epoch
+
+    tui._invalidate_layout("resize")
+
+    assert tui._scroll_epoch == original_epoch + 1
+    assert tui._applied_layout_snapshot is None
+    assert tui._pending_layout_snapshots == {}
+    assert tui._pending_layout_force_full == {}
+    assert tui._full_layout_invalidated is True
+
+    tui._handle_terminal_frame_result(FrameResult(1, 1, 1, 0.1, "full", True))
+    assert tui._applied_layout_snapshot is None
+
+
+
+def test_non_full_frame_result_does_not_clear_layout_invalidation(
+    tmp_path, monkeypatch
+):
+    from voidx_cli.terminal_writer import FrameResult
+
+    tui, writer = _worker_render_tui(tmp_path, monkeypatch)
+    tui._render_frame()
+    assert writer.frames[0].force_full is False
+    tui._full_layout_invalidated = True
+
+    tui._handle_terminal_frame_result(FrameResult(1, 1, 1, 0.1, "diff", True))
+
+    assert tui._full_layout_invalidated is True
+
+
+
+def test_sync_frame_registers_bounded_physical_snapshot(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 6)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=6, _environ={})
+    tui._input_lines = [f"input {index}" for index in range(10)]
+    tui._cursor_row = 9
+    tui._cursor_col = len(tui._input_lines[-1])
+
+    tui._render_frame()
+
+    assert tui._applied_layout_snapshot is not None
+    assert tui._applied_layout_snapshot.frame_rows == tui._last_frame_rows
+    assert tui._last_frame_start_row + tui._last_frame_rows - 1 <= 6
+    assert 1 <= tui._applied_layout_snapshot.cursor_row <= 6
+
+
+
+def test_sync_frame_patch_keeps_absolute_cursor_and_avoids_screen_erase(
+    tmp_path, monkeypatch
+):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 20)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=20, _environ={})
+    dock.begin_capture()
+    dock.set_stream("first line")
+    tui._render_frame()
+
+    fake_stdout.text = ""
+    dock.set_stream("first line\nsecond line")
+    tui._render_frame()
+
+    assert "\x1b[J" not in fake_stdout.text
+    assert "\x1b[K" in fake_stdout.text
+    assert re.search(r"\x1b\[\d+;\d+H", fake_stdout.text)
+    assert tui._applied_layout_snapshot is not None
+
+
+
+def test_sync_input_region_uses_snapshot_patch_without_screen_erase(tmp_path, monkeypatch):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 12)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=12, _environ={})
+    dock.append_message("stable transcript")
+    tui._render_frame()
+    fake_stdout.text = ""
+
+    tui._input_lines = ["changed input"]
+    tui._cursor_col = len("changed input")
+    tui._render_input_region()
+
+    assert "\x1b[J" not in fake_stdout.text
+    assert "changed input" in Text.from_ansi(fake_stdout.text).plain
+
+
+def test_sync_input_region_without_snapshot_falls_back_to_full_frame(tmp_path, monkeypatch):
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=12, _environ={})
+    tui._has_rendered_frame = True
+    tui._last_bottom_rows = 3
+    calls = []
+    monkeypatch.setattr(tui, "_render_frame", lambda: calls.append("frame"))
+
+    tui._render_input_region()
+
+    assert calls == ["frame"]
+
+
+
+def test_sync_choice_selection_patch_only_writes_choice_region(tmp_path, monkeypatch):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 20)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=20, _environ={})
+    dock.append_message("stable transcript")
+    tui._active_choice = [("one", "one", ""), ("two", "two", "")]
+    tui._choice_prompt = "Pick?"
+    tui._choice_selected = 0
+    tui._render_frame()
+    fake_stdout.text = ""
+
+    tui._choice_selected = 1
+    assert tui._render_choice_selection_region() is True
+
+    output = Text.from_ansi(fake_stdout.text).plain
+    assert "Pick?" in output
+    assert "stable transcript" not in output
+    assert "\x1b[J" not in fake_stdout.text
+    assert "\x1b[K" in fake_stdout.text
+
+
+
+def test_sync_busy_tick_requires_trusted_layout_cache(tmp_path, monkeypatch):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 12)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=12, _environ={})
+    tui._busy = True
+    tui._busy_started_at = 0.0
+    tui._busy_activity_verb = "Working"
+    tui._render_frame()
+    fake_stdout.text = ""
+    tui._invalidate_frame_cache()
+
+    assert tui._render_busy_activity_tick() is False
+    assert fake_stdout.text == ""
+
+
+@pytest.mark.asyncio
+async def test_worker_resize_barrier_stays_pending_until_token_completes(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+
+    class DeferredToken:
+        def __init__(self):
+            self.future = asyncio.get_running_loop().create_future()
+
+    class DeferredBarrierWriter(_WorkerFrameWriter):
+        def __init__(self):
+            super().__init__()
+            self.tokens = []
+
+        def submit_barrier(self, **kwargs):
+            token = DeferredToken()
+            self.tokens.append(token)
+            self.barriers.append(kwargs)
+            self.events.append(("barrier", kwargs["kind"]))
+            return token
+
+        async def wait(self, token):
+            await token.future
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = DeferredBarrierWriter()
+    tui._terminal_writer = writer
+    tui._prev_frame_width = 60
+    tui._prev_frame_term_height = 24
+
+    tui._render_frame()
+
+    token = writer.tokens[0]
+    operation = tui._pending_terminal_operations[id(token)]
+    assert operation["kind"] == "barrier"
+    assert operation["token"] is token
+
+    token.future.set_result(None)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert tui._pending_terminal_operations == {}
+
+
+@pytest.mark.asyncio
+async def test_worker_make_room_registers_scroll_barrier_until_completion(
+    tmp_path,
+):
+    class DeferredScrollWriter(_WorkerFrameWriter):
+        def __init__(self):
+            super().__init__()
+            self.tokens = []
+
+        def submit_barrier(self, **kwargs):
+            token = _DeferredCommitToken(asyncio.get_running_loop())
+            self.tokens.append(token)
+            self.barriers.append(kwargs)
+            self.events.append(("barrier", kwargs["kind"]))
+            return token
+
+        async def wait(self, token):
+            await token.future
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    writer = DeferredScrollWriter()
+    tui._terminal_writer = writer
+    tui._visible_committed_rows = 5
+
+    assert tui._make_room_for_frame(frame_rows=8, term_height=10) is True
+
+    token = writer.tokens[0]
+    assert id(token) in tui._pending_terminal_operations
+    assert tui._pending_terminal_operations[id(token)]["kind"] == "barrier"
+
+    token.future.set_result(None)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert tui._pending_terminal_operations == {}
+
+
+class _DelayedBarrierToken:
+    def __init__(self, loop):
+        self._future = loop.create_future()
+
+
+class _DelayedBarrierWriter:
+    worker_mode = True
+
+    def __init__(self, loop):
+        self.loop = loop
+        self.barriers = []
+        self.frames = []
+        self.tokens = []
+
+    def submit_barrier(self, **kwargs):
+        token = _DelayedBarrierToken(self.loop)
+        self.barriers.append(kwargs)
+        self.tokens.append(token)
+        return token
+
+    def submit_frame(self, batch):
+        self.frames.append(batch)
+
+    async def wait(self, token):
+        await token._future
+
+
+@pytest.mark.asyncio
+async def test_worker_frame_defers_scroll_state_until_barrier_applies(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 12)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=12, _environ={})
+    writer = _DelayedBarrierWriter(asyncio.get_running_loop())
+    tui._terminal_writer = writer
+    tui._visible_committed_rows = 12
+
+    tui._render_frame()
+
+    assert writer.barriers
+    assert writer.frames
+    assert tui._visible_committed_rows == 12
+
+    writer.tokens[0]._future.set_result(None)
+    await asyncio.sleep(0)
+
+    assert tui._visible_committed_rows < 12
+
+
+
+
+@pytest.mark.asyncio
+async def test_worker_clear_state_waits_for_barrier_before_applying(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 12)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=12, _environ={})
+    writer = _DelayedBarrierWriter(asyncio.get_running_loop())
+    tui._terminal_writer = writer
+    projection = object()
+    tui._committed_line_count = 7
+    tui._committed_projection = projection
+    tui._visible_committed_rows = 5
+    dock.reset()
+
+    tui._render_frame()
+
+    assert writer.barriers[0]["kind"] == "clear"
+    assert tui._committed_line_count == 7
+    assert tui._committed_projection is projection
+    assert tui._visible_committed_rows == 5
+
+    writer.tokens[0]._future.set_result(None)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert tui._committed_line_count == 0
+    assert tui._committed_projection is None
+    assert tui._visible_committed_rows == 0
+
+class _FailingSyncFrameWriter:
+    worker_mode = False
+
+    def __init__(self):
+        self.flush_calls = 0
+        self.fail_flush = False
+        self.values = []
+        self.recovery_errors = []
+
+    def write(self, value):
+        self.values.append(value)
+        return len(value)
+
+    def flush(self):
+        self.flush_calls += 1
+        if self.fail_flush:
+            raise OSError("frame flush failed")
+
+    def _recover_sync_failure(self, error):
+        self.recovery_errors.append(error)
+
+
+def test_sync_frame_flush_failure_does_not_publish_renderer_state(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _FailingSyncFrameWriter()
+    tui._terminal_writer = writer
+
+    tui._render_frame()
+    previous = (
+        tui._applied_layout_snapshot,
+        tui._prev_frame_lines,
+        tui._terminal_frame_generation,
+        tui._layout_generation,
+        tui._last_frame_rows,
+    )
+    writer.fail_flush = True
+
+    with pytest.raises(OSError, match="frame flush failed"):
+        tui._render_frame()
+
+    assert tui._applied_layout_snapshot is None
+    assert tui._prev_frame_lines is None
+    assert tui._terminal_frame_generation == previous[2]
+    assert tui._layout_generation == previous[3]
+    assert tui._last_frame_rows == previous[4]
+    assert writer.recovery_errors
+    assert tui._terminal_submission_failed is True
+
+
+def test_sync_local_io_failure_does_not_recurse_into_full_frame(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._terminal_writer = _FailingSyncFrameWriter()
+    previous = SimpleNamespace(frame_start_row=1)
+    tui._applied_layout_snapshot = previous
+    tui._terminal_frame_generation = 3
+    fallback_calls = []
+    monkeypatch.setattr(tui, "_sync_snapshot_is_usable", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        tui,
+        "_render_impl",
+        lambda **kwargs: setattr(
+            tui,
+            "_render_plan",
+            SimpleNamespace(logical_plan=object()),
+        ),
+    )
+    monkeypatch.setattr(
+        tui,
+        "_physical_viewport_for_frame",
+        lambda *args, **kwargs: object(),
+    )
+    monkeypatch.setattr(tui, "_physical_target_lines", lambda physical: ["line"])
+    monkeypatch.setattr(
+        tui,
+        "_layout_snapshot_for_physical",
+        lambda **kwargs: SimpleNamespace(
+            frame_start_row=1,
+            frame_rows=1,
+            cursor_row=1,
+            cursor_col=1,
+            generation=4,
+        ),
+    )
+    monkeypatch.setattr(tui, "_snapshot_geometry_matches", lambda *args: True)
+    monkeypatch.setattr(
+        tui,
+        "_apply_sync_snapshot_patch",
+        lambda **kwargs: (_ for _ in ()).throw(OSError("local write failed")),
+    )
+    monkeypatch.setattr(tui, "_render_frame", lambda: fallback_calls.append(True))
+
+    assert tui._render_sync_local_frame() is False
+    assert fallback_calls == []
+    assert tui._terminal_submission_failed is True

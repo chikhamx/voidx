@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import io
+import asyncio
+import re
 import shutil
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from rich.cells import cell_len
 from rich.console import Console, Group
@@ -15,6 +17,20 @@ from rich.text import Text
 from voidx.presentation.output.dock import dock
 from voidx.presentation.output.dock.formatting import text_from_line
 from .helpers import _rendered_row_count
+from .layout import (
+    BottomViewportPlan,
+    LayoutSnapshot,
+    LogicalRenderPlan,
+    BottomGeometry,
+    PhysicalViewportPlan,
+    RegionGeometry,
+    RenderedRows,
+    SourceSlice,
+    normalize_rendered_rows,
+    project_bottom_viewport,
+    diff_layout,
+    project_physical_viewport,
+)
 from .state import RenderStats
 from .terminal_writer import FrameBatch, FrameResult
 
@@ -31,7 +47,9 @@ class _RenderPlan:
     panel_rows: int
     panel_ansi: str | None
     bottom_elements: tuple[object, ...]
+    panel_elements: tuple[Text, ...]
     input_rows: tuple[int, ...]
+    logical_plan: LogicalRenderPlan | None
 
 
 
@@ -45,9 +63,300 @@ class _FrameRendererMixin:
     def _terminal_writer_worker_mode(self) -> bool:
         return bool(getattr(self._terminal_writer, "worker_mode", False))
 
-    def _handle_terminal_frame_result(self, result: FrameResult) -> None:
-        if not result.applied or result.generation != self._terminal_frame_generation:
+    def _layout_snapshot_for_frame(
+        self,
+        *,
+        generation: int,
+        width: int,
+        term_height: int,
+        start_row: int,
+        lines: list[str],
+        frame_rows: int,
+        bottom_rows: int,
+        lines_up: int,
+        cursor_ansi: str,
+    ) -> LayoutSnapshot | None:
+        if frame_rows < 1 or frame_rows > term_height:
+            return None
+        if start_row < 1 or start_row + frame_rows - 1 > term_height:
+            return None
+        if bottom_rows < 1 or bottom_rows > frame_rows:
+            return None
+
+        cursor_row = start_row + max(frame_rows - lines_up - 1, 0)
+        cursor_row = max(start_row, min(cursor_row, start_row + frame_rows - 1))
+        cursor_col = 1
+        match = re.search(r"\x1b\[(?:\d+)?A\x1b\[(\d+)G", cursor_ansi)
+        if match is not None:
+            cursor_col = max(1, min(int(match.group(1)), width))
+
+        frame_rendered = normalize_rendered_rows("\n".join(lines), width=width)
+        frame_region = RegionGeometry(
+            key="frame",
+            start_row=start_row,
+            visual_rows=frame_rendered.visual_rows,
+            width=width,
+            content_signature=frame_rendered.signature,
+            patch_safe=frame_rendered.patch_safe,
+        )
+        bottom_start = start_row + frame_rows - bottom_rows
+        bottom_rendered = normalize_rendered_rows(
+            "\n".join(lines[-bottom_rows:]),
+            width=width,
+        )
+        bottom_region = RegionGeometry(
+            key="bottom",
+            start_row=bottom_start,
+            visual_rows=bottom_rendered.visual_rows,
+            width=width,
+            content_signature=bottom_rendered.signature,
+            patch_safe=bottom_rendered.patch_safe,
+        )
+        empty = RegionGeometry(
+            key="bottom.empty",
+            start_row=bottom_start,
+            visual_rows=0,
+            width=width,
+            content_signature=(),
+            patch_safe=True,
+        )
+        bottom = BottomGeometry(
+            rendered=bottom_rendered,
+            region=bottom_region,
+            top_separator=empty,
+            input=RegionGeometry(
+                key="bottom.input",
+                start_row=bottom_start,
+                visual_rows=bottom_rows,
+                width=width,
+                content_signature=bottom_rendered.signature,
+                patch_safe=bottom_rendered.patch_safe,
+            ),
+            middle_separator=empty,
+            panel=empty,
+            panel_status_separator=empty,
+            status=empty,
+            cursor_row=cursor_row,
+            cursor_col=cursor_col,
+        )
+        return LayoutSnapshot(
+            terminal_width=width,
+            terminal_height=term_height,
+            frame_start_row=start_row,
+            frame_rows=frame_rows,
+            regions=(frame_region,),
+            source_slices=(),
+            bottom=bottom,
+            cursor_row=cursor_row,
+            cursor_col=cursor_col,
+            scroll_epoch=self._scroll_epoch,
+            generation=generation,
+        )
+    def _invalidate_layout(
+        self,
+        reason: str,
+        *,
+        advances_scroll_epoch: bool = True,
+    ) -> None:
+        """Invalidate physical layout snapshots at an absolute terminal boundary."""
+        del reason
+        self._applied_layout_snapshot = None
+        self._pending_layout_snapshots.clear()
+        self._pending_layout_force_full.clear()
+        pending_frame_states = getattr(self, "_pending_frame_states", None)
+        if pending_frame_states is not None:
+            pending_frame_states.clear()
+        self._full_layout_invalidated = True
+        if advances_scroll_epoch:
+            self._scroll_epoch += 1
+
+    def _handle_terminal_submission_failure(
+        self,
+        operation: str,
+        error: BaseException,
+        *,
+        layout_already_invalidated: bool = False,
+    ) -> None:
+        """Invalidate terminal state once after a submission or token failure."""
+        del operation, error
+        if self._terminal_submission_failed:
+            self._running = False
             return
+        self._terminal_submission_failed = True
+        if layout_already_invalidated:
+            self._applied_layout_snapshot = None
+            self._pending_layout_snapshots.clear()
+            self._pending_layout_force_full.clear()
+            pending_frame_states = getattr(self, "_pending_frame_states", None)
+            if pending_frame_states is not None:
+                pending_frame_states.clear()
+            self._full_layout_invalidated = True
+        else:
+            self._invalidate_layout("terminal_submission_failure")
+        self._running = False
+
+    def _handle_sync_terminal_failure(self, error: BaseException) -> None:
+        recover = getattr(self._terminal_writer, "_recover_sync_failure", None)
+        if callable(recover):
+            try:
+                recover(error)
+            except BaseException:
+                pass
+        self._invalidate_frame_cache()
+        self._handle_terminal_submission_failure("sync_frame", error)
+
+    def _invalidate_pending_layout_after_submit_failure(
+        self,
+        error: BaseException,
+    ) -> None:
+        self._handle_terminal_submission_failure("frame_enqueue", error)
+
+    def _pending_worker_frame_states(self) -> dict[int, dict[str, object]]:
+        states = getattr(self, "_pending_frame_states", None)
+        if states is None:
+            states = {}
+            self._pending_frame_states = states
+        return states
+
+    def _apply_worker_frame_state(self, state: dict[str, object]) -> None:
+        self._visible_committed_rows = int(state["visible_rows"])
+        frame_rows = int(state["frame_rows"])
+        start_row = int(state["start_row"])
+        bottom_rows = int(state["bottom_rows"])
+        self._last_frame_rows = frame_rows
+        self._last_frame_start_row = start_row
+        self._last_bottom_rows = bottom_rows
+        self._last_bottom_start_row = start_row + frame_rows - bottom_rows
+
+        busy_rows = int(state["busy_activity_rows"])
+        if busy_rows > 0:
+            self._record_busy_activity_layout(
+                start_row=int(state["busy_activity_start_row"]),
+                rows=busy_rows,
+                width=int(state["width"]),
+                term_height=state["term_height"],
+                bottom_rows=bottom_rows,
+                thinking_rows=int(state["thinking_stream_rows"]),
+            )
+        else:
+            self._invalidate_busy_activity_layout()
+        self._record_input_cursor_geometry(frame_rows, int(state["lines_up"]))
+        self._has_rendered_frame = True
+        self._prev_frame_lines = list(state["target_lines"])
+        self._prev_frame_start_row = start_row
+        self._prev_frame_width = int(state["width"])
+        self._prev_frame_term_height = state["term_height"]
+        self._bottom_region_dirty = False
+        self._last_render_plan = state["render_plan"]
+
+    def _track_pending_terminal_operation(
+        self,
+        token,
+        *,
+        kind: str,
+        apply_state=None,
+    ) -> None:
+        wait = getattr(self._terminal_writer, "wait", None)
+        if not callable(wait):
+            if apply_state is not None:
+                apply_state()
+            return
+        if not (hasattr(token, "_future") or hasattr(token, "future")):
+            if apply_state is not None:
+                apply_state()
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        token_key = id(token)
+        operation = {
+            "kind": kind,
+            "token": token,
+            "scroll_epoch": self._scroll_epoch,
+            "apply_state": apply_state,
+        }
+        self._pending_terminal_operations[token_key] = operation
+        operation["task"] = loop.create_task(
+            self._wait_for_pending_terminal_operation(token)
+        )
+
+    async def _wait_for_pending_terminal_operation(self, token) -> None:
+        token_key = id(token)
+        operation = self._pending_terminal_operations.get(token_key)
+        if operation is None:
+            return
+        try:
+            await self._terminal_writer.wait(token)
+        except asyncio.CancelledError:
+            self._pending_terminal_operations.pop(token_key, None)
+        except BaseException as exc:
+            self._pending_terminal_operations.pop(token_key, None)
+            self._handle_terminal_submission_failure(operation["kind"], exc)
+        else:
+            self._pending_terminal_operations.pop(token_key, None)
+            apply_state = operation.get("apply_state")
+            if apply_state is not None:
+                apply_state()
+
+    def _submit_terminal_barrier(
+        self,
+        *,
+        kind: str,
+        ansi: str = "",
+        invalidate_frame: bool = False,
+        apply_state=None,
+    ):
+        invalidates = invalidate_frame or kind in {"clear", "scroll", "resize"}
+        if invalidates:
+            self._invalidate_layout(kind)
+        kwargs = {"kind": kind}
+        if ansi:
+            kwargs["ansi"] = ansi
+        if invalidate_frame:
+            kwargs["invalidate_frame"] = True
+        try:
+            token = self._terminal_writer.submit_barrier(**kwargs)
+        except Exception as exc:
+            self._handle_terminal_submission_failure(
+                kind,
+                exc,
+                layout_already_invalidated=invalidates,
+            )
+            raise
+        self._track_pending_terminal_operation(
+            token,
+            kind="barrier",
+            apply_state=apply_state,
+        )
+        return token
+
+    def _handle_terminal_frame_result(self, result: FrameResult) -> None:
+        snapshot = self._pending_layout_snapshots.get(result.generation)
+        if snapshot is None:
+            return
+        if not result.applied:
+            return
+        frame_states = self._pending_worker_frame_states()
+        if snapshot.scroll_epoch != self._scroll_epoch:
+            self._pending_layout_snapshots.pop(result.generation, None)
+            self._pending_layout_force_full.pop(result.generation, None)
+            frame_states.pop(result.generation, None)
+            return
+        force_full = self._pending_layout_force_full.get(result.generation, False)
+        frame_state = frame_states.get(result.generation)
+        if frame_state is not None:
+            self._apply_worker_frame_state(frame_state)
+        self._applied_layout_snapshot = snapshot
+        for generation in tuple(self._pending_layout_snapshots):
+            if generation <= result.generation:
+                self._pending_layout_snapshots.pop(generation, None)
+                self._pending_layout_force_full.pop(generation, None)
+        for generation in tuple(frame_states):
+            if generation <= result.generation:
+                frame_states.pop(generation, None)
+        if self._full_layout_invalidated and force_full:
+            self._full_layout_invalidated = False
         self._render_stats = RenderStats(
             total_lines=result.total_lines,
             changed_lines=result.changed_lines,
@@ -89,7 +398,8 @@ class _FrameRendererMixin:
             full_frame_repaint = self._full_frame_repaint_pending
             self._full_frame_repaint_pending = False
             force_full = (
-                self._bottom_region_dirty
+                self._full_layout_invalidated
+                or self._bottom_region_dirty
                 or resize_frame
                 or clear_screen
                 or full_frame_repaint
@@ -97,11 +407,13 @@ class _FrameRendererMixin:
             if not worker_mode:
                 if resize_frame:
                     self._invalidate_frame_cache()
+                    self._invalidate_layout("resize")
                 if clear_screen:
                     self._committed_line_count = 0
                     self._committed_projection = None
                     self._visible_committed_rows = 0
                     self._invalidate_frame_cache()
+                    self._invalidate_layout("clear")
 
         self._render_plan = None
         try:
@@ -118,6 +430,13 @@ class _FrameRendererMixin:
                 self._pending_tb = traceback.format_exc()
                 self._last_error = f"Render error: {exc}"
                 renderable = Group(Text(f"Render error: {exc}", style="red"))
+
+            if worker_mode and clear_screen and committed_before_clear is not None:
+                (
+                    self._committed_line_count,
+                    self._committed_projection,
+                    self._visible_committed_rows,
+                ) = committed_before_clear
 
             ansi = self._capture_renderable(renderable, width)
             if not self._tty:
@@ -148,15 +467,54 @@ class _FrameRendererMixin:
             lines = ansi.splitlines()
 
             if worker_mode:
+                physical: PhysicalViewportPlan | None = None
+                target_lines = lines
+                if (
+                    not render_failed
+                    and render_plan is not None
+                    and render_plan.logical_plan is not None
+                ):
+                    provisional = self._physical_viewport_for_frame(
+                        render_plan.logical_plan,
+                        width=width,
+                        term_height=term_height,
+                        frame_start_row=1,
+                    )
+                    scroll_frame_rows = provisional.frame_rows
+                else:
+                    scroll_frame_rows = frame_rows
                 visible_before = 0 if clear_screen else self._visible_committed_rows
                 visible_after, scroll_ansi = self._frame_scroll_plan(
-                    frame_rows,
+                    scroll_frame_rows,
                     term_height,
                     visible_rows=visible_before,
                 )
                 force_full = force_full or bool(scroll_ansi)
                 start_row = max(visible_after + 1, 1)
-                if render_failed:
+                if (
+                    not render_failed
+                    and render_plan is not None
+                    and render_plan.logical_plan is not None
+                ):
+                    physical = self._physical_viewport_for_frame(
+                        render_plan.logical_plan,
+                        width=width,
+                        term_height=term_height,
+                        frame_start_row=start_row,
+                    )
+                    target_lines = self._physical_target_lines(physical)
+                    frame_rows = physical.frame_rows
+                    bottom_rows = physical.bottom.rendered.visual_rows
+                    busy_activity_rows = physical.projected_regions[2].visual_rows
+                    thinking_stream_rows = physical.projected_regions[3].visual_rows
+                    cursor_ansi = (
+                        f"\x1b[{physical.cursor_row};{physical.cursor_col}H"
+                    )
+                    lines_up = max(
+                        frame_rows - (physical.cursor_row - start_row) - 1,
+                        0,
+                    )
+                elif render_failed:
                     cursor_ansi, lines_up = "", 0
                 else:
                     cursor_ansi, lines_up = self._input_cursor_target(plan=render_plan)
@@ -165,35 +523,181 @@ class _FrameRendererMixin:
                 batch = FrameBatch(
                     generation=generation,
                     start_row=start_row,
-                    target_lines=tuple(lines),
+                    target_lines=tuple(target_lines),
                     cursor_ansi=cursor_ansi,
                     render_ms=render_ms,
                     force_full=force_full,
                 )
 
                 if resize_frame:
-                    self._terminal_writer.submit_barrier(kind="resize")
-                    self._invalidate_frame_cache()
+                    self._submit_terminal_barrier(
+                        kind="resize",
+                        apply_state=self._apply_resize_state,
+                    )
                 if clear_screen:
-                    self._terminal_writer.submit_barrier(
+                    self._submit_terminal_barrier(
                         kind="clear",
                         ansi="\x1b[2J\x1b[H",
+                        apply_state=self._apply_clear_state,
                     )
                     clear_submitted = True
-                    self._committed_line_count = 0
-                    self._committed_projection = None
-                    self._visible_committed_rows = 0
-                    self._invalidate_frame_cache()
                 if scroll_ansi:
-                    self._terminal_writer.submit_barrier(
+                    self._submit_terminal_barrier(
                         kind="scroll",
                         ansi=scroll_ansi,
+                        apply_state=lambda: self._apply_scroll_state(visible_after),
                     )
-                    self._visible_committed_rows = visible_after
-                    self._invalidate_frame_cache()
 
-                self._terminal_writer.submit_frame(batch)
+                if physical is not None:
+                    snapshot = self._layout_snapshot_for_physical(
+                        physical=physical,
+                        generation=generation,
+                        width=width,
+                        term_height=term_height,
+                        frame_start_row=start_row,
+                        scroll_epoch=self._scroll_epoch,
+                    )
+                else:
+                    snapshot = self._layout_snapshot_for_frame(
+                        generation=generation,
+                        width=width,
+                        term_height=term_height,
+                        start_row=start_row,
+                        lines=target_lines,
+                        frame_rows=frame_rows,
+                        bottom_rows=bottom_rows,
+                        lines_up=lines_up,
+                        cursor_ansi=cursor_ansi,
+                    )
+                self._layout_generation = generation
+                if snapshot is not None:
+                    self._pending_layout_snapshots[generation] = snapshot
+                    self._pending_layout_force_full[generation] = force_full
+                try:
+                    self._terminal_writer.submit_frame(batch)
+                except Exception as exc:
+                    self._pending_layout_snapshots.pop(generation, None)
+                    self._pending_layout_force_full.pop(generation, None)
+                    self._invalidate_pending_layout_after_submit_failure(exc)
+                    raise
+                self._has_rendered_frame = True
+                self._submitted_generation = generation
                 self._terminal_frame_generation = generation
+                self._pending_worker_frame_states()[generation] = {
+                    "visible_rows": visible_after,
+                    "frame_rows": frame_rows,
+                    "start_row": start_row,
+                    "bottom_rows": bottom_rows,
+                    "busy_activity_rows": busy_activity_rows,
+                    "busy_activity_start_row": (
+                        start_row
+                        + frame_rows
+                        - bottom_rows
+                        - thinking_stream_rows
+                        - busy_activity_rows
+                    ),
+                    "thinking_stream_rows": thinking_stream_rows,
+                    "width": width,
+                    "term_height": term_height,
+                    "lines_up": lines_up,
+                    "target_lines": tuple(target_lines),
+                    "render_plan": render_plan,
+                }
+            else:
+                physical: PhysicalViewportPlan | None = None
+                target_lines = lines
+                logical = (
+                    render_plan.logical_plan
+                    if not render_failed and render_plan is not None
+                    else None
+                )
+                if logical is not None:
+                    provisional = self._physical_viewport_for_frame(
+                        logical,
+                        width=width,
+                        term_height=term_height,
+                        frame_start_row=1,
+                    )
+                    scroll_frame_rows = provisional.frame_rows
+                else:
+                    scroll_frame_rows = frame_rows
+
+                visible_before = 0 if clear_screen else self._visible_committed_rows
+                visible_after, scroll_ansi = self._frame_scroll_plan(
+                    scroll_frame_rows,
+                    term_height,
+                    visible_rows=visible_before,
+                )
+                force_full = force_full or bool(scroll_ansi)
+                start_row = max(visible_after + 1, 1)
+                try:
+                    if clear_screen:
+                        self._terminal_writer.write("\x1b[2J\x1b[H")
+                    if scroll_ansi:
+                        self._terminal_writer.write(scroll_ansi)
+                        self._invalidate_frame_cache()
+                        self._invalidate_layout("scroll")
+
+                    if logical is not None:
+                        physical = self._physical_viewport_for_frame(
+                            logical,
+                            width=width,
+                            term_height=term_height,
+                            frame_start_row=start_row,
+                        )
+                        target_lines = self._physical_target_lines(physical)
+                        frame_rows = physical.frame_rows
+                        bottom_rows = physical.bottom.rendered.visual_rows
+                        busy_activity_rows = physical.projected_regions[2].visual_rows
+                        thinking_stream_rows = physical.projected_regions[3].visual_rows
+                        cursor_ansi = f"\x1b[{physical.cursor_row};{physical.cursor_col}H"
+                        lines_up = max(
+                            frame_rows - (physical.cursor_row - start_row) - 1,
+                            0,
+                        )
+                    elif render_failed:
+                        cursor_ansi, lines_up = "", 0
+                    else:
+                        cursor_ansi, lines_up = self._input_cursor_target(plan=render_plan)
+
+                    generation = self._terminal_frame_generation + 1
+                    snapshot = None
+                    if physical is not None:
+                        snapshot = self._layout_snapshot_for_physical(
+                            physical=physical,
+                            generation=generation,
+                            width=width,
+                            term_height=term_height,
+                            frame_start_row=start_row,
+                            scroll_epoch=self._scroll_epoch,
+                        )
+                    else:
+                        snapshot = self._layout_snapshot_for_frame(
+                            generation=generation,
+                            width=width,
+                            term_height=term_height,
+                            start_row=start_row,
+                            lines=target_lines,
+                            frame_rows=frame_rows,
+                            bottom_rows=bottom_rows,
+                            lines_up=lines_up,
+                            cursor_ansi=cursor_ansi,
+                        )
+                    changed_lines, strategy = self._render_sync_layout_diff(
+                        start_row=start_row,
+                        previous_lines=self._prev_frame_lines,
+                        new_lines=target_lines,
+                        previous_snapshot=self._applied_layout_snapshot,
+                        snapshot=snapshot,
+                        force_full=force_full,
+                    )
+                    if physical is not None or not render_failed:
+                        self._terminal_writer.write(cursor_ansi)
+                    self._terminal_writer.flush()
+                except BaseException as exc:
+                    self._handle_sync_terminal_failure(exc)
+                    raise
+
                 self._visible_committed_rows = visible_after
                 self._last_frame_rows = frame_rows
                 self._last_frame_start_row = start_row
@@ -218,71 +722,22 @@ class _FrameRendererMixin:
                     self._invalidate_busy_activity_layout()
                 self._record_input_cursor_geometry(frame_rows, lines_up)
                 self._has_rendered_frame = True
-                self._prev_frame_lines = lines
+                self._prev_frame_lines = list(target_lines)
                 self._prev_frame_start_row = start_row
                 self._prev_frame_width = width
                 self._prev_frame_term_height = term_height
                 self._bottom_region_dirty = False
-                self._last_render_plan = render_plan
-            else:
-                if clear_screen:
-                    self._terminal_writer.write("\x1b[2J\x1b[H")
-                scrolled = self._make_room_for_frame(frame_rows, term_height)
-                if scrolled:
-                    self._invalidate_frame_cache()
-                    force_full = True
-                start_row = max(self._visible_committed_rows + 1, 1)
-                prev_lines = self._prev_frame_lines
-                if (
-                    not force_full
-                    and prev_lines is not None
-                    and self._prev_frame_start_row == start_row
-                ):
-                    changed_lines, strategy = self._render_diff(
-                        start_row,
-                        prev_lines,
-                        lines,
-                    )
-                else:
-                    changed_lines, strategy = self._render_full(start_row, lines)
-                self._last_frame_rows = frame_rows
-                self._last_frame_start_row = start_row
-                self._last_bottom_rows = bottom_rows
-                self._last_bottom_start_row = start_row + frame_rows - bottom_rows
-                if busy_activity_rows > 0:
-                    self._record_busy_activity_layout(
-                        start_row=(
-                            start_row
-                            + frame_rows
-                            - bottom_rows
-                            - thinking_stream_rows
-                            - busy_activity_rows
-                        ),
-                        rows=busy_activity_rows,
-                        width=width,
-                        term_height=term_height,
-                        bottom_rows=bottom_rows,
-                        thinking_rows=thinking_stream_rows,
-                    )
-                else:
-                    self._invalidate_busy_activity_layout()
-                if render_failed:
-                    self._record_input_cursor_geometry(frame_rows, 0)
-                else:
-                    self._position_input_cursor(frame_rows, plan=render_plan)
-                self._has_rendered_frame = True
-                self._prev_frame_lines = lines
-                self._prev_frame_start_row = start_row
-                self._prev_frame_width = width
-                self._prev_frame_term_height = term_height
-                self._bottom_region_dirty = False
+                self._terminal_frame_generation = generation
+                self._layout_generation = generation
+                if snapshot is not None:
+                    self._applied_layout_snapshot = snapshot
+                    self._full_layout_invalidated = False
                 self._render_stats = RenderStats(
-                    total_lines=len(lines),
+                    total_lines=len(target_lines),
                     changed_lines=changed_lines,
                     render_ms=(time.perf_counter() - started_at) * 1000,
                     strategy=strategy,
                 )
-                self._terminal_writer.flush()
                 self._last_render_plan = render_plan
 
             if self._pending_tb:
@@ -320,20 +775,81 @@ class _FrameRendererMixin:
             or index >= len(new_lines)
             or prev_lines[index] != new_lines[index]
         ]
-        if total and len(changed) / total > 0.8:
-            return self._render_full(start_row, new_lines)
 
         wrote_tail_clear = False
         for index in changed:
             row = start_row + index
             self._terminal_writer.write(f"\x1b[{row};1H")
             if index >= len(new_lines):
-                self._terminal_writer.write("\x1b[J")
+                self._terminal_writer.write("\x1b[K")
                 wrote_tail_clear = True
-                break
+                continue
             self._terminal_writer.write(new_lines[index])
             self._terminal_writer.write("\x1b[K")
         return len(changed), "diff-tail-clear" if wrote_tail_clear else "diff"
+
+    def _render_sync_layout_diff(
+        self,
+        *,
+        start_row: int,
+        previous_lines: list[str] | None,
+        new_lines: list[str],
+        previous_snapshot: LayoutSnapshot | None,
+        snapshot: LayoutSnapshot | None,
+        force_full: bool,
+    ) -> tuple[int, str]:
+        if snapshot is None or force_full or previous_lines is None:
+            return self._render_full(start_row, new_lines)
+        if previous_snapshot is None:
+            return self._render_full(start_row, new_lines)
+
+        layout_diff = diff_layout(previous_snapshot, snapshot)
+        if layout_diff.kind == "full":
+            return self._render_full(start_row, new_lines)
+        if layout_diff.kind == "unchanged":
+            return 0, "unchanged"
+        if layout_diff.kind == "cursor":
+            return 0, "cursor"
+
+        def write_row(row: int, line: str) -> None:
+            self._terminal_writer.write(f"\x1b[{row};1H")
+            self._terminal_writer.write(line)
+            self._terminal_writer.write("\x1b[K")
+
+        if layout_diff.kind == "regions":
+            rows = {
+                row
+                for row in layout_diff.changed_rows
+                if snapshot.frame_start_row <= row
+                < snapshot.frame_start_row + snapshot.frame_rows
+            }
+            changed_rows = []
+            for row in sorted(rows):
+                new_index = row - snapshot.frame_start_row
+                old_index = row - previous_snapshot.frame_start_row
+                if (
+                    0 <= old_index < len(previous_lines)
+                    and previous_lines[old_index] == new_lines[new_index]
+                ):
+                    continue
+                write_row(row, new_lines[new_index])
+                changed_rows.append(row)
+            return len(changed_rows), "diff"
+
+        first_row = max(
+            snapshot.frame_start_row,
+            layout_diff.first_absolute_row or snapshot.frame_start_row,
+        )
+        end_row = snapshot.frame_start_row + snapshot.frame_rows
+        for row in range(first_row, end_row):
+            write_row(row, new_lines[row - snapshot.frame_start_row])
+        for row in layout_diff.old_tail_rows:
+            self._terminal_writer.write(f"\x1b[{row};1H")
+            self._terminal_writer.write("\x1b[K")
+        return (
+            max(0, end_row - first_row) + len(layout_diff.old_tail_rows),
+            "diff-suffix" if not layout_diff.old_tail_rows else "diff-tail-clear",
+        )
 
     def _invalidate_frame_cache(self) -> None:
         self._last_render_plan = None
@@ -420,14 +936,407 @@ class _FrameRendererMixin:
         visible_after, scroll_ansi = self._frame_scroll_plan(frame_rows, term_height)
         if scroll_ansi:
             if self._terminal_writer_worker_mode():
-                self._terminal_writer.submit_barrier(
+                self._submit_terminal_barrier(
                     kind="scroll",
                     ansi=scroll_ansi,
+                    apply_state=lambda: self._apply_scroll_state(visible_after),
                 )
             else:
                 self._terminal_writer.write(scroll_ansi)
-        self._visible_committed_rows = visible_after
+                self._apply_scroll_state(visible_after)
         return bool(scroll_ansi)
+
+    def _apply_resize_state(self) -> None:
+        self._invalidate_frame_cache()
+
+    def _apply_clear_state(self) -> None:
+        self._committed_line_count = 0
+        self._committed_projection = None
+        self._visible_committed_rows = 0
+        self._invalidate_frame_cache()
+
+    def _apply_scroll_state(self, visible_rows: int) -> None:
+        self._visible_committed_rows = visible_rows
+        self._invalidate_frame_cache()
+
+    def _sync_snapshot_is_usable(
+        self,
+        snapshot: LayoutSnapshot | None,
+        *,
+        width: int,
+        term_height: int,
+    ) -> bool:
+        previous_lines = self._prev_frame_lines
+        return bool(
+            isinstance(snapshot, LayoutSnapshot)
+            and not self._full_layout_invalidated
+            and snapshot.scroll_epoch == self._scroll_epoch
+            and snapshot.terminal_width == width
+            and snapshot.terminal_height == term_height
+            and snapshot.frame_start_row == self._prev_frame_start_row
+            and snapshot.frame_rows == len(previous_lines or ())
+            and self._prev_frame_width == width
+            and self._prev_frame_term_height == term_height
+            and self._has_rendered_frame
+        )
+
+    @staticmethod
+    def _snapshot_geometry_matches(
+        previous: LayoutSnapshot,
+        current: LayoutSnapshot,
+    ) -> bool:
+        if (
+            previous.frame_start_row != current.frame_start_row
+            or previous.frame_rows != current.frame_rows
+            or len(previous.regions) != len(current.regions)
+        ):
+            return False
+        return all(
+            old.key == new.key
+            and old.start_row == new.start_row
+            and old.visual_rows == new.visual_rows
+            for old, new in zip(previous.regions, current.regions)
+        )
+
+    @staticmethod
+    def _snapshot_region(
+        snapshot: LayoutSnapshot,
+        key: str,
+    ) -> RegionGeometry | None:
+        for region in snapshot.regions:
+            if region.key == key:
+                return region
+        if key.startswith("bottom."):
+            attribute = key.removeprefix("bottom.")
+            region = getattr(snapshot.bottom, attribute, None)
+            if isinstance(region, RegionGeometry):
+                return region
+        return None
+
+    @classmethod
+    def _snapshot_with_region_content(
+        cls,
+        snapshot: LayoutSnapshot,
+        *,
+        key: str,
+        rendered: RenderedRows,
+        new_lines: list[str],
+    ) -> LayoutSnapshot:
+        if not key.startswith("bottom."):
+            return replace(
+                snapshot,
+                regions=tuple(
+                    replace(
+                        region,
+                        content_signature=rendered.signature,
+                        patch_safe=rendered.patch_safe,
+                    )
+                    if region.key == key
+                    else region
+                    for region in snapshot.regions
+                ),
+            )
+
+        attribute = key.removeprefix("bottom.")
+        previous_child = getattr(snapshot.bottom, attribute, None)
+        if not isinstance(previous_child, RegionGeometry):
+            raise ValueError(f"unknown bottom region: {key}")
+        bottom_start = snapshot.bottom.region.start_row - snapshot.frame_start_row
+        bottom_end = bottom_start + snapshot.bottom.region.visual_rows
+        if bottom_start < 0 or bottom_end > len(new_lines):
+            raise ValueError("bottom region is outside frame lines")
+        bottom_rendered = normalize_rendered_rows(
+            "\n".join(new_lines[bottom_start:bottom_end]),
+            width=snapshot.bottom.region.width,
+        )
+        bottom_child = replace(
+            previous_child,
+            content_signature=rendered.signature,
+            patch_safe=rendered.patch_safe,
+        )
+        bottom = replace(
+            snapshot.bottom,
+            rendered=bottom_rendered,
+            region=replace(
+                snapshot.bottom.region,
+                content_signature=bottom_rendered.signature,
+                patch_safe=all(
+                    getattr(snapshot.bottom, child).patch_safe
+                    for child in (
+                        "top_separator",
+                        "input",
+                        "middle_separator",
+                        "panel",
+                        "panel_status_separator",
+                        "status",
+                    )
+                ),
+            ),
+            **{attribute: bottom_child},
+        )
+        return replace(
+            snapshot,
+            bottom=bottom,
+            regions=tuple(
+                bottom.region if region.key == "bottom" else region
+                for region in snapshot.regions
+            ),
+        )
+
+    def _apply_sync_snapshot_patch(
+        self,
+        *,
+        previous: LayoutSnapshot,
+        snapshot: LayoutSnapshot,
+        new_lines: list[str],
+        started_at: float,
+        lines_up: int,
+        render_plan: _RenderPlan | None = None,
+        force_regions: tuple[str, ...] = (),
+        patch_rows: set[int] | None = None,
+        bottom_region_dirty: bool | None = None,
+    ) -> bool:
+        if not self._snapshot_geometry_matches(previous, snapshot):
+            return False
+        if len(new_lines) != snapshot.frame_rows:
+            return False
+        layout_diff = diff_layout(previous, snapshot)
+        if layout_diff.kind in {"full", "suffix"}:
+            return False
+
+        previous_lines = self._prev_frame_lines
+        if previous_lines is None or len(previous_lines) != previous.frame_rows:
+            return False
+
+        forced_rows: set[int] = set()
+        for key in force_regions:
+            region = self._snapshot_region(snapshot, key)
+            if region is None:
+                return False
+            forced_rows.update(
+                range(region.start_row, region.start_row + region.visual_rows)
+            )
+        if patch_rows is not None:
+            forced_rows.intersection_update(patch_rows)
+
+        changed_rows = set(layout_diff.changed_rows)
+        if patch_rows is not None:
+            changed_rows.intersection_update(patch_rows)
+        if layout_diff.kind not in {"regions", "unchanged", "cursor"}:
+            return False
+        rows = changed_rows | forced_rows
+        written_rows = 0
+        try:
+            for row in sorted(rows):
+                new_index = row - snapshot.frame_start_row
+                old_index = row - previous.frame_start_row
+                if not 0 <= new_index < len(new_lines):
+                    return False
+                forced = row in forced_rows
+                if (
+                    not forced
+                    and 0 <= old_index < len(previous_lines)
+                    and previous_lines[old_index] == new_lines[new_index]
+                ):
+                    continue
+                self._terminal_writer.write(f"\x1b[{row};1H")
+                self._terminal_writer.write(new_lines[new_index])
+                self._terminal_writer.write("\x1b[K")
+                written_rows += 1
+
+            self._terminal_writer.write(
+                f"\x1b[{snapshot.cursor_row};{snapshot.cursor_col}H"
+            )
+            self._terminal_writer.flush()
+        except BaseException as exc:
+            self._handle_sync_terminal_failure(exc)
+            raise
+
+        self._applied_layout_snapshot = snapshot
+        self._prev_frame_lines = list(new_lines)
+        self._prev_frame_start_row = snapshot.frame_start_row
+        self._prev_frame_width = snapshot.terminal_width
+        self._prev_frame_term_height = snapshot.terminal_height
+        self._terminal_frame_generation = snapshot.generation
+        self._layout_generation = snapshot.generation
+        self._last_frame_rows = snapshot.frame_rows
+        self._last_frame_start_row = snapshot.frame_start_row
+        self._last_bottom_rows = snapshot.bottom.region.visual_rows
+        self._last_bottom_start_row = snapshot.bottom.region.start_row
+        self._record_input_cursor_geometry(snapshot.frame_rows, lines_up)
+        self._has_rendered_frame = True
+        if bottom_region_dirty is not None:
+            self._bottom_region_dirty = bottom_region_dirty
+        self._full_layout_invalidated = False
+        if render_plan is not None:
+            self._last_render_plan = render_plan
+
+            vibe = next(
+                (region for region in snapshot.regions if region.key == "vibe"),
+                None,
+            )
+            thinking = next(
+                (region for region in snapshot.regions if region.key == "thinking"),
+                None,
+            )
+            if vibe is not None and vibe.visual_rows > 0:
+                self._record_busy_activity_layout(
+                    start_row=vibe.start_row,
+                    rows=vibe.visual_rows,
+                    width=snapshot.terminal_width,
+                    term_height=snapshot.terminal_height,
+                    bottom_rows=snapshot.bottom.region.visual_rows,
+                    thinking_rows=thinking.visual_rows if thinking is not None else 0,
+                )
+            else:
+                self._invalidate_busy_activity_layout()
+        self._render_stats = RenderStats(
+            total_lines=len(new_lines),
+            changed_lines=written_rows,
+            render_ms=(time.perf_counter() - started_at) * 1000,
+            strategy="diff" if written_rows else "cursor",
+        )
+        return True
+
+    def _render_sync_local_frame(
+        self,
+        *,
+        bottom_region_dirty: bool | None = None,
+    ) -> bool:
+        width = self._frame_width()
+        term_height = shutil.get_terminal_size().lines
+        previous = self._applied_layout_snapshot
+        if not self._sync_snapshot_is_usable(
+            previous,
+            width=width,
+            term_height=term_height,
+        ):
+            self._render_frame()
+            return True
+
+        started_at = time.perf_counter()
+        self._render_plan = None
+        try:
+            self._render_impl(height=term_height, capture_plan=True)
+            render_plan = self._render_plan
+            if render_plan is None or render_plan.logical_plan is None:
+                raise ValueError("local repaint did not produce a logical render plan")
+            physical = self._physical_viewport_for_frame(
+                render_plan.logical_plan,
+                width=width,
+                term_height=term_height,
+                frame_start_row=previous.frame_start_row,
+            )
+            new_lines = self._physical_target_lines(physical)
+            generation = self._terminal_frame_generation + 1
+            snapshot = self._layout_snapshot_for_physical(
+                physical=physical,
+                generation=generation,
+                width=width,
+                term_height=term_height,
+                frame_start_row=previous.frame_start_row,
+                scroll_epoch=self._scroll_epoch,
+            )
+            if not self._snapshot_geometry_matches(previous, snapshot):
+                self._render_plan = None
+                self._render_frame()
+                return True
+            lines_up = max(
+                snapshot.frame_rows
+                - (snapshot.cursor_row - snapshot.frame_start_row)
+                - 1,
+                0,
+            )
+            if not self._apply_sync_snapshot_patch(
+                previous=previous,
+                snapshot=snapshot,
+                new_lines=new_lines,
+                started_at=started_at,
+                lines_up=lines_up,
+                render_plan=render_plan,
+                bottom_region_dirty=bottom_region_dirty,
+            ):
+                self._render_plan = None
+                self._render_frame()
+                return True
+            return True
+        except OSError as exc:
+            self._handle_sync_terminal_failure(exc)
+            return False
+        except Exception:
+            self._render_plan = None
+            self._render_frame()
+            return True
+        finally:
+            self._render_plan = None
+
+    def _render_sync_local_region(
+        self,
+        *,
+        key: str,
+        rendered: RenderedRows,
+        render_plan: _RenderPlan | None = None,
+        force_regions: tuple[str, ...] = (),
+        patch_rows: set[int] | None = None,
+        bottom_region_dirty: bool | None = None,
+    ) -> bool:
+        width = self._frame_width()
+        term_height = shutil.get_terminal_size().lines
+        previous = self._applied_layout_snapshot
+        if not self._sync_snapshot_is_usable(
+            previous,
+            width=width,
+            term_height=term_height,
+        ):
+            return False
+        previous_region = self._snapshot_region(previous, key)
+        previous_lines = self._prev_frame_lines
+        if (
+            previous_region is None
+            or previous_region.visual_rows != rendered.visual_rows
+            or previous_lines is None
+            or not rendered.patch_safe
+        ):
+            return False
+
+        start = previous_region.start_row - previous.frame_start_row
+        end = start + previous_region.visual_rows
+        if start < 0 or end > len(previous_lines):
+            return False
+        new_lines = list(previous_lines)
+        new_lines[start:end] = rendered.rows
+        try:
+            snapshot = self._snapshot_with_region_content(
+                previous,
+                key=key,
+                rendered=rendered,
+                new_lines=new_lines,
+            )
+        except (TypeError, ValueError):
+            return False
+        snapshot = replace(
+            snapshot,
+            generation=self._terminal_frame_generation + 1,
+        )
+        lines_up = max(
+            snapshot.frame_rows
+            - (snapshot.cursor_row - snapshot.frame_start_row)
+            - 1,
+            0,
+        )
+        if not self._apply_sync_snapshot_patch(
+            previous=previous,
+            snapshot=snapshot,
+            new_lines=new_lines,
+            started_at=time.perf_counter(),
+            lines_up=lines_up,
+            render_plan=render_plan,
+            force_regions=force_regions,
+            patch_rows=patch_rows,
+            bottom_region_dirty=bottom_region_dirty,
+        ):
+            return False
+        return True
 
     def _render_input_region(self) -> None:
         if self._full_frame_repaint_pending:
@@ -443,34 +1352,8 @@ class _FrameRendererMixin:
             self._render_frame()
             return
 
-        width = self._frame_width()
-        try:
-            ansi = self._capture_renderable(self._render_bottom_impl(), width)
-        except Exception:
-            self._render_frame()
-            return
-
-        bottom_rows = _rendered_row_count(ansi)
-        # Use the stored bottom start row (computed from frame start + offset)
-        # rather than re-deriving from terminal height, so it works correctly
-        # when the frame is top-aligned.
-        start_row = self._last_bottom_start_row
-        if (
-            bottom_rows != self._last_bottom_rows
-            or start_row != self._last_bottom_start_row
-        ):
-            self._render_frame()
-            return
-
-        self._terminal_writer.write(f"\x1b[{start_row};1H")
-        self._terminal_writer.write("\x1b[J")
-        self._terminal_writer.write(ansi)
-        self._position_input_cursor(self._last_frame_rows)
-        self._has_rendered_frame = True
-        self._bottom_region_dirty = True
+        self._render_sync_local_frame(bottom_region_dirty=True)
         self._last_render_plan = None
-        self._invalidate_busy_activity_layout()
-        self._terminal_writer.flush()
 
     def _render_choice_selection_region(self) -> bool:
         if not self._tty or self._active_choice is None:
@@ -485,6 +1368,45 @@ class _FrameRendererMixin:
             return True
 
         width = self._frame_width()
+        term_height = shutil.get_terminal_size().lines
+        previous = self._applied_layout_snapshot
+        if self._sync_snapshot_is_usable(
+            previous,
+            width=width,
+            term_height=term_height,
+        ):
+            try:
+                panel_lines = self._render_panel_lines(width)
+                _, panel_ansi = self._panel_row_count_and_ansi(panel_lines, width)
+                panel_elements = self._render_panel_elements(
+                    panel_lines,
+                    width,
+                    panel_ansi=panel_ansi,
+                )
+                panel = self._capture_region_rows(
+                    panel_elements,
+                    width,
+                    signature_context=("bottom", "panel"),
+                )
+                panel_region = self._snapshot_region(previous, "bottom.panel")
+                if panel_region is not None:
+                    patch_rows = set(
+                        range(
+                            panel_region.start_row,
+                            panel_region.start_row + panel_region.visual_rows,
+                        )
+                    )
+                    if self._render_sync_local_region(
+                        key="bottom.panel",
+                        rendered=panel,
+                        force_regions=("bottom.panel",),
+                        patch_rows=patch_rows,
+                    ):
+                        self._last_render_plan = None
+                        return True
+            except Exception:
+                pass
+
         try:
             ansi = self._capture_renderable(self._render_bottom_impl(), width)
         except Exception:
@@ -531,40 +1453,39 @@ class _FrameRendererMixin:
         plan = self._last_render_plan
         if plan is None:
             return False
-
         width = self._frame_width()
         term_height = shutil.get_terminal_size().lines
-        try:
-            ansi = self._capture_renderable(
-                Group(*self._render_busy_activity_elements(width)),
-                width,
-            )
-        except Exception:
-            return False
-
-        rows = _rendered_row_count(ansi)
-        if rows <= 0 or not self._busy_activity_layout_matches(
-            plan=plan,
+        previous = self._applied_layout_snapshot
+        if not self._sync_snapshot_is_usable(
+            previous,
             width=width,
             term_height=term_height,
-            rows=rows,
         ):
             return False
 
-        lines = ansi.splitlines()
-        if len(lines) != rows:
+        try:
+            elements = self._render_busy_activity_elements(width)
+            rendered = self._capture_region_rows(
+                elements,
+                width,
+                signature_context=("vibe",),
+            )
+        except Exception:
             return False
-
-        start_row = self._last_busy_activity_start_row
-        for offset, line in enumerate(lines):
-            self._terminal_writer.write(f"\x1b[{start_row + offset};1H")
-            self._terminal_writer.write(line)
-            self._terminal_writer.write("\x1b[K")
-        frame_end_row = self._last_frame_start_row + self._last_frame_rows - 1
-        self._terminal_writer.write(f"\x1b[{max(frame_end_row, 1)};1H")
-        self._position_input_cursor(self._last_frame_rows, plan=plan)
-        self._terminal_writer.flush()
-        return True
+        if rendered.visual_rows <= 0:
+            return False
+        vibe = self._snapshot_region(previous, "vibe")
+        if vibe is None or vibe.visual_rows != rendered.visual_rows:
+            return False
+        patch_rows = set(range(vibe.start_row, vibe.start_row + vibe.visual_rows))
+        next_plan = replace(plan, busy_activity_elements=tuple(elements))
+        return self._render_sync_local_region(
+            key="vibe",
+            rendered=rendered,
+            render_plan=next_plan,
+            force_regions=("vibe",),
+            patch_rows=patch_rows,
+        )
 
     def _capture_renderable(self, renderable: object, width: int) -> str:
         capture_width = max(width, 1)
@@ -664,6 +1585,230 @@ class _FrameRendererMixin:
         self._terminal_writer.flush()
         if frame_rows is not None:
             self._record_input_cursor_geometry(frame_rows, lines_up)
+    def _capture_region_rows(
+        self,
+        renderables: list[object] | tuple[object, ...],
+        width: int,
+        *,
+        signature_context: tuple[object, ...] = (),
+    ) -> RenderedRows:
+        if not renderables:
+            return normalize_rendered_rows(
+                "",
+                width=width,
+                signature_context=signature_context,
+            )
+        ansi = self._capture_renderable(Group(*renderables), width)
+        return normalize_rendered_rows(
+            ansi,
+            width=width,
+            signature_context=signature_context,
+        )
+
+    def _input_source_cursor(
+        self,
+        width: int,
+        input_rows: tuple[int, ...],
+    ) -> tuple[int, int]:
+        if not input_rows:
+            return 0, 1
+        cursor_row = min(self._cursor_row, len(input_rows) - 1)
+        current_line = self._current_line()
+        display_line = self._input_display_text(current_line)
+        cursor = min(self._cursor_col, len(current_line))
+        render_width = self._render_line_width(width)
+        if self._active_text_secret:
+            before_cursor = "*" * cell_len(current_line[:cursor])
+        else:
+            before_cursor = display_line[:cursor]
+        cursor_cells = self._input_line_prefix_width(cursor_row) + cell_len(before_cursor)
+        cursor_visual_row = min(
+            cursor_cells // render_width,
+            input_rows[cursor_row] - 1,
+        )
+        prompt_rows = 1 if self._active_text_prompt is not None else 0
+        source_row = prompt_rows + sum(input_rows[:cursor_row]) + cursor_visual_row
+        return source_row, (cursor_cells % render_width) + 1
+
+    def _build_logical_render_plan(
+        self,
+        *,
+        width: int,
+        height: int,
+        transcript_elements: list[object],
+        todo_elements: list[object],
+        busy_activity_elements: list[Text],
+        thinking_stream_elements: list[Text],
+        status_lines: list[object],
+        panel_elements: list[Text],
+        input_elements: list[Text],
+        input_rows: tuple[int, ...],
+    ) -> LogicalRenderPlan:
+        top_regions = (
+            self._capture_region_rows(
+                transcript_elements,
+                width,
+                signature_context=("transcript",),
+            ),
+            self._capture_region_rows(
+                todo_elements,
+                width,
+                signature_context=("todo",),
+            ),
+            self._capture_region_rows(
+                busy_activity_elements,
+                width,
+                signature_context=("vibe",),
+            ),
+            self._capture_region_rows(
+                thinking_stream_elements,
+                width,
+                signature_context=("thinking",),
+            ),
+        )
+        separator = Text("─" * width, style="dim")
+        bottom_children: list[tuple[str, RenderedRows]] = [
+            (
+                "top_separator",
+                self._capture_region_rows([separator], width, signature_context=("bottom", "top_separator")),
+            ),
+            (
+                "input",
+                self._capture_region_rows(
+                    input_elements,
+                    width,
+                    signature_context=("bottom", "input"),
+                ),
+            ),
+            (
+                "middle_separator",
+                self._capture_region_rows([separator], width, signature_context=("bottom", "middle_separator")),
+            ),
+        ]
+        if panel_elements:
+            bottom_children.append(
+                (
+                    "panel",
+                    self._capture_region_rows(
+                        panel_elements,
+                        width,
+                        signature_context=("bottom", "panel"),
+                    ),
+                )
+            )
+            bottom_children.append(
+                (
+                    "panel_status_separator",
+                    self._capture_region_rows(
+                        [separator],
+                        width,
+                        signature_context=("bottom", "panel_status_separator"),
+                    ),
+                )
+            )
+        if status_lines:
+            bottom_children.append(
+                (
+                    "status",
+                    self._capture_region_rows(
+                        status_lines,
+                        width,
+                        signature_context=("bottom", "status"),
+                    )
+                )
+            )
+
+        source_cursor_row, cursor_col = self._input_source_cursor(width, input_rows)
+        bottom_row_count = sum(rendered.visual_rows for _, rendered in bottom_children)
+        bottom_source = project_bottom_viewport(
+            bottom_children,
+            terminal_height=max(height, bottom_row_count, 1),
+            source_cursor_key="input",
+            source_cursor_row=source_cursor_row,
+            cursor_col=cursor_col,
+            start_row=1,
+            width=width,
+        )
+        source_keys = ("transcript", "todo", "vibe", "thinking")
+        source_signature = tuple(
+            (key, rendered.signature)
+            for key, rendered in zip(source_keys, top_regions)
+        ) + (
+            ("bottom", bottom_source.source_signature),
+            ("cursor", source_cursor_row, cursor_col),
+        )
+        return LogicalRenderPlan(
+            source_regions=top_regions,
+            bottom_source=bottom_source,
+            source_cursor=("input", source_cursor_row),
+            source_signature=source_signature,
+        )
+
+    @staticmethod
+    def _physical_target_lines(physical: PhysicalViewportPlan) -> list[str]:
+        lines: list[str] = []
+        for region in physical.projected_regions:
+            lines.extend(region.rows)
+        lines.extend(physical.bottom.rendered.rows)
+        if len(lines) != physical.frame_rows:
+            raise ValueError("physical viewport rows do not match frame geometry")
+        return lines
+
+    @staticmethod
+    def _layout_snapshot_for_physical(
+        *,
+        physical: PhysicalViewportPlan,
+        generation: int,
+        width: int,
+        term_height: int,
+        frame_start_row: int,
+        scroll_epoch: int,
+    ) -> LayoutSnapshot:
+        region_keys = ("transcript", "todo", "vibe", "thinking")
+        regions: list[RegionGeometry] = []
+        next_row = frame_start_row
+        for key, rendered in zip(region_keys, physical.projected_regions):
+            regions.append(
+                RegionGeometry(
+                    key=key,
+                    start_row=next_row,
+                    visual_rows=rendered.visual_rows,
+                    width=width,
+                    content_signature=rendered.signature,
+                    patch_safe=rendered.patch_safe,
+                )
+            )
+            next_row += rendered.visual_rows
+        regions.append(physical.bottom.region)
+        return LayoutSnapshot(
+            terminal_width=width,
+            terminal_height=term_height,
+            frame_start_row=frame_start_row,
+            frame_rows=physical.frame_rows,
+            regions=tuple(regions),
+            source_slices=physical.source_slices,
+            bottom=physical.bottom,
+            cursor_row=physical.cursor_row,
+            cursor_col=physical.cursor_col,
+            scroll_epoch=scroll_epoch,
+            generation=generation,
+        )
+
+    def _physical_viewport_for_frame(
+        self,
+        logical: LogicalRenderPlan,
+        *,
+        width: int,
+        term_height: int,
+        frame_start_row: int,
+    ) -> PhysicalViewportPlan:
+        return project_physical_viewport(
+            logical,
+            terminal_width=width,
+            terminal_height=term_height,
+            frame_start_row=frame_start_row,
+        )
+
 
     def _render_impl(
         self,
@@ -799,20 +1944,43 @@ class _FrameRendererMixin:
             width,
             body_limit,
         )
+        full_transcript_elements = [
+            self._safe_text_from_line(line) for line in active_lines
+        ]
+        full_todo_elements = self._render_pinned_todo_elements(width)
 
         elements.extend(pinned_todo_elements)
         elements.extend(busy_activity_elements)
         elements.extend(thinking_stream_elements)
+        panel_elements = self._render_panel_elements(
+            panel_lines,
+            width,
+            panel_ansi=panel_ansi,
+        )
         bottom_elements = self._render_bottom_elements(
             width,
             panel_lines,
             status_lines,
             panel_ansi=panel_ansi,
             input_elements=input_elements,
+            panel_elements=panel_elements,
         )
         elements.extend(bottom_elements)
 
+        logical_plan = None
         if capture_plan:
+            logical_plan = self._build_logical_render_plan(
+                width=width,
+                height=render_height,
+                transcript_elements=full_transcript_elements,
+                todo_elements=full_todo_elements,
+                busy_activity_elements=busy_activity_elements,
+                thinking_stream_elements=thinking_stream_elements,
+                status_lines=status_lines,
+                panel_elements=panel_elements,
+                input_elements=input_elements,
+                input_rows=tuple(input_rows),
+            )
             self._render_plan = _RenderPlan(
                 width=width,
                 height=render_height,
@@ -824,7 +1992,9 @@ class _FrameRendererMixin:
                 panel_rows=panel_rows,
                 panel_ansi=panel_ansi,
                 bottom_elements=tuple(bottom_elements),
+                panel_elements=tuple(panel_elements),
                 input_rows=tuple(input_rows),
+                logical_plan=logical_plan,
             )
 
         return Group(*elements)
@@ -956,6 +2126,7 @@ class _FrameRendererMixin:
         *,
         panel_ansi: str | None = None,
         input_elements: list[Text] | None = None,
+        panel_elements: list[Text] | None = None,
     ) -> list:
         elements: list = [Text("─" * width, style="dim")]
         if input_elements is None:
@@ -964,11 +2135,12 @@ class _FrameRendererMixin:
         elements.append(Text("─" * width, style="dim"))
 
         # Panels (attachment, command palette, choice)
-        panel_elements = self._render_panel_elements(
-            panel_lines,
-            width,
-            panel_ansi=panel_ansi,
-        )
+        if panel_elements is None:
+            panel_elements = self._render_panel_elements(
+                panel_lines,
+                width,
+                panel_ansi=panel_ansi,
+            )
         elements.extend(panel_elements)
 
         if panel_elements:
