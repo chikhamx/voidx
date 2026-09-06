@@ -782,6 +782,49 @@ async def test_writer_failure_wakes_and_cancels_pending_tty_input(tmp_path, monk
     assert "shutdown" in events
 
 
+
+@pytest.mark.asyncio
+async def test_writer_error_invalidates_tui_layout_snapshot(tmp_path, monkeypatch):
+    events = []
+    writer = _LifecycleWriter(events)
+    tui = _prepare_lifecycle_tui(tmp_path, monkeypatch, writer)
+    tui._applied_layout_snapshot = object()
+    tui._pending_layout_snapshots[4] = object()
+    tui._pending_layout_force_full[4] = True
+    original_epoch = tui._scroll_epoch
+    input_started = asyncio.Event()
+
+    async def read_input():
+        input_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            raise
+
+    monkeypatch.setattr(tui, "_read_input_raw", read_input)
+    monkeypatch.setattr(tui, "_render_frame", lambda: None)
+    monkeypatch.setattr(tui, "_flush_committed", lambda *, force=False: None)
+
+    async def on_submit(_text: str) -> bool:
+        return True
+
+    run_task = asyncio.create_task(tui.run(on_submit))
+    await asyncio.wait_for(input_started.wait(), timeout=1)
+    failure = BrokenPipeError("stdout closed")
+    assert writer.on_error is not None
+    writer.on_error(failure)
+
+    with pytest.raises(BrokenPipeError) as caught:
+        await asyncio.wait_for(run_task, timeout=1)
+
+    assert caught.value is failure
+    assert tui._terminal_writer_failed is True
+    assert tui._applied_layout_snapshot is None
+    assert tui._pending_layout_snapshots == {}
+    assert tui._pending_layout_force_full == {}
+    assert tui._scroll_epoch == original_epoch + 1
+    assert tui._full_layout_invalidated is True
+
 @pytest.mark.asyncio
 async def test_tty_shutdown_orders_commit_drain_restore_stop_and_dump(
     tmp_path, monkeypatch

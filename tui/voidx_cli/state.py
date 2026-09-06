@@ -126,6 +126,15 @@ class RenderState:
     notice: str = ""
     pending_tb: str = ""
     terminal_frame_generation: int = 0
+    layout_generation: int = 0
+    submitted_generation: int = 0
+    applied_layout_snapshot: Any | None = None
+    pending_layout_snapshots: dict[int, Any] = field(default_factory=dict)
+    pending_layout_force_full: dict[int, bool] = field(default_factory=dict)
+    pending_terminal_operations: dict[int, Any] = field(default_factory=dict)
+    scroll_epoch: int = 0
+    full_layout_invalidated: bool = False
+    terminal_submission_failed: bool = False
     terminal_writer_failed: bool = False
     has_rendered_frame: bool = False
     cursor_to_frame_top_lines: int = 0
@@ -275,6 +284,15 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_notice": ("_render_state", "notice"),
     "_pending_tb": ("_render_state", "pending_tb"),
     "_terminal_frame_generation": ("_render_state", "terminal_frame_generation"),
+    "_layout_generation": ("_render_state", "layout_generation"),
+    "_submitted_generation": ("_render_state", "submitted_generation"),
+    "_applied_layout_snapshot": ("_render_state", "applied_layout_snapshot"),
+    "_pending_layout_snapshots": ("_render_state", "pending_layout_snapshots"),
+    "_pending_layout_force_full": ("_render_state", "pending_layout_force_full"),
+    "_pending_terminal_operations": ("_render_state", "pending_terminal_operations"),
+    "_scroll_epoch": ("_render_state", "scroll_epoch"),
+    "_full_layout_invalidated": ("_render_state", "full_layout_invalidated"),
+    "_terminal_submission_failed": ("_render_state", "terminal_submission_failed"),
     "_terminal_writer_failed": ("_render_state", "terminal_writer_failed"),
     "_has_rendered_frame": ("_render_state", "has_rendered_frame"),
     "_cursor_to_frame_top_lines": ("_render_state", "cursor_to_frame_top_lines"),

@@ -238,6 +238,7 @@ class PureTui(
             if cleanup_error is None:
                 cleanup_error = exc
             self._terminal_writer_failed = True
+            self._invalidate_layout("writer_error")
             self._running = False
             writer_failed_event.set()
 
@@ -680,6 +681,7 @@ class PureTui(
         finally:
             self._render_state.pending_commit_updates.pop(token_key, None)
             self._render_state.pending_commit_tasks.pop(token_key, None)
+            self._render_state.pending_terminal_operations.pop(token_key, None)
             try:
                 self._render_state.pending_commit_tokens.remove(token)
             except ValueError:
@@ -697,6 +699,12 @@ class PureTui(
         raw_echoes: list[str],
     ) -> None:
         token_key = id(token)
+        self._render_state.pending_terminal_operations[token_key] = {
+            "kind": "commit",
+            "token": token,
+            "scroll_epoch": self._scroll_epoch,
+            "apply_state": apply_state,
+        }
         self._render_state.pending_commit_tokens.append(token)
         self._render_state.pending_commit_updates[token_key] = {
             "apply_state": apply_state,
@@ -1171,6 +1179,7 @@ class PureTui(
             )
 
             if worker_mode:
+                self._invalidate_layout("commit")
                 token = self._terminal_writer.submit_commit(
                     clear_start_row=clear_start_row,
                     ansi=commit_ansi,
