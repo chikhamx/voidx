@@ -210,6 +210,47 @@ def test_tree_root_append_skips_invisible_children_like_full_render():
 
 
 
+def test_subagent_todo_rerenders_complete_payload_for_each_tree_width():
+    from rich.text import Text
+
+    from voidx.presentation.output.tree import OutputTree
+
+    tree = OutputTree()
+    agent = tree.new_node(
+        tree.root,
+        node_type="subagent",
+        header="agent",
+        collapsed=False,
+    )
+    tree.new_node(
+        agent,
+        node_type="todo",
+        header="stale todo header",
+        body_lines=["stale body rendered at an old width"],
+        collapsed=False,
+        status="done",
+        payload={
+            "summary": "0/10 done",
+            "items": [
+                {"id": f"task-{index}", "content": "宽度很长的任务", "status": "pending"}
+                for index in range(10)
+            ],
+        },
+    )
+
+    wide = tree.render(100)
+    narrow = tree.render(24)
+    plain_narrow = "\n".join(Text.from_markup(line).plain for line in narrow)
+
+    assert "stale body rendered" not in "\n".join(wide)
+    assert "task-7" in "\n".join(wide)
+    assert "task-8" not in "\n".join(wide)
+    assert "stale body rendered" not in plain_narrow
+    assert "task-0" in plain_narrow
+    assert "… 2 more todos" in plain_narrow
+    assert all(len(Text.from_markup(line).plain) <= 24 for line in narrow)
+
+
 
 
 

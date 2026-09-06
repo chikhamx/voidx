@@ -2,23 +2,28 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from rich.text import Text
 
 from voidx.presentation.output.dock import dock
+from voidx.presentation.output.dock.todo import (
+    GLOBAL_TODO_RENDER_POLICY,
+    TodoRenderLine,
+    build_todo_render_plan,
+)
 from .helpers import _clip_cells
 
 
-_TODO_PINNED_MAX_ITEMS = 4
-_TODO_PINNED_ORDER = ("active", "pending", "done")
-_TODO_PINNED_ICONS = {
-    "pending": "○",
-    "active": "◐",
-    "done": "●",
-}
 _TODO_PINNED_STYLES = {
     "pending": "#8F9BA8",
     "active": "#7AA2F7",
     "done": "#A3BE8C",
+}
+_TODO_PINNED_ICONS = {
+    "pending": "○",
+    "active": "◐",
+    "done": "●",
 }
 
 
@@ -27,9 +32,7 @@ class _TodoRendererMixin:
         if dock.todo_state() is None:
             return 0
         available_rows = render_height - bottom_fixed_lines
-        row_budget = 1 + _TODO_PINNED_MAX_ITEMS
-        return max(1, min(row_budget, available_rows))
-
+        return max(1, min(1 + (GLOBAL_TODO_RENDER_POLICY.body_row_budget or 0), available_rows))
 
     def _render_pinned_todo_elements(
         self,
@@ -41,37 +44,45 @@ class _TodoRendererMixin:
         if state is None:
             return []
 
-        row_limit = 1 + _TODO_PINNED_MAX_ITEMS if max_rows is None else max_rows
+        row_limit = (
+            1 + (GLOBAL_TODO_RENDER_POLICY.body_row_budget or 0)
+            if max_rows is None
+            else max_rows
+        )
         if row_limit <= 0:
             return []
+
         elements = [
             Text(_clip_cells(f"Todo: {state.summary}", width), style="bold #A3BE8C")
         ]
-        if row_limit <= 1 or not state.items:
-            return elements[:row_limit]
+        if row_limit <= 1:
+            return elements
 
-        ordered_items = [
-            item
-            for status in _TODO_PINNED_ORDER
-            for item in state.items
-            if item.status == status
-        ]
-        ordered_items.extend(
-            item for item in state.items if item.status not in _TODO_PINNED_ORDER
-        )
+        policy = GLOBAL_TODO_RENDER_POLICY
+        if policy.body_row_budget is not None:
+            physical_body_budget = min(policy.body_row_budget, row_limit - 1)
+            policy = replace(policy, body_row_budget=physical_body_budget)
+        plan = build_todo_render_plan(state, policy)
 
-        available_item_rows = row_limit - 1
-        visible_count = available_item_rows
-        if len(ordered_items) > available_item_rows:
-            visible_count = max(available_item_rows - 1, 0)
-        for item in ordered_items[:visible_count]:
+        for line in plan.logical_lines:
+            if len(elements) >= row_limit:
+                break
+            if line.kind == "empty":
+                continue
+            if line.kind == "ellipsis":
+                elements.append(
+                    Text(
+                        _clip_cells(f"  … {line.omitted_count} more todos", width),
+                        style="dim",
+                    )
+                )
+                continue
+            assert isinstance(line, TodoRenderLine)
+            assert line.item is not None
+            item = line.item
             icon = _TODO_PINNED_ICONS.get(item.status, "○")
             style = _TODO_PINNED_STYLES.get(item.status, "#8F9BA8")
-            elements.append(Text(_clip_cells(f"  {icon} {item.content}", width), style=style))
-
-        omitted = len(ordered_items) - visible_count
-        if omitted > 0 and len(elements) < row_limit:
             elements.append(
-                Text(_clip_cells(f"  … {omitted} more todos", width), style="dim")
+                Text(_clip_cells(f"  {icon} {item.content}", width), style=style)
             )
-        return elements[:row_limit]
+        return elements

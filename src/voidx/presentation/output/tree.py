@@ -1217,6 +1217,27 @@ class OutputTree:
             and node.parent is not None
             and _is_transparent_assistant_container(node.parent)
         )
+        todo_plan = None
+        todo_header = node.header
+        if (
+            node.node_type == "todo"
+            and node.parent is not None
+            and node.parent.node_type == "subagent"
+        ):
+            from voidx.presentation.output.dock.todo import (
+                SUBAGENT_TODO_RENDER_POLICY,
+                build_todo_render_plan,
+                render_todo_header,
+                todo_state_from_payload,
+            )
+
+            todo_state = todo_state_from_payload(node.payload)
+            if todo_state is not None:
+                todo_plan = build_todo_render_plan(
+                    todo_state,
+                    SUBAGENT_TODO_RENDER_POLICY,
+                )
+                todo_header = render_todo_header(todo_state)
 
         if node.collapsed:
             if inline_tool_result:
@@ -1243,12 +1264,13 @@ class OutputTree:
             )
         )
         if not body_only_thinking:
-            line = f"{current_prefix}{node.header}" if node.header else current_prefix
+            header = todo_header if todo_plan is not None else node.header
+            line = f"{current_prefix}{header}" if header else current_prefix
             if _is_full_width_user_row(node):
                 if _align_full_width_user_row(node):
-                    line = f"{indent}{node.header}"
-                elif node.header:
-                    line = node.header
+                    line = f"{indent}{header}"
+                elif header:
+                    line = header
                 else:
                     line = ""
                 line = _permission_row(line, self._render_width)
@@ -1269,15 +1291,28 @@ class OutputTree:
         )
 
         # Body lines
-        for bl in node.body_lines:
-            body_line = f"{tool_prefix}{_tool_meta_line(bl)}" if tool_metadata_body else f"{cont}{bl}"
-            if node.payload.get("diff_text"):
-                body_line = _pad_diff_background_row(body_line, self._render_width)
-            if _is_full_width_user_row(node):
+        if todo_plan is not None:
+            from voidx.presentation.output.dock.todo import render_todo_plan_lines
+
+            body_lines = render_todo_plan_lines(
+                todo_plan,
+                width=self._render_width,
+                prefix=cont,
+            )
+        else:
+            body_lines = node.body_lines
+        for bl in body_lines:
+            if todo_plan is not None:
                 body_line = bl
-                body_line = _permission_row(body_line, self._render_width)
-            elif node.node_type == "permission":
-                body_line = _permission_row(body_line, self._render_width)
+            else:
+                body_line = f"{tool_prefix}{_tool_meta_line(bl)}" if tool_metadata_body else f"{cont}{bl}"
+                if node.payload.get("diff_text"):
+                    body_line = _pad_diff_background_row(body_line, self._render_width)
+                if _is_full_width_user_row(node):
+                    body_line = bl
+                    body_line = _permission_row(body_line, self._render_width)
+                elif node.node_type == "permission":
+                    body_line = _permission_row(body_line, self._render_width)
             lines.append(body_line)
             if line_map is not None:
                 line_map[len(lines) - 1] = node.id
