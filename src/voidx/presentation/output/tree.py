@@ -1410,8 +1410,19 @@ def _needs_gap_between_message_blocks(
         and any(_is_full_width_user_row(grandchild) for grandchild in prev.children)
     ):
         return False
+    if is_assistant_message(child):
+        return True
     compact_types = {"assistant", "message", "tool_call"}
     return prev.node_type not in compact_types or child.node_type not in compact_types
+
+
+def is_assistant_message(node: OutputNode) -> bool:
+    return (
+        node.node_type == "assistant"
+        and not _is_thinking_stream(node)
+        and not _is_transparent_assistant_container(node)
+        and bool(node.header or node.body_lines or _visible_children(node))
+    )
 
 
 def _is_thinking_stream(node: OutputNode) -> bool:

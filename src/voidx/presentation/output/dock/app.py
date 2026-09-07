@@ -43,7 +43,12 @@ from voidx.presentation.output.dock.status import (
     active_llm_retry_text,
     active_turn_analyzing_text,
 )
-from voidx.presentation.output.tree import OutputNode, OutputTree, is_transparent_container
+from voidx.presentation.output.tree import (
+    OutputNode,
+    OutputTree,
+    is_assistant_message,
+    is_transparent_container,
+)
 
 
 class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
@@ -628,10 +633,40 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         committed: int,
     ) -> int:
         index = max(0, min(committed, len(lines)))
+        previous_owners: list[str | None] = [None] * len(lines)
+        following_owners: list[str | None] = [None] * len(lines)
+        previous: str | None = None
+        following: str | None = None
+        for line_index in range(len(lines)):
+            previous_owners[line_index] = previous
+            owner = line_map.get(line_index)
+            if owner is not None:
+                previous = owner
+        for line_index in range(len(lines) - 1, -1, -1):
+            owner = line_map.get(line_index)
+            if owner is not None:
+                following = owner
+            following_owners[line_index] = following
+
         while index < len(lines):
             node_id = line_map.get(index)
             if node_id is None:
                 if lines[index].strip():
+                    break
+                previous_node = self._tree.get(previous_owners[index])
+                following_node = self._tree.get(following_owners[index])
+                same_non_root_parent = (
+                    previous_node is not None
+                    and following_node is not None
+                    and previous_node.parent is not None
+                    and previous_node.parent is following_node.parent
+                    and previous_node.parent is not self._tree.root
+                )
+                if (
+                    same_non_root_parent
+                    and is_assistant_message(following_node)
+                    and not self._is_node_chain_settled(following_node.id)
+                ):
                     break
                 index += 1
                 continue

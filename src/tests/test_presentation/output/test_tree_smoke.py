@@ -190,7 +190,7 @@ def test_non_ai_tool_blocks_have_exactly_one_blank_line():
     assert lines == ["● First response", "", "● Clarification", "", "● Plan"]
 
 
-def test_transparent_subagent_keeps_ai_and_tool_messages_adjacent():
+def test_transparent_subagent_separates_assistant_from_following_output():
     tree = OutputTree()
     assistant = tree.new_node(tree.root, node_type="assistant", header="● Working")
     agent_tool = tree.new_node(
@@ -215,7 +215,8 @@ def test_transparent_subagent_keeps_ai_and_tool_messages_adjacent():
     message_index = next(index for index, line in enumerate(lines) if "审查报告引用" in line)
     search_index = next(index for index, line in enumerate(lines) if 'Search("while True")' in line)
 
-    assert message_index == provider_index + 1
+    assert lines[message_index - 1] == ""
+    assert message_index == provider_index + 2
     assert search_index == message_index + 1
 
 
