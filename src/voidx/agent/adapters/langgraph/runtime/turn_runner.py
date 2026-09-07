@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voidx.agent.domain.ui_events import GuidanceCommitted, InputSet, StatusFinished, StatusUpdated, TodoCleared, TodoCommitted, TurnCancelled, TurnCompleted, TurnFailed, TurnStarted
+from voidx.agent.domain.ui_events import GuidanceCommitted, InputSet, MessageAppended, StatusFinished, StatusUpdated, TodoCleared, TodoCommitted, TurnCancelled, TurnCompleted, TurnFailed, TurnStarted
 
 import asyncio
 import json
@@ -529,25 +529,40 @@ class TurnRunner:
                 turn_in = stats.turn_input_tokens
                 turn_out = stats.turn_output_tokens
                 from voidx.llm.usage import format_token_count
-                host._ui.dock.append_message(
+                stats_text = (
                     f"[dim]✻  {elapsed:.0f}s[/dim]"
                     f"  [dim]·[/dim]  [cyan]{turn_calls}[/cyan] [dim]calls[/dim]"
                     f"  [dim]·[/dim]  [cyan]{format_token_count(turn_in)}[/cyan] [dim]in[/dim]"
-                    f"  [cyan]{format_token_count(turn_out)}[/cyan] [dim]out[/dim]",
-                    markup=True,
+                    f"  [cyan]{format_token_count(turn_out)}[/cyan] [dim]out[/dim]"
                 )
                 host._ui.session_tracker.finish_turn()
                 change_lines = host._ui.session_tracker.change_summary_lines()
-                if change_lines:
-                    host._ui.dock.append_message(
-                        "\n".join(change_lines),
-                        markup=True,
-                    )
                 if host._ui.via_events():
+                    await host._ui.events.emit(
+                        MessageAppended(
+                            text=stats_text,
+                            style="turn_stats",
+                            markup=True,
+                        )
+                    )
+                    if change_lines:
+                        await host._ui.events.emit(
+                            MessageAppended(
+                                text="\n".join(change_lines),
+                                style="file_changes",
+                                markup=True,
+                            )
+                        )
                     await host._ui.events.emit(TodoCommitted())
                     await host._ui.events.emit(TurnCompleted())
                     await host._ui.events.drain()
                 else:
+                    host._ui.dock.append_message(stats_text, markup=True)
+                    if change_lines:
+                        host._ui.dock.append_message(
+                            "\n".join(change_lines),
+                            markup=True,
+                        )
                     host._ui.dock.commit_todo_state()
                 if host._session:
                     await host._persist_transcript_snapshot()

@@ -248,6 +248,62 @@ async def test_run_turn_emits_turn_completed_event(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_run_turn_emits_turn_summary_before_completed_event(tmp_path):
+    session = await create_session(workspace=str(tmp_path))
+    events: list[object] = []
+
+    class RecordingConsumer:
+        def handle(self, event):
+            events.append(event)
+            if isinstance(event, TurnStarted):
+                return object()
+            return None
+
+    try:
+        graph = _graph(tmp_path, session=session)
+
+        class FakeGraph:
+            async def astream(self, initial, _config, *, stream_mode="values"):
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="done")]}
+
+        graph.graph = FakeGraph()
+        graph._ui.session_tracker.change_summary_lines = lambda: [
+            "[dim]Modified[/dim] [cyan]src/app.py[/cyan]"
+        ]
+
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        ui_events.start(RecordingConsumer())
+        try:
+            await graph.run_turn(
+                "hello",
+                context=TurnExecutionContext(
+                    thread_id=getattr(graph, "session_id", "") or "coding",
+                    session_id=getattr(graph, "session_id", "") or "coding",
+                ),
+            )
+            await ui_events.drain()
+        finally:
+            await ui_events.stop()
+            test_dock.deactivate()
+            test_dock.reset()
+            set_dock(None)
+
+        from voidx.presentation.output.events import MessageAppended
+
+        summary_events = [event for event in events if isinstance(event, MessageAppended)]
+        assert [event.style for event in summary_events] == ["turn_stats", "file_changes"]
+        assert all(event.markup for event in summary_events)
+        completed_index = next(
+            index for index, event in enumerate(events) if isinstance(event, TurnCompleted)
+        )
+        assert max(events.index(event) for event in summary_events) < completed_index
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
 async def test_run_turn_emits_turn_failed_event_on_exception(tmp_path):
     session = await create_session(workspace=str(tmp_path))
     events: list[object] = []

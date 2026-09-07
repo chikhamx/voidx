@@ -69,6 +69,7 @@ class MessageAppended(UiEventBase):
     kind: Literal["message.appended"] = "message.appended"
     text: str
     style: str = ""
+    markup: bool = False
 
 
 class AnsiAppended(UiEventBase):
