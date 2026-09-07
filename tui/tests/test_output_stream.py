@@ -202,6 +202,33 @@ def test_thinking_only_stream_not_flushed_to_scrollback():
         test_dock.deactivate()
         test_dock.reset()
 
+def test_thinking_only_stream_leaves_no_blank_placeholder_after_commit():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("blank thinking question")
+        test_dock.set_stream("checking permissions", phase="thinking")
+        before = [_rich_plain(line) for line in test_dock.tree.render(100)]
+        assert any("checking permissions" in line for line in before)
+
+        test_dock.commit_stream()
+        after = [_rich_plain(line) for line in test_dock.tree.render(100)]
+        thinking_nodes = [
+            node
+            for parent in test_dock.tree.root.children
+            for node in [parent, *parent.children]
+            if node.node_type == "assistant" and node.payload.get("phase") == "thinking"
+        ]
+
+        assert "checking permissions" not in "\n".join(after)
+        assert thinking_nodes == []
+        assert after.count("") <= 1
+        assert test_dock.safe_flush_line_count(100, 0) == len(after)
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
 
 def test_thinking_stream_updates_are_throttled(monkeypatch):
     now = {"value": 100.0}

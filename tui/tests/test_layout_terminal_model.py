@@ -777,3 +777,140 @@ async def test_terminal_model_submit_preserves_unchanged_activity_on_screen(
         assert patch.startswith(_BEGIN_SYNC)
         assert patch.endswith(_END_SYNC)
         assert screen.scrollback == []
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("worker", [False, True], ids=["sync", "worker"])
+async def test_terminal_model_live_thinking_and_busy_do_not_enter_scrollback(
+    tmp_path, monkeypatch, worker
+):
+    async with _terminal_tui(tmp_path, monkeypatch, worker=worker, height=12) as (
+        tui, screen, stream, drain
+    ):
+        for index in range(6):
+            dock.tree.new_node(
+                parent=dock.tree.root,
+                node_type="message",
+                header=f"HISTORY-{index}",
+            )
+        tui._flush_committed(force=True)
+        await drain()
+
+        dock.begin_capture()
+        dock.start_turn("live overlay question")
+        tui._busy = True
+        tui._was_busy = True
+        tui._busy_started_at = 0.0
+        tui._busy_activity_verb = "Ruminating"
+        dock.set_stream("checking permissions", phase="thinking")
+        tui._flush_committed()
+        await drain()
+        tui._render_frame()
+        await drain()
+        _assert_applied_screen(tui, screen)
+
+        history = "\n".join(screen.history)
+        visible = "\n".join(screen.rows)
+        assert "Ruminating" not in history
+        assert "Thinking" not in history
+        assert "checking permissions" not in history
+        assert "checking permissions" in visible
+        assert "Thinking" in visible
+
+        tui._input_lines = [f"dynamic input {index}" for index in range(8)]
+        tui._cursor_row, tui._cursor_col = 7, 5
+        tui._render_frame()
+        await drain()
+        _assert_applied_screen(tui, screen)
+
+        history = "\n".join(screen.history)
+        assert "Ruminating" not in history
+        assert "Thinking" not in history
+        assert "checking permissions" not in history
+        assert all(
+            row.startswith("HISTORY-") or not row.strip()
+            for row in screen.history
+        )
+
+        dock.commit_stream()
+        tui._busy = False
+        tui._flush_committed()
+        await drain()
+        tui._render_frame()
+        await drain()
+        _assert_applied_screen(tui, screen)
+
+        all_rows = "\n".join((*screen.history, *screen.rows))
+        assert "Ruminating" not in all_rows
+        assert "Thinking" not in all_rows
+        assert "checking permissions" not in all_rows
+        assert all_rows.count("live overlay question") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("worker", [False, True], ids=["sync", "worker"])
+async def test_terminal_model_search_started_and_completed_share_one_scrollback_row(
+    tmp_path, monkeypatch, worker
+):
+    async with _terminal_tui(tmp_path, monkeypatch, worker=worker, height=12) as (
+        tui, screen, stream, drain
+    ):
+        for index in range(6):
+            dock.tree.new_node(
+                parent=dock.tree.root,
+                node_type="message",
+                header=f"HISTORY-{index}",
+            )
+        tui._flush_committed(force=True)
+        await drain()
+
+        dock.begin_capture()
+        dock.start_turn("find compaction summary")
+        tui._busy = True
+        tui._was_busy = True
+        tui._busy_started_at = 0.0
+        tui._busy_activity_verb = "Ruminating"
+        tool = dock.start_tool(
+            "Searching",
+            'pattern="_compaction_summary"',
+            tool_name="search",
+            tool_call_id="search-1",
+            raw_args={"pattern": "_compaction_summary"},
+        )
+        tui._flush_committed()
+        await drain()
+        tui._render_frame()
+        await drain()
+        _assert_applied_screen(tui, screen)
+
+        started = "\n".join((*screen.history, *screen.rows))
+        assert started.count('Search("_compaction_summary")') == 1
+        assert "0 matches" not in started
+        assert "Ruminating" not in "\n".join(screen.history)
+        assert "Search" not in "\n".join(screen.history)
+
+        tui._busy = False
+        tui._flush_committed()
+        await drain()
+        tui._render_frame()
+        await drain()
+        _assert_applied_screen(tui, screen)
+
+        mid = "\n".join((*screen.history, *screen.rows))
+        assert mid.count('Search("_compaction_summary")') == 1
+        assert "0 matches" not in mid
+        assert "Search" not in "\n".join(screen.history)
+
+        dock.finish_tool_node(tool, "Search", 0.1, True, "0 matches")
+        tui._flush_committed()
+        await drain()
+        tui._render_frame()
+        await drain()
+        _assert_applied_screen(tui, screen)
+
+        all_rows = "\n".join((*screen.history, *screen.rows))
+        assert all_rows.count('Search("_compaction_summary")') == 1
+        assert all_rows.count("0 matches") == 1
+        assert "Ruminating" not in all_rows
+        assert all_rows.count("find compaction summary") == 1

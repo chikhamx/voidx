@@ -407,6 +407,191 @@ def test_final_flush_invalidates_previous_frame_cache(tmp_path, monkeypatch):
     assert tui._prev_frame_lines is None
 
 
+def test_busy_end_flush_does_not_commit_unsettled_search_or_thinking(tmp_path, monkeypatch):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 30)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._busy = True
+    tui._was_busy = True
+    tui._console = Console(file=fake_stdout, force_terminal=True, width=80, height=30, _environ={})
+    dock.begin_capture()
+    dock.start_turn("find compaction summary")
+    tool = dock.start_tool(
+        "Searching",
+        'pattern="_compaction_summary"',
+        tool_name="search",
+        tool_call_id="search-1",
+        raw_args={"pattern": "_compaction_summary"},
+    )
+
+    tui._flush_committed()
+    committed = tui._committed_line_count
+    assert "Search" not in Text.from_ansi(fake_stdout.text).plain
+    assert committed < len(dock.tree.render(tui._frame_width()))
+
+    tui._busy = False
+    fake_stdout.text = ""
+    tui._flush_committed()
+
+    assert "Search" not in Text.from_ansi(fake_stdout.text).plain
+    assert tui._committed_line_count == committed
+
+    dock.finish_tool_node(tool, "Search", 0.1, True, "0 matches")
+    fake_stdout.text = ""
+    tui._flush_committed()
+
+    flushed = Text.from_ansi(fake_stdout.text).plain
+    assert flushed.count('Search("_compaction_summary")') == 1
+    assert flushed.count("0 matches") == 1
+
+
+def test_thinking_only_busy_end_flush_does_not_leave_blank_placeholder(tmp_path, monkeypatch):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 30)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._busy = True
+    tui._was_busy = True
+    tui._console = Console(file=fake_stdout, force_terminal=True, width=80, height=30, _environ={})
+    dock.begin_capture()
+    dock.start_turn("blank thinking question")
+    dock.set_stream("checking permissions", phase="thinking")
+
+    tui._flush_committed()
+    committed_before = tui._committed_line_count
+    assert "checking permissions" not in Text.from_ansi(fake_stdout.text).plain
+
+    tui._busy = False
+    fake_stdout.text = ""
+    tui._flush_committed()
+
+    flushed = Text.from_ansi(fake_stdout.text).plain
+    assert "checking permissions" not in flushed
+    assert tui._committed_line_count == committed_before
+
+    dock.commit_stream()
+    fake_stdout.text = ""
+    tui._flush_committed()
+
+    flushed = Text.from_ansi(fake_stdout.text).plain
+    rendered = [_rich_plain(line) for line in dock.tree.render(tui._frame_width())]
+    thinking_nodes = [
+        node
+        for parent in dock.tree.root.children
+        for node in [parent, *parent.children]
+        if node.node_type == "assistant" and node.payload.get("phase") == "thinking"
+    ]
+
+    assert tui._committed_line_count == committed_before
+    assert "checking permissions" not in flushed
+    assert thinking_nodes == []
+    assert rendered.count("") <= 1
+
+
+def test_force_flush_does_not_commit_unsettled_search(tmp_path, monkeypatch):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 30)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=fake_stdout, force_terminal=True, width=80, height=30, _environ={})
+    dock.begin_capture()
+    dock.start_turn("force search question")
+    dock.start_tool(
+        "Searching",
+        'pattern="_compaction_summary"',
+        tool_name="search",
+        tool_call_id="search-force-1",
+        raw_args={"pattern": "_compaction_summary"},
+    )
+
+    tui._flush_committed(force=True)
+
+    output = Text.from_ansi(fake_stdout.text).plain
+    assert "Search" not in output
+    assert tui._committed_line_count < len(dock.tree.render(tui._frame_width()))
+
+
+def test_force_flush_does_not_commit_unsettled_thinking(tmp_path, monkeypatch):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 30)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=fake_stdout, force_terminal=True, width=80, height=30, _environ={})
+    dock.begin_capture()
+    dock.start_turn("force thinking question")
+    dock.set_stream("checking permissions", phase="thinking")
+
+    tui._flush_committed(force=True)
+
+    output = Text.from_ansi(fake_stdout.text).plain
+    assert "checking permissions" not in output
+    assert tui._committed_line_count < len(dock.tree.render(tui._frame_width()))
+
+
+@pytest.mark.parametrize("prompt", ["clarify", "checkpoint", "goal_spec"])
+def test_force_flush_does_not_commit_interactive_prompt(tmp_path, monkeypatch, prompt):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 30)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=fake_stdout, force_terminal=True, width=80, height=30, _environ={})
+    dock.begin_capture()
+    dock.start_turn("force prompt question")
+    if prompt == "clarify":
+        dock.show_clarify("force-cl-1", "Which approach?", ["implement"])
+        marker = "voidx clarify"
+    elif prompt == "checkpoint":
+        dock.show_checkpoint(
+            "force-cp-1",
+            {"goal": "Implement the plan", "steps": ["Write the code"]},
+            [],
+        )
+        marker = "voidx plan"
+    else:
+        dock.show_goal_spec(
+            "force-gs-1",
+            {"objective": "Implement the plan"},
+            [],
+        )
+        marker = "goal spec"
+
+    tui._flush_committed(force=True)
+
+    output = Text.from_ansi(fake_stdout.text).plain
+    assert marker not in output
+
+
 def test_flush_does_not_replay_committed_lines_after_transient_status_removed(tmp_path, monkeypatch):
     fake_stdout = _FakeStdout()
     monkeypatch.setattr(sys, "stdout", fake_stdout)

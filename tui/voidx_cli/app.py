@@ -1095,23 +1095,27 @@ class PureTui(
                 )
                 next_restored_committed_line_count = committed_added
                 if force:
-                    flush_limit = len(added_lines)
+                    flush_limit = min(
+                        dock.force_safe_flush_root_slice_line_count(
+                            width,
+                            restored_end,
+                            current_end,
+                            committed_added,
+                        ),
+                        len(added_lines),
+                    )
                 else:
                     is_busy = self._busy
-                    was_busy = next_was_busy
                     next_was_busy = is_busy
-                    if was_busy and not is_busy:
-                        flush_limit = len(added_lines)
-                    else:
-                        flush_limit = min(
-                            dock.safe_flush_root_slice_line_count(
-                                width,
-                                restored_end,
-                                current_end,
-                                committed_added,
-                            ),
-                            len(added_lines),
-                        )
+                    flush_limit = min(
+                        dock.safe_flush_root_slice_line_count(
+                            width,
+                            restored_end,
+                            current_end,
+                            committed_added,
+                        ),
+                        len(added_lines),
+                    )
                 flush_limit = min(
                     self._pending_stream_flush_limit(added_line_map, flush_limit),
                     len(added_lines),
@@ -1142,18 +1146,17 @@ class PureTui(
                 total = len(tree_lines)
                 committed_count = min(next_committed_line_count, total)
                 if force:
-                    flush_limit = total
+                    flush_limit = min(
+                        dock.force_safe_flush_line_count(width, 0),
+                        total,
+                    )
                 else:
                     is_busy = self._busy
-                    was_busy = next_was_busy
                     next_was_busy = is_busy
-                    if was_busy and not is_busy:
-                        flush_limit = total
-                    else:
-                        flush_limit = min(
-                            dock.safe_flush_line_count(width, 0),
-                            total,
-                        )
+                    flush_limit = min(
+                        dock.safe_flush_line_count(width, 0),
+                        total,
+                    )
                 flush_limit = self._pending_stream_flush_limit(line_map, flush_limit)
 
                 previous_projection = next_committed_projection

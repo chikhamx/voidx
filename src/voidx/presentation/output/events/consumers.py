@@ -665,6 +665,7 @@ class DockEventConsumer:
             agent_name=f"agent {agent_id}",
         )
         self._agent_nodes[agent_id] = node
+        self._dock.mark_node_unsettled(node)
         self._dock.refresh()
         return node
 

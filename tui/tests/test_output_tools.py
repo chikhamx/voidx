@@ -118,6 +118,35 @@ def test_ai_and_tool_blocks_are_compact_while_other_blocks_are_spaced():
     assert checkpoint == clarify + 2
 
 
+def test_search_started_and_completed_render_as_one_tool_row():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("find compaction summary")
+        tool = test_dock.start_tool(
+            "Searching",
+            'pattern="_compaction_summary"',
+            tool_name="search",
+            tool_call_id="search-1",
+            raw_args={"pattern": "_compaction_summary"},
+        )
+        started = [_rich_plain(line) for line in test_dock.tree.render(100)]
+        assert sum(1 for line in started if 'Search("_compaction_summary")' in line) == 1
+        assert test_dock.safe_flush_line_count(100, 0) < len(started)
+
+        test_dock.finish_tool_node(tool, "Search", 0.1, True, "0 matches")
+        finished = [_rich_plain(line) for line in test_dock.tree.render(100)]
+        search_lines = [line for line in finished if 'Search("_compaction_summary")' in line]
+
+        assert len(search_lines) == 1
+        assert "0 matches" in search_lines[0]
+        assert test_dock.safe_flush_line_count(100, 0) == len(finished)
+        assert finished.count("") <= 1
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
 
 
 def test_assistant_messages_start_after_blank_line_independent_of_previous_node():

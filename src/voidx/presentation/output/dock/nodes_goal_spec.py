@@ -33,7 +33,7 @@ class DockGoalSpecNodeMixin:
             },
         )
         self._goal_spec_nodes[prompt_id] = node
-        self._mark_subtree_settled(node)
+        self._mark_unsettled(node)
         self.refresh()
         return node
 

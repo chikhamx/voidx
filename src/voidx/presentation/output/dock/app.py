@@ -90,6 +90,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._guidance_preview: str = ""
         self._guidance_echoes: list[str] = []
         self._settled_node_ids: set[str] = set()
+        self._unsettled_node_ids: set[str] = set()
         self._input_text = ""
         self._cursor_pos = 0
         self._hints: list[tuple[str, str, bool]] = []
@@ -240,6 +241,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
     def reset(self) -> None:
         self._tree = OutputTree()
         self._settled_node_ids.clear()
+        self._unsettled_node_ids.clear()
         self._guidance_echoes.clear()
         self._todo_state = None
         self._reset_runtime_nodes()
@@ -260,6 +262,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         else:
             self._tree = tree
         self._settled_node_ids.clear()
+        self._unsettled_node_ids.clear()
         self._mark_tree_settled()
         self._reset_runtime_nodes()
         self._todo_state = None
@@ -579,15 +582,18 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
     def _mark_settled(self, node: OutputNode | None) -> None:
         if node is not None:
             self._settled_node_ids.add(node.id)
+            self._unsettled_node_ids.discard(node.id)
 
     def _mark_unsettled(self, node: OutputNode | None) -> None:
         if node is not None:
             self._settled_node_ids.discard(node.id)
+            self._unsettled_node_ids.add(node.id)
 
     def _mark_subtree_settled(self, node: OutputNode | None) -> None:
         if node is None:
             return
         self._settled_node_ids.add(node.id)
+        self._unsettled_node_ids.discard(node.id)
         for child in node.children:
             self._mark_subtree_settled(child)
 
@@ -599,15 +605,24 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         if node is None:
             return
         self._settled_node_ids.discard(node.id)
+        self._unsettled_node_ids.discard(node.id)
         for child in node.children:
             self._discard_settled_subtree(child)
 
-    def _is_node_chain_settled(self, node_id: str) -> bool:
+    def _is_node_chain_settled(
+        self,
+        node_id: str,
+        *,
+        allow_untracked: bool = False,
+    ) -> bool:
         node = self._tree.get(node_id)
         while node is not None and node is not self._tree.root:
             if node.payload.get("render_pending"):
                 return False
-            if node.id not in self._settled_node_ids and not is_transparent_container(node):
+            transparent = is_transparent_container(node)
+            if node.id in self._unsettled_node_ids and not transparent:
+                return False
+            if node.id not in self._settled_node_ids and not transparent and not allow_untracked:
                 return False
             node = node.parent
         return True
@@ -626,11 +641,37 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         lines, line_map = self._tree.render_root_slice_with_line_map(width, start, end)
         return self._safe_flush_limit(lines, line_map, committed)
 
+    def force_safe_flush_line_count(self, width: int, committed: int) -> int:
+        lines, line_map = self._tree.render_with_line_map(width)
+        return self._safe_flush_limit(
+            lines,
+            line_map,
+            committed,
+            allow_untracked=True,
+        )
+
+    def force_safe_flush_root_slice_line_count(
+        self,
+        width: int,
+        start: int,
+        end: int,
+        committed: int,
+    ) -> int:
+        lines, line_map = self._tree.render_root_slice_with_line_map(width, start, end)
+        return self._safe_flush_limit(
+            lines,
+            line_map,
+            committed,
+            allow_untracked=True,
+        )
+
     def _safe_flush_limit(
         self,
         lines: list[str],
         line_map: dict[int, str],
         committed: int,
+        *,
+        allow_untracked: bool = False,
     ) -> int:
         index = max(0, min(committed, len(lines)))
         previous_owners: list[str | None] = [None] * len(lines)
@@ -655,6 +696,15 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
                     break
                 previous_node = self._tree.get(previous_owners[index])
                 following_node = self._tree.get(following_owners[index])
+                if (
+                    following_node is not None
+                    and not self._is_node_chain_settled(
+                        following_node.id,
+                        allow_untracked=allow_untracked,
+                    )
+                    and not is_assistant_message(following_node)
+                ):
+                    break
                 same_non_root_parent = (
                     previous_node is not None
                     and following_node is not None
@@ -665,12 +715,18 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
                 if (
                     same_non_root_parent
                     and is_assistant_message(following_node)
-                    and not self._is_node_chain_settled(following_node.id)
+                    and not self._is_node_chain_settled(
+                        following_node.id,
+                        allow_untracked=allow_untracked,
+                    )
                 ):
                     break
                 index += 1
                 continue
-            if not self._is_node_chain_settled(node_id):
+            if not self._is_node_chain_settled(
+                node_id,
+                allow_untracked=allow_untracked,
+            ):
                 break
             index += 1
         return index

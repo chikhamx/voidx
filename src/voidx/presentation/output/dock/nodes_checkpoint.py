@@ -34,6 +34,7 @@ class DockCheckpointNodeMixin:
             },
         )
         self._checkpoint_nodes[checkpoint_id] = node
+        self._mark_unsettled(node)
         self.refresh()
         return node
 
