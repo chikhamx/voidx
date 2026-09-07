@@ -11,11 +11,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
 from voidx.llm.compaction.constants import (
     COMPACTION_BUFFER,
     COMPACTION_PROMPT_CONTEXT_MAX_CHARS,
+    COMPACTION_TAIL_CONTEXT_RATIO,
     COMPACTION_THRESHOLD,
     DEFAULT_TAIL_TURNS,
     MAX_PRESERVE_RECENT,
@@ -317,3 +318,97 @@ def _token_total(tokens: dict) -> int:
         tokens.get("output", 0) +
         tokens.get("reasoning", 0)
     )
+
+
+def validate_closed_tool_batches(messages: list[BaseMessage]) -> bool:
+    """Validate that every tool call in AIMessage is cleanly resolved by ToolMessages.
+
+    Rules:
+    - Standalone AIMessage (no tool calls) is valid.
+    - AIMessage with tool calls must be immediately followed by exactly one ToolMessage
+      for each tool_call_id.
+    - Orphan ToolMessages, duplicate tool results, unclosed tool calls, or tool calls
+      interleaved with other message types are invalid.
+    """
+    expected_ids: set[str] = set()
+    for msg in messages:
+        if isinstance(msg, AIMessage):
+            if expected_ids:
+                return False
+            tool_calls = getattr(msg, "tool_calls", None) or []
+            if not isinstance(tool_calls, list):
+                return False
+            ids: list[str] = []
+            for call in tool_calls:
+                if not isinstance(call, dict) or "id" not in call or not call["id"]:
+                    return False
+                ids.append(call["id"])
+            if len(ids) != len(set(ids)):
+                return False
+            expected_ids = set(ids)
+        elif isinstance(msg, ToolMessage):
+            call_id = getattr(msg, "tool_call_id", None)
+            if not call_id or call_id not in expected_ids:
+                return False
+            expected_ids.remove(call_id)
+        else:
+            if expected_ids:
+                return False
+    return len(expected_ids) == 0
+
+
+def select_closed_tool_tail(
+    messages: list[BaseMessage],
+    context_limit: int,
+    *,
+    token_counter: Callable[[list[BaseMessage], str], int] = estimate_context_tokens,
+    model: str = "",
+) -> tuple[list[BaseMessage], list[BaseMessage]]:
+    """Select the latest single complete AI/tool batch as retained tail.
+
+    Tail must not exceed floor(context_limit * COMPACTION_TAIL_CONTEXT_RATIO).
+    If the latest batch exceeds the limit or cannot be cleanly closed,
+    the returned tail is empty and all messages remain in source.
+
+    Returns:
+        (tail, source) tuple.
+    """
+    if not messages or context_limit <= 0:
+        return [], list(messages)
+
+    tail_budget = int(context_limit * COMPACTION_TAIL_CONTEXT_RATIO)
+
+    last_msg = messages[-1]
+    batch_start = -1
+
+    if isinstance(last_msg, ToolMessage):
+        tool_call_ids: list[str] = []
+        idx = len(messages) - 1
+        while idx >= 0 and isinstance(messages[idx], ToolMessage):
+            cid = getattr(messages[idx], "tool_call_id", None)
+            if cid:
+                tool_call_ids.append(cid)
+            idx -= 1
+        if idx >= 0 and isinstance(messages[idx], AIMessage):
+            ai_msg = messages[idx]
+            ai_calls = getattr(ai_msg, "tool_calls", None) or []
+            ai_call_ids = [c["id"] for c in ai_calls if isinstance(c, dict) and "id" in c]
+            if set(ai_call_ids) == set(tool_call_ids) and len(ai_call_ids) == len(tool_call_ids):
+                batch_start = idx
+    elif isinstance(last_msg, AIMessage):
+        ai_calls = getattr(last_msg, "tool_calls", None) or []
+        if not ai_calls:
+            batch_start = len(messages) - 1
+
+    if batch_start == -1:
+        return [], list(messages)
+
+    candidate_tail = list(messages[batch_start:])
+    if not validate_closed_tool_batches(candidate_tail):
+        return [], list(messages)
+
+    tail_tokens = token_counter(candidate_tail, model)
+    if tail_tokens > tail_budget:
+        return [], list(messages)
+
+    return candidate_tail, list(messages[:batch_start])

@@ -641,7 +641,7 @@ async def test_call_llm_overflow_compaction_does_not_send_temporary_summary_mess
         if isinstance(message, SystemMessage)
     ]
     assert system_messages
-    assert "## Long Summary\nnew compacted summary" in str(system_messages[0].content)
+    assert "## Long Summary" not in str(system_messages[0].content)
     assert not any(
         isinstance(message, SystemMessage)
         and isinstance(message.content, str)

@@ -28,3 +28,5 @@ class AgentState(TypedDict):
     convergence_forced: NotRequired[bool]  # final no-tools convergence prompt was injected
     turn_state: NotRequired[str]  # initial/running/committed within one user turn
     stop_signal: NotRequired[str]
+    active_turn_input: NotRequired[dict[str, Any]]
+    segment_index: NotRequired[int]

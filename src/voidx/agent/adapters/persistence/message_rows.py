@@ -11,17 +11,31 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 
 from voidx.agent.application.attachments import parse_structured_content
 from voidx.llm.message_status import message_status
-from voidx.agent.adapters.persistence.session_repository import MessageRow
+from voidx.agent.adapters.persistence.session_models import MessageRow
 from voidx.agent.application.runtime_context import RowMessageCacheEntry
-from voidx.llm.message_markers import GUIDANCE_MARKER
+from voidx.llm.message_markers import COMPACTION_MESSAGE_MARKER, GUIDANCE_MARKER
 
 
 def is_guidance_row(row: MessageRow) -> bool:
     return bool(row.additional_kwargs.get(GUIDANCE_MARKER))
 
 
+def is_compaction_row(row: MessageRow) -> bool:
+    return bool(row.additional_kwargs.get(COMPACTION_MESSAGE_MARKER))
+
+
 def is_user_turn_row(row: MessageRow) -> bool:
-    return row.role == "user" and not is_guidance_row(row)
+    return row.role == "user" and not is_guidance_row(row) and not is_compaction_row(row)
+
+
+def compute_source_range_hash(rows: Iterable[MessageRow]) -> str:
+    fingerprints = [
+        {"id": row.id, "fingerprint": row_fingerprint(row)}
+        for row in rows
+    ]
+    return hashlib.sha256(
+        json.dumps(fingerprints, sort_keys=True).encode("utf-8")
+    ).hexdigest()
 
 
 def messages_from_rows(rows: Iterable[MessageRow]) -> list[BaseMessage]:

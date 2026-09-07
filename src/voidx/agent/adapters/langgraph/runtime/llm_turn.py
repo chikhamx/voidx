@@ -24,9 +24,14 @@ from voidx.agent.adapters.langgraph.runtime.core.context import (
 from voidx.agent.adapters.langgraph.runtime.core.loop import LlmLoopState, handle_llm_exception
 from voidx.agent.adapters.langgraph.runtime.core.turn import handle_turn_control_response
 from voidx.agent.adapters.langgraph.runtime.core.helpers import _invalidate_tui, _merge_workflow_runs, _persona_for_workflow_runs, _task_state_for_context, _LLM_MAX_RETRIES, _LLM_TIMEOUT_MAX_RETRIES
-from voidx.agent.domain.compaction import CompactionResult
+from voidx.agent.domain.compaction import CompactionResult, ContextBudgetExhausted
+from voidx.llm.compaction.constants import COMPACTION_BUFFER
+from voidx.agent.adapters.langgraph.runtime.prepared_request import (
+    PreparedMainRequest,
+    prepare_main_request,
+)
 from typing import Any
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, RemoveMessage
 from voidx.agent.application.agents import get_agent
 from voidx.agent.application.prompts import (
     CODING_PROFILE_SPEC,
@@ -70,9 +75,10 @@ from voidx.agent.adapters.langgraph.runtime.context_pressure import (
     upsert_context_pressure_hint,
 )
 from voidx.agent.application.runtime_context import raw_semantic_messages
-from voidx.agent.adapters.persistence.session_repository import MessageRow
+from voidx.agent.adapters.persistence.session_models import MessageRow
 from voidx.llm.message_markers import (
     GUIDANCE_MARKER,
+    is_continuation_message,
     is_context_pressure_message,
 )
 
@@ -210,12 +216,15 @@ class LlmTurn:
                     )
                 )
         request_pressure_hint: HumanMessage | None = None
+        rollover_continuation: HumanMessage | None = None
         state_messages = [
             message
             for message in state["messages"]
             if not is_context_pressure_message(message)
+            and not is_continuation_message(message)
         ]
         compaction_happened = False
+        rollover_rebuild_used = False
         raw_todo_state = (
             state["todo_state"]
             if "todo_state" in state
@@ -296,6 +305,8 @@ class LlmTurn:
 
         def request_messages() -> list[BaseMessage]:
             messages = list(llm_messages)
+            if rollover_continuation is not None:
+                messages.append(rollover_continuation)
             if request_pressure_hint is not None:
                 messages.append(request_pressure_hint)
             return messages
@@ -324,18 +335,29 @@ class LlmTurn:
             )
 
         async def apply_compaction_result(result: CompactionResult) -> tuple[list[BaseMessage], list[HumanMessage], bool, int]:
-            nonlocal compaction_happened, state_messages, runtime_task_state, persona, request_pressure_hint
+            nonlocal compaction_happened, state_messages, runtime_task_state, persona
+            nonlocal request_pressure_hint, rollover_continuation
             compaction_happened = True
             request_pressure_hint = None
             state_messages = [
                 message
                 for message in result.live_messages
                 if not is_context_pressure_message(message)
+                and not isinstance(message, RemoveMessage)
+                and not is_continuation_message(message)
             ]
+            rollover_continuation = next(
+                (
+                    message
+                    for message in result.live_messages
+                    if is_continuation_message(message)
+                ),
+                None,
+            )
             if result.summary:
                 reprepare_state = {
                     **state,
-                    "messages": state_messages,
+                    "messages": list(state_messages),
                     "task_state": runtime_task_state.model_dump(mode="json"),
                 }
                 prepared = await host._prepare_with_stream(reprepare_state)
@@ -385,6 +407,7 @@ class LlmTurn:
             compaction_service=host._compaction,
         )
         active_pressure = None
+        live_rollover_enabled = host._session is not None
 
         async def apply_hard_pressure_fallback() -> None:
             nonlocal active_pressure
@@ -409,7 +432,7 @@ class LlmTurn:
                     soft_threshold=pressure_decision.soft_threshold,
                     hard_threshold=pressure_decision.hard_threshold,
                 ))
-        if pressure_decision.should_inject:
+        if not live_rollover_enabled and pressure_decision.should_inject:
             pressure_update = update_request_pressure_hint(pressure_decision)
             active_pressure = current_context_pressure(
                 [request_pressure_hint] if request_pressure_hint is not None else [],
@@ -430,7 +453,7 @@ class LlmTurn:
                     soft_threshold=pressure_decision.soft_threshold,
                     hard_threshold=pressure_decision.hard_threshold,
                 ))
-        if host._compaction.is_overflow({"total": loop.context_tokens}):
+        if not live_rollover_enabled and host._compaction.is_overflow({"total": loop.context_tokens}):
             result, _preflight_result = await host._preflight_compact_if_needed(
                 state_messages,
                 force=True,
@@ -452,6 +475,8 @@ class LlmTurn:
                 await apply_hard_pressure_fallback()
 
         max_retries = _LLM_MAX_RETRIES
+        prepared_request: PreparedMainRequest | None = None
+        overflow_request_hash: str | None = None
         while True:
             try:
                 refresh_child_runs()
@@ -487,6 +512,39 @@ class LlmTurn:
                         for definition in tool_defs
                         if definition.get("function", {}).get("name") == forced_tool_name
                     ]
+
+                prepared_request = prepare_main_request(
+                    request_llm_messages,
+                    active_tool_defs,
+                    model_name=host.config.model.model,
+                    context_limit=getattr(host._compaction, "context_limit", 128_000),
+                    output_token_max=getattr(host._compaction, "output_token_max", 4096),
+                    safety_margin=COMPACTION_BUFFER,
+                    budget_messages=raw_semantic_messages(
+                        [*state_messages, *guidance_messages]
+                    ),
+                )
+                if prepared_request.should_rollover:
+                    if rollover_rebuild_used and live_rollover_enabled:
+                        raise ContextBudgetExhausted(
+                            "Main request remains over budget after one rollover rebuild"
+                        )
+                    rollover_result = await host._compaction_coordinator.rollover_for_live_state(
+                        state_messages,
+                        prepared_request=prepared_request,
+                        force=True,
+                    )
+                    if rollover_result is None and live_rollover_enabled:
+                        raise ContextBudgetExhausted(
+                            "Main request remains over budget and no valid rollover replacement was available"
+                        )
+                    if rollover_result is not None:
+                        rollover_rebuild_used = True
+                        llm_messages, convergence_messages, convergence_forced, context_tokens = (
+                            await apply_compaction_result(rollover_result)
+                        )
+                        loop.context_tokens = context_tokens
+                        continue
                 if active_tool_defs:
                     if forced_tool_name:
                         try:
@@ -505,6 +563,7 @@ class LlmTurn:
                     prompt_cache_key,
                     protocol=model_protocol,
                 )
+                rollover_continuation = None
                 assistant_msg = await _stream_llm(
                     model_with_tools,
                     request_llm_messages,
@@ -640,10 +699,28 @@ class LlmTurn:
                     break
 
                 break
+            except ContextBudgetExhausted:
+                raise
             except Exception as e:
                 from voidx.agent.adapters.langgraph.runtime.core.helpers import _classify_llm_error
 
                 kind = _classify_llm_error(e)
+                if kind == "context_overflow" and live_rollover_enabled and overflow_request_hash is not None:
+                    if host._ui.via_events():
+                        failure_pressure = active_pressure or (
+                            f"voidx:context-pressure:{pressure_decision.turn_id}",
+                            "hard",
+                        )
+                        await host._ui.events.emit(ContextPressureFinished(
+                            pressure_id=failure_pressure[0],
+                            level="hard",
+                            outcome="model_overflow_failed",
+                            detail=str(e),
+                            ok=False,
+                        ))
+                    raise ContextBudgetExhausted(
+                        "Provider request remained over budget after one rollover rebuild"
+                    ) from e
 
                 retry_result = await handle_llm_exception(
                     ui=host._ui,
@@ -654,6 +731,38 @@ class LlmTurn:
                     timeout_max_retries=_LLM_TIMEOUT_MAX_RETRIES,
                 )
                 if retry_result.action == "overflow":
+                    if live_rollover_enabled:
+                        if rollover_rebuild_used:
+                            raise ContextBudgetExhausted(
+                                "Provider context overflow remained after rollover without new accepted source"
+                            ) from e
+                        overflow_request_hash = (
+                            prepared_request.request_hash
+                            if prepared_request is not None
+                            else None
+                        )
+                        result = await host._compaction_coordinator.rollover_for_live_state(
+                            state_messages,
+                            prepared_request=prepared_request,
+                            force=True,
+                        )
+                        if result is None:
+                            raise ContextBudgetExhausted(
+                                "Provider context overflow could not be recovered by rollover"
+                            ) from e
+                        rollover_rebuild_used = True
+                        llm_messages, convergence_messages, convergence_forced, context_tokens = (
+                            await apply_compaction_result(result)
+                        )
+                        loop.context_tokens = context_tokens
+                        if active_pressure is not None and host._ui.via_events():
+                            await host._ui.events.emit(ContextPressureFinished(
+                                pressure_id=active_pressure[0],
+                                level=active_pressure[1],
+                                outcome="compacted",
+                            ))
+                        continue
+
                     result, _preflight_result = await host._preflight_compact_if_needed(
                         state_messages,
                         force=True,
@@ -763,7 +872,10 @@ class LlmTurn:
         interaction_mode = state.get("interaction_mode") or (
             InteractionMode.PLAN.value if state.get("plan_mode", False) else host._interaction_mode.value
         )
-        current_user_text = latest_user_text(state.get("messages", []))
+        current_user_text = latest_user_text(
+            state.get("messages", []),
+            active_turn_input=state.get("active_turn_input"),
+        )
         profile_id = getattr(active_profile, "profile_id", "coding")
         instructions = await host._instruction.system(include_files=profile_id != "chat")
         task_state = _task_state_for_context(state.get("task_state"), getattr(host, "_task_state", None))

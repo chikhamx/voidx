@@ -4,7 +4,7 @@ display_name: 递归 User Summary 消息替换压缩
 description: 用可见、可恢复的 synthetic user summary message 替换有效历史，并在多次压缩中递归合并。
 doc_type: tech-design
 audience: human+llm
-status: draft
+status: approved
 ---
 
 # 递归 User Summary 消息替换压缩

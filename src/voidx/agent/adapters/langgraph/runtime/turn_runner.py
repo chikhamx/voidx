@@ -23,6 +23,8 @@ from voidx.agent.application.automation.goal.goal_resolver import build_goal_res
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.domain.turn_metadata import turn_metadata_from_context
 from voidx.agent.domain.task.intent import InteractionMode
+from voidx.agent.domain.turn_input import ActiveTurnInput
+from voidx.agent.adapters.langgraph.runtime.turn_journal import TurnJournal, message_journal_key
 from voidx.agent.adapters.langgraph.runtime.thread_context import (
     GuidanceEntry,
     bind_thread_execution_context,
@@ -38,7 +40,8 @@ from voidx.agent.domain.task.state import (
 )
 from voidx.llm.message_status import message_status
 from voidx.observability.tool_log import log_tool_event
-from voidx.agent.adapters.persistence.session_repository import MessageRow, count_messages, create_session, delete_messages_from, load_messages, touch_session, update_title
+from voidx.agent.adapters.persistence.session_models import MessageRow
+from voidx.agent.adapters.persistence.session_repository import count_messages, create_session, delete_messages_from, load_messages, touch_session, update_title
 from voidx.agent.adapters.persistence.runtime_state_repository import MessageRuntimeSnapshot, save_message_runtime_snapshot
 from voidx.persistence.sqlite import now as memorynow
 from voidx.agent.application.automation.workflow.service import reconcile_workflow_runs_for_turn
@@ -435,6 +438,29 @@ class TurnRunner:
                         ))
                 host._any_messages_sent = True
 
+                turn_journal_id = f"tj_{time.time_ns()}"
+                active_input = ActiveTurnInput(
+                    turn_journal_id=turn_journal_id,
+                    user_message_id=user_message_id,
+                    raw_text=payload.raw_text,
+                    semantic_text=payload.title_text or payload.display_text,
+                    display_text=turn_display_text,
+                    title_text=payload.title_text,
+                    content=payload.content,
+                    content_format=user_content_format if persist_user_input else "text",
+                    segment_index=0,
+                )
+                prior_keys = {
+                    message_journal_key(m)
+                    for m in msgs[:-1]
+                    if not isinstance(m, HumanMessage)
+                }
+                journal = TurnJournal(active_input=active_input, committed_keys=prior_keys)
+                current_state = current_thread_execution_state()
+                if current_state is not None:
+                    current_state.active_turn_input = active_input
+                    current_state.turn_journal = journal
+
                 initial: AgentState = {
                     "messages": msgs,
                     "workspace": current_thread_execution_state().workspace,
@@ -447,6 +473,8 @@ class TurnRunner:
                     "task_state": turn_task_state.model_dump(mode="json"),
                     "user_message_id": user_message_id,
                     "turn_state": "initial",
+                    "active_turn_input": active_input.model_dump(),
+                    "segment_index": 0,
                 }
 
                 # ── compaction: check overflow before running ──────────────────
@@ -498,24 +526,41 @@ class TurnRunner:
                 # Persist new messages — detached turns (empty session_id,
                 # e.g. goal evaluator) must not write into any session.
                 if host._session and not context.detached:
-                    turn_index = None
-                    for i, msg in enumerate(final["messages"]):
-                        if getattr(msg, "id", None) == turn_msg.id:
-                            turn_index = i
-                            break
-                    if turn_index is None:
-                        for i in range(len(final["messages"]) - 1, -1, -1):
-                            msg = final["messages"][i]
-                            if isinstance(msg, HumanMessage) and msg.content == payload.content:
+                    state = current_thread_execution_state()
+                    journal = getattr(state, "turn_journal", None) if state else None
+                    if journal is not None:
+                        async def _save_row(row: MessageRow) -> int:
+                            row_id = await save_turn_message(row)
+                            if host._session_msg_cache is not None:
+                                host._session_msg_cache.append(row.model_copy(update={"id": row_id}))
+                            return row_id
+
+                        await journal.flush(
+                            final.get("messages", []),
+                            session_id=host._session.id,
+                            save_func=_save_row,
+                        )
+                        await touch_session(host._session.id)
+                    else:
+                        turn_index = None
+                        for i, msg in enumerate(final["messages"]):
+                            if getattr(msg, "id", None) == turn_msg.id:
                                 turn_index = i
                                 break
-                    new_messages = final["messages"][turn_index + 1:] if turn_index is not None else []
+                        if turn_index is None:
+                            for i in range(len(final["messages"]) - 1, -1, -1):
+                                msg = final["messages"][i]
+                                if isinstance(msg, HumanMessage) and msg.content == payload.content:
+                                    turn_index = i
+                                    break
+                        new_messages = final["messages"][turn_index + 1:] if turn_index is not None else []
+                        await _persist_new_messages(host, new_messages)
+
                     host._current_turn_tool_messages = tuple(
                         message
-                        for message in new_messages
+                        for message in final.get("messages", [])
                         if isinstance(message, ToolMessage)
                     )
-                    await _persist_new_messages(host, new_messages)
 
                     # Update session title to match current goal after turn completes
                     goal = final_task_state.current_goal
@@ -687,6 +732,24 @@ async def _persist_new_messages(host: Any, new_messages: list) -> None:
     """
     if not host._session:
         return
+    state = current_thread_execution_state()
+    journal = getattr(state, "turn_journal", None) if state else None
+    if journal is not None:
+        async def _save_row(row: MessageRow) -> int:
+            row_id = await save_turn_message(row)
+            if host._session_msg_cache is not None:
+                host._session_msg_cache.append(row.model_copy(update={"id": row_id}))
+            return row_id
+
+        flushed = await journal.flush(
+            new_messages,
+            session_id=host._session.id,
+            save_func=_save_row,
+        )
+        if flushed > 0:
+            await touch_session(host._session.id)
+        return
+
     for msg in new_messages:
         if isinstance(msg, AIMessage):
             raw_content = msg.content
@@ -741,10 +804,30 @@ async def _persist_new_messages(host: Any, new_messages: list) -> None:
 async def _persist_streamed_messages(host: Any, streamed_messages: list, payload_content: str | None) -> None:
     """Persist assistant/tool messages collected during streaming before an exception or interrupt.
 
-    Locates the user turn message by content, sanitizes the trailing new messages,
-    and delegates to _persist_new_messages so partial replies survive crashes.
+    Uses the turn journal when active to idempotently flush messages, avoiding
+    reliance on locating HumanMessage anchors across rollovers.
     """
-    if not host._session or not streamed_messages or not payload_content:
+    if not host._session or not streamed_messages:
+        return
+    state = current_thread_execution_state()
+    journal = getattr(state, "turn_journal", None) if state else None
+    if journal is not None:
+        async def _save_row(row: MessageRow) -> int:
+            row_id = await save_turn_message(row)
+            if host._session_msg_cache is not None:
+                host._session_msg_cache.append(row.model_copy(update={"id": row_id}))
+            return row_id
+
+        flushed = await journal.flush(
+            streamed_messages,
+            session_id=host._session.id,
+            save_func=_save_row,
+        )
+        if flushed > 0:
+            await touch_session(host._session.id)
+        return
+
+    if not payload_content:
         return
     turn_index = None
     for i, msg in enumerate(streamed_messages):

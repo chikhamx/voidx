@@ -49,3 +49,37 @@ class PreflightCompactionResult(BaseModel):
             fallback=bool(metadata.get("fallback") or result.fallback),
             reason=str(metadata.get("compaction_reason") or ""),
         )
+
+
+class ContextBudgetExhausted(RuntimeError):
+    """Raised when context budget remains exhausted after compaction."""
+    pass
+
+
+class CompactionMessageMetadata(BaseModel):
+    compaction_id: str
+    source_range_hash: str
+    compaction_depth: int = 1
+    closed_segment_index: int = 0
+    opened_segment_index: int = 1
+    replacement_operation_id: str
+
+
+@dataclass(frozen=True)
+class ClosedToolBatch:
+    ai_message: BaseMessage
+    tool_messages: list[BaseMessage] = field(default_factory=list)
+
+    @property
+    def messages(self) -> list[BaseMessage]:
+        return [self.ai_message, *self.tool_messages]
+
+
+@dataclass(frozen=True)
+class ReplacementResult:
+    applied: bool
+    operation_id: str
+    replacement_message_id: int
+    effective_message_count: int
+    source_message_ids: list[int]
+    winner_operation_id: str | None = None

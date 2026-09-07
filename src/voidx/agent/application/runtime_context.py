@@ -286,11 +286,6 @@ class RuntimeContextBuilder:
                 content="\n\n".join(self.instructions),
             ))
         sections.append(ContextSection(name="Session Time", content=self.session_date))
-        if self.summary:
-            sections.append(ContextSection(
-                name="Long Summary",
-                content=self.summary,
-            ))
         return sections
 
     def _build_task_sections(self) -> list[ContextSection]:

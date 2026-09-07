@@ -13,9 +13,47 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+import uuid
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, RemoveMessage, SystemMessage, ToolMessage
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
-from voidx.agent.domain.compaction import CompactionResult, PreflightCompactionResult
+from voidx.agent.domain.compaction import (
+    CompactionMessageMetadata,
+    CompactionResult,
+    ContextBudgetExhausted,
+    PreflightCompactionResult,
+)
+from voidx.agent.adapters.persistence.message_rows import (
+    compute_source_range_hash,
+    is_compaction_row,
+)
+from voidx.agent.adapters.persistence.session_models import MessageRow
+from voidx.agent.adapters.persistence.session_repository import (
+    load_messages,
+    replace_effective_message_range,
+)
+from voidx.llm.message_markers import (
+    COMPACTION_MESSAGE_MARKER,
+    create_compaction_user_message,
+    create_continuation_message,
+    is_compaction_message,
+    is_continuation_message,
+    is_context_pressure_message,
+    is_step_hint_message,
+)
+from voidx.llm.compaction.service import (
+    select_closed_tool_tail,
+    validate_closed_tool_batches,
+)
+from voidx.llm.compaction.fallback_summary import fallback_summary
+from voidx.agent.adapters.langgraph.runtime.prepared_request import (
+    PreparedMainRequest,
+    prepare_main_request,
+)
+from voidx.agent.adapters.langgraph.runtime.thread_context import (
+    current_thread_execution_state,
+    save_turn_message,
+)
 from voidx.agent.adapters.langgraph.runtime.streaming import extract_text, stream_llm
 from voidx.agent.adapters.persistence.message_rows import messages_from_rows
 from voidx.agent.application.runtime_context import raw_semantic_messages
@@ -220,6 +258,221 @@ class CompactionCoordinator:
             if result is not None:
                 result.metadata["compaction_reason"] = reason
         return result, preflight_result
+
+    async def rollover_for_live_state(
+        self,
+        messages: list[BaseMessage],
+        *,
+        prepared_request: PreparedMainRequest | None = None,
+        force: bool = False,
+        run_compaction_agent: RunCompactionAgent | None = None,
+        minimum_net_reclaim: int = 1,
+    ) -> CompactionResult | None:
+        """Execute a context rollover cycle: flush journal, select tail, create recursive synthetic user summary, replace in persistence, and return live graph messages."""
+        host = self.host
+        state_context = current_thread_execution_state()
+        session = getattr(state_context, "session", None) if state_context else getattr(host, "_session", None)
+        session_id = session.id if session is not None else None
+
+        # 1. Flush accepted AI/tool source via execution-local TurnJournal
+        journal = getattr(state_context, "turn_journal", None) if state_context else getattr(host, "_turn_journal", None)
+        if journal is not None and session_id:
+            await journal.flush(messages, session_id=session_id, save_func=save_turn_message)
+
+        model_name = (
+            prepared_request.model_name
+            if prepared_request is not None
+            else host.config.model.model
+        )
+        context_limit = (
+            prepared_request.context_limit
+            if prepared_request is not None
+            else getattr(host._compaction, "context_limit", 128_000)
+        )
+        token_counter = (
+            prepared_request.metadata.get("token_counter")
+            if prepared_request is not None and "token_counter" in prepared_request.metadata
+            else lambda msgs, mdl=model_name: estimate_context_tokens(msgs, mdl)
+        )
+
+        # 2. Select closed tool tail (<= 10% context limit)
+        semantic_messages = [
+            m for m in messages
+            if not isinstance(m, RemoveMessage)
+            and not is_continuation_message(m)
+            and not is_context_pressure_message(m)
+            and not is_step_hint_message(m)
+        ]
+        retained_tail, candidate_head = select_closed_tool_tail(
+            semantic_messages,
+            context_limit=context_limit,
+            token_counter=token_counter,
+            model=model_name,
+        )
+
+        if retained_tail and not validate_closed_tool_batches(retained_tail):
+            retained_tail = []
+
+        # 3. Align with effective rows from persistence
+        if session_id:
+            effective_rows = await load_messages(session_id) or []
+            tail_len = len(retained_tail)
+            if tail_len >= len(effective_rows):
+                retained_tail = []
+                tail_len = 0
+
+            source_rows = effective_rows[:len(effective_rows) - tail_len] if tail_len > 0 else list(effective_rows)
+            non_compaction_rows = [r for r in source_rows if not is_compaction_row(r)]
+            if not non_compaction_rows:
+                if tail_len > 0:
+                    retained_tail = []
+                    source_rows = list(effective_rows)
+                    non_compaction_rows = [r for r in source_rows if not is_compaction_row(r)]
+                if not non_compaction_rows:
+                    return None
+
+            source_message_ids = [r.id for r in source_rows if r.id is not None]
+            source_range_hash = compute_source_range_hash(source_rows)
+            head_messages = messages_from_rows(source_rows)
+        else:
+            source_message_ids = []
+            source_range_hash = "in_memory"
+            head_messages = candidate_head
+            if not any(not is_compaction_message(m) for m in head_messages):
+                return None
+
+        summary_head = compaction_summary_messages(head_messages)
+        if not summary_head:
+            return None
+
+        # 4. Determine compaction depth and segment indices
+        prev_depth = 0
+        prev_opened_seg = 0
+        for m in head_messages:
+            if is_compaction_message(m):
+                d = int(m.additional_kwargs.get("compaction_depth") or 1)
+                if d > prev_depth:
+                    prev_depth = d
+                seg = int(m.additional_kwargs.get("opened_segment_index") or 0)
+                if seg > prev_opened_seg:
+                    prev_opened_seg = seg
+
+        compaction_depth = prev_depth + 1
+        closed_segment_index = prev_opened_seg
+        if state_context is not None and getattr(state_context, "segment_index", 0) > closed_segment_index:
+            closed_segment_index = state_context.segment_index
+        opened_segment_index = closed_segment_index + 1
+
+        # 5. Summary agent invocation (detached)
+        summary_text: str | None = None
+        used_fallback = False
+        agent_fn = run_compaction_agent or getattr(self, "run_compaction_agent", None)
+        if agent_fn is not None:
+            try:
+                summary_text = await agent_fn(summary_head, None)
+            except Exception as exc:
+                log_tool_event("compaction_agent_failed", message=str(exc))
+                summary_text = None
+
+        if not summary_text or not summary_text.strip():
+            summary_text = fallback_summary(summary_head)
+            used_fallback = True
+
+        # 6. Candidate validation
+        operation_id = f"op_rollover_{uuid.uuid4().hex[:12]}"
+        compaction_id = f"c_{uuid.uuid4().hex[:8]}"
+
+        meta = CompactionMessageMetadata(
+            compaction_id=compaction_id,
+            source_range_hash=source_range_hash,
+            compaction_depth=compaction_depth,
+            closed_segment_index=closed_segment_index,
+            opened_segment_index=opened_segment_index,
+            replacement_operation_id=operation_id,
+        )
+        synthetic_user_msg = create_compaction_user_message(
+            content=summary_text,
+            metadata=meta,
+        )
+
+        candidate_messages = [synthetic_user_msg, *retained_tail]
+        candidate_prepared = prepare_main_request(
+            messages=candidate_messages,
+            tool_defs=prepared_request.tool_defs if prepared_request is not None else [],
+            model_name=model_name,
+            context_limit=context_limit,
+            output_token_max=prepared_request.main_output_reserve if prepared_request is not None else 4096,
+            safety_margin=prepared_request.safety_margin if prepared_request is not None else COMPACTION_BUFFER,
+            token_counter=token_counter,
+        )
+
+        if candidate_prepared.should_rollover:
+            raise ContextBudgetExhausted(
+                f"Candidate request tokens ({candidate_prepared.total_input_tokens}) exceed main request limit ({candidate_prepared.main_request_limit})"
+            )
+
+        pre_tokens = (
+            prepared_request.total_input_tokens
+            if prepared_request is not None
+            else token_counter(messages, model_name)
+        )
+        if pre_tokens - candidate_prepared.total_input_tokens < minimum_net_reclaim:
+            return None
+
+        # 7. Commit replacement in persistence
+        if session_id:
+            replacement_row = MessageRow(
+                session_id=session_id,
+                role="user",
+                content=summary_text,
+                content_format="text",
+                additional_kwargs=dict(synthetic_user_msg.additional_kwargs),
+            )
+            repl_result = await replace_effective_message_range(
+                session_id=session_id,
+                source_message_ids=source_message_ids,
+                source_range_hash=source_range_hash,
+                replacement=replacement_row,
+                operation_id=operation_id,
+                closed_segment_index=closed_segment_index,
+                opened_segment_index=opened_segment_index,
+            )
+            if not repl_result.applied and repl_result.winner_operation_id != operation_id:
+                return None
+
+            synthetic_user_msg = create_compaction_user_message(
+                content=summary_text,
+                metadata=meta,
+                id=str(repl_result.replacement_message_id),
+            )
+            if state_context is not None:
+                state_context.compaction_summary = summary_text
+                state_context.segment_index = opened_segment_index
+            host._compaction_summary = summary_text
+            if getattr(host, "_session_msg_cache", None) is not None:
+                host._session_msg_cache = await load_messages(session_id)
+            try:
+                await gc_context_frames(session_id)
+            except Exception:
+                pass
+
+        # 8. Assemble live graph state messages
+        continuation_msg = create_continuation_message()
+        live_messages: list[BaseMessage] = [
+            RemoveMessage(id=REMOVE_ALL_MESSAGES),
+            synthetic_user_msg,
+            *retained_tail,
+            continuation_msg,
+        ]
+
+        return CompactionResult(
+            summary=summary_text,
+            removed_messages=list(head_messages),
+            live_messages=live_messages,
+            tail_id=str(retained_tail[0].id) if retained_tail and getattr(retained_tail[0], "id", None) else None,
+            fallback=used_fallback,
+            metadata=meta.model_dump(),
+        )
 
     async def compact_for_live_state(
         self,

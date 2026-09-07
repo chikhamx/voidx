@@ -11,7 +11,8 @@ from voidx.agent.application.session_service import SessionService
 from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.adapters.persistence.memory_session import MemorySessionAdapter
 from voidx.agent.adapters.persistence.message_rows import is_user_turn_row
-from voidx.agent.adapters.persistence.session_repository import MessageRow, count_messages, delete_session, load_messages, update_title, update_title_if_current
+from voidx.agent.adapters.persistence.session_models import MessageRow
+from voidx.agent.adapters.persistence.session_repository import count_messages, delete_session, load_messages, update_title, update_title_if_current
 from voidx.agent.ports.presentation import NullPresentationSnapshotPort, PresentationSnapshotPort
 from voidx.observability.tool_log import log_tool_event
 from voidx.agent.adapters.tools.result_storage import cleanup_session_results

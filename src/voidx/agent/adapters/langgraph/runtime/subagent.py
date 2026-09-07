@@ -50,6 +50,7 @@ from voidx.agent.application.runtime_context import (
     InteractionMode,
     RuntimeContextBuilder,
 )
+from voidx.agent.domain.prompt_contracts import ContextSection
 from voidx.agent.domain.task.state import GoalResolution, GoalSpec, TaskState
 from voidx.agent.domain.task.todo import TodoRunState
 from voidx.agent.domain.automation.workflow import WorkflowRoute
@@ -408,6 +409,20 @@ async def run_subagent(
             normalized_name = name.lower()
             if normalized_name not in known_active:
                 active_summaries.append(f"{name} (child state)")
+
+        handoff_profile_sections = (
+            list(context_handoff.profile_sections)
+            if context_handoff is not None
+            else []
+        )
+        if context_handoff is not None and context_handoff.summary.strip():
+            handoff_profile_sections.append(
+                ContextSection(
+                    name="Parent Context Handoff",
+                    content=context_handoff.summary.strip(),
+                )
+            )
+
         context, context_cache = RuntimeContextBuilder(
             config=context_config,
             workspace=config.workspace,
@@ -432,8 +447,7 @@ async def run_subagent(
             child_runs=child_runs,
             child_runs_sampled_at=child_runs_sampled_at,
             instructions=list(context_handoff.instructions) if context_handoff is not None else (),
-            profile_sections=list(context_handoff.profile_sections) if context_handoff is not None else (),
-            summary=(context_handoff.summary or None) if context_handoff is not None else None,
+            profile_sections=handoff_profile_sections,
         ).build_incremental(context_cache)
         return ContextCompiler(context).compile_messages(source_messages)
 

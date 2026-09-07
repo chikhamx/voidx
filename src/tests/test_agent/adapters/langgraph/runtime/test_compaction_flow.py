@@ -134,7 +134,7 @@ def _tree_nodes(root):
 
 
 
-async def test_compaction_trims_head_and_injects_summary_into_system_prompt(tmp_path):
+async def test_compaction_trims_head_without_injecting_summary_into_system_prompt(tmp_path):
     graph = _graph(tmp_path)
     graph._compaction.is_overflow = lambda _tokens: True
     graph._compaction.select_details = lambda messages: CompactionSelection(
@@ -177,8 +177,8 @@ async def test_compaction_trims_head_and_injects_summary_into_system_prompt(tmp_
     await graph._prepare_with_stream(state)
 
     assert isinstance(messages[0], SystemMessage)
-    assert "Long Summary" in messages[0].content
-    assert "summary text" in messages[0].content
+    assert "Long Summary" not in messages[0].content
+    assert "summary text" not in messages[0].content
     assert "You are voidx" in messages[0].content
 
 

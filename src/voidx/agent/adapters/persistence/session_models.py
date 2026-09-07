@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -23,6 +24,21 @@ class SessionInfo(BaseModel):
     message_count: int = 0
     runtime_profile: str = "coding"
     profile_snapshot: AgentProfileSnapshot | None = None
+
+
+
+
+class MessageRow(BaseModel):
+    id: int | None = None
+    session_id: str
+    role: str
+    content: str = ""
+    content_format: str = "text"
+    tool_calls: list[dict] | None = None
+    tool_call_id: str | None = None
+    status: str | None = None
+    additional_kwargs: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = Field(default_factory=now)
 
 
 def validate_runtime_profile(profile: str) -> str:
@@ -59,6 +75,7 @@ def snapshot_from_row(row) -> AgentProfileSnapshot | None:
 
 
 __all__ = [
+    "MessageRow",
     "SessionInfo",
     "snapshot_columns",
     "snapshot_from_row",

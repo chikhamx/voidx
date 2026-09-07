@@ -16,9 +16,8 @@ from voidx.agent.adapters.langgraph.runtime.runtime_guards import RuntimeGuardSt
 from voidx.agent.adapters.langgraph.runtime.topology import session_date
 from voidx.agent.application.runtime_context import ContextCompilerCache, InteractionMode
 from voidx.agent.domain.task.state import TaskState
+from voidx.agent.adapters.persistence.session_models import MessageRow, SessionInfo
 from voidx.agent.adapters.persistence.session_repository import (
-    MessageRow,
-    SessionInfo,
     append_goal_transcript_message,
     get_session,
     save_message,
@@ -67,6 +66,9 @@ class ThreadExecutionState:
     workspace: str = ""
     goal_transcript_local_sequence: int = 0
     host_id: int | None = None
+    turn_journal: Any | None = None
+    active_turn_input: Any | None = None
+    segment_index: int = 0
 
 
 _CURRENT_THREAD_EXECUTION_STATE: ContextVar[ThreadExecutionState | None] = ContextVar(

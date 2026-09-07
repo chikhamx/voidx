@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from voidx.agent.adapters.persistence.session_repository import MessageRow, save_message
+from voidx.agent.adapters.persistence.session_models import MessageRow
+from voidx.agent.adapters.persistence.session_repository import save_message
 from voidx.persistence.sqlite import now as memorynow
 
 

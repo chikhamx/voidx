@@ -10,6 +10,9 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMe
 from voidx.llm.compaction.fallback_summary import dedupe, message_text
 from voidx.llm.message_markers import (
     STEP_HINT_MARKER,
+    is_compaction_message,
+    is_continuation_message,
+    is_context_pressure_message,
     is_guidance_message,
     is_step_hint_message,
 )
@@ -20,7 +23,8 @@ def generate_fallback_summary(state: Mapping[str, Any]) -> str:
     max_steps = int(state.get("max_steps", 0) or 0)
     goal = str(state.get("goal") or "").strip()
     messages = list(state.get("messages", []) or [])
-    latest_user = _latest_user_text(messages)
+    active_turn_input = state.get("active_turn_input")
+    latest_user = _latest_user_text(messages, active_turn_input=active_turn_input)
     tool_results = state.get("tool_results", {}) or {}
 
     tool_result_count = len(tool_results) + _tool_message_count(messages)
@@ -43,19 +47,46 @@ def generate_fallback_summary(state: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _marked_human_message(content: str) -> HumanMessage:
-    return HumanMessage(content=content, additional_kwargs={STEP_HINT_MARKER: True})
+def _latest_user_text(
+    messages: list[BaseMessage],
+    active_turn_input: Any | None = None,
+) -> str:
+    if active_turn_input is not None:
+        if isinstance(active_turn_input, dict):
+            text = active_turn_input.get("semantic_text") or active_turn_input.get("raw_text")
+            if text:
+                return str(text)
+            content = active_turn_input.get("content")
+            if content:
+                return str(content)
+        else:
+            text = (
+                getattr(active_turn_input, "semantic_text", None)
+                or getattr(active_turn_input, "raw_text", None)
+            )
+            if text:
+                return str(text)
+            content = getattr(active_turn_input, "content", None)
+            if content:
+                return str(content)
 
-
-def _latest_user_text(messages: list[BaseMessage]) -> str:
     for message in reversed(messages):
         if (
             isinstance(message, HumanMessage)
             and not is_step_hint_message(message)
             and not is_guidance_message(message)
+            and not is_compaction_message(message)
+            and not is_continuation_message(message)
+            and not is_context_pressure_message(message)
         ):
             return message_text(message).strip()
     return ""
+
+
+def _marked_human_message(content: str) -> HumanMessage:
+    return HumanMessage(content=content, additional_kwargs={STEP_HINT_MARKER: True})
+
+
 
 
 def _extract_file_mentions(tool_results: Mapping[Any, Any]) -> list[str]:

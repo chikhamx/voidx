@@ -8,11 +8,16 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langgraph.graph import END, StateGraph
 
-from voidx.agent.adapters.langgraph.runtime.convergence import is_step_hint_message
 from voidx.agent.adapters.langgraph.state import AgentState
-from voidx.llm.message_markers import is_guidance_message
+from voidx.llm.message_markers import (
+    is_compaction_message,
+    is_continuation_message,
+    is_context_pressure_message,
+    is_guidance_message,
+    is_step_hint_message,
+)
 
-from voidx.agent.adapters.persistence.session_repository import SessionInfo
+from voidx.agent.adapters.persistence.session_models import SessionInfo
 
 
 def build_graph(host: Any):
@@ -50,12 +55,37 @@ def route_after_execute_tools(state: AgentState) -> str:
     return "call_llm"
 
 
-def latest_user_text(messages: list[BaseMessage]) -> str:
+def latest_user_text(
+    messages: list[BaseMessage],
+    active_turn_input: Any | None = None,
+) -> str:
+    if active_turn_input is not None:
+        if isinstance(active_turn_input, dict):
+            text = active_turn_input.get("semantic_text") or active_turn_input.get("raw_text")
+            if text:
+                return text
+            content = active_turn_input.get("content")
+            if content:
+                return str(content)
+        else:
+            text = (
+                getattr(active_turn_input, "semantic_text", None)
+                or getattr(active_turn_input, "raw_text", None)
+            )
+            if text:
+                return text
+            content = getattr(active_turn_input, "content", None)
+            if content:
+                return str(content)
+
     for msg in reversed(messages):
         if (
             isinstance(msg, HumanMessage)
             and not is_step_hint_message(msg)
             and not is_guidance_message(msg)
+            and not is_compaction_message(msg)
+            and not is_continuation_message(msg)
+            and not is_context_pressure_message(msg)
         ):
             content = msg.content
             if isinstance(content, str):

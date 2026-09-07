@@ -72,7 +72,6 @@ def test_runtime_context_section_order_places_runtime_state_before_task_state(tm
         "Runtime State",
         "Project Instructions",
         "Session Time",
-        "Long Summary",
         "Current Task State",
     ]
 
@@ -81,7 +80,8 @@ def test_runtime_context_section_order_places_runtime_state_before_task_state(tm
     assert system.index("## Persona") < system.index("## Workflow Runtime")
     assert system.index("## Workflow Runtime") < system.index("## Runtime State")
     assert system.index("## Runtime State") < system.index("## Project Instructions")
-    assert system.index("## Session Time") < system.index("## Long Summary")
+    assert "## Session Time" in system
+    assert "## Long Summary" not in system
     assert "## Mode" not in system
     assert "## Runtime Constraints" not in system
     assert "## Workspace Facts" not in system
@@ -442,7 +442,7 @@ def test_runtime_context_incremental_reuses_stable_system_message(tmp_path):
     assert second.system_message is first.system_message
     assert second.render_system() == first.render_system()
 
-def test_stable_prefix_rebuilds_on_summary_change(tmp_path):
+def test_stable_prefix_ignores_summary_change(tmp_path):
     cache = ContextCompilerCache()
     first, cache = RuntimeContextBuilder(
         config=Config(workspace=str(tmp_path)),
@@ -463,9 +463,9 @@ def test_stable_prefix_rebuilds_on_summary_change(tmp_path):
         summary="new summary",
     ).build_incremental(cache)
 
-    assert second.system_message is not first.system_message
-    assert "old summary" in first.render_system()
-    assert "new summary" in second.render_system()
+    assert second.system_message is first.system_message
+    assert "old summary" not in first.render_system()
+    assert "new summary" not in second.render_system()
 
 
 def test_runtime_context_recompile_does_not_duplicate_turn_overlay(tmp_path):

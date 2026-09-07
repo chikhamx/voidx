@@ -23,6 +23,7 @@ FALLBACK_SUMMARY_MAX_PER_MSG = 200
 FALLBACK_SUMMARY_MAX_ITEMS = 8
 COMPACTION_PROMPT_CONTEXT_MAX_CHARS = 60_000
 COMPACTION_THRESHOLD = 0.90  # trigger when used >= 90% of context_limit
+COMPACTION_TAIL_CONTEXT_RATIO = 0.10  # maximum raw AI/tool tail is 10% of context_limit
 
 SUMMARY_TEMPLATE = """Output exactly the Markdown structure shown inside <template> and keep the section order unchanged. Do not include the <template> tags in your response.
 <template>

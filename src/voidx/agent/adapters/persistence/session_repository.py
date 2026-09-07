@@ -15,10 +15,11 @@ import uuid
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from voidx.agent.domain.agent_profile import AgentProfileSnapshot
 from voidx.agent.adapters.persistence.session_models import (
+    MessageRow,
     SessionInfo,
     snapshot_columns as _snapshot_columns,
     snapshot_from_row as _snapshot_from_row,
@@ -67,20 +68,6 @@ def _pin_profile_snapshot(
         return agent_registry_for(workspace or ".").resolve(profile).snapshot
     except Exception:
         return None
-
-
-class MessageRow(BaseModel):
-    id: int | None = None  # auto-increment
-    session_id: str
-    role: str  # system | user | assistant | tool
-    content: str = ""
-    content_format: str = "text"  # "text" | "structured" (e.g. DeepSeek thinking blocks)
-    tool_calls: list[dict] | None = None
-    tool_call_id: str | None = None
-    status: str | None = None
-    additional_kwargs: dict[str, Any] = Field(default_factory=dict)
-    created_at: str = Field(default_factory=now)
-
 
 
 class GoalTranscriptRecord(BaseModel):
@@ -717,9 +704,15 @@ async def _next_message_id(session_id: str) -> int:
     records = await read_session_records(session_id, "messages.jsonl") or []
     max_id = 0
     for record in records:
-        message_id = record.get("id")
-        if record.get("type") == "message" and isinstance(message_id, int):
-            max_id = max(max_id, message_id)
+        rtype = record.get("type")
+        if rtype == "message":
+            message_id = record.get("id")
+            if isinstance(message_id, int):
+                max_id = max(max_id, message_id)
+        elif rtype == "message_replaced":
+            repl_id = (record.get("replacement") or {}).get("id")
+            if isinstance(repl_id, int):
+                max_id = max(max_id, repl_id)
     return max(next_from_count, max_id + 1)
 
 
@@ -772,36 +765,89 @@ async def _load_messages_jsonl(session_id: str) -> list[MessageRow] | None:
     if records is None:
         return None
 
-    messages: dict[int, MessageRow] = {}
+    effective_messages: list[MessageRow] = []
+    seen_operations: set[str] = set()
+
     for record in records:
         rtype = record.get("type")
         if rtype == "session_cleared":
-            messages.clear()
+            effective_messages.clear()
             continue
         if rtype == "message_deleted":
             mode = record.get("mode")
             if mode == "all":
-                messages.clear()
+                effective_messages.clear()
             elif mode == "from":
                 first_message_id = record.get("first_message_id")
                 if isinstance(first_message_id, int):
-                    for message_id in list(messages):
-                        if message_id >= first_message_id:
-                            del messages[message_id]
+                    effective_messages = [
+                        r for r in effective_messages
+                        if r.id is not None and r.id < first_message_id
+                    ]
             elif mode == "through":
                 last_message_id = record.get("last_message_id")
                 if isinstance(last_message_id, int):
-                    for message_id in list(messages):
-                        if message_id <= last_message_id:
-                            del messages[message_id]
+                    effective_messages = [
+                        r for r in effective_messages
+                        if r.id is not None and r.id > last_message_id
+                    ]
+            continue
+        if rtype == "message_replaced":
+            op_id = record.get("operation_id")
+            if op_id:
+                if op_id in seen_operations:
+                    continue
+                seen_operations.add(op_id)
+            source_ids = record.get("source_message_ids") or []
+            source_id_set = set(source_ids)
+            matched_sources = [msg for msg in effective_messages if msg.id in source_id_set]
+            if len(matched_sources) != len(source_ids):
+                raise GoalRuntimeCorruption(
+                    f"message_replaced event source messages {source_ids} missing from effective transcript ({len(matched_sources)} matched)"
+                )
+            expected_hash = record.get("source_range_hash")
+            if expected_hash:
+                from voidx.agent.adapters.persistence.message_rows import compute_source_range_hash
+                actual_hash = compute_source_range_hash(matched_sources)
+                if actual_hash != expected_hash:
+                    raise GoalRuntimeCorruption(
+                        f"message_replaced event source range hash mismatch: expected {expected_hash}, got {actual_hash}"
+                    )
+
+            insert_idx: int | None = None
+            for idx, msg in enumerate(effective_messages):
+                if msg.id in source_id_set:
+                    if insert_idx is None:
+                        insert_idx = idx
+            if insert_idx is not None:
+                effective_messages = [
+                    msg for msg in effective_messages if msg.id not in source_id_set
+                ]
+                replacement_record = record.get("replacement")
+                if isinstance(replacement_record, dict):
+                    replacement_row = _message_row_from_record(session_id, replacement_record)
+                    effective_messages.insert(insert_idx, replacement_row)
             continue
         if rtype != "message":
             continue
         message_id = record.get("id")
         if not isinstance(message_id, int):
             continue
-        messages[message_id] = _message_row_from_record(session_id, record)
-    return [messages[key] for key in sorted(messages)]
+        row = _message_row_from_record(session_id, record)
+        existing_idx = next(
+            (i for i, m in enumerate(effective_messages) if m.id == message_id),
+            None,
+        )
+        if existing_idx is not None:
+            effective_messages[existing_idx] = row
+        elif (
+            row.additional_kwargs.get("compaction_depth") == 0
+            and bool(row.additional_kwargs.get("_voidx_compaction_message"))
+        ):
+            effective_messages.insert(0, row)
+        else:
+            effective_messages.append(row)
+    return effective_messages
 
 
 async def count_messages(session_id: str) -> int:
@@ -977,3 +1023,136 @@ async def last_messages(session_id: str, n: int = 20) -> list[MessageRow]:
     """Last N messages for a session."""
     messages = await load_messages(session_id)
     return messages[-max(n, 0):] if n > 0 else []
+
+
+async def replace_effective_message_range(
+    session_id: str,
+    source_message_ids: list[int],
+    source_range_hash: str,
+    replacement: MessageRow,
+    operation_id: str,
+    *,
+    closed_segment_index: int = 0,
+    opened_segment_index: int = 1,
+) -> Any:
+    """Atomically replace a contiguous effective message range with a synthetic summary message."""
+    from voidx.agent.domain.compaction import ReplacementResult
+    from voidx.agent.adapters.persistence.message_rows import compute_source_range_hash
+    from voidx.llm.message_markers import COMPACTION_MESSAGE_MARKER
+
+    session_id = validate_session_storage_id(session_id)
+    if not operation_id:
+        raise ValueError("operation_id is required for replacement")
+    if not source_message_ids:
+        raise ValueError("source_message_ids cannot be empty")
+
+    async with session_directory_locks((session_id,)):
+        records = await read_session_records(session_id, "messages.jsonl") or []
+        for r in records:
+            if r.get("type") == "message_replaced" and r.get("operation_id") == operation_id:
+                repl_dict = r.get("replacement") or {}
+                repl_id = int(repl_dict.get("id") or 0)
+                current = await _load_messages_jsonl(session_id) or []
+                return ReplacementResult(
+                    applied=False,
+                    operation_id=operation_id,
+                    replacement_message_id=repl_id,
+                    effective_message_count=len(current),
+                    source_message_ids=list(source_message_ids),
+                    winner_operation_id=operation_id,
+                )
+
+        effective = await _load_messages_jsonl(session_id) or []
+        source_id_set = set(source_message_ids)
+        matched_rows = [row for row in effective if row.id in source_id_set]
+
+        if len(matched_rows) != len(source_message_ids):
+            raise ValueError(
+                f"Source messages {source_message_ids} not found in effective transcript ({len(matched_rows)} matched)"
+            )
+
+        actual_hash = compute_source_range_hash(matched_rows)
+        if actual_hash != source_range_hash:
+            raise ValueError(
+                f"Source range hash mismatch: expected {source_range_hash}, got {actual_hash}"
+            )
+
+        row_id = await _next_message_id(session_id)
+        extra = dict(replacement.additional_kwargs or {})
+        extra[COMPACTION_MESSAGE_MARKER] = True
+        extra["replacement_operation_id"] = operation_id
+
+        record = {
+            "type": "message_replaced",
+            "operation_id": operation_id,
+            "source_message_ids": list(source_message_ids),
+            "source_range_hash": source_range_hash,
+            "replacement": {
+                "id": row_id,
+                "role": replacement.role,
+                "content": replacement.content,
+                "content_format": replacement.content_format,
+                "additional_kwargs": extra,
+                "created_at": replacement.created_at or now(),
+            },
+            "closed_segment_index": closed_segment_index,
+            "opened_segment_index": opened_segment_index,
+            "created_at": now(),
+        }
+
+        await append_session_record(session_id, "messages.jsonl", record)
+        await _refresh_message_count_from_jsonl(session_id)
+        await touch_session(session_id)
+
+        effective_after = await _load_messages_jsonl(session_id) or []
+        return ReplacementResult(
+            applied=True,
+            operation_id=operation_id,
+            replacement_message_id=row_id,
+            effective_message_count=len(effective_after),
+            source_message_ids=list(source_message_ids),
+        )
+
+
+async def materialize_legacy_summary_if_needed(
+    session_id: str,
+    *,
+    legacy_summary: str | None = None,
+) -> int | None:
+    """Materialize a legacy compaction_summary as depth=0 synthetic user row if missing."""
+    from voidx.agent.adapters.persistence.message_rows import is_compaction_row
+    from voidx.llm.message_markers import COMPACTION_MESSAGE_MARKER
+
+    session_id = validate_session_storage_id(session_id)
+    summary_text = legacy_summary
+    if summary_text is None:
+        from voidx.agent.adapters.persistence.runtime_state_repository import load_compaction_summary
+        summary_text = await load_compaction_summary(session_id)
+
+    if not summary_text or not summary_text.strip():
+        return None
+
+    async with session_directory_locks((session_id,)):
+        messages = await _load_messages_jsonl(session_id) or []
+        if any(is_compaction_row(m) for m in messages):
+            return None
+
+        row_id = await _next_message_id(session_id)
+        record = {
+            "type": "message",
+            "id": row_id,
+            "role": "user",
+            "content": summary_text,
+            "content_format": "text",
+            "additional_kwargs": {
+                COMPACTION_MESSAGE_MARKER: True,
+                "compaction_id": f"legacy_{session_id}",
+                "compaction_depth": 0,
+                "source_range_hash": "legacy",
+            },
+            "created_at": now(),
+        }
+        await append_session_record(session_id, "messages.jsonl", record)
+        await _refresh_message_count_from_jsonl(session_id)
+        await touch_session(session_id)
+        return row_id

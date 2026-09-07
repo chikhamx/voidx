@@ -319,7 +319,8 @@ class LangGraphAutonomousInputRouter:
         if session is None:
             return
         from datetime import datetime, timezone
-        from voidx.agent.adapters.persistence.session_repository import MessageRow, save_message
+        from voidx.agent.adapters.persistence.session_models import MessageRow
+        from voidx.agent.adapters.persistence.session_repository import save_message
 
         await save_message(
             MessageRow(
