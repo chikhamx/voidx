@@ -466,7 +466,7 @@ def test_stream_commit_result_is_ignored_after_reset(isolated_dock):
 
 
 @pytest.mark.asyncio
-async def test_dock_event_consumer_schedules_stream_commit_without_waiting(
+async def test_dock_event_consumer_waits_for_stream_commit(
     isolated_dock, monkeypatch
 ):
     import threading
@@ -491,11 +491,13 @@ async def test_dock_event_consumer_schedules_stream_commit_without_waiting(
         blocked_builder,
     )
 
-    assert consumer.handle(AssistantStreamCommitted()) is True
+    commit_task = consumer.handle(AssistantStreamCommitted())
+    assert hasattr(commit_task, "__await__")
     assert await asyncio.to_thread(started.wait, 1)
     assert consumer.pending_stream_commit_count == 1
 
     release.set()
+    await commit_task
     await consumer.drain_stream_commits()
 
     rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
@@ -521,8 +523,9 @@ async def test_stream_commit_worker_failure_installs_escaped_fallback(
         "build_canonical_stream_projection",
         fail_builder,
     )
-    assert consumer.handle(AssistantStreamCommitted()) is True
-    await consumer.drain_stream_commits()
+    commit_task = consumer.handle(AssistantStreamCommitted())
+    assert hasattr(commit_task, "__await__")
+    await commit_task
 
     rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
     assert "hello **world**" in rendered
@@ -557,12 +560,13 @@ async def test_stream_commit_worker_result_cannot_repopulate_reset_tree(
         "build_canonical_stream_projection",
         blocked_builder,
     )
-    assert consumer.handle(AssistantStreamCommitted()) is True
+    commit_task = consumer.handle(AssistantStreamCommitted())
+    assert hasattr(commit_task, "__await__")
     assert await asyncio.to_thread(started.wait, 1)
 
     isolated_dock.reset()
     release.set()
-    await consumer.drain_stream_commits()
+    await commit_task
 
     assert isolated_dock.tree.root.children == []
     assert consumer.pending_stream_commit_count == 0
@@ -629,3 +633,44 @@ def test_streaming_renderer_discard_emits_no_commit(isolated_dock, monkeypatch):
 
     assert any(isinstance(event, AssistantStreamDiscarded) for event in emitted)
     assert not any(isinstance(event, AssistantStreamCommitted) for event in emitted)
+
+
+@pytest.mark.asyncio
+async def test_dock_event_consumer_waits_for_stream_commit_before_return(
+    isolated_dock, monkeypatch
+):
+    import threading
+
+    from voidx.presentation.output.events import consumers as consumers_module
+
+    isolated_dock.begin_capture()
+    consumer = consumers_module.DockEventConsumer(isolated_dock)
+    consumer.handle(AssistantStreamUpdated(text="hello **world**"))
+    started = threading.Event()
+    release = threading.Event()
+    original_builder = consumers_module.build_canonical_stream_projection
+
+    def blocked_builder(work_item):
+        started.set()
+        assert release.wait(1)
+        return original_builder(work_item)
+
+    monkeypatch.setattr(
+        consumers_module,
+        "build_canonical_stream_projection",
+        blocked_builder,
+    )
+
+    commit_result = consumer.handle(AssistantStreamCommitted())
+    assert hasattr(commit_result, "__await__")
+    assert await asyncio.to_thread(started.wait, 1)
+
+    release.set()
+    await commit_result
+
+    rendered = "\n".join(_plain(line) for line in isolated_dock.tree.render(100))
+    assert "hello world" in rendered
+    assert isolated_dock.safe_flush_line_count(100, 0) == len(
+        isolated_dock.tree.render(100)
+    )
+    assert consumer.pending_stream_commit_count == 0

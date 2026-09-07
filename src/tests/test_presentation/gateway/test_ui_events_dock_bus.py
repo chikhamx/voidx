@@ -638,3 +638,78 @@ async def test_ui_event_bus_request_future_is_a_stream_barrier():
         if not request_task.done():
             request_task.cancel()
         await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_ui_event_bus_waits_for_stream_commit_before_following_message(
+    isolated_dock, monkeypatch
+):
+    import threading
+
+    from voidx.presentation.output.events import MessageAppended
+    from voidx.presentation.output.events import consumers as consumers_module
+
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    started = threading.Event()
+    release = threading.Event()
+    stats_applied = asyncio.Event()
+    original_builder = consumers_module.build_canonical_stream_projection
+    original_append_message = isolated_dock.append_message
+
+    def blocked_builder(work_item):
+        started.set()
+        assert release.wait(1)
+        return original_builder(work_item)
+
+    def append_message(text, *args, **kwargs):
+        if text == "stats":
+            stats_applied.set()
+        return original_append_message(text, *args, **kwargs)
+
+    monkeypatch.setattr(
+        consumers_module,
+        "build_canonical_stream_projection",
+        blocked_builder,
+    )
+    monkeypatch.setattr(isolated_dock, "append_message", append_message)
+
+    try:
+        await bus.emit(AssistantStreamUpdated(text="hello **world**"))
+        await bus.emit(AssistantStreamCommitted())
+        await bus.emit(MessageAppended(text="stats"))
+
+        assert await asyncio.to_thread(started.wait, 1)
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(stats_applied.wait(), timeout=0.05)
+
+        release.set()
+        await bus.drain()
+        assert stats_applied.is_set()
+    finally:
+        release.set()
+        await bus.stop()
+
+
+def test_message_event_preserves_markup_for_dock(isolated_dock, monkeypatch):
+    from voidx.presentation.output.events import MessageAppended
+
+    isolated_dock.begin_capture()
+    consumer = DockEventConsumer(isolated_dock)
+    captured: dict[str, object] = {}
+    original_append_message = isolated_dock.append_message
+
+    def append_message(text, *args, **kwargs):
+        captured.update(kwargs)
+        return original_append_message(text, *args, **kwargs)
+
+    monkeypatch.setattr(isolated_dock, "append_message", append_message)
+
+    consumer.handle(MessageAppended(
+        text="[dim]stats[/dim]",
+        style="turn_stats",
+        markup=True,
+    ))
+
+    assert captured["markup"] is True

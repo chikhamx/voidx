@@ -13,6 +13,9 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from rich.errors import MarkupError
+from rich.text import Text
+
 from voidx.presentation.output.events.schema import (
     AnsiAppended,
     AssistantStreamCommitted,
@@ -62,7 +65,18 @@ from voidx.presentation.output.events.schema import (
     UiEvent,
     WarningAppended,
 )
+
+
 from voidx.presentation.protocol.v2.envelope import JsonRpcNotification
+
+
+def _plain_message_text(event: MessageAppended) -> str:
+    if not event.markup:
+        return event.text
+    try:
+        return Text.from_markup(event.text).plain
+    except MarkupError:
+        return event.text
 
 
 def _uid() -> str:
@@ -249,7 +263,10 @@ class UiEventItemAdapter:
 
     def _on_message(self, event: MessageAppended) -> JsonRpcNotification:
         return self._item_notification(
-            _uid(), "message", "started", {"text": event.text, "style": event.style}
+            _uid(),
+            "message",
+            "started",
+            {"text": _plain_message_text(event), "style": event.style},
         )
 
     def _on_markdown(self, event: MarkdownAppended) -> JsonRpcNotification:

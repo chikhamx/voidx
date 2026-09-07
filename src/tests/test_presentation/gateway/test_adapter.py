@@ -223,6 +223,25 @@ async def test_message_appended_to_item_started():
 
 
 @pytest.mark.asyncio
+async def test_markup_message_is_plain_text_in_gateway_item():
+    adapter = _adapter()
+
+    msg = await adapter.handle(
+        MessageAppended(
+            text="[dim]✻  2s[/dim]  [cyan]3[/cyan] calls",
+            style="turn_stats",
+            markup=True,
+        )
+    )
+
+    params = _item_params(msg)
+    assert params["data"] == {
+        "text": "✻  2s  3 calls",
+        "style": "turn_stats",
+    }
+
+
+@pytest.mark.asyncio
 async def test_markdown_appended_to_item_started():
     adapter = _adapter()
     msg = await adapter.handle(MarkdownAppended(content="# Title"))

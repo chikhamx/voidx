@@ -246,9 +246,21 @@ class UiEventBus:
             f"UiEventBus.request timed out after {max_retries * timeout}s: {type(event).__name__}"
         )
 
+    async def _drain_consumer_stream_commits(self) -> None:
+        consumer = self._consumer
+        if consumer is None:
+            return
+        drain = getattr(consumer, "drain_stream_commits", None)
+        if drain is None:
+            return
+        result = drain()
+        if inspect.isawaitable(result):
+            await result
+
     async def drain(self) -> None:
         if self._queue is not None:
             await self._queue.join()
+        await self._drain_consumer_stream_commits()
         if self._last_error is not None:
             raise self._last_error
 
@@ -256,6 +268,7 @@ class UiEventBus:
         if self._queue is None or self._task is None:
             return
         await self._queue.join()
+        await self._drain_consumer_stream_commits()
         await self._queue.put(None)
         await self._task
         self._queue = None

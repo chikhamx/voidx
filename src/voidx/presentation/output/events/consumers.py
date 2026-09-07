@@ -102,6 +102,15 @@ class CompositeEventConsumer:
                 self._schedule_task(mirror_result, target="mirror")
         return result
 
+    async def drain_stream_commits(self) -> None:
+        for consumer in (self._primary, *self._mirrors):
+            drain = getattr(consumer, "drain_stream_commits", None)
+            if drain is None:
+                continue
+            result = drain()
+            if inspect.isawaitable(result):
+                await result
+
     def handle_direct(self, event: UiEvent) -> Any:
         """Synchronous variant: apply to primary immediately, schedule mirrors async."""
         result = self._primary.handle(event)
@@ -150,15 +159,18 @@ class DockEventConsumer:
     def pending_stream_commit_count(self) -> int:
         return len(self._stream_commit_tasks)
 
-    def _schedule_stream_commit(self, work_item: StreamCommitWorkItem) -> bool:
+    def _schedule_stream_commit(
+        self,
+        work_item: StreamCommitWorkItem,
+    ) -> asyncio.Task[Any] | None:
         try:
             task = asyncio.create_task(self._finish_stream_commit(work_item))
         except RuntimeError:
-            return False
+            return None
         self._stream_commit_tasks.add(task)
         task.add_done_callback(self._stream_commit_tasks.discard)
         task.add_done_callback(self._log_stream_commit_error)
-        return True
+        return task
 
     async def _finish_stream_commit(self, work_item: StreamCommitWorkItem) -> None:
         try:
@@ -246,8 +258,8 @@ class DockEventConsumer:
                     is_new=e.is_new,
                     profile_configured=e.profile_configured,
                 )
-            case MessageAppended(text=text, style=style):
-                return self._dock.append_message(text, style=style)
+            case MessageAppended(text=text, style=style, markup=markup):
+                return self._dock.append_message(text, style=style, markup=markup)
             case AnsiAppended(text=text):
                 return self._dock.append_ansi(text)
             case MarkdownAppended(content=content):
@@ -337,8 +349,9 @@ class DockEventConsumer:
                 if work_item is None:
                     self._dock.refresh()
                     return True
-                if self._schedule_stream_commit(work_item):
-                    return True
+                task = self._schedule_stream_commit(work_item)
+                if task is not None:
+                    return task
                 try:
                     projection = build_canonical_stream_projection(work_item)
                 except Exception as exc:
