@@ -674,6 +674,7 @@ class PureTui(
             if not isinstance(exc, asyncio.CancelledError):
                 log_internal_error(exc, context="terminal_commit_wait")
         else:
+            update["settle"]()
             update["apply_state"]()
             term_height = shutil.get_terminal_size().lines
             self._visible_committed_rows = min(
@@ -697,6 +698,7 @@ class PureTui(
         token: BatchToken,
         *,
         apply_state,
+        settle,
         flush_rows: int,
         force_requested: bool,
         raw_echoes: list[str],
@@ -711,6 +713,7 @@ class PureTui(
         self._render_state.pending_commit_tokens.append(token)
         self._render_state.pending_commit_updates[token_key] = {
             "apply_state": apply_state,
+            "settle": settle,
             "flush_rows": flush_rows,
             "force_requested": force_requested,
             "raw_echoes": raw_echoes,
@@ -1009,6 +1012,7 @@ class PureTui(
         next_restored_startup_flushed = self._restored_startup_flushed
         next_restored_history_retired = self._restored_history_retired
         next_was_busy = self._was_busy
+        batch_owner_ids: frozenset[str] = frozenset()
 
         def apply_state() -> None:
             tree_changed_before_apply = (
@@ -1033,11 +1037,21 @@ class PureTui(
                     0,
                     len(dock.tree.root.children),
                 )
-                self._committed_line_count = len(lines)
+                restored_history_line_count = len(
+                    dock.tree.render_root_slice(
+                        width,
+                        0,
+                        restored_range[1],
+                    )
+                )
+                self._committed_line_count = min(
+                    len(lines),
+                    restored_history_line_count + next_restored_committed_line_count,
+                )
                 self._committed_projection = self._committed_projection_for_prefix(
                     lines,
                     line_map,
-                    len(lines),
+                    self._committed_line_count,
                 )
                 self._record_committed_live_history(width)
             if restored_range is None and tree_changed_before_apply:
@@ -1138,6 +1152,11 @@ class PureTui(
                     *restored_lines,
                     *added_lines[committed_added:flush_limit],
                 ]
+                batch_owner_ids = frozenset(
+                    owner
+                    for index, owner in added_line_map.items()
+                    if committed_added <= index < flush_limit
+                )
                 next_restored_committed_line_count = flush_limit
                 if flush_limit > committed_added:
                     next_restored_history_retired = True
@@ -1171,8 +1190,19 @@ class PureTui(
                         previous_projection,
                     )
                     flush_lines = [tree_lines[index] for index in flush_indexes]
+                    batch_owner_ids = frozenset(
+                        line_map[index]
+                        for index in flush_indexes
+                        if line_map.get(index) is not None
+                    )
                 else:
-                    flush_lines = tree_lines[committed_count:flush_limit]
+                    flush_start = committed_count
+                    flush_lines = tree_lines[flush_start:flush_limit]
+                    batch_owner_ids = frozenset(
+                        owner
+                        for index, owner in line_map.items()
+                        if flush_start <= index < flush_limit
+                    )
                 next_committed_line_count = flush_limit
                 next_committed_projection = self._merged_committed_projection(
                     tree_lines,
@@ -1182,6 +1212,27 @@ class PureTui(
                 )
 
             submitted_tree_revision = dock.tree.revision
+            settled_node_ids = dock.snapshot_node_ids(batch_owner_ids)
+            settled_node_snapshots = tuple(
+                (
+                    node_id,
+                    self._committed_node_signature(node),
+                )
+                for node_id in sorted(settled_node_ids)
+                if (node := dock.tree.get(node_id)) is not None
+            )
+
+            def settle_batch() -> None:
+                settled_ids = frozenset(
+                    node_id
+                    for node_id, signature in settled_node_snapshots
+                    if (
+                        (node := dock.tree.get(node_id)) is not None
+                        and self._committed_node_signature(node) == signature
+                    )
+                )
+                dock.mark_nodes_settled(settled_ids)
+
             if not flush_lines and not echo_lines:
                 apply_state()
                 return None
@@ -1192,6 +1243,7 @@ class PureTui(
                 for line in flush_lines:
                     self._terminal_writer.write(_plain_line(line).rstrip() + "\n")
                 self._terminal_writer.flush()
+                settle_batch()
                 apply_state()
                 return None
 
@@ -1224,11 +1276,13 @@ class PureTui(
                     self._track_pending_commit(
                         token,
                         apply_state=apply_state,
+                        settle=settle_batch,
                         flush_rows=flush_rows,
                         force_requested=force_requested,
                         raw_echoes=raw_echoes,
                     )
                 else:
+                    settle_batch()
                     apply_state()
                     term_height = shutil.get_terminal_size().lines
                     self._visible_committed_rows = min(
@@ -1244,6 +1298,7 @@ class PureTui(
                 self._terminal_writer.flush()
             self._terminal_writer.write(commit_ansi)
             self._terminal_writer.flush()
+            settle_batch()
             apply_state()
             term_height = shutil.get_terminal_size().lines
             self._visible_committed_rows = min(

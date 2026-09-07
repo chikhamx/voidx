@@ -219,6 +219,25 @@ def test_streaming_renderer_done_is_idempotent_for_dock_stream(isolated_dock):
     assert rendered.count("final answer") == 1
 
 
+def test_duplicate_completed_stream_is_ignored_before_writer_settles(isolated_dock):
+    isolated_dock.begin_capture()
+    text = "● duplicate stream"
+
+    assert isolated_dock.set_stream(text, refresh=False)
+    assert isolated_dock.commit_stream(refresh=False)
+
+    agent = isolated_dock.current_agent
+    assert agent is not None
+    committed = agent.children[0]
+    assert committed.payload["lifecycle"] == "completed"
+    assert committed.id not in isolated_dock._settled_node_ids
+
+    assert isolated_dock.set_stream(text, refresh=False)
+    assert isolated_dock.commit_stream(refresh=False)
+
+    assert agent.children == [committed]
+
+
 @pytest.mark.asyncio
 async def test_duplicate_stream_commit_after_permission_clear_is_ignored(isolated_dock):
     isolated_dock.begin_capture()

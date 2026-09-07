@@ -36,7 +36,7 @@ class DockNodeMixin(
     DockClarifyNodeMixin,
     DockGoalSpecNodeMixin,
 ):
-    def _new_settled_node(
+    def _new_completed_node(
         self,
         target: OutputNode,
         *,
@@ -48,7 +48,7 @@ class DockNodeMixin(
             node = self._tree.new_node_before(reference, **kwargs)
         else:
             node = self._tree.new_node(parent=target, **kwargs)
-        self._mark_settled(node)
+        self._mark_completed(node)
         return node
 
     def append_message(
@@ -77,7 +77,7 @@ class DockNodeMixin(
         if title:
             payload["title"] = title
         payload["raw_text"] = clean
-        node = self._new_settled_node(
+        node = self._new_completed_node(
             target,
             before_active_stream=parent is None,
             node_type="message",
@@ -97,7 +97,7 @@ class DockNodeMixin(
         if not clean.strip():
             return None
         lines = [_strip_ansi_trailing_space(line) for line in (clean.splitlines() or [clean])]
-        node = self._new_settled_node(
+        node = self._new_completed_node(
             parent or self._tree.root,
             before_active_stream=parent is None,
             node_type="error",
@@ -115,7 +115,7 @@ class DockNodeMixin(
         if not clean.strip():
             return None
         lines = [_strip_ansi_trailing_space(line) for line in (clean.splitlines() or [clean])]
-        node = self._new_settled_node(
+        node = self._new_completed_node(
             parent or self._tree.root,
             before_active_stream=parent is None,
             node_type="message",
@@ -153,7 +153,7 @@ class DockNodeMixin(
             meta=summary,
             payload={"raw_text": clean},
         )
-        self._mark_settled(node)
+        self._mark_completed(node)
         self.refresh()
         return node
 
@@ -216,9 +216,99 @@ class DockNodeMixin(
         node.header = f"[{color}]{icon}[/{color}] {tool_body}{suffix}"
         node.elapsed = elapsed
         node.status = "done" if ok else "error"
-        self._mark_settled(node)
+        self._mark_completed(node, outcome="completed" if ok else "failed")
         self._tree.mark_dirty()
         self.refresh()
+
+    def _result_parent(self, target: OutputNode) -> OutputNode:
+        if (
+            target.node_type == "tool_call"
+            and target.payload.get("tool_name") != "agent"
+            and target.parent is not None
+        ):
+            return target.parent
+        return target
+
+    def _find_tool_result(
+        self,
+        parent: OutputNode,
+        *,
+        tool_call_id: str | None,
+        anchor_id: str | None,
+    ) -> OutputNode | None:
+        for node in parent.children:
+            if node.node_type != "tool_result" or not node.payload.get("independent_result"):
+                continue
+            if tool_call_id is not None:
+                if node.payload.get("result_tool_call_id") == tool_call_id:
+                    return node
+            elif anchor_id is not None and node.payload.get("result_anchor_id") == anchor_id:
+                return node
+        return None
+
+    def _find_diff_result(
+        self,
+        parent: OutputNode,
+        *,
+        tool_call_id: str | None,
+        anchor_id: str | None,
+        index: int,
+        path: str,
+    ) -> OutputNode | None:
+        for node in parent.children:
+            if node.node_type != "tool_call" or not node.payload.get("diff_result"):
+                continue
+            matches_call = (
+                node.payload.get("result_tool_call_id") == tool_call_id
+                if tool_call_id is not None
+                else node.payload.get("result_anchor_id") == anchor_id
+            )
+            if matches_call and (
+                node.payload.get("diff_index") == index
+                or node.payload.get("diff_path") == path
+            ):
+                return node
+        return None
+
+    def _ensure_result_spacer(self, result: OutputNode) -> OutputNode | None:
+        parent = result.parent
+        if parent is None:
+            return None
+        spacers = [
+            node
+            for node in parent.children
+            if node.node_type == "message"
+            and node.payload.get("tool_result_spacer_for") == result.id
+        ]
+        spacer = spacers[0] if spacers else None
+        for duplicate in spacers[1:]:
+            self._remove_node(duplicate)
+        if spacer is None:
+            next_index = parent.children.index(result) + 1
+            kwargs = {
+                "parent": parent,
+                "node_type": "message",
+                "header": "",
+                "collapsed": False,
+                "payload": {"tool_result_spacer_for": result.id},
+            }
+            if next_index < len(parent.children):
+                spacer = self._tree.new_node_before(parent.children[next_index], **kwargs)
+            else:
+                spacer = self._tree.new_node(**kwargs)
+        else:
+            current_index = parent.children.index(spacer)
+            result_index = parent.children.index(result)
+            desired_index = result_index + 1
+            if current_index != desired_index:
+                parent.children.pop(current_index)
+                if current_index < desired_index:
+                    desired_index -= 1
+                parent.children.insert(desired_index, spacer)
+                self._tree._refresh_sibling_flags(parent)
+                self._tree.mark_dirty()
+        self._mark_completed(spacer)
+        return spacer
 
     def append_tool_result(
         self,
@@ -238,19 +328,49 @@ class DockNodeMixin(
             lines.pop()
         if not lines:
             return None
+
         target = parent or self._current_tool or self._current_agent or self._tree.root
-        node = self._tree.new_node(
-            parent=target,
-            node_type="tool_result",
-            header=escape(lines[0]) if lines else "",
-            body_lines=[escape(line) for line in lines[1:]],
-            collapsed=collapsed,
-            tool_call_id=tool_call_id,
-            payload={"raw_text": clean},
+        result_parent = self._result_parent(target)
+        result_tool_call_id = tool_call_id or (
+            target.tool_call_id if target.node_type == "tool_call" else None
         )
-        self._mark_subtree_settled(node)
-        if target.node_type == "tool_call":
-            self._mark_subtree_settled(target)
+        result_anchor_id = target.id if target.node_type == "tool_call" else None
+        node = self._find_tool_result(
+            result_parent,
+            tool_call_id=result_tool_call_id,
+            anchor_id=result_anchor_id,
+        )
+        if node is None:
+            node = self._tree.new_node(
+                parent=result_parent,
+                node_type="tool_result",
+                header=escape(lines[0]),
+                body_lines=[escape(line) for line in lines[1:]],
+                collapsed=collapsed,
+                status="done",
+                tool_call_id=result_tool_call_id,
+                payload={
+                    "raw_text": clean,
+                    "independent_result": True,
+                    "result_tool_call_id": result_tool_call_id,
+                    "result_anchor_id": result_anchor_id,
+                },
+            )
+        else:
+            node.header = escape(lines[0])
+            node.body_lines = [escape(line) for line in lines[1:]]
+            node.collapsed = collapsed
+            node.status = "done"
+            if result_tool_call_id is not None:
+                node.tool_call_id = result_tool_call_id
+            node.payload.update(
+                raw_text=clean,
+                result_tool_call_id=result_tool_call_id,
+                result_anchor_id=result_anchor_id,
+            )
+        self._mark_completed(node)
+        self._ensure_result_spacer(node)
+        self._tree.mark_dirty()
         self.refresh()
         return node
 
@@ -279,10 +399,13 @@ class DockNodeMixin(
             )
 
         target = parent or self._current_tool or self._current_agent or self._tree.root
-        if target.node_type == "tool_call":
-            self._mark_unsettled(target)
+        result_parent = self._result_parent(target)
+        result_tool_call_id = tool_call_id or (
+            target.tool_call_id if target.node_type == "tool_call" else None
+        )
+        result_anchor_id = target.id if target.node_type == "tool_call" else None
         first_node: OutputNode | None = None
-        settled_nodes: list[OutputNode] = []
+        completed_nodes: list[OutputNode] = []
         for index, file_diff in enumerate(parsed.files):
             if preview_hunks is not None and preview_lines is not None:
                 body_lines, omitted = render_file_change_lines(file_diff, preview_hunks, preview_lines)
@@ -294,43 +417,80 @@ class DockNodeMixin(
                 f"{_operation_header(file_diff.operation, file_diff.path)}"
             )
             show_diff = file_diff.operation == "Update"
-            if index == 0 and target.node_type == "tool_call":
-                node = target
-                node.header = header
-                node.body_lines = body_lines
-                node.collapsed = not show_diff
-                node.status = "done"
-                node.meta = header
-                if tool_call_id:
-                    node.tool_call_id = tool_call_id
-                node.payload["diff_text"] = diff_text
-            else:
+            node = self._find_diff_result(
+                result_parent,
+                tool_call_id=result_tool_call_id,
+                anchor_id=result_anchor_id,
+                index=index,
+                path=file_diff.path,
+            )
+            if node is None:
                 node = self._tree.new_node(
-                    parent=target,
+                    parent=result_parent,
                     node_type="tool_call",
                     header=header,
                     body_lines=body_lines,
                     collapsed=not show_diff,
                     status="done",
                     meta=header,
-                    tool_call_id=tool_call_id,
-                    payload={"diff_text": diff_text},
+                    tool_call_id=result_tool_call_id,
+                    payload={
+                        "diff_text": diff_text,
+                        "diff_result": True,
+                        "independent_result": True,
+                        "result_tool_call_id": result_tool_call_id,
+                        "result_anchor_id": result_anchor_id,
+                        "diff_index": index,
+                        "diff_path": file_diff.path,
+                    },
+                )
+            else:
+                node.header = header
+                node.body_lines = body_lines
+                node.collapsed = not show_diff
+                node.status = "done"
+                node.meta = header
+                if result_tool_call_id is not None:
+                    node.tool_call_id = result_tool_call_id
+                node.payload.update(
+                    diff_text=diff_text,
+                    result_tool_call_id=result_tool_call_id,
+                    result_anchor_id=result_anchor_id,
+                    diff_index=index,
+                    diff_path=file_diff.path,
                 )
             if omitted:
                 full_lines = render_full_file_diff_lines(file_diff)
                 if full_lines:
-                    self._tree.new_node(
-                        parent=node,
-                        node_type="tool_result",
-                        header="[dim]Full diff[/dim]",
-                        body_lines=full_lines,
-                        collapsed=True,
+                    full_diff = next(
+                        (
+                            child
+                            for child in node.children
+                            if child.node_type == "tool_result"
+                            and child.payload.get("full_diff_result")
+                        ),
+                        None,
                     )
+                    if full_diff is None:
+                        full_diff = self._tree.new_node(
+                            parent=node,
+                            node_type="tool_result",
+                            header="[dim]Full diff[/dim]",
+                            body_lines=full_lines,
+                            collapsed=True,
+                            status="done",
+                            payload={"full_diff_result": True},
+                        )
+                    else:
+                        full_diff.body_lines = full_lines
+                    self._mark_completed(full_diff)
             if first_node is None:
                 first_node = node
-            settled_nodes.append(node)
-        for node in settled_nodes:
-            self._mark_subtree_settled(node)
+            completed_nodes.append(node)
+        for node in completed_nodes:
+            self._mark_completed(node)
+        if completed_nodes:
+            self._ensure_result_spacer(completed_nodes[-1])
         self._tree.mark_dirty()
         self.refresh()
         return first_node

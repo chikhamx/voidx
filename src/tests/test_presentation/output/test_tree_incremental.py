@@ -341,7 +341,7 @@ def test_dock_turn_lifecycle_metadata_is_explicit():
     presentation_dock.begin_capture()
     turn = presentation_dock.start_turn("cancel me")
 
-    assert turn.payload["lifecycle"] == "running"
+    assert turn.payload["lifecycle"] == "completed"
     assert turn.payload["active"] is True
     assert turn.payload["transcript_turn_id"] == 0
 

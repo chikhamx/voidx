@@ -44,7 +44,7 @@ class DockStartupNodeMixin:
             existing.body_lines = lines[1:]
             existing.collapsed = False
             self._tree.mark_dirty()
-            self._mark_settled(existing)
+            self._mark_completed(existing)
             self.refresh()
             return existing
         node = self._tree.new_node(
@@ -54,7 +54,7 @@ class DockStartupNodeMixin:
             body_lines=lines[1:],
             collapsed=False,
         )
-        self._mark_settled(node)
+        self._mark_completed(node)
         self.refresh()
         return node
 

@@ -528,7 +528,10 @@ class DockEventConsumer:
                 node.elapsed = e.elapsed
                 node.collapsed = False
                 self._dock.tree.mark_dirty()
-                self._dock.mark_node_settled(node)
+                self._dock.mark_node_completed(
+                    node,
+                    outcome="cancelled" if cancelled else ("completed" if e.ok else "failed"),
+                )
                 self._dock.refresh()
                 return node
             case InputSet() as e:
@@ -610,7 +613,7 @@ class DockEventConsumer:
         node.payload = todo_state_payload(state)
         node.status = "done"
         self._dock.tree.mark_dirty(node.id)
-        self._dock.mark_node_settled(node)
+        self._dock.mark_node_completed(node)
         self._dock.refresh()
         return node
 

@@ -36,7 +36,7 @@ def test_safe_flush_line_count_stops_at_unsettled_stream_after_finished_tool():
         test_dock.reset()
 
 
-def test_safe_flush_line_count_requires_settled_ancestors():
+def test_safe_flush_line_count_requires_completed_ancestors():
     test_dock = dock
     test_dock.begin_capture()
     parent = test_dock.tree.new_node(
@@ -52,11 +52,11 @@ def test_safe_flush_line_count_requires_settled_ancestors():
         collapsed=False,
     )
     test_dock.mark_node_unsettled(parent)
-    test_dock.mark_node_settled(child)
+    test_dock.mark_node_completed(child)
 
     assert test_dock.safe_flush_line_count(100, 0) == 0
 
-    test_dock.mark_node_settled(parent)
+    test_dock.mark_node_completed(parent)
     assert test_dock.safe_flush_line_count(100, 0) == len(test_dock.tree.render(100))
 
 

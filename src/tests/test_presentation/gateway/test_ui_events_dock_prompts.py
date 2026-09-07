@@ -612,3 +612,98 @@ async def test_goal_spec_decision_for_unknown_id_does_not_fail(isolated_dock):
         await bus.drain()
     finally:
         await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_clarify_resolution_is_completed_but_not_writer_settled(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.emit(ClarifyPromptShown(
+            clarify_id="cl_state",
+            question="Which approach?",
+            options=["implement", "document"],
+        ))
+        await bus.drain()
+        clarify = next(
+            node for node in _tree_nodes(isolated_dock.tree.root)
+            if node.node_type == "clarify"
+        )
+
+        assert clarify.payload["lifecycle"] == "running"
+        assert clarify.id not in isolated_dock._settled_node_ids
+
+        await bus.emit(ClarifyAnswerSubmitted(
+            clarify_id="cl_state",
+            answer="implement",
+        ))
+        await bus.drain()
+
+        assert clarify.payload["lifecycle"] == "completed"
+        assert clarify.id not in isolated_dock._settled_node_ids
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_resolution_is_completed_but_not_writer_settled(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.emit(CheckpointPromptShown(
+            checkpoint_id="cp_state",
+            plan=CheckpointPlanPayload(goal="Add state boundary", plan_summary="Add state boundary"),
+        ))
+        await bus.drain()
+        checkpoint = next(
+            node for node in _tree_nodes(isolated_dock.tree.root)
+            if node.node_type == "checkpoint"
+        )
+
+        assert checkpoint.payload["lifecycle"] == "running"
+        assert checkpoint.id not in isolated_dock._settled_node_ids
+
+        await bus.emit(CheckpointDecisionSubmitted(
+            checkpoint_id="cp_state",
+            decision="approved",
+            label="Approve",
+            response="Approve",
+        ))
+        await bus.drain()
+
+        assert checkpoint.payload["lifecycle"] == "completed"
+        assert checkpoint.id not in isolated_dock._settled_node_ids
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_hidden_tool_does_not_create_request_node(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.emit(ToolStarted(
+            tool_call_id="hidden_state",
+            tool_name="clarify",
+            label="Asking",
+            display_mode=ToolDisplayMode.HIDDEN,
+        ))
+        await bus.emit(ToolFinished(
+            tool_call_id="hidden_state",
+            label="Asking",
+            elapsed=0.1,
+        ))
+        await bus.drain()
+
+        assert not any(
+            node.node_type == "tool_call"
+            for node in _tree_nodes(isolated_dock.tree.root)
+        )
+    finally:
+        await bus.stop()

@@ -118,6 +118,280 @@ def test_ai_and_tool_blocks_are_compact_while_other_blocks_are_spaced():
     assert checkpoint == clarify + 2
 
 
+
+
+def test_tool_result_is_a_completed_sibling_and_keeps_request_unchanged():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("read the file")
+        tool = test_dock.start_tool(
+            "Reading",
+            'file_path="src/app.py"',
+            tool_name="read",
+            tool_call_id="read-1",
+            raw_args={"file_path": "src/app.py"},
+        )
+        request_header = tool.header
+        result = test_dock.append_tool_result(
+            "file contents",
+            parent=tool,
+            tool_call_id="read-1",
+        )
+
+        assert result is not None
+        assert result.node_type == "tool_result"
+        assert result.parent is tool.parent
+        assert result in tool.parent.children
+        assert tool.header == request_header
+        assert tool.body_lines == []
+        assert result.payload["lifecycle"] == "completed"
+        assert result.id not in test_dock._settled_node_ids
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_file_change_result_does_not_rewrite_tool_request():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("update the file")
+        tool = test_dock.start_tool(
+            "Editing",
+            'file_path="src/app.py"',
+            tool_name="edit",
+            tool_call_id="edit-1",
+            raw_args={"file_path": "src/app.py"},
+        )
+        request_header = tool.header
+        request_body = list(tool.body_lines)
+        result = test_dock.append_file_change(
+            "\n".join(
+                [
+                    "--- a/src/app.py",
+                    "+++ b/src/app.py",
+                    "@@ -1 +1,1 @@",
+                    "-old",
+                    "+new",
+                ]
+            ),
+            parent=tool,
+            tool_call_id="edit-1",
+        )
+
+        assert result is not None
+        assert result is not tool
+        assert result.parent is tool.parent
+        assert tool.header == request_header
+        assert tool.body_lines == request_body
+        assert result.payload["lifecycle"] == "completed"
+        assert result.payload["diff_text"]
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+
+
+def test_multi_file_diff_keeps_request_unchanged_and_one_trailing_spacer():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("update two files")
+        tool = test_dock.start_tool(
+            "Editing",
+            'file_path="src/one.py"',
+            tool_name="edit",
+            tool_call_id="edit-many",
+            raw_args={"file_path": "src/one.py"},
+        )
+        request_header = tool.header
+        diff = "\n".join(
+            [
+                "--- a/src/one.py",
+                "+++ b/src/one.py",
+                "@@ -1 +1 @@",
+                "-one old",
+                "+one new",
+                "--- a/src/two.py",
+                "+++ b/src/two.py",
+                "@@ -1 +1 @@",
+                "-two old",
+                "+two new",
+            ]
+        )
+        first = test_dock.append_file_change(
+            diff,
+            parent=tool,
+            tool_call_id="edit-many",
+        )
+
+        results = [
+            node
+            for node in tool.parent.children
+            if node.payload.get("diff_result")
+        ]
+        spacers = [
+            node
+            for node in tool.parent.children
+            if node.node_type == "message"
+            and node.payload.get("tool_result_spacer_for")
+        ]
+        assert first is results[0]
+        assert len(results) == 2
+        assert [node.payload["diff_index"] for node in results] == [0, 1]
+        assert all(node.parent is tool.parent for node in results)
+        assert all(node.payload["lifecycle"] == "completed" for node in results)
+        assert tool.header == request_header
+        assert len(spacers) == 1
+        assert tool.parent.children[tool.parent.children.index(results[-1]) + 1] is spacers[0]
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_duplicate_file_change_event_reuses_results_and_spacer():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("update the file")
+        tool = test_dock.start_tool(
+            "Editing",
+            'file_path="src/app.py"',
+            tool_name="edit",
+            tool_call_id="edit-repeat",
+            raw_args={"file_path": "src/app.py"},
+        )
+        diff = "\n".join(
+            [
+                "--- a/src/app.py",
+                "+++ b/src/app.py",
+                "@@ -1 +1 @@",
+                "-old",
+                "+new",
+            ]
+        )
+        first = test_dock.append_file_change(
+            diff,
+            parent=tool,
+            tool_call_id="edit-repeat",
+        )
+        second = test_dock.append_file_change(
+            diff,
+            parent=tool,
+            tool_call_id="edit-repeat",
+        )
+
+        results = [
+            node for node in tool.parent.children if node.payload.get("diff_result")
+        ]
+        spacers = [
+            node
+            for node in tool.parent.children
+            if node.node_type == "message"
+            and node.payload.get("tool_result_spacer_for")
+        ]
+        assert second is first
+        assert len(results) == 1
+        assert len(spacers) == 1
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_tool_result_adds_one_idempotent_trailing_spacer():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("read the file")
+        tool = test_dock.start_tool(
+            "Reading",
+            'file_path="src/app.py"',
+            tool_name="read",
+            tool_call_id="read-1",
+            raw_args={"file_path": "src/app.py"},
+        )
+        result = test_dock.append_tool_result(
+            "file contents",
+            parent=tool,
+            tool_call_id="read-1",
+        )
+        again = test_dock.append_tool_result(
+            "file contents",
+            parent=tool,
+            tool_call_id="read-1",
+        )
+
+        assert result is not None
+        assert again is result
+        siblings = tool.parent.children
+        assert [node for node in siblings if node is result] == [result]
+        spacers = [
+            node
+            for node in siblings
+            if node.node_type == "message"
+            and not node.header
+            and not node.body_lines
+            and not node.children
+        ]
+        assert len(spacers) == 1
+        assert siblings[siblings.index(result) + 1] is spacers[0]
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_tool_result_update_reuses_result_and_spacer_without_rewriting_request():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("read the file")
+        tool = test_dock.start_tool(
+            "Reading",
+            'file_path="src/app.py"',
+            tool_name="read",
+            tool_call_id="read-1",
+            raw_args={"file_path": "src/app.py"},
+        )
+        first = test_dock.append_tool_result(
+            "first chunk",
+            parent=tool,
+            tool_call_id="read-1",
+        )
+        second = test_dock.append_tool_result(
+            "second chunk",
+            parent=tool,
+            tool_call_id="read-1",
+        )
+
+        assert first is not None
+        assert second is first
+        assert first.header == "second chunk"
+        assert tool.header.startswith("[#A3BE8C]")
+        assert len(
+            [
+                node
+                for node in tool.parent.children
+                if node.node_type == "tool_result"
+                and node.tool_call_id == "read-1"
+            ]
+        ) == 1
+        assert len(
+            [
+                node
+                for node in tool.parent.children
+                if node.node_type == "message"
+                and not node.header
+                and not node.body_lines
+                and not node.children
+            ]
+        ) == 1
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
 def test_search_started_and_completed_render_as_one_tool_row():
     test_dock = dock
     test_dock.begin_capture()

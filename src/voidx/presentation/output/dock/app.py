@@ -160,7 +160,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
             status="done",
             payload=todo_state_payload(state),
         )
-        self._mark_settled(node)
+        self._mark_completed(node)
         self._todo_state = None
         self.refresh()
         return node
@@ -358,7 +358,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
             payload={
                 "raw_text": raw_text if raw_text is not None else text,
                 "transcript_turn_id": transcript_turn_id,
-                "lifecycle": "running",
+                "lifecycle": "completed",
                 "active": True,
                 "terminal": False,
                 "committed": False,
@@ -368,7 +368,6 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
                 "render_pending": False,
             },
         )
-        self._mark_settled(self._current_turn)
         self.refresh()
         return self._current_turn
 
@@ -451,7 +450,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         preview = strip_pasted_wrapper(clean)
         header, body_lines = self._render_turn_text(preview)
         header = f"[bold white]❯[/] {header}" if header else "[bold white]❯[/]"
-        node = self._new_settled_node(
+        node = self._new_completed_node(
             self._tree.root,
             before_active_stream=True,
             node_type="turn",
@@ -579,23 +578,64 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
             parts.append((after, "white"))
         return parts
 
+    def _mark_completed(
+        self,
+        node: OutputNode | None,
+        *,
+        outcome: str = "completed",
+    ) -> None:
+        if node is None:
+            return
+        node.payload["lifecycle"] = outcome
+        self._settled_node_ids.discard(node.id)
+        self._unsettled_node_ids.discard(node.id)
+
+    def _mark_running(self, node: OutputNode | None) -> None:
+        if node is None:
+            return
+        node.payload["lifecycle"] = "running"
+        self._settled_node_ids.discard(node.id)
+        self._unsettled_node_ids.discard(node.id)
+
+    def _mark_unsettled(self, node: OutputNode | None) -> None:
+        """Mark a node as business-running without claiming terminal output was written."""
+        self._mark_running(node)
+
+    def _mark_subtree_completed(
+        self,
+        node: OutputNode | None,
+        *,
+        outcome: str = "completed",
+    ) -> None:
+        if node is None:
+            return
+        self._mark_completed(node, outcome=outcome)
+        for child in node.children:
+            self._mark_subtree_completed(child, outcome=outcome)
+
     def _mark_settled(self, node: OutputNode | None) -> None:
+        """Mark a node only after its rendered content was written to scrollback."""
         if node is not None:
             self._settled_node_ids.add(node.id)
             self._unsettled_node_ids.discard(node.id)
 
-    def _mark_unsettled(self, node: OutputNode | None) -> None:
-        if node is not None:
-            self._settled_node_ids.discard(node.id)
-            self._unsettled_node_ids.add(node.id)
-
     def _mark_subtree_settled(self, node: OutputNode | None) -> None:
+        """Mark restored or writer-confirmed content as durably written."""
         if node is None:
             return
-        self._settled_node_ids.add(node.id)
-        self._unsettled_node_ids.discard(node.id)
+        node.payload.setdefault("lifecycle", "completed")
+        self._mark_settled(node)
         for child in node.children:
             self._mark_subtree_settled(child)
+
+    def snapshot_node_ids(self, node_ids: frozenset[str]) -> frozenset[str]:
+        """Copy the node IDs rendered by a writer batch before it is queued."""
+        return frozenset(node_ids)
+
+    def mark_nodes_settled(self, node_ids: frozenset[str]) -> None:
+        """Mark an immutable node-id snapshot after a writer batch succeeds."""
+        self._settled_node_ids.update(node_ids)
+        self._unsettled_node_ids.difference_update(node_ids)
 
     def _mark_tree_settled(self) -> None:
         for child in self._tree.root.children:
@@ -609,7 +649,8 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         for child in node.children:
             self._discard_settled_subtree(child)
 
-    def _is_node_chain_settled(
+
+    def _is_node_chain_completed(
         self,
         node_id: str,
         *,
@@ -620,9 +661,14 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
             if node.payload.get("render_pending"):
                 return False
             transparent = is_transparent_container(node)
-            if node.id in self._unsettled_node_ids and not transparent:
+            lifecycle = node.payload.get("lifecycle")
+            if lifecycle == "running" and not transparent:
                 return False
-            if node.id not in self._settled_node_ids and not transparent and not allow_untracked:
+            if (
+                not transparent
+                and lifecycle not in {"completed", "failed", "cancelled"}
+                and not allow_untracked
+            ):
                 return False
             node = node.parent
         return True
@@ -698,7 +744,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
                 following_node = self._tree.get(following_owners[index])
                 if (
                     following_node is not None
-                    and not self._is_node_chain_settled(
+                    and not self._is_node_chain_completed(
                         following_node.id,
                         allow_untracked=allow_untracked,
                     )
@@ -715,7 +761,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
                 if (
                     same_non_root_parent
                     and is_assistant_message(following_node)
-                    and not self._is_node_chain_settled(
+                    and not self._is_node_chain_completed(
                         following_node.id,
                         allow_untracked=allow_untracked,
                     )
@@ -723,7 +769,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
                     break
                 index += 1
                 continue
-            if not self._is_node_chain_settled(
+            if not self._is_node_chain_completed(
                 node_id,
                 allow_untracked=allow_untracked,
             ):
@@ -760,6 +806,14 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
     def mark_node_settled(self, node: OutputNode | None) -> None:
         self._mark_subtree_settled(node)
 
+    def mark_node_completed(
+        self,
+        node: OutputNode | None,
+        *,
+        outcome: str = "completed",
+    ) -> None:
+        self._mark_subtree_completed(node, outcome=outcome)
+
     def mark_node_unsettled(self, node: OutputNode | None) -> None:
         self._mark_unsettled(node)
 
@@ -791,7 +845,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
             collapsed=False,
             payload=inherited_payload,
         )
-        self._mark_settled(node)
+        self._mark_completed(node)
 
     def _remove_node(self, node: OutputNode) -> None:
         self._discard_settled_subtree(node)

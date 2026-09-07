@@ -84,5 +84,5 @@ class DockStatusNodeMixin:
         node.collapsed = True
         node.meta = text
         self._tree.mark_dirty()
-        self._mark_subtree_settled(node)
+        self._mark_completed(node, outcome="completed" if ok else "failed")
         self.refresh()

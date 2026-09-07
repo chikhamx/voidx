@@ -272,7 +272,7 @@ class DockStreamMixin:
         stream_node.payload.pop("phase", None)
         stream_node.payload.pop("render_pending", None)
         stream_node.payload.pop("stream_revision", None)
-        self._mark_settled(stream_node)
+        self._mark_completed(stream_node)
         self._last_committed_stream_text = _stream_signature(work_item.raw_text)
         self._last_committed_stream_parent_id = work_item.parent_id
         self._last_committed_stream_node_id = work_item.node_id
@@ -467,7 +467,8 @@ class DockStreamMixin:
         return (
             last is not None
             and last.node_type == "assistant"
-            and last.id in self._settled_node_ids
+            and last.payload.get("lifecycle") == "completed"
+            and not last.payload.get("render_pending", False)
         )
 
 

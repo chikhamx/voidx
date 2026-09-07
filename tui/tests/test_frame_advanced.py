@@ -737,6 +737,81 @@ def test_resume_does_not_retire_history_before_first_frame(
     assert "restored history" in fake_stdout.text
 
 
+def test_resume_stream_stays_live_after_restored_assistant_tool_history(
+    tmp_path, monkeypatch
+):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 12)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._running = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=12, _environ={})
+
+    restored = type(dock.tree)()
+    turn = restored.new_node(
+        parent=restored.root,
+        node_type="turn",
+        header="[bold white]❯[/] restored question",
+        collapsed=False,
+        payload={
+            "transcript_turn_id": 1,
+            "lifecycle": "completed",
+            "active": False,
+            "terminal": True,
+            "committed": True,
+            "durable": True,
+            "referenced": False,
+            "pinned": False,
+            "render_pending": False,
+        },
+    )
+    agent = restored.new_node(
+        parent=turn,
+        node_type="assistant",
+        header="",
+        collapsed=False,
+    )
+    restored.new_node(
+        parent=agent,
+        node_type="assistant",
+        header="● restored answer",
+        collapsed=False,
+    )
+    tool = restored.new_node(
+        parent=agent,
+        node_type="tool_call",
+        header="● Read(restored.py)",
+        collapsed=True,
+        status="done",
+    )
+    restored.new_node(
+        parent=tool,
+        node_type="tool_result",
+        header="restored tool result",
+        collapsed=False,
+    )
+
+    dock.begin_capture()
+    dock.restore_tree(restored)
+    tui._render_frame()
+    fake_stdout.text = ""
+
+    dock.start_turn("new question")
+    dock.set_stream("new streaming answer")
+    tui._flush_committed()
+    fake_stdout.text = ""
+    tui._render_frame()
+
+    assert "new streaming answer" in fake_stdout.text
+
+
+
 def test_resume_from_empty_tree_commits_history_before_first_input(
     tmp_path, monkeypatch
 ):
@@ -2261,6 +2336,289 @@ async def test_drain_committed_output_flushes_tail_added_while_token_pending(
     assert tui._pending_commit_tasks == {}
 
 
+
+
+@pytest.mark.asyncio
+async def test_worker_commit_settles_only_immutable_submitted_snapshot(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitWriter()
+    tui._terminal_writer = writer
+
+    submitted = dock.append_message("submitted batch")
+    tui._flush_committed(force=True)
+    added_after_submit = dock.tree.new_node(
+        parent=submitted,
+        node_type="message",
+        header="added after submit",
+        collapsed=False,
+        payload={"lifecycle": "completed"},
+    )
+
+    assert submitted.id not in dock._settled_node_ids
+    assert added_after_submit.id not in dock._settled_node_ids
+
+    writer.tokens[0].future.set_result(None)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert submitted.id in dock._settled_node_ids
+    assert added_after_submit.id not in dock._settled_node_ids
+
+
+
+
+def _start_deferred_tool_result():
+    dock.start_turn("read the file")
+    tool = dock.start_tool(
+        "Reading",
+        'file_path="src/app.py"',
+        tool_name="read",
+        tool_call_id="read-deferred",
+        raw_args={"file_path": "src/app.py"},
+    )
+    dock.finish_tool_node(tool, "Read", 0.1, True, "done")
+    result = dock.append_tool_result(
+        "first result",
+        parent=tool,
+        tool_call_id="read-deferred",
+    )
+    assert result is not None
+    return tool, result
+
+
+async def _resolve_deferred_commit(token, *, failed=False):
+    if failed:
+        token.future.set_exception(RuntimeError("terminal write failed"))
+    else:
+        token.future.set_result(None)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_result_update_while_first_writer_batch_is_pending_needs_new_settle(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitWriter()
+    tui._terminal_writer = writer
+    tool, result = _start_deferred_tool_result()
+
+    tui._flush_committed(force=True)
+    first_token = writer.tokens[0]
+    dock.append_tool_result(
+        "second result",
+        parent=tool,
+        tool_call_id="read-deferred",
+    )
+
+    await _resolve_deferred_commit(first_token)
+
+    assert result.id not in dock._settled_node_ids
+    tui._flush_committed(force=True)
+    assert len(writer.tokens) == 2
+    assert "second result" in writer.commits[1]["ansi"]
+    assert result.id not in dock._settled_node_ids
+
+    await _resolve_deferred_commit(writer.tokens[1])
+    assert result.id in dock._settled_node_ids
+
+
+@pytest.mark.asyncio
+async def test_result_update_after_first_writer_batch_settles_waits_for_second_batch(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitWriter()
+    tui._terminal_writer = writer
+    tool, result = _start_deferred_tool_result()
+
+    tui._flush_committed(force=True)
+    await _resolve_deferred_commit(writer.tokens[0])
+    assert result.id in dock._settled_node_ids
+
+    dock.append_tool_result(
+        "second result",
+        parent=tool,
+        tool_call_id="read-deferred",
+    )
+    assert result.id not in dock._settled_node_ids
+    tui._flush_committed(force=True)
+    assert len(writer.tokens) == 2
+    assert result.id not in dock._settled_node_ids
+
+    await _resolve_deferred_commit(writer.tokens[1])
+    assert result.id in dock._settled_node_ids
+
+
+@pytest.mark.asyncio
+async def test_result_update_after_failed_first_writer_batch_is_not_settled_by_failure(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitWriter()
+    tui._terminal_writer = writer
+    tool, result = _start_deferred_tool_result()
+
+    tui._flush_committed(force=True)
+    first_token = writer.tokens[0]
+    dock.append_tool_result(
+        "second result",
+        parent=tool,
+        tool_call_id="read-deferred",
+    )
+    await _resolve_deferred_commit(first_token, failed=True)
+
+    assert result.id not in dock._settled_node_ids
+    tui._flush_committed(force=True)
+    assert len(writer.tokens) == 2
+    assert "second result" in writer.commits[1]["ansi"]
+
+    await _resolve_deferred_commit(writer.tokens[1])
+    assert result.id in dock._settled_node_ids
+
+
+@pytest.mark.asyncio
+async def test_result_update_during_second_writer_batch_needs_third_settle(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitWriter()
+    tui._terminal_writer = writer
+    tool, result = _start_deferred_tool_result()
+
+    tui._flush_committed(force=True)
+    await _resolve_deferred_commit(writer.tokens[0])
+    dock.append_tool_result(
+        "second result",
+        parent=tool,
+        tool_call_id="read-deferred",
+    )
+    tui._flush_committed(force=True)
+    second_token = writer.tokens[1]
+    dock.append_tool_result(
+        "third result",
+        parent=tool,
+        tool_call_id="read-deferred",
+    )
+
+    await _resolve_deferred_commit(second_token)
+
+    assert result.id not in dock._settled_node_ids
+    tui._flush_committed(force=True)
+    assert len(writer.tokens) == 3
+    assert "third result" in writer.commits[2]["ansi"]
+
+    await _resolve_deferred_commit(writer.tokens[2])
+    assert result.id in dock._settled_node_ids
+
+
+@pytest.mark.asyncio
+async def test_worker_commit_failure_does_not_settle_submitted_snapshot(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitWriter()
+    tui._terminal_writer = writer
+
+    submitted = dock.append_message("failed batch")
+    tui._flush_committed(force=True)
+    writer.tokens[0].future.set_exception(RuntimeError("terminal write failed"))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert submitted.id not in dock._settled_node_ids
+
+
+@pytest.mark.parametrize("tty", [False, True])
+def test_synchronous_writer_settles_after_flush(tmp_path, monkeypatch, tty):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = tty
+    if tty:
+        tui._console = Console(
+            file=None,
+            force_terminal=True,
+            width=80,
+            height=24,
+            _environ={},
+        )
+
+    submitted = dock.append_message("synchronous batch")
+    tui._flush_committed(force=True)
+
+    assert submitted.id in dock._settled_node_ids
+
+
+def test_worker_without_wait_settles_after_submit(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui, writer = _worker_commit_tui(tmp_path)
+    submitted = dock.append_message("compatibility batch")
+
+    tui._flush_committed(force=True)
+
+    assert writer.commits
+    assert submitted.id in dock._settled_node_ids
 
 def test_invalidate_layout_clears_snapshots_and_rejects_old_callback(
     tmp_path, monkeypatch

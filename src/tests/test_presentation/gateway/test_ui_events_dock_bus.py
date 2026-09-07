@@ -128,12 +128,75 @@ async def test_ui_event_bus_serializes_tool_updates_by_call_id(isolated_dock):
         reading = next(node for header, node in tools.items() if 'Read("x")' in _rich_plain(header))
         mapping = next(node for header, node in tools.items() if 'Map' in _rich_plain(header))
         assert "[cyan]" not in visible_headers
-        assert reading.children[0].header == "first result"
-        assert mapping.children[0].header == "second result"
+        reading_result = next(
+            node for node in assistant.children
+            if node.node_type == "tool_result"
+            and node.tool_call_id == "call_1"
+        )
+        mapping_result = next(
+            node for node in assistant.children
+            if node.node_type == "tool_result"
+            and node.tool_call_id == "call_2"
+        )
+        assert reading_result.parent is assistant
+        assert mapping_result.parent is assistant
+        assert reading_result.header == "first result"
+        assert mapping_result.header == "second result"
     finally:
         await bus.stop()
 
 
+
+
+@pytest.mark.asyncio
+async def test_tool_completion_is_completed_but_not_writer_settled(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.emit(ToolStarted(
+            tool_call_id="tool_state",
+            tool_name="read",
+            label="Reading",
+            args='file_path="x.py"',
+        ))
+        await bus.emit(ToolFinished(
+            tool_call_id="tool_state",
+            label="Reading",
+            elapsed=0.1,
+        ))
+        await bus.drain()
+
+        tool = next(
+            node for node in _tree_nodes(isolated_dock.tree.root)
+            if node.node_type == "tool_call"
+        )
+        assert tool.payload["lifecycle"] == "completed"
+        assert tool.id not in isolated_dock._settled_node_ids
+    finally:
+        await bus.stop()
+
+
+def test_completed_prefix_waits_behind_previous_running_node(isolated_dock):
+    isolated_dock.begin_capture()
+    isolated_dock.start_turn("demo")
+    first = isolated_dock.start_tool("Reading", tool_name="read")
+    second = isolated_dock.start_tool("Mapping", tool_name="search")
+    isolated_dock.finish_tool_node(second, "Mapping", 0.1, True)
+
+    lines = isolated_dock.tree.render(120)
+    limit = isolated_dock.safe_flush_line_count(120, 0)
+
+    assert first.payload["lifecycle"] == "running"
+    assert second.payload["lifecycle"] == "completed"
+    assert limit < len(lines)
+    assert "Mapping" not in "\n".join(lines[:limit])
+
+    isolated_dock.finish_tool_node(first, "Reading", 0.1, True)
+    assert isolated_dock.safe_flush_line_count(120, 0) == len(
+        isolated_dock.tree.render(120)
+    )
 
 
 @pytest.mark.asyncio

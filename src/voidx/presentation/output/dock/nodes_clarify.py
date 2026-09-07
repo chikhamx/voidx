@@ -63,8 +63,8 @@ class DockClarifyNodeMixin:
             collapsed=False,
             payload={"full_width_user_row": True, "align_full_width_user_row": True},
         )
-        self._mark_subtree_settled(child)
-        self._mark_subtree_settled(node)
+        self._mark_completed(child)
+        self._mark_completed(node)
         self._tree.mark_dirty()
         self.refresh()
 
