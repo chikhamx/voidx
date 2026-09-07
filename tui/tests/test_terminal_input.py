@@ -192,7 +192,8 @@ def test_input_region_render_falls_back_to_full_frame_after_terminal_resize(
 
     tui._render_after_input()
 
-    assert fake_stdout.text.startswith("\x1b[1;1H\x1b[J")
+    assert fake_stdout.text.startswith("\x1b[?2026h\x1b[1;1H\x1b[J")
+    assert fake_stdout.text.endswith("\x1b[?2026l")
     assert f"\x1b[{stale_bottom_start};1H" not in fake_stdout.text
     assert tui._prev_frame_term_height == 10
     assert tui._last_bottom_start_row <= 10

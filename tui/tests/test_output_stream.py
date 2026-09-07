@@ -80,6 +80,33 @@ def test_stream_reply_and_following_tool_share_same_ai_message_block():
         test_dock.reset()
 
 
+def test_following_assistant_stream_starts_after_blank_line():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("检查这个")
+        test_dock.set_stream("先读取文件。")
+        test_dock.commit_stream()
+        tool = test_dock.start_tool(
+            "Reading",
+            'file_path="x.py"',
+            tool_name="read",
+            raw_args={"file_path": "x.py"},
+        )
+        test_dock.finish_tool_node(tool, "Read", 0.1, True)
+        test_dock.set_stream("文件内容如下。")
+
+        plain_lines = [_rich_plain(line) for line in test_dock.tree.render(120)]
+        reply_index = next(index for index, line in enumerate(plain_lines) if "文件内容如下" in line)
+        read_index = next(index for index, line in enumerate(plain_lines) if "Read" in line)
+
+        assert plain_lines[reply_index - 1] == ""
+        assert reply_index == read_index + 2
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
 def test_thinking_stream_does_not_store_blank_placeholder_rows():
     test_dock = dock
     test_dock.begin_capture()

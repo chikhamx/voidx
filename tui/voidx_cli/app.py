@@ -219,6 +219,7 @@ class PureTui(
         cleanup_error: BaseException | None = None
         cleanup_cancellation: asyncio.CancelledError | None = None
         self._terminal_writer_failed = False
+        self._terminal_writer_required = False
 
         def record_terminal_cleanup_error(
             exc: BaseException,
@@ -280,6 +281,7 @@ class PureTui(
                 and os.isatty(self._stdin_fd)
                 and _stream_is_tty(sys.stdout)
             )
+            self._terminal_writer_required = self._tty
             if self._tty:
                 terminal_setup_attempted = True
                 self._setup_terminal()
@@ -410,6 +412,7 @@ class PureTui(
                         restore_external_logging()
                     except BaseException as exc:
                         log_internal_error(exc, context="external_log_restore")
+                self._terminal_writer_required = False
 
             _, cleanup_cancellation = await await_cancellation_safe(cleanup())
 
@@ -891,6 +894,21 @@ class PureTui(
         )
 
     @staticmethod
+    def _pending_stream_flush_limit(
+        line_map: dict[int, str],
+        limit: int,
+    ) -> int:
+        bounded_limit = max(0, limit)
+        pending_indexes = [
+            index
+            for index, node_id in line_map.items()
+            if index < bounded_limit
+            and (node := dock.tree.get(node_id)) is not None
+            and node.payload.get("render_pending")
+        ]
+        return min(pending_indexes, default=bounded_limit)
+
+    @staticmethod
     def _projected_segment_bytes(segment) -> int:
         total = 0
         stack = list(segment)
@@ -993,6 +1011,9 @@ class PureTui(
         next_was_busy = self._was_busy
 
         def apply_state() -> None:
+            tree_changed_before_apply = (
+                dock.tree.revision != submitted_tree_revision
+            )
             self._committed_line_count = next_committed_line_count
             self._committed_projection = next_committed_projection
             self._restored_committed_line_count = next_restored_committed_line_count
@@ -1019,7 +1040,10 @@ class PureTui(
                     len(lines),
                 )
                 self._record_committed_live_history(width)
-            self._committed_tree_revision = dock.tree.revision
+            if restored_range is None and tree_changed_before_apply:
+                self._committed_tree_revision = submitted_tree_revision
+            else:
+                self._committed_tree_revision = dock.tree.revision
 
         try:
             width = self._frame_width()
@@ -1047,11 +1071,14 @@ class PureTui(
                     next_restored_startup_flushed = True
 
                 current_end = len(dock.tree.root.children)
-                added_lines = (
-                    dock.tree.render_root_slice(width, restored_end, current_end)
-                    if current_end > restored_end
-                    else []
-                )
+                if current_end > restored_end:
+                    added_lines, added_line_map = dock.tree.render_root_slice_with_line_map(
+                        width,
+                        restored_end,
+                        current_end,
+                    )
+                else:
+                    added_lines, added_line_map = [], {}
                 if (
                     self._tty
                     and not self._has_rendered_frame
@@ -1085,6 +1112,10 @@ class PureTui(
                             ),
                             len(added_lines),
                         )
+                flush_limit = min(
+                    self._pending_stream_flush_limit(added_line_map, flush_limit),
+                    len(added_lines),
+                )
 
                 restored_lines: list[str] = []
                 if (
@@ -1123,6 +1154,7 @@ class PureTui(
                             dock.safe_flush_line_count(width, 0),
                             total,
                         )
+                flush_limit = self._pending_stream_flush_limit(line_map, flush_limit)
 
                 previous_projection = next_committed_projection
                 if (
@@ -1146,6 +1178,7 @@ class PureTui(
                     previous_projection,
                 )
 
+            submitted_tree_revision = dock.tree.revision
             if not flush_lines and not echo_lines:
                 apply_state()
                 return None

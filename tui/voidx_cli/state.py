@@ -201,6 +201,7 @@ class ExternalState:
 class TerminalState:
     stdin_fd: int | None = None
     tty: bool = False
+    terminal_writer_required: bool = False
     old_termios: list | None = None
     windows_stdout_mode: int | None = None
     stdin_reader: asyncio.StreamReader | None = None
@@ -349,6 +350,7 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_skills_api_provider": ("_external_state", "skills_api_provider"),
     "_stdin_fd": ("_terminal_state", "stdin_fd"),
     "_tty": ("_terminal_state", "tty"),
+    "_terminal_writer_required": ("_terminal_state", "terminal_writer_required"),
     "_old_termios": ("_terminal_state", "old_termios"),
     "_windows_stdout_mode": ("_terminal_state", "windows_stdout_mode"),
     "_stdin_stream_reader": ("_terminal_state", "stdin_reader"),

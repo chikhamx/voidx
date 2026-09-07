@@ -16,7 +16,11 @@ from rich.text import Text
 
 from voidx.presentation.output.dock import dock
 from voidx.presentation.output.dock.formatting import text_from_line
-from .helpers import _rendered_row_count
+from .helpers import (
+    _BEGIN_SYNCHRONIZED_OUTPUT,
+    _END_SYNCHRONIZED_OUTPUT,
+    _rendered_row_count,
+)
 from .layout import (
     BottomViewportPlan,
     LayoutSnapshot,
@@ -61,7 +65,10 @@ class _FrameRendererMixin:
         return max((self._console.width or 80) - 1, 20)
 
     def _terminal_writer_worker_mode(self) -> bool:
-        return bool(getattr(self._terminal_writer, "worker_mode", False))
+        return bool(
+            getattr(self, "_terminal_writer_required", False)
+            or getattr(self._terminal_writer, "worker_mode", False)
+        )
 
     def _layout_snapshot_for_frame(
         self,
@@ -274,6 +281,7 @@ class _FrameRendererMixin:
             "kind": kind,
             "token": token,
             "scroll_epoch": self._scroll_epoch,
+            "after_generation": self._submitted_generation,
             "apply_state": apply_state,
         }
         self._pending_terminal_operations[token_key] = operation
@@ -294,10 +302,34 @@ class _FrameRendererMixin:
             self._pending_terminal_operations.pop(token_key, None)
             self._handle_terminal_submission_failure(operation["kind"], exc)
         else:
-            self._pending_terminal_operations.pop(token_key, None)
+            self._apply_pending_terminal_operation(token)
+
+    def _apply_pending_terminal_operation(self, token) -> None:
+        operation = self._pending_terminal_operations.pop(id(token), None)
+        if operation is not None:
             apply_state = operation.get("apply_state")
             if apply_state is not None:
                 apply_state()
+
+    def _apply_completed_barriers_before_frame(self, generation: int) -> None:
+        # Future completion is queued before FrameResult, but its waiter may run later.
+        for operation in tuple(self._pending_terminal_operations.values()):
+            if (
+                operation["kind"] != "barrier"
+                or operation["after_generation"] >= generation
+            ):
+                continue
+            token = operation["token"]
+            future = getattr(token, "_future", None)
+            if future is None:
+                future = getattr(token, "future", None)
+            if (
+                isinstance(future, asyncio.Future)
+                and future.done()
+                and not future.cancelled()
+                and future.exception() is None
+            ):
+                self._apply_pending_terminal_operation(token)
 
     def _submit_terminal_barrier(
         self,
@@ -343,6 +375,7 @@ class _FrameRendererMixin:
             self._pending_layout_force_full.pop(result.generation, None)
             frame_states.pop(result.generation, None)
             return
+        self._apply_completed_barriers_before_frame(result.generation)
         force_full = self._pending_layout_force_full.get(result.generation, False)
         frame_state = frame_states.get(result.generation)
         if frame_state is not None:
@@ -399,7 +432,6 @@ class _FrameRendererMixin:
             self._full_frame_repaint_pending = False
             force_full = (
                 self._full_layout_invalidated
-                or self._bottom_region_dirty
                 or resize_frame
                 or clear_screen
                 or full_frame_repaint
@@ -631,10 +663,11 @@ class _FrameRendererMixin:
                 force_full = force_full or bool(scroll_ansi)
                 start_row = max(visible_after + 1, 1)
                 try:
+                    payload: list[str] = []
                     if clear_screen:
-                        self._terminal_writer.write("\x1b[2J\x1b[H")
+                        payload.append("\x1b[2J\x1b[H")
                     if scroll_ansi:
-                        self._terminal_writer.write(scroll_ansi)
+                        payload.append(scroll_ansi)
                         self._invalidate_frame_cache()
                         self._invalidate_layout("scroll")
 
@@ -683,7 +716,7 @@ class _FrameRendererMixin:
                             lines_up=lines_up,
                             cursor_ansi=cursor_ansi,
                         )
-                    changed_lines, strategy = self._render_sync_layout_diff(
+                    frame_ansi, changed_lines, strategy = self._sync_layout_payload(
                         start_row=start_row,
                         previous_lines=self._prev_frame_lines,
                         new_lines=target_lines,
@@ -691,9 +724,10 @@ class _FrameRendererMixin:
                         snapshot=snapshot,
                         force_full=force_full,
                     )
+                    payload.append(frame_ansi)
                     if physical is not None or not render_failed:
-                        self._terminal_writer.write(cursor_ansi)
-                    self._terminal_writer.flush()
+                        payload.append(cursor_ansi)
+                    self._write_sync_payload("".join(payload))
                 except BaseException as exc:
                     self._handle_sync_terminal_failure(exc)
                     raise
@@ -755,11 +789,11 @@ class _FrameRendererMixin:
                     ) = committed_before_clear
                 dock.request_clear_screen()
 
-    def _render_full(self, start_row: int, lines: list[str]) -> tuple[int, str]:
-        self._terminal_writer.write(f"\x1b[{start_row};1H")
-        self._terminal_writer.write("\x1b[J")
-        self._terminal_writer.write("\n".join(lines))
-        return len(lines), "full"
+    def _write_sync_payload(self, ansi: str) -> None:
+        self._terminal_writer.write(
+            _BEGIN_SYNCHRONIZED_OUTPUT + ansi + _END_SYNCHRONIZED_OUTPUT
+        )
+        self._terminal_writer.flush()
 
     def _render_diff(
         self,
@@ -788,8 +822,8 @@ class _FrameRendererMixin:
             self._terminal_writer.write("\x1b[K")
         return len(changed), "diff-tail-clear" if wrote_tail_clear else "diff"
 
-    def _render_sync_layout_diff(
-        self,
+    @staticmethod
+    def _sync_layout_payload(
         *,
         start_row: int,
         previous_lines: list[str] | None,
@@ -797,24 +831,26 @@ class _FrameRendererMixin:
         previous_snapshot: LayoutSnapshot | None,
         snapshot: LayoutSnapshot | None,
         force_full: bool,
-    ) -> tuple[int, str]:
+    ) -> tuple[str, int, str]:
+        def full() -> tuple[str, int, str]:
+            ansi = f"\x1b[{start_row};1H\x1b[J" + "\n".join(new_lines)
+            return ansi, len(new_lines), "full"
+
         if snapshot is None or force_full or previous_lines is None:
-            return self._render_full(start_row, new_lines)
+            return full()
         if previous_snapshot is None:
-            return self._render_full(start_row, new_lines)
+            return full()
 
         layout_diff = diff_layout(previous_snapshot, snapshot)
         if layout_diff.kind == "full":
-            return self._render_full(start_row, new_lines)
-        if layout_diff.kind == "unchanged":
-            return 0, "unchanged"
-        if layout_diff.kind == "cursor":
-            return 0, "cursor"
+            return full()
+        if layout_diff.kind in {"unchanged", "cursor"}:
+            return "", 0, layout_diff.kind
+
+        payload: list[str] = []
 
         def write_row(row: int, line: str) -> None:
-            self._terminal_writer.write(f"\x1b[{row};1H")
-            self._terminal_writer.write(line)
-            self._terminal_writer.write("\x1b[K")
+            payload.append(f"\x1b[{row};1H{line}\x1b[K")
 
         if layout_diff.kind == "regions":
             rows = {
@@ -834,7 +870,7 @@ class _FrameRendererMixin:
                     continue
                 write_row(row, new_lines[new_index])
                 changed_rows.append(row)
-            return len(changed_rows), "diff"
+            return "".join(payload), len(changed_rows), "diff"
 
         first_row = max(
             snapshot.frame_start_row,
@@ -843,12 +879,14 @@ class _FrameRendererMixin:
         end_row = snapshot.frame_start_row + snapshot.frame_rows
         for row in range(first_row, end_row):
             write_row(row, new_lines[row - snapshot.frame_start_row])
-        for row in layout_diff.old_tail_rows:
-            self._terminal_writer.write(f"\x1b[{row};1H")
-            self._terminal_writer.write("\x1b[K")
+        old_end_row = previous_snapshot.frame_start_row + previous_snapshot.frame_rows
+        tail_rows = tuple(range(end_row, max(end_row, old_end_row)))
+        for row in tail_rows:
+            write_row(row, "")
         return (
-            max(0, end_row - first_row) + len(layout_diff.old_tail_rows),
-            "diff-suffix" if not layout_diff.old_tail_rows else "diff-tail-clear",
+            "".join(payload),
+            max(0, end_row - first_row) + len(tail_rows),
+            "diff-suffix" if not tail_rows else "diff-tail-clear",
         )
 
     def _invalidate_frame_cache(self) -> None:
@@ -1126,28 +1164,25 @@ class _FrameRendererMixin:
             return False
         rows = changed_rows | forced_rows
         written_rows = 0
-        try:
-            for row in sorted(rows):
-                new_index = row - snapshot.frame_start_row
-                old_index = row - previous.frame_start_row
-                if not 0 <= new_index < len(new_lines):
-                    return False
-                forced = row in forced_rows
-                if (
-                    not forced
-                    and 0 <= old_index < len(previous_lines)
-                    and previous_lines[old_index] == new_lines[new_index]
-                ):
-                    continue
-                self._terminal_writer.write(f"\x1b[{row};1H")
-                self._terminal_writer.write(new_lines[new_index])
-                self._terminal_writer.write("\x1b[K")
-                written_rows += 1
+        payload: list[str] = []
+        for row in sorted(rows):
+            new_index = row - snapshot.frame_start_row
+            old_index = row - previous.frame_start_row
+            if not 0 <= new_index < len(new_lines):
+                return False
+            forced = row in forced_rows
+            if (
+                not forced
+                and 0 <= old_index < len(previous_lines)
+                and previous_lines[old_index] == new_lines[new_index]
+            ):
+                continue
+            payload.append(f"\x1b[{row};1H{new_lines[new_index]}\x1b[K")
+            written_rows += 1
 
-            self._terminal_writer.write(
-                f"\x1b[{snapshot.cursor_row};{snapshot.cursor_col}H"
-            )
-            self._terminal_writer.flush()
+        payload.append(f"\x1b[{snapshot.cursor_row};{snapshot.cursor_col}H")
+        try:
+            self._write_sync_payload("".join(payload))
         except BaseException as exc:
             self._handle_sync_terminal_failure(exc)
             raise
@@ -1879,21 +1914,18 @@ class _FrameRendererMixin:
         # Transcript — only render uncommitted (active) lines.
         # Restored history stays in the viewport; only new, uncommitted root
         # blocks participate in the active frame after the restore boundary.
-        committed = self._committed_line_count
         restored_range = self._sync_restored_render_state()
         if restored_range is not None:
             restored_start, restored_end = restored_range
             history_start = restored_start if self._restored_startup_flushed else 0
             current_end = len(dock.tree.root.children)
-            tail_limit = max(body_limit * 2, body_limit + 32)
             if self._restored_history_retired:
                 history_lines, history_line_map = [], {}
             else:
-                history_lines, history_line_map = dock.tree.render_root_tail_with_line_map(
+                history_lines, history_line_map = dock.tree.render_root_slice_with_line_map(
                     width,
                     history_start,
                     restored_end,
-                    tail_limit,
                 )
             added_lines, added_line_map = dock.tree.render_root_slice_with_line_map(
                 width,
@@ -1916,28 +1948,18 @@ class _FrameRendererMixin:
                 if added_line_map.get(index) != thinking_node_id
             )
         else:
-            use_tail = committed == 0 and dock.tree.node_count >= 256
-            if use_tail:
-                tail_limit = max(body_limit * 2, body_limit + 32)
-                tree_lines, tail_line_map = dock.tree.render_tail_with_line_map(
-                    width,
-                    tail_limit,
-                )
-                thinking_node_id = dock.active_thinking_stream_node_id()
-                active_lines = [
-                    line
-                    for index, line in enumerate(tree_lines)
-                    if tail_line_map.get(index) != thinking_node_id
-                ]
-            else:
-                tree_lines, line_map = dock.tree.render_with_line_map(width)
-                thinking_line_ids = dock.active_thinking_stream_line_ids(width)
-                active_indexes = self._active_identity_line_indexes(tree_lines, line_map)
-                active_lines = [
-                    tree_lines[index]
-                    for index in active_indexes
-                    if index not in thinking_line_ids
-                ]
+            tree_lines, line_map = dock.tree.render_with_line_map(width)
+            thinking_line_ids = dock.active_thinking_stream_line_ids(width)
+            active_indexes = self._active_identity_line_indexes(tree_lines, line_map)
+            active_lines = [
+                tree_lines[index]
+                for index in active_indexes
+                if index not in thinking_line_ids
+            ]
+
+        if dock.has_active_thinking_stream():
+            while active_lines and not active_lines[-1].strip():
+                active_lines.pop()
 
         elements: list = self._transcript_elements_for_rows(
             active_lines,
@@ -1947,7 +1969,7 @@ class _FrameRendererMixin:
         full_transcript_elements = [
             self._safe_text_from_line(line) for line in active_lines
         ]
-        full_todo_elements = self._render_pinned_todo_elements(width)
+        full_todo_elements = pinned_todo_elements
 
         elements.extend(pinned_todo_elements)
         elements.extend(busy_activity_elements)

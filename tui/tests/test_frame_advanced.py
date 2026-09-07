@@ -497,7 +497,7 @@ def test_transcript_viewport_conversion_does_not_scan_full_history(tmp_path, mon
 
 
 
-def test_render_impl_uses_tree_tail_for_restored_long_history(tmp_path, monkeypatch):
+def test_render_impl_bounds_restored_viewport_without_full_tree_render(tmp_path, monkeypatch):
     tui = _tui(tmp_path)
     tui._console = Console(file=None, force_terminal=False, width=80, height=12, _environ={})
     restored = type(dock.tree)()
@@ -1923,6 +1923,52 @@ async def test_worker_commit_watermark_waits_for_completed_writer_token(
 
 
 
+
+
+@pytest.mark.asyncio
+async def test_worker_commit_does_not_reappend_stream_node_changed_before_token_completion(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitWriter()
+    tui._terminal_writer = writer
+    dock.begin_capture()
+    dock.start_turn("user")
+    text = "stable assistant marker\n\n" + "".join(
+        f"- item {index} with long details\n" for index in range(20)
+    )
+    dock.set_stream(text, refresh=False)
+    work_item = dock.prepare_stream_commit(refresh=False)
+    assert work_item is not None
+
+    from voidx.presentation.output.dock.stream import build_canonical_stream_projection
+
+    projection = build_canonical_stream_projection(work_item)
+    token = tui._flush_committed(force=True)
+    assert token is writer.tokens[0]
+    assert writer.commits[0]["ansi"].count("stable assistant marker") == 0
+
+    assert dock.apply_stream_commit(work_item, projection, refresh=False) is True
+    token.future.set_result(None)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    dock.append_message("unrelated mutation")
+    tui._flush_committed(force=True)
+
+    assert len(writer.commits) == 2
+    assert "unrelated mutation" in writer.commits[1]["ansi"]
+    assert writer.commits[1]["ansi"].count("stable assistant marker") == 1
+
+
 @pytest.mark.asyncio
 async def test_worker_commit_registers_pending_operation_and_invalidates_layout(
     tmp_path,
@@ -2685,3 +2731,189 @@ def test_sync_local_io_failure_does_not_recurse_into_full_frame(tmp_path, monkey
     assert tui._render_sync_local_frame() is False
     assert fallback_calls == []
     assert tui._terminal_submission_failed is True
+
+
+@pytest.mark.parametrize("startup_flushed", [False, True])
+def test_restored_logical_transcript_is_complete_before_viewport_projection(
+    tmp_path, monkeypatch, startup_flushed
+):
+    monkeypatch.setattr(sys, "stdout", _FakeStdout())
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(force_terminal=True, width=80, height=24, _environ={})
+    dock.tree.new_node(
+        parent=dock.tree.root,
+        node_type="startup",
+        header="STARTUP-PREFIX",
+    )
+    restored = type(dock.tree)()
+    for index in range(260):
+        restored.new_node(
+            parent=restored.root,
+            node_type="message",
+            header=f"RESTORED-{index:03d}",
+            payload={"index": index},
+        )
+    dock.restore_tree(restored, append=True)
+    if startup_flushed:
+        tui._flush_committed(force=True)
+        assert tui._restored_startup_flushed is True
+    dock.tree.new_node(
+        parent=dock.tree.root,
+        node_type="message",
+        header="NEW-AFTER-RESTORE",
+    )
+    nodes_before = tuple(dock.tree.root.children)
+    payloads_before = [dict(node.payload) for node in nodes_before]
+    source_rows = []
+
+    for height in (6, 24, 60):
+        tui._render_impl(height=height, capture_plan=True)
+        logical = tui._render_plan.logical_plan
+        transcript = logical.source_regions[0]
+        plain = Text.from_ansi(transcript.ansi).plain
+        assert all(f"RESTORED-{index:03d}" in plain for index in range(260))
+        assert "NEW-AFTER-RESTORE" in plain
+        assert ("STARTUP-PREFIX" in plain) is not startup_flushed
+        source_rows.append(transcript.rows)
+        physical = tui._physical_viewport_for_frame(
+            logical,
+            width=tui._frame_width(),
+            term_height=height,
+            frame_start_row=1,
+        )
+        assert len(tui._physical_target_lines(physical)) <= height
+        assert physical.bottom.region.start_row <= physical.cursor_row <= height
+
+    assert source_rows[0] == source_rows[1] == source_rows[2]
+    assert tuple(dock.tree.root.children) == nodes_before
+    assert [node.payload for node in nodes_before] == payloads_before
+    assert dock.restored_root_child_range() is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["scroll", "resize", "clear"])
+async def test_completed_barrier_waiter_cannot_erase_newly_applied_frame(
+    tmp_path, monkeypatch, boundary
+):
+    from voidx_cli.terminal_writer import FrameResult
+
+    monkeypatch.setattr(
+        shutil, "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 12)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(force_terminal=True, width=80, height=12, _environ={})
+    writer = _DelayedBarrierWriter(asyncio.get_running_loop())
+    tui._terminal_writer = writer
+    if boundary == "scroll":
+        tui._visible_committed_rows = 12
+    elif boundary == "resize":
+        tui._prev_frame_width = 60
+    else:
+        dock.request_clear_screen()
+    applied = []
+    apply = getattr(tui, f"_apply_{boundary}_state")
+
+    def record_apply(*args):
+        applied.append(boundary)
+        apply(*args)
+
+    monkeypatch.setattr(tui, f"_apply_{boundary}_state", record_apply)
+    tui._render_frame()
+    tasks = tuple(op["task"] for op in tui._pending_terminal_operations.values())
+    await asyncio.sleep(0)
+    assert applied == []
+    for token in writer.tokens:
+        token._future.set_result(None)
+    batch = writer.frames[-1]
+    tui._handle_terminal_frame_result(FrameResult(
+        generation=batch.generation,
+        total_lines=len(batch.target_lines),
+        changed_lines=len(batch.target_lines),
+        render_ms=0,
+        strategy="full",
+        applied=True,
+    ))
+    snapshot = tui._applied_layout_snapshot
+    await asyncio.gather(*tasks)
+
+    assert applied == [boundary]
+    assert tui._applied_layout_snapshot is snapshot
+    assert tui._prev_frame_lines == list(batch.target_lines)
+    assert tui._last_render_plan is not None
+    assert tui._pending_terminal_operations == {}
+
+
+class _RequiredWorkerFrameWriter(_WorkerFrameWriter):
+    worker_mode = False
+
+
+def test_worker_owned_tty_frame_never_falls_back_to_sync_writer(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._terminal_writer_required = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _RequiredWorkerFrameWriter()
+    tui._terminal_writer = writer
+
+    tui._render_frame()
+
+    assert len(writer.frames) == 1
+
+
+class _RequiredWorkerCommitWriter(_WorkerCommitWriter):
+    worker_mode = False
+
+
+def test_worker_owned_tty_commit_never_falls_back_to_sync_writer(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._terminal_writer_required = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _RequiredWorkerCommitWriter()
+    tui._terminal_writer = writer
+    tui._has_rendered_frame = True
+    tui._last_frame_start_row = 6
+    tui._prev_frame_lines = ["active frame"]
+    tui._prev_frame_width = 79
+    dock.tree.new_node(
+        parent=dock.tree.root,
+        node_type="message",
+        header="worker-owned commit",
+        collapsed=False,
+    )
+
+    tui._flush_committed(force=True)
+
+    assert len(writer.commits) == 1
+
+
+def test_worker_owned_tty_scroll_never_falls_back_to_sync_writer(tmp_path):
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._terminal_writer_required = True
+    writer = _RequiredWorkerFrameWriter()
+    tui._terminal_writer = writer
+    tui._visible_committed_rows = 5
+
+    assert tui._make_room_for_frame(frame_rows=8, term_height=10) is True
+
+    assert writer.barriers == [
+        {
+            "kind": "scroll",
+            "ansi": "\x1b[10;1H" + "\n" * 3,
+        }
+    ]
+    assert tui._visible_committed_rows == 2

@@ -5,7 +5,10 @@ import re
 import shutil
 import sys
 
+import pytest
+
 from rich.console import Console
+from rich.text import Text
 
 from voidx.presentation.output.dock import dock
 
@@ -126,7 +129,8 @@ def test_render_frame_starts_below_short_committed_history(tmp_path, monkeypatch
     tui._render_frame()
 
     assert tui._last_frame_start_row == 4
-    assert fake_stdout.text.startswith("\x1b[4;1H\x1b[J")
+    assert fake_stdout.text.startswith("\x1b[?2026h\x1b[4;1H\x1b[J")
+    assert fake_stdout.text.endswith("\x1b[?2026l")
 
 
 def test_render_frame_scrolls_visible_committed_history_before_overlap(
@@ -183,7 +187,7 @@ def test_render_frame_scrolls_visible_committed_history_before_overlap(
         assert tui._last_frame_start_row == 3
         assert tui._visible_committed_rows == 2
         clear_pos = fake_stdout.text.find("\x1b[J")
-        assert fake_stdout.text[:clear_pos].startswith("\x1b[12;1H\n\x1b[3;1H")
+        assert fake_stdout.text[:clear_pos] == "\x1b[?2026h\x1b[12;1H\n\x1b[3;1H"
 
 
 def test_flush_committed_does_not_pad_short_history_to_bottom(tmp_path, monkeypatch):
@@ -269,6 +273,37 @@ def test_pending_assistant_block_does_not_flush_internal_separator(tmp_path, mon
         raw_args={"file_path": "x.py"},
     )
     dock.finish_tool_node(tool, "Read", 0.1, True)
+    tui._flush_committed(force=True)
+    committed_line_count = tui._committed_line_count
+    visible_committed_rows = tui._visible_committed_rows
+    fake_stdout.text = ""
+
+    dock.set_stream("second assistant")
+    tui._flush_committed()
+
+    assert tui._committed_line_count == committed_line_count
+    assert tui._visible_committed_rows == visible_committed_rows
+    assert fake_stdout.text == ""
+
+
+def test_pending_assistant_after_assistant_does_not_flush_internal_separator(
+    tmp_path, monkeypatch
+):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 30)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=fake_stdout, force_terminal=True, width=80, height=30, _environ={})
+    dock.begin_capture()
+    dock.start_turn("hello")
+    dock.set_stream("first assistant")
+    dock.commit_stream(refresh=False)
     tui._flush_committed(force=True)
     committed_line_count = tui._committed_line_count
     visible_committed_rows = tui._visible_committed_rows
@@ -518,3 +553,131 @@ def test_active_frame_reconciles_in_place_tool_growth_by_node_identity(
     assert "added two" in rendered
     assert "first narration" not in rendered
     assert "second narration" not in rendered
+
+
+@pytest.mark.parametrize("node_count", [255, 256, 260])
+def test_logical_transcript_keeps_all_retained_nodes_before_viewport_projection(
+    tmp_path, node_count
+):
+    tui = _tui(tmp_path)
+    tui._console = Console(force_terminal=True, width=80, height=24, _environ={})
+    nodes = tuple(
+        dock.tree.new_node(
+            parent=dock.tree.root,
+            node_type="message",
+            header=f"SOURCE-{index:03d}",
+            payload={"index": index},
+        )
+        for index in range(node_count)
+    )
+    logical_rows = []
+    for height in (6, 24, 60):
+        tui._render_impl(height=height, capture_plan=True)
+        logical = tui._render_plan.logical_plan
+        transcript = logical.source_regions[0]
+        plain = Text.from_ansi(transcript.ansi).plain
+        assert transcript.visual_rows >= node_count
+        assert all(f"SOURCE-{index:03d}" in plain for index in range(node_count))
+        logical_rows.append(transcript.rows)
+
+        physical = tui._physical_viewport_for_frame(
+            logical,
+            width=tui._frame_width(),
+            term_height=height,
+            frame_start_row=1,
+        )
+        target = tui._physical_target_lines(physical)
+        assert len(target) == physical.frame_rows <= height
+        assert physical.bottom.region.start_row <= physical.cursor_row <= height
+        assert "SOURCE-000" not in "\n".join(target)
+
+    assert logical_rows[0] == logical_rows[1] == logical_rows[2]
+    assert tuple(dock.tree.root.children) == nodes
+    assert [node.payload for node in nodes] == [
+        {"index": index} for index in range(node_count)
+    ]
+    assert tui._committed_line_count == 0
+
+
+def test_logical_transcript_does_not_replay_committed_nodes_after_resize(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(sys, "stdout", _FakeStdout())
+    tui = _tui(tmp_path)
+    tui._tty = False
+    tui._console = Console(force_terminal=True, width=80, height=24, _environ={})
+    for index in range(260):
+        dock.tree.new_node(
+            parent=dock.tree.root,
+            node_type="message",
+            header=f"COMMITTED-{index:03d} " + "wide content " * 12,
+        )
+    tui._flush_committed(force=True)
+    committed_projection = tui._committed_projection
+    assert committed_projection is not None
+    dock.tree.new_node(
+        parent=dock.tree.root,
+        node_type="message",
+        header="UNCOMMITTED-LATEST",
+    )
+
+    for width, height in ((80, 6), (40, 60), (80, 24)):
+        tui._console = Console(force_terminal=True, width=width, height=height, _environ={})
+        tui._render_impl(height=height, capture_plan=True)
+        plain = Text.from_ansi(tui._render_plan.logical_plan.source_regions[0].ansi).plain
+        assert all(f"COMMITTED-{index:03d}" not in plain for index in range(260))
+        assert "UNCOMMITTED-LATEST" in plain
+        assert tui._committed_projection is committed_projection
+
+
+
+def test_todo_physical_viewport_matches_bounded_frame_rows(tmp_path):
+    tui = _tui(tmp_path)
+    tui._console = Console(
+        file=None,
+        force_terminal=True,
+        width=80,
+        height=7,
+        _environ={},
+    )
+    dock.set_todo_state(
+        "2/4 done · 1 active · 1 pending",
+        [
+            {"content": "finished one", "status": "done"},
+            {"content": "finished two", "status": "done"},
+            {"content": "current task", "status": "active"},
+            {"content": "next task", "status": "pending"},
+        ],
+    )
+
+    rendered = tui._render_impl(height=7, capture_plan=True)
+    actual = tui._capture_renderable(rendered, tui._frame_width()).splitlines()
+    logical = tui._render_plan.logical_plan
+    physical = tui._physical_viewport_for_frame(
+        logical,
+        width=tui._frame_width(),
+        term_height=7,
+        frame_start_row=1,
+    )
+    target = tui._physical_target_lines(physical)
+
+    assert actual == target
+
+
+
+def test_active_thinking_stream_does_not_leave_separator_in_transcript(
+    tmp_path, monkeypatch
+):
+    tui = _tui(tmp_path)
+    tui._console = Console(file=None, force_terminal=True, width=80, height=12, _environ={})
+    dock.begin_capture()
+    dock.start_turn("question")
+    dock.set_stream("checking", phase="thinking")
+
+    tui._render_impl(height=12, capture_plan=True)
+
+    logical = tui._render_plan.logical_plan
+    assert logical is not None
+    transcript = logical.source_regions[0]
+    assert transcript.visual_rows == 1
+    assert all(row.strip() for row in transcript.rows)

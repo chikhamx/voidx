@@ -108,12 +108,37 @@ def test_ai_and_tool_blocks_are_compact_while_other_blocks_are_spaced():
 
     assert first_tool == first_text + 1
     assert second_tool == first_tool + 1
-    assert second_text == second_tool + 1
-    assert third_text == second_text + 1
+    assert second_text == second_tool + 2
+    assert plain_lines[second_text - 1] == ""
+    assert third_text == second_text + 2
+    assert plain_lines[third_text - 1] == ""
     assert plain_lines[third_text + 1] == ""
     assert clarify == third_text + 2
     assert plain_lines[clarify + 1] == ""
     assert checkpoint == clarify + 2
+
+
+
+
+def test_assistant_messages_start_after_blank_line_independent_of_previous_node():
+    from voidx.presentation.output.tree import OutputTree
+
+    tree = OutputTree()
+    assistant = tree.new_node(tree.root, node_type="assistant", header="")
+    tree.new_node(assistant, node_type="tool_call", header="● Read(\"src/a.py\")")
+    tree.new_node(assistant, node_type="assistant", header="读取完成。")
+    tree.new_node(assistant, node_type="assistant", header="继续说明。")
+
+    plain_lines = [_rich_plain(line) for line in tree.render(100)]
+    tool_index = next(index for index, line in enumerate(plain_lines) if "Read" in line)
+    first_message = plain_lines.index("读取完成。")
+    second_message = plain_lines.index("继续说明。")
+
+    assert plain_lines[first_message - 1] == ""
+    assert first_message == tool_index + 2
+    assert plain_lines[second_message - 1] == ""
+    assert second_message == first_message + 2
+
 
 
 def test_thinking_stream_starts_immediately_after_last_tool_call_without_header():
@@ -147,7 +172,7 @@ def test_thinking_stream_starts_immediately_after_last_tool_call_without_header(
     assert all("Thinking" not in line for line in plain_lines)
 
 
-def test_text_stream_after_thinking_stays_adjacent_to_tool_call():
+def test_text_stream_after_thinking_starts_after_blank_line():
     test_dock = dock
     test_dock.begin_capture()
     try:
@@ -168,7 +193,8 @@ def test_text_stream_after_thinking_stays_adjacent_to_tool_call():
         bash_index = next(index for index, line in enumerate(plain_lines) if "Bash" in line)
         answer_index = next(index for index, line in enumerate(plain_lines) if "final answer" in line)
 
-        assert answer_index == bash_index + 1
+        assert plain_lines[answer_index - 1] == ""
+        assert answer_index == bash_index + 2
     finally:
         test_dock.deactivate()
         test_dock.reset()

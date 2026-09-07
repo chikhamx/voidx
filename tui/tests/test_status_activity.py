@@ -670,7 +670,9 @@ def test_busy_regular_submit_after_typing_preserves_activity_line(tmp_path, monk
 
     output = _rich_plain(fake_stdout.text)
     assert tui._queue.get_nowait() == "hello"
-    assert "Working (5s)" in output
+    assert "Working (5s)" not in output
+    assert "\x1b[J" not in fake_stdout.text
+    assert "Working (5s)" in _rich_plain("\n".join(tui._prev_frame_lines))
     assert "hello" not in output
     assert tui._bottom_region_dirty is False
 
@@ -714,7 +716,9 @@ async def test_busy_guide_submit_preserves_activity_line(tmp_path, monkeypatch):
 
     output = _rich_plain(fake_stdout.text)
     assert requests == [{"kind": "guide", "text": "use TypeScript"}]
-    assert "Working (5s)" in output
+    assert "Working (5s)" not in output
+    assert "\x1b[J" not in fake_stdout.text
+    assert "Working (5s)" in _rich_plain("\n".join(tui._prev_frame_lines))
     assert "use TypeScript" not in output
     assert tui._bottom_region_dirty is False
 
