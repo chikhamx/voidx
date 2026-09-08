@@ -1,3 +1,5 @@
+> **Status: Done** — Archived on 2026-09-08.
+
 ---
 name: recursive-user-summary-replacement
 display_name: 递归 User Summary 消息替换压缩
