@@ -223,6 +223,15 @@ class SessionSlashAdapter:
     async def regenerate_session_title(self): return await self._execution.regenerate_session_title()
     async def restore_transcript_snapshot(self, *, append=False): return await self._execution.restore_transcript_snapshot(append=append)
     async def resume_session(self, session): return await self._execution.resume_session(session)
+    async def clear_current_session(self): return await self._execution.clear_current_session()
+    async def prepare_session_switch(self):
+        prepare = getattr(self._execution, "prepare_session_switch", None)
+        if callable(prepare):
+            result = prepare()
+        else:
+            result = self._execution.presentation_ui.prepare_session_switch()
+        if hasattr(result, "__await__"):
+            await result
     async def set_session_title(self, title): return await self._execution.set_session_title(title)
     async def show_startup(self, *, prefer_direct=False): return await self._execution.show_startup(prefer_direct=prefer_direct)
 

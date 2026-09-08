@@ -301,10 +301,18 @@ class SessionCommandsMixin:
             self.session_port.ui.error(f"Session not found: {sid}")
             return
 
-        await self.session_port.resume_session(session)
+        current = self.session_port.session
+        if current is not None and getattr(current, "id", None) == session.id:
+            self.session_port.ui.print("[dim]That is already the current session.[/dim]")
+            return
+
+        await self.session_port.clear_current_session()
+        self.session_port.ui_state.session_tracker.clear()
         active_dock = self.session_port.ui_state.get_dock()
         if active_dock is not None:
             active_dock.reset()
+        await self.session_port.prepare_session_switch()
+        await self.session_port.resume_session(session)
         await self._restore_transcript_snapshot(append=True)
         self.session_port.ui.print(f"[dim]Resumed: {session.id} — {session.title} ({session.message_count} msgs)[/dim]")
 

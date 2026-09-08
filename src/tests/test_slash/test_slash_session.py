@@ -360,6 +360,12 @@ async def test_session_resume_alias_resumes_savedsession(monkeypatch, isolated_m
             ("Resume Me", "2026-06-15T00:00:00+00:00", session.id),
         )
 
+        async def clear_current_session() -> None:
+            calls.append("clear")
+
+        async def prepare_session_switch() -> None:
+            calls.append("terminal-clear")
+
         async def resume_session(resumed) -> bool:
             calls.append(f"resume:{resumed.id}")
             return True
@@ -369,17 +375,107 @@ async def test_session_resume_alias_resumes_savedsession(monkeypatch, isolated_m
             return True
 
         graph = command_context(
+            clear_current_session=clear_current_session,
+            prepare_session_switch=prepare_session_switch,
             resume_session=resume_session,
             restore_transcript_snapshot=restore_transcript_snapshot,
         )
 
         assert await SlashHandler(graph).dispatch(f"/session resume {session.id}") is True
 
-        assert calls == [f"resume:{session.id}", "restore:True"]
+        assert calls == [
+            "clear",
+            "terminal-clear",
+            f"resume:{session.id}",
+            "restore:True",
+        ]
         assert any(f"Resumed: {session.id}" in line and "Resume Me" in line for line in output)
     finally:
         await delete_session(session.id)
 
+
+
+@pytest.mark.asyncio
+async def test_session_resume_clears_current_session_before_loading_target(monkeypatch):
+    output = _capture_output(monkeypatch)
+    target = SimpleNamespace(
+        id="target-session",
+        title="Target session",
+        workspace="/tmp/target",
+        message_count=4,
+    )
+    calls: list[str] = []
+
+    async def clear_current_session() -> None:
+        calls.append("clear")
+
+    async def prepare_session_switch() -> None:
+        calls.append("terminal-clear")
+
+    async def resume_session(session) -> None:
+        calls.append(f"resume:{session.id}")
+
+    async def restore_transcript_snapshot(*, append: bool = False) -> bool:
+        calls.append(f"restore:{append}")
+        return True
+
+    class Repository:
+        async def get_session(self, session_id: str):
+            calls.append(f"get:{session_id}")
+            return target
+
+    graph = command_context(
+        clear_current_session=clear_current_session,
+        prepare_session_switch=prepare_session_switch,
+        resume_session=resume_session,
+        restore_transcript_snapshot=restore_transcript_snapshot,
+    )
+
+    assert await SlashHandler(
+        graph,
+        session_repository=Repository(),
+    ).dispatch("/resume target-session") is True
+
+    assert calls == [
+        "get:target-session",
+        "clear",
+        "terminal-clear",
+        "resume:target-session",
+        "restore:True",
+    ]
+    assert any("Resumed: target-session" in line for line in output)
+
+
+@pytest.mark.asyncio
+async def test_session_resume_does_not_clear_same_current_session(monkeypatch):
+    output = _capture_output(monkeypatch)
+    current = SimpleNamespace(id="current-session")
+    calls: list[str] = []
+
+    async def clear_current_session() -> None:
+        calls.append("clear")
+
+    class Repository:
+        async def get_session(self, session_id: str):
+            return SimpleNamespace(
+                id=session_id,
+                title="Current session",
+                workspace=".",
+                message_count=2,
+            )
+
+    graph = command_context(
+        session=current,
+        clear_current_session=clear_current_session,
+    )
+
+    assert await SlashHandler(
+        graph,
+        session_repository=Repository(),
+    ).dispatch("/resume current-session") is True
+
+    assert calls == []
+    assert any("already the current session" in line for line in output)
 
 def test_session_namespace_commands_are_in_palette():
     assert ("/session list", "List saved sessions") in COMMANDS

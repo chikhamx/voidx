@@ -124,3 +124,12 @@ class PresentationUiAdapter:
         from voidx.presentation.output.console import format_tool_title
 
         return format_tool_title(tool_name)
+
+    async def prepare_session_switch(self) -> None:
+        frontend = self._status_frontend
+        prepare = getattr(frontend, "prepare_session_switch", None)
+        if not callable(prepare):
+            return
+        result = prepare()
+        if inspect.isawaitable(result):
+            await result

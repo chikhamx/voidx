@@ -263,6 +263,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
             self._tree = tree
         self._settled_node_ids.clear()
         self._unsettled_node_ids.clear()
+        self._normalize_restored_tree()
         self._mark_tree_settled()
         self._reset_runtime_nodes()
         self._todo_state = None
@@ -271,6 +272,21 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._sync_transcript_turn_id_allocator()
         self._needs_force_flush = False
         self.refresh()
+
+    def _normalize_restored_tree(self) -> None:
+        stack = list(self._tree.root.children)
+        while stack:
+            node = stack.pop()
+            node.payload.update(
+                lifecycle="completed",
+                active=False,
+                terminal=True,
+                render_pending=False,
+            )
+            node.payload.pop("phase", None)
+            node.payload.pop("stream", None)
+            stack.extend(node.children)
+
 
     def _sync_transcript_turn_id_allocator(self) -> None:
         used_ids: set[int] = set()
