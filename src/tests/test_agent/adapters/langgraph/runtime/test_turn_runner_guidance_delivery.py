@@ -166,7 +166,6 @@ def _make_successful_host(guidance: _RecordingGuidance) -> SimpleNamespace:
         _pending_summary=None,
         _session_date="",
         _runtime_guards=None,
-        _pending_turn_stop_commit=None,
         _any_messages_sent=False,
         _plan_mode=False,
         model=None,

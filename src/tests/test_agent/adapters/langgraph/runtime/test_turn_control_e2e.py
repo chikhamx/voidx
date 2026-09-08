@@ -1,15 +1,15 @@
+"""End-to-end tests for turn_init and plain-text completion."""
+
 import asyncio
-"""E2e tests for the 13 required test cases from the design doc."""
 
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 
-from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
+from tests.test_agent.adapters.langgraph.runtime.stream_llm_helpers import FakeRenderer
 from voidx.agent.adapters.langgraph.runtime.turn_control import TURN_TOOL_DEFINITION
 from voidx.config import Config
 from voidx.llm.domain.model import ModelConfig
-from tests.test_agent.adapters.langgraph.runtime.stream_llm_helpers import FakeRenderer
 
 
 class ScriptedStreamingModel:
@@ -23,26 +23,38 @@ class ScriptedStreamingModel:
         return self
 
     async def astream(self, messages):
-        idx = self.call_index
+        index = self.call_index
         self.call_index += 1
-        if idx >= len(self.scripts):
+        if index >= len(self.scripts):
             pytest.fail(
-                f"Unexpected LLM call {idx + 1}; "
+                f"Unexpected LLM call {index + 1}; "
                 f"only {len(self.scripts)} scripted responses were provided"
             )
-        for chunk in self.scripts[idx]:
+        for chunk in self.scripts[index]:
             yield chunk
 
 
-def _turn_args(operation: str = "stop", goal: str = "") -> dict[str, str]:
-    return {"operation": operation, "params": None if operation == "stop" else {"goal": goal}}
-
-
-def _turn_chunk(decision: str = "stop") -> AIMessageChunk:
-    args = _turn_args() if decision == "stop" else {"decision": decision}
+def _turn_init_chunk(goal: str = "Fix the issue") -> AIMessageChunk:
     return AIMessageChunk(
         content="",
-        tool_calls=[{"name": "turn", "args": args, "id": "tc1", "type": "tool_call"}],
+        tool_calls=[{
+            "name": "turn_init",
+            "args": {"goal": goal},
+            "id": "tc-init",
+            "type": "tool_call",
+        }],
+    )
+
+
+def _legacy_turn_chunk() -> AIMessageChunk:
+    return AIMessageChunk(
+        content="",
+        tool_calls=[{
+            "name": "turn",
+            "args": {"operation": "stop", "params": None},
+            "id": "tc-legacy",
+            "type": "tool_call",
+        }],
     )
 
 
@@ -53,17 +65,7 @@ def _text_chunk(text: str) -> AIMessageChunk:
 def _regular_tool_chunk() -> AIMessageChunk:
     return AIMessageChunk(
         content="",
-        tool_calls=[{"name": "read", "args": {"file_path": "x.py"}, "id": "tc2", "type": "tool_call"}],
-    )
-
-
-def _mixed_chunk() -> AIMessageChunk:
-    return AIMessageChunk(
-        content="",
-        tool_calls=[
-            {"name": "read", "args": {"file_path": "x.py"}, "id": "tc3", "type": "tool_call"},
-            {"name": "turn", "args": _turn_args(), "id": "tc4", "type": "tool_call"},
-        ],
+        tool_calls=[{"name": "read", "args": {"file_path": "x.py"}, "id": "tc-read", "type": "tool_call"}],
     )
 
 
@@ -75,44 +77,33 @@ def _make_graph(tmp_path, model, monkeypatch, provider="openai"):
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     monkeypatch.setattr(asyncio, "sleep", fail_on_retry)
-
     graph = make_langgraph_execution(
         Config(
             model=ModelConfig(provider=provider, model="test-model"),
             workspace=str(tmp_path),
         ),
-        api_key="test-key",
+        api_key=None,
     )
     graph.model = model
     return graph
 
 
-# ── Test 7: regular tool call resets missing-turn count ─────────────────────
-
-
 @pytest.mark.asyncio
-async def test_regular_tool_call_resets_missing_turn_count(tmp_path, monkeypatch):
+async def test_regular_tool_call_is_followed_by_plain_text_on_next_turn(tmp_path, monkeypatch):
     model = ScriptedStreamingModel([
-        [_text_chunk("First provisional.")],
         [_regular_tool_chunk()],
         [_text_chunk("Final answer.")],
-        [_turn_chunk()],
     ])
     graph = _make_graph(tmp_path, model, monkeypatch)
 
-    # First _call_llm: plain text → first miss prompt → regular tool call
     result1 = await graph._call_llm({
         "messages": [HumanMessage(content="hello")],
         "step_count": 0,
         "persona": "coordinate",
         "turn_state": "running",
     })
-    # The regular tool call should route to execute, not end
-    assert result1["messages"][0].tool_calls
     assert result1["messages"][0].tool_calls[0]["name"] == "read"
 
-    # Second _call_llm: fresh invocation, count should be reset
-    # The model produces text then turn — should work in 2 calls
     result2 = await graph._call_llm({
         "messages": [HumanMessage(content="hello"), *result1["messages"]],
         "step_count": 1,
@@ -120,14 +111,12 @@ async def test_regular_tool_call_resets_missing_turn_count(tmp_path, monkeypatch
         "turn_state": result1.get("turn_state", "running"),
     })
     assert result2["messages"][0].content == "Final answer."
-    assert not result2["messages"][0].tool_calls
-
-
-# ── Test 10: control call never emits tool permission or execution events ───
+    assert result2["messages"][0].tool_calls == []
+    assert model.call_index == 2
 
 
 @pytest.mark.asyncio
-async def test_turn_call_never_emits_permission_or_execution_events(tmp_path, monkeypatch):
+async def test_turn_init_never_emits_permission_or_execution_events(tmp_path, monkeypatch):
     events_emitted = []
 
     class TrackingEvents:
@@ -159,41 +148,57 @@ async def test_turn_call_never_emits_permission_or_execution_events(tmp_path, mo
             self.console = None
             self.ui = self.Output()
 
+        def invalidate(self):
+            pass
+
         def via_events(self):
             return True
 
     model = ScriptedStreamingModel([
+        [_turn_init_chunk("Inspect the issue")],
         [_text_chunk("The answer.")],
-        [_turn_chunk()],
     ])
     graph = _make_graph(tmp_path, model, monkeypatch)
-
-    # Replace the UI port to track events
     graph._ui = TrackingUi()
 
-    result = await graph._call_llm({
+    await graph._call_llm({
         "messages": [HumanMessage(content="hello")],
         "step_count": 0,
         "persona": "coordinate",
-        "turn_state": "running",
+        "turn_state": "initial",
     })
 
-    # Check that no tool permission or tool execution events were emitted
-    event_types = [type(e).__name__ for e in events_emitted]
+    event_types = [type(event).__name__ for event in events_emitted]
     assert "ToolPermissionRequested" not in event_types
     assert "ToolStarted" not in event_types
     assert "ToolFinished" not in event_types
     assert model.call_index == 2
 
 
-# ── Test 11: successful barrier emits exactly one committed assistant stream ─
+@pytest.mark.asyncio
+async def test_plain_text_emits_one_committed_terminal_message(tmp_path, monkeypatch):
+    model = ScriptedStreamingModel([[_text_chunk("The committed answer.")]])
+    graph = _make_graph(tmp_path, model, monkeypatch)
+
+    result = await graph._call_llm({
+        "messages": [HumanMessage(content="hello")],
+        "step_count": 0,
+        "persona": "coordinate",
+        "turn_state": "running",
+    })
+
+    assert len(result["messages"]) == 1
+    assert isinstance(result["messages"][0], AIMessage)
+    assert result["messages"][0].content == "The committed answer."
+    assert result["messages"][0].tool_calls == []
+    assert model.call_index == 1
 
 
 @pytest.mark.asyncio
-async def test_successful_barrier_emits_one_committed_stream(tmp_path, monkeypatch):
+async def test_legacy_turn_without_text_is_not_executed(tmp_path, monkeypatch):
     model = ScriptedStreamingModel([
-        [_text_chunk("The committed answer.")],
-        [_turn_chunk()],
+        [_legacy_turn_chunk()],
+        [_text_chunk("Recovered answer.")],
     ])
     graph = _make_graph(tmp_path, model, monkeypatch)
 
@@ -204,55 +209,18 @@ async def test_successful_barrier_emits_one_committed_stream(tmp_path, monkeypat
         "turn_state": "running",
     })
 
-    msgs = result["messages"]
-    # Exactly one AIMessage in the result
-    assert len(msgs) == 1
-    assert isinstance(msgs[0], AIMessage)
-    assert msgs[0].content == "The committed answer."
-    # No tool calls in the terminal message
-    assert not msgs[0].tool_calls
-
-
-# ── Test 12: second-miss fallback emits exactly one committed assistant stream ─
+    assert result["messages"][0].content == "Recovered answer."
+    assert result["messages"][0].tool_calls == []
+    assert model.call_index == 2
 
 
 @pytest.mark.asyncio
-async def test_regular_tool_continues_after_turn_prompt(tmp_path, monkeypatch):
-    model = ScriptedStreamingModel([
-        [_text_chunk("First.")],
-        [_regular_tool_chunk()],
-    ])
+async def test_subagent_tool_definitions_do_not_register_lifecycle_tool(tmp_path, monkeypatch):
+    model = ScriptedStreamingModel([[_text_chunk("answer")]])
     graph = _make_graph(tmp_path, model, monkeypatch)
 
-    result = await graph._call_llm({
-        "messages": [HumanMessage(content="hello")],
-        "step_count": 0,
-        "persona": "coordinate",
-        "turn_state": "running",
-    })
-
-    assert result["messages"][0].tool_calls
-    assert result["messages"][0].tool_calls[0]["name"] == "read"
-
-
-# ── Test 13: subagent tool definitions do not contain turn ───────────────────
-
-
-@pytest.mark.asyncio
-async def test_subagent_tool_definitions_do_not_contain_turn(tmp_path, monkeypatch):
-    model = ScriptedStreamingModel([
-        [_text_chunk("answer")],
-        [_turn_chunk()],
-    ])
-    graph = _make_graph(tmp_path, model, monkeypatch)
-
-    # The subagent path uses its own serialize_definitions() call
-    # Verify that the turn tool is not in the subagent's tool definitions
-    # by checking that the subagent's tool registry doesn't have it
-    subagent_tool_ids = graph.tools.ids()
-    assert "turn" not in subagent_tool_ids
-
-    # Also verify the TURN_TOOL_DEFINITION is not registered as a normal tool
-    assert TURN_TOOL_DEFINITION["function"]["name"] == "turn"
-    # The tool registry should not contain a tool named "turn"
+    assert "turn" not in graph.tools.ids()
+    assert "turn_init" not in graph.tools.ids()
+    assert TURN_TOOL_DEFINITION["function"]["name"] == "turn_init"
     assert graph.tools.get("turn") is None
+    assert graph.tools.get("turn_init") is None

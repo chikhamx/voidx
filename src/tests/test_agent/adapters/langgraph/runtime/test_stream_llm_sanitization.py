@@ -552,7 +552,7 @@ async def test_stream_llm_reports_start_and_each_stream_chunk_activity():
         on_activity=lambda: observed.append("activity"),
     )
 
-    assert observed == ["activity", "activity", "activity", "activity"]
+    assert observed == ["activity", "activity", "activity"]
 
 
 @pytest.mark.asyncio

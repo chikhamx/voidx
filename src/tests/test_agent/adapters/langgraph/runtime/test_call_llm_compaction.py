@@ -409,7 +409,13 @@ async def test_call_llm_updates_usage_stats_across_turn_control_calls(tmp_path, 
             self.calls += 1
             if self.calls == 1:
                 yield AIMessageChunk(
-                    content="answer",
+                    content="",
+                    tool_calls=[{
+                        "name": "turn_init",
+                        "args": {"goal": "Answer the request"},
+                        "id": "turn-init-usage",
+                        "type": "tool_call",
+                    }],
                     usage_metadata={
                         "input_tokens": 7,
                         "output_tokens": 3,
@@ -419,15 +425,7 @@ async def test_call_llm_updates_usage_stats_across_turn_control_calls(tmp_path, 
                 return
             if self.calls == 2:
                 yield AIMessageChunk(
-                    content="",
-                    tool_calls=[
-                        {
-                            "name": "turn",
-                            "args": {"operation": "stop", "params": None},
-                            "id": "turn-usage",
-                            "type": "tool_call",
-                        }
-                    ],
+                    content="answer",
                     usage_metadata={
                         "input_tokens": 2,
                         "output_tokens": 1,
@@ -860,10 +858,6 @@ class MalformedThenRepairsAfterCompactionStreamingModel:
             ))
             return
         yield AIMessageChunk(content="repaired after compaction")
-        yield AIMessageChunk(
-            content="",
-            tool_calls=[{"name": "turn", "args": {"operation": "stop", "params": None}, "id": "turn-1", "type": "tool_call"}],
-        )
 
 
 @pytest.mark.asyncio
@@ -1025,15 +1019,6 @@ async def test_call_llm_retries_incomplete_chunked_read(tmp_path, monkeypatch):
                 )
             self.messages = messages
             yield AIMessageChunk(content="answer")
-            yield AIMessageChunk(
-                content="",
-                tool_calls=[{
-                    "name": "turn",
-                    "args": {"operation": "stop", "params": None},
-                    "id": "turn-1",
-                    "type": "tool_call",
-                }],
-            )
 
     monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
     graph = make_langgraph_execution(

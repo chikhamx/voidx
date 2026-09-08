@@ -34,16 +34,8 @@ class _FakeGraph:
         return None
 
 
-def _turn_stop_msg() -> AIMessage:
-    return AIMessage(
-        content="",
-        tool_calls=[{
-            "name": "turn",
-            "args": {"operation": "stop", "params": None},
-            "id": "call_stop",
-            "type": "tool_call",
-        }],
-    )
+def _plain_text_msg() -> AIMessage:
+    return AIMessage(content="TypeX MCP 不可用,需要用户排查。")
 
 
 def _loop_state_with_provisional() -> LlmLoopState:
@@ -83,7 +75,7 @@ async def test_loop_turn_stop_without_decision_prompts_for_loop_decision() -> No
     graph = _FakeGraph()
     loop = _loop_state_with_provisional()
 
-    result = await _handle(graph, _turn_stop_msg(), loop, controller=_controller())
+    result = await _handle(graph, _plain_text_msg(), loop, controller=_controller())
 
     assert result.action == "retry"
     assert loop.protocol_repairs == 1
@@ -118,7 +110,7 @@ async def test_loop_turn_stop_allowed_after_repairs_exhausted() -> None:
     loop = _loop_state_with_provisional()
     loop.protocol_repairs = 2
 
-    result = await _handle(graph, _turn_stop_msg(), loop, controller=_controller())
+    result = await _handle(graph, _plain_text_msg(), loop, controller=_controller())
 
     assert result.action == "break"
 
@@ -132,7 +124,7 @@ async def test_loop_turn_stop_commits_once_decision_submitted() -> None:
         controller.spec_decision(outcome="continue", summary="本轮检查完成")
     )
 
-    result = await _handle(graph, _turn_stop_msg(), loop, controller=controller)
+    result = await _handle(graph, _plain_text_msg(), loop, controller=controller)
 
     assert result.action == "break"
     assert result.turn_state == "committed"
@@ -193,7 +185,7 @@ async def test_regular_turn_stop_unaffected_without_loop_controller() -> None:
     graph = _FakeGraph()
     loop = _loop_state_with_provisional()
 
-    result = await _handle(graph, _turn_stop_msg(), loop, controller=None)
+    result = await _handle(graph, _plain_text_msg(), loop, controller=None)
 
     assert result.action == "break"
     assert result.turn_state == "committed"

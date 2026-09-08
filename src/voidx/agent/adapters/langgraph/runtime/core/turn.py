@@ -6,21 +6,15 @@ from typing import Any, Literal
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
 from voidx.agent.adapters.langgraph.runtime.core.loop import LlmLoopState
-from voidx.agent.domain.task.intent import InteractionMode
 from voidx.agent.adapters.langgraph.runtime.streaming import extract_text
 from voidx.agent.adapters.langgraph.runtime.turn_control import (
-    NO_USER_RESPONSE_PROMPT,
-    TURN_START_PROMPT,
-    TURN_STOP_PROMPT,
+    INVALID_TURN_PROMPT,
+    TURN_INIT_PROMPT,
+    TURN_TOOL_NAME,
     TurnClassification,
     normalize_terminal_message,
-    validate_turn_call,
 )
-from voidx.agent.domain.task.state import (
-    GoalResolution,
-    GoalSpec,
-    TaskState,
-)
+from voidx.agent.domain.task.state import GoalResolution, GoalSpec, TaskState
 from voidx.llm.message_markers import GUIDANCE_MARKER
 from voidx.agent.application.automation.workflow.service import reconcile_workflow_runs_for_turn
 from voidx.agent.domain.automation.workflow_schema import WorkflowDAG
@@ -53,9 +47,7 @@ async def handle_turn_control_response(
     protocol: Any | None = None,
     workflow_dag: WorkflowDAG | None = None,
 ) -> TurnControlResult:
-    from voidx.agent.adapters.langgraph.runtime.control_protocol import (
-        TurnToolProtocol,
-    )
+    from voidx.agent.adapters.langgraph.runtime.control_protocol import TurnToolProtocol
 
     protocol = protocol or TurnToolProtocol()
     classification = protocol.classify(assistant_msg)
@@ -96,48 +88,26 @@ async def handle_turn_control_response(
         )
 
     if classification in {
-        TurnClassification.VALID_START,
-        TurnClassification.VALID_START_WITH_TOOLS,
+        TurnClassification.VALID_INIT,
+        TurnClassification.VALID_INIT_WITH_TOOLS,
     }:
-        return await _handle_turn_start(
+        return await _handle_turn_init(
             graph=graph,
             assistant_msg=assistant_msg,
             llm_messages=llm_messages,
             loop=loop,
             turn_state=turn_state,
             runtime_task_state=runtime_task_state,
-            state_messages=state_messages,
             estimate_tokens=estimate_tokens,
             rerender_task_context=rerender_task_context,
-            with_tools=classification == TurnClassification.VALID_START_WITH_TOOLS,
+            with_tools=classification == TurnClassification.VALID_INIT_WITH_TOOLS,
             workflow_dag=workflow_dag,
-        )
-
-    if classification == TurnClassification.VALID_TURN:
-        return _handle_turn_stop(
-            graph=graph,
-            assistant_msg=assistant_msg,
-            llm_messages=llm_messages,
-            loop=loop,
-            turn_state=turn_state,
-            runtime_task_state=runtime_task_state,
-            has_text=has_text,
-            estimate_tokens=estimate_tokens,
-        )
-
-    if classification == TurnClassification.VALID_STOP_WITH_TOOLS:
-        return _handle_turn_stop_with_tools(
-            graph=graph,
-            assistant_msg=assistant_msg,
-            llm_messages=llm_messages,
-            loop=loop,
-            turn_state=turn_state,
-            runtime_task_state=runtime_task_state,
         )
 
     if classification == TurnClassification.REGULAR_TOOLS:
         if loop.turn_prompt_active:
             graph._turn_metrics.increment("turn_control_prompt_succeeded")
+        loop.turn_prompt_active = False
         loop.terminal_msg = _loop_commit_summary_message(
             assistant_msg,
             protocol=protocol,
@@ -164,15 +134,14 @@ async def handle_turn_control_response(
             loop=loop,
             turn_state=turn_state,
             runtime_task_state=runtime_task_state,
-            state_messages=state_messages,
-            interaction_mode_value=interaction_mode_value,
-            protocol=protocol,
             estimate_tokens=estimate_tokens,
         )
 
     graph._turn_metrics.increment("turn_control_prompt_succeeded")
-    loop.terminal_msg = assistant_msg
-    return TurnControlResult("break", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
+    loop.terminal_msg = normalize_terminal_message(assistant_msg)
+    loop.terminal_msg_visible = not loop.turn_prompt_active
+    loop.turn_prompt_active = False
+    return TurnControlResult("break", llm_messages, loop.context_tokens, "committed", runtime_task_state)
 
 
 def _loop_commit_summary_message(
@@ -233,18 +202,10 @@ def _is_invalid_prompt_response(
     has_text: bool,
     loop: LlmLoopState,
 ) -> bool:
-    return (
-        loop.turn_prompt_active
-        and has_text
-        and classification != TurnClassification.PLAIN_TEXT
-        and not (
-            classification == TurnClassification.VALID_TURN
-            and loop.pending_provisional is None
-        )
-    )
+    return loop.turn_prompt_active and has_text and classification != TurnClassification.PLAIN_TEXT
 
 
-async def _handle_turn_start(
+async def _handle_turn_init(
     *,
     graph: Any,
     assistant_msg: AIMessage,
@@ -252,18 +213,17 @@ async def _handle_turn_start(
     loop: LlmLoopState,
     turn_state: str,
     runtime_task_state: TaskState,
-    state_messages: list[BaseMessage],
     estimate_tokens: Any,
     rerender_task_context: Any,
     with_tools: bool = False,
     workflow_dag: WorkflowDAG | None = None,
 ) -> TurnControlResult:
-    start_call = _turn_call_from_message(assistant_msg)
-    tool_call_id = str((start_call or {}).get("id") or "")
+    init_call = _turn_call_from_message(assistant_msg)
+    tool_call_id = str((init_call or {}).get("id") or "")
     regular_calls = [
         call
         for call in (getattr(assistant_msg, "tool_calls", None) or [])
-        if isinstance(call, dict) and str(call.get("name") or "") != "turn"
+        if isinstance(call, dict) and str(call.get("name") or "") != TURN_TOOL_NAME
     ]
 
     if turn_state != "initial":
@@ -280,17 +240,16 @@ async def _handle_turn_start(
             *llm_messages,
             assistant_msg,
             ToolMessage(
-                content="Goal already declared.",
+                content="Turn already initialized.",
                 tool_call_id=tool_call_id,
-                name="turn",
+                name=TURN_TOOL_NAME,
             ),
         ]
         loop.context_tokens = estimate_tokens(llm_messages)
         return TurnControlResult("retry", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
 
-    start_args = (start_call or {}).get("args") or {}
-    start_params = start_args.get("params") or {}
-    goal_text = str(start_params.get("goal") or "").strip()
+    init_args = (init_call or {}).get("args") or {}
+    goal_text = str(init_args.get("goal") or "").strip()
     resolution = GoalResolution(
         goal=GoalSpec(desc=goal_text),
         plan=None,
@@ -325,12 +284,9 @@ async def _handle_turn_start(
         *llm_messages,
         assistant_msg,
         ToolMessage(
-            content=(
-                "Check the active workflow in the task state and enter it if applicable, "
-                "otherwise proceed with the work directly."
-            ),
+            content="Turn initialized. Continue the work or provide the final response as plain text.",
             tool_call_id=tool_call_id,
-            name="turn",
+            name=TURN_TOOL_NAME,
         ),
     ]
     loop.context_tokens = estimate_tokens(llm_messages)
@@ -339,7 +295,7 @@ async def _handle_turn_start(
 
 def _turn_call_from_message(assistant_msg: AIMessage) -> dict[str, Any] | None:
     for call in getattr(assistant_msg, "tool_calls", None) or []:
-        if isinstance(call, dict) and str(call.get("name") or "") == "turn":
+        if isinstance(call, dict) and str(call.get("name") or "") == TURN_TOOL_NAME:
             return call
     return None
 
@@ -358,106 +314,6 @@ def _message_with_tool_calls(assistant_msg: AIMessage, tool_calls: list[dict[str
     )
 
 
-def _handle_turn_stop_with_tools(
-    *,
-    graph: Any,
-    assistant_msg: AIMessage,
-    llm_messages: list[BaseMessage],
-    loop: LlmLoopState,
-    turn_state: str,
-    runtime_task_state: TaskState,
-) -> TurnControlResult:
-    regular_calls = [
-        call
-        for call in (getattr(assistant_msg, "tool_calls", None) or [])
-        if isinstance(call, dict) and str(call.get("name") or "") != "turn"
-    ]
-    if not regular_calls:
-        return _handle_invalid_turn(
-            graph=graph,
-            assistant_msg=assistant_msg,
-            llm_messages=llm_messages,
-            loop=loop,
-            turn_state=turn_state,
-            runtime_task_state=runtime_task_state,
-            estimate_tokens=lambda messages: loop.context_tokens,
-        )
-
-    if loop.pending_provisional is not None:
-        terminal = normalize_terminal_message(loop.pending_provisional)
-        terminal_visible = loop.pending_provisional_visible
-    else:
-        terminal = normalize_terminal_message(assistant_msg)
-        terminal_visible = not loop.turn_prompt_active
-
-    if not extract_text(terminal).strip():
-        return _handle_invalid_turn(
-            graph=graph,
-            assistant_msg=assistant_msg,
-            llm_messages=llm_messages,
-            loop=loop,
-            turn_state=turn_state,
-            runtime_task_state=runtime_task_state,
-            estimate_tokens=lambda messages: loop.context_tokens,
-        )
-
-    graph._turn_metrics.increment("turn_control_called")
-    graph._pending_turn_stop_commit = {
-        "terminal_msg": terminal,
-        "terminal_msg_visible": terminal_visible,
-    }
-    loop.terminal_msg = _message_with_tool_calls(assistant_msg, regular_calls)
-    loop.terminal_msg_visible = True
-    return TurnControlResult(
-        "break",
-        llm_messages,
-        loop.context_tokens,
-        turn_state,
-        runtime_task_state,
-    )
-
-
-def _handle_turn_stop(
-    *,
-    graph: Any,
-    assistant_msg: AIMessage,
-    llm_messages: list[BaseMessage],
-    loop: LlmLoopState,
-    turn_state: str,
-    runtime_task_state: TaskState,
-    has_text: bool,
-    estimate_tokens: Any,
-) -> TurnControlResult:
-    if loop.pending_provisional is not None:
-        turn_terminal = loop.pending_provisional
-        turn_terminal_visible = loop.pending_provisional_visible
-    else:
-        turn_terminal = assistant_msg if has_text else loop.pending_provisional
-        turn_terminal_visible = not loop.turn_prompt_active
-    if validate_turn_call(assistant_msg, turn_terminal):
-        graph._turn_metrics.increment("turn_control_called")
-        loop.terminal_msg = normalize_terminal_message(turn_terminal)
-        loop.terminal_msg_visible = turn_terminal_visible
-        turn_state = "committed"
-        return TurnControlResult("break", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
-    graph._turn_metrics.increment("turn_control_invalid")
-    if loop.invalid_turn_repairs < 2:
-        loop.invalid_turn_repairs += 1
-        graph._turn_metrics.increment("turn_control_invalid")
-        loop.turn_prompt_active = True
-        llm_messages = [
-            *llm_messages,
-            assistant_msg,
-            HumanMessage(
-                content=NO_USER_RESPONSE_PROMPT,
-                additional_kwargs={GUIDANCE_MARKER: True},
-            ),
-        ]
-        loop.context_tokens = estimate_tokens(llm_messages)
-        return TurnControlResult("retry", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
-    return _invalid_turn_failure(llm_messages, loop, turn_state, runtime_task_state)
-
-
 def _handle_invalid_turn(
     *,
     graph: Any,
@@ -471,26 +327,19 @@ def _handle_invalid_turn(
     has_text = bool(extract_text(assistant_msg).strip())
     if has_text:
         graph._turn_metrics.increment("turn_control_invalid_committed")
-        if loop.pending_provisional is not None and loop.turn_prompt_active:
-            terminal = loop.pending_provisional
-            terminal_visible = loop.pending_provisional_visible
-        else:
-            terminal = assistant_msg
-            terminal_visible = not loop.turn_prompt_active
-        loop.terminal_msg = normalize_terminal_message(terminal)
-        loop.terminal_msg_visible = terminal_visible
-        turn_state = "committed"
-        return TurnControlResult("break", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
+        loop.terminal_msg = normalize_terminal_message(assistant_msg)
+        loop.terminal_msg_visible = not loop.turn_prompt_active
+        loop.turn_prompt_active = False
+        return TurnControlResult("break", llm_messages, loop.context_tokens, "committed", runtime_task_state)
     if loop.invalid_turn_repairs < 2:
         loop.invalid_turn_repairs += 1
-        graph._turn_metrics.increment("turn_control_mixed_tools")
         graph._turn_metrics.increment("turn_control_invalid")
         loop.turn_prompt_active = True
         llm_messages = [
             *llm_messages,
             assistant_msg,
             HumanMessage(
-                content=NO_USER_RESPONSE_PROMPT,
+                content=INVALID_TURN_PROMPT,
                 additional_kwargs={GUIDANCE_MARKER: True},
             ),
         ]
@@ -507,92 +356,33 @@ def _handle_plain_text(
     loop: LlmLoopState,
     turn_state: str,
     runtime_task_state: TaskState,
-    state_messages: list[BaseMessage],
-    interaction_mode_value: str,
-    protocol: Any,
     estimate_tokens: Any,
 ) -> TurnControlResult:
     text = extract_text(assistant_msg).strip()
-    has_text = bool(text)
-    is_turn_protocol = getattr(protocol, "protocol_id", "turn") == "turn"
-    if (
-        turn_state == "initial"
-        and loop.missing_turn_count == 0
-        and not loop.start_prompt_injected
-        and not loop.turn_prompt_active
-        and bool(state_messages and isinstance(state_messages[-1], HumanMessage))
-        and has_text
-    ):
+    if text:
+        if loop.turn_prompt_active:
+            graph._turn_metrics.increment("turn_control_prompt_succeeded")
         loop.terminal_msg = normalize_terminal_message(assistant_msg)
         loop.terminal_msg_visible = not loop.turn_prompt_active
-        turn_state = "committed"
-        return TurnControlResult("break", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
-    if loop.missing_turn_count == 0 and has_text:
-        loop.pending_provisional = assistant_msg
-        loop.pending_provisional_visible = not loop.turn_prompt_active
-    if not is_turn_protocol and has_text:
-        loop.terminal_msg = normalize_terminal_message(assistant_msg)
-        loop.terminal_msg_visible = loop.pending_provisional_visible
-        turn_state = "committed"
-        return TurnControlResult("break", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
-    if (
-        turn_state == "initial"
-        and not loop.start_prompt_injected
-        and loop.missing_turn_count == 0
-        and len(text.splitlines()) > 3
-        and interaction_mode_value not in {InteractionMode.PLAN.value, InteractionMode.GOAL.value}
-    ):
-        graph._turn_metrics.increment("turn_control_auto_committed")
-        loop.terminal_msg = normalize_terminal_message(assistant_msg)
-        loop.terminal_msg_visible = loop.pending_provisional_visible
-        turn_state = "committed"
-        return TurnControlResult("break", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
-    if (
-        turn_state == "initial"
-        and not loop.start_prompt_injected
-        and loop.missing_turn_count == 0
-        and interaction_mode_value not in {InteractionMode.PLAN.value, InteractionMode.GOAL.value}
-    ):
-        loop.start_prompt_injected = True
-        loop.turn_prompt_active = True
+        loop.turn_prompt_active = False
+        return TurnControlResult("break", llm_messages, loop.context_tokens, "committed", runtime_task_state)
+
+    if loop.invalid_turn_repairs < 2:
+        loop.invalid_turn_repairs += 1
         graph._turn_metrics.increment("turn_control_missing")
-        llm_messages = [
-            *llm_messages,
-            assistant_msg,
-            HumanMessage(
-                content=TURN_START_PROMPT,
-                additional_kwargs={GUIDANCE_MARKER: True},
-            ),
-        ]
-        loop.context_tokens = estimate_tokens(llm_messages)
-        return TurnControlResult("retry", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
-    loop.missing_turn_count += 1
-    graph._turn_metrics.increment("turn_control_missing")
-    if loop.missing_turn_count == 1 and len(text.splitlines()) > 3:
-        graph._turn_metrics.increment("turn_control_auto_committed")
-        loop.terminal_msg = normalize_terminal_message(assistant_msg)
-        loop.terminal_msg_visible = loop.pending_provisional_visible
-        turn_state = "committed"
-        return TurnControlResult("break", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
-    if loop.missing_turn_count == 1:
-        graph._turn_metrics.increment("turn_control_first_prompt")
         loop.turn_prompt_active = True
+        prompt = TURN_INIT_PROMPT if turn_state == "initial" else INVALID_TURN_PROMPT
         llm_messages = [
             *llm_messages,
             assistant_msg,
             HumanMessage(
-                content=TURN_STOP_PROMPT,
+                content=prompt,
                 additional_kwargs={GUIDANCE_MARKER: True},
             ),
         ]
         loop.context_tokens = estimate_tokens(llm_messages)
         return TurnControlResult("retry", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
-    graph._turn_metrics.increment("turn_control_second_prompt")
-    if loop.pending_provisional is None:
-        return _invalid_turn_failure(llm_messages, loop, turn_state, runtime_task_state)
-    loop.terminal_msg = normalize_terminal_message(loop.pending_provisional)
-    loop.terminal_msg_visible = loop.pending_provisional_visible
-    return TurnControlResult("break", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
+    return _invalid_turn_failure(llm_messages, loop, turn_state, runtime_task_state)
 
 
 def _invalid_turn_failure(

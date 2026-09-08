@@ -264,7 +264,6 @@ class TurnRunner:
 
             t_turn_start = time.monotonic()
             host._usage_stats.begin_turn()
-            host._pending_turn_stop_commit = None
             self.idle_event.clear()
             user_message_id: int | None = None
             streamed_messages: list = []
@@ -692,7 +691,6 @@ class TurnRunner:
                             state.guidance_drained_ids.clear()
                     guidance_bound = False
                 host._usage_stats.end_turn()
-                host._pending_turn_stop_commit = None
                 discard_guidance = getattr(host, "_discard_pending_guidance", None)
                 if callable(discard_guidance):
                     guidance_discarded = discard_guidance()

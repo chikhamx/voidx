@@ -46,7 +46,7 @@ def _coding_profile() -> RuntimeProfile:
     return RuntimeProfile(profile_id="coding", revision=1, name="Coding")
 
 
-def test_coding_main_exposes_turn_but_hides_goal_loop_and_execution_only() -> None:
+def test_coding_main_exposes_turn_init_but_hides_goal_loop_and_execution_only() -> None:
     registry = _registry("read", "bash", "agent", "goal", "loop", "git", "lsp_format", "compact")
 
     surface = resolve_tool_surface(
@@ -55,7 +55,8 @@ def test_coding_main_exposes_turn_but_hides_goal_loop_and_execution_only() -> No
     )
 
     names = _names(surface)
-    assert "turn" in names
+    assert "turn_init" in names
+    assert "turn" not in names
     assert "read" in names and "bash" in names and "agent" in names
     for hidden in ("goal", "loop", "git", "lsp_format", "compact"):
         assert hidden not in names

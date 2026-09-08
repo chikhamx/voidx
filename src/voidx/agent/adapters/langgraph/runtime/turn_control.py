@@ -1,8 +1,8 @@
-"""Graph-owned turn control tool: explicit completion barrier signal.
+"""Graph-owned turn initialization control tool.
 
-The ``turn`` tool is a protocol signal, not a normal runtime tool. It is
-intercepted inside ``_call_llm`` before tool authorization or execution.
-It never creates a ``ToolMessage`` and is not registered in ``ToolRegistry``.
+The ``turn_init`` tool is a protocol signal, not a normal runtime tool. It is
+intercepted inside ``_call_llm`` before tool authorization or execution. It
+never creates a ``ToolMessage`` and is not registered in ``ToolRegistry``.
 """
 
 from __future__ import annotations
@@ -12,49 +12,24 @@ from typing import Any
 
 from langchain_core.messages import AIMessage
 
-TURN_TOOL_NAME = "turn"
+TURN_TOOL_NAME = "turn_init"
 
-
-class TurnOperation(str, Enum):
-    START = "start"
-    STOP = "stop"
 
 TURN_TOOL_DEFINITION: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": TURN_TOOL_NAME,
         "description": (
-            "Turn lifecycle control. At turn start, call operation='start' with a short goal. "
-            "start may be combined with regular tools in the same message; start is applied first, then the other tools run. "
-            "At turn end, call operation='stop' with params=null only after the pending final answer is complete. "
-            "stop may be combined with regular tools in the same message when the final answer text is already present; tools run first, then stop commits. "
-            "Do not output text with this call when stop is alone."
+            "Initialize the turn with a short goal. "
+            "Call turn_init once at the beginning of a turn; it may be combined "
+            "with regular tools in the same response, and initialization is applied first. "
+            "When the final answer is ready, output plain text without calling a lifecycle tool."
         ),
         "strict": True,
         "parameters": {
             "type": "object",
-            "properties": {
-                "operation": {
-                    "type": "string",
-                    "enum": ["start", "stop"],
-                    "description": "start declares the goal; stop commits the pending final answer.",
-                },
-                "params": {
-                    "anyOf": [
-                        {
-                            "type": "object",
-                            "properties": {
-                                "goal": {"type": "string"},
-                                },
-                            "required": ["goal"],
-                            "additionalProperties": False
-                        },
-                        {"type": "null"},
-                    ],
-                    "description": "Object for start; null for stop.",
-                },
-            },
-            "required": ["operation", "params"],
+            "properties": {"goal": {"type": "string"}},
+            "required": ["goal"],
             "additionalProperties": False,
         },
     },
@@ -62,32 +37,28 @@ TURN_TOOL_DEFINITION: dict[str, Any] = {
 
 
 class TurnClassification(str, Enum):
-    VALID_TURN = "valid_turn"
-    VALID_START = "valid_start"
-    VALID_START_WITH_TOOLS = "valid_start_with_tools"
-    VALID_STOP_WITH_TOOLS = "valid_stop_with_tools"
+    VALID_INIT = "valid_init"
+    VALID_INIT_WITH_TOOLS = "valid_init_with_tools"
     REGULAR_TOOLS = "regular_tools"
     INVALID_TURN = "invalid_turn"
     PLAIN_TEXT = "plain_text"
 
 
-TURN_STOP_PROMPT = (
-    "If your text response is the final answer, call turn with operation='stop' with params=null to commit it. "
-    "If you still need to work, call a regular tool instead of outputting text."
+TURN_INIT_PROMPT = (
+    "Turn state is initial. Do not output text yet. "
+    "Call turn_init with a short goal now."
 )
 
-TURN_START_PROMPT = (
-    "Turn state is initial. Do not output text yet. Call turn with operation='start' and a short goal now."
+FIRST_MISS_PROMPT = (
+    "If you still need to work, call a regular tool instead of outputting text. "
+    "When the final answer is ready, output it as plain text."
 )
 
-FIRST_MISS_PROMPT = TURN_STOP_PROMPT
+SECOND_MISS_PROMPT = FIRST_MISS_PROMPT
 
-SECOND_MISS_PROMPT = TURN_STOP_PROMPT
-
-NO_USER_RESPONSE_PROMPT = (
-    "Turn stop was called but the user has not received a text response yet. "
-    "Output a concise user-facing summary of the completed work first, "
-    "then call turn with operation='stop' with params=null to finish."
+INVALID_TURN_PROMPT = (
+    "Use only the bound turn_init({goal}) call to initialize the turn, or use a regular tool. "
+    "When finished, output the final answer as plain text."
 )
 
 LOOP_DECISION_PROMPT = (
@@ -101,70 +72,6 @@ LOOP_DECISION_PROMPT = (
 def _has_tool_calls(msg: AIMessage) -> bool:
     calls = getattr(msg, "tool_calls", None)
     return bool(calls)
-
-
-def _valid_start_params(params: Any) -> bool:
-    if not isinstance(params, dict):
-        return False
-    allowed = {"goal"}
-    if set(params) - allowed or set(params) < {"goal"}:
-        return False
-    return _is_non_empty_text(params.get("goal"))
-
-
-def classify_turn_call(msg: AIMessage) -> TurnClassification:
-    calls = getattr(msg, "tool_calls", None) or []
-    if not calls:
-        return TurnClassification.PLAIN_TEXT
-    if any(not isinstance(call, dict) for call in calls):
-        return TurnClassification.INVALID_TURN
-
-    names = [str(call.get("name") or "") for call in calls]
-    turn_count = sum(1 for name in names if name == TURN_TOOL_NAME)
-    regular_count = len(calls) - turn_count
-
-    if turn_count == 0:
-        return TurnClassification.REGULAR_TOOLS
-
-    if turn_count == 1 and regular_count == 0:
-        args = calls[0].get("args")
-        if not isinstance(args, dict) or "operation" not in args:
-            return TurnClassification.INVALID_TURN
-        operation = args.get("operation")
-        params = args.get("params")
-        if operation == TurnOperation.STOP:
-            if params is None and set(args).issubset({"operation", "params"}):
-                return TurnClassification.VALID_TURN
-        if (
-            operation == TurnOperation.START
-            and _valid_start_params(params)
-            and set(args) == {"operation", "params"}
-        ):
-            return TurnClassification.VALID_START
-        return TurnClassification.INVALID_TURN
-
-    if turn_count == 1 and regular_count > 0:
-        turn_call = next(call for call in calls if str(call.get("name") or "") == TURN_TOOL_NAME)
-        args = turn_call.get("args")
-        if not isinstance(args, dict) or "operation" not in args:
-            return TurnClassification.INVALID_TURN
-        operation = args.get("operation")
-        params = args.get("params")
-        if (
-            operation == TurnOperation.START
-            and _valid_start_params(params)
-            and set(args) == {"operation", "params"}
-        ):
-            return TurnClassification.VALID_START_WITH_TOOLS
-        if (
-            operation == TurnOperation.STOP
-            and params is None
-            and set(args).issubset({"operation", "params"})
-            and _is_non_empty_text(msg.content)
-        ):
-            return TurnClassification.VALID_STOP_WITH_TOOLS
-
-    return TurnClassification.INVALID_TURN
 
 
 def _is_non_empty_text(text: Any) -> bool:
@@ -183,12 +90,39 @@ def _is_non_empty_text(text: Any) -> bool:
     return False
 
 
-def validate_turn_call(msg: AIMessage, pending: AIMessage | None) -> bool:
-    if classify_turn_call(msg) != TurnClassification.VALID_TURN:
+def _valid_init_args(args: Any) -> bool:
+    if not isinstance(args, dict):
         return False
-    if pending is None:
+    if set(args) != {"goal"}:
         return False
-    return _is_non_empty_text(pending.content)
+    goal = args.get("goal")
+    return isinstance(goal, str) and bool(goal.strip())
+
+
+def classify_turn_call(msg: AIMessage) -> TurnClassification:
+    calls = getattr(msg, "tool_calls", None) or []
+    if not calls:
+        return TurnClassification.PLAIN_TEXT
+    if any(not isinstance(call, dict) for call in calls):
+        return TurnClassification.INVALID_TURN
+
+    names = [str(call.get("name") or "") for call in calls]
+    if "turn" in names:
+        return TurnClassification.INVALID_TURN
+    turn_count = sum(1 for name in names if name == TURN_TOOL_NAME)
+    regular_count = len(calls) - turn_count
+
+    if turn_count == 0:
+        return TurnClassification.REGULAR_TOOLS
+    if turn_count != 1:
+        return TurnClassification.INVALID_TURN
+
+    turn_call = next(call for call in calls if str(call.get("name") or "") == TURN_TOOL_NAME)
+    if not _valid_init_args(turn_call.get("args")):
+        return TurnClassification.INVALID_TURN
+    if regular_count:
+        return TurnClassification.VALID_INIT_WITH_TOOLS
+    return TurnClassification.VALID_INIT
 
 
 def normalize_terminal_message(pending: AIMessage) -> AIMessage:
@@ -201,3 +135,9 @@ def normalize_terminal_message(pending: AIMessage) -> AIMessage:
         "tool_calls": [],
         "invalid_tool_calls": [],
     })
+
+
+# Kept as a small compatibility-neutral helper for callers that need to
+# recognize a terminal candidate while migrating from the old stop barrier.
+def _has_text(msg: AIMessage | None) -> bool:
+    return msg is not None and _is_non_empty_text(getattr(msg, "content", None))

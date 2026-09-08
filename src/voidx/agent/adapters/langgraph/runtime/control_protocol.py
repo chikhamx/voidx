@@ -57,7 +57,7 @@ def turn_context_from(ctx: ControlContext | TurnExecutionContext | None) -> Turn
 
 
 class TurnToolProtocol:
-    """Default coding/chat protocol: turn(start/stop) manages the whole lifecycle."""
+    """Default coding/chat protocol: turn_init initializes the lifecycle."""
 
     protocol_id = "turn"
 
@@ -107,7 +107,8 @@ def strip_tool_calls_after_loop_commit(msg: AIMessage) -> AIMessage:
 
 
 _BARRIER_CLASSIFICATIONS = {
-    TurnClassification.VALID_TURN,
+    TurnClassification.VALID_INIT,
+    TurnClassification.VALID_INIT_WITH_TOOLS,
     TurnClassification.PLAIN_TEXT,
     TurnClassification.REGULAR_TOOLS,
 }

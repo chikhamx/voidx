@@ -24,16 +24,8 @@ from voidx.agent.application.automation.goal.intake_controller import GoalIntake
 from voidx.agent.application.automation.loop.controller import LoopAttemptController
 
 
-def _turn_stop_msg() -> AIMessage:
-    return AIMessage(
-        content="",
-        tool_calls=[{
-            "name": "turn",
-            "args": {"operation": "stop", "params": None},
-            "id": "call_stop",
-            "type": "tool_call",
-        }],
-    )
+def _plain_text_msg(content: str = "done") -> AIMessage:
+    return AIMessage(content=content)
 
 
 def _loop_commit_msg() -> AIMessage:
@@ -51,24 +43,39 @@ def _loop_commit_msg() -> AIMessage:
 # ── TurnToolProtocol ─────────────────────────────────────────────────────────
 
 
-def test_turn_protocol_injects_turn_tool_only() -> None:
+def test_turn_protocol_injects_turn_init_tool_only() -> None:
     defs = TurnToolProtocol().tool_definitions()
 
-    assert [d["function"]["name"] for d in defs] == ["turn"]
+    assert [d["function"]["name"] for d in defs] == ["turn_init"]
+    assert defs[0]["function"]["parameters"] == {
+        "type": "object",
+        "properties": {"goal": {"type": "string"}},
+        "required": ["goal"],
+        "additionalProperties": False,
+    }
 
 
 def test_turn_protocol_classifies_like_turn_control() -> None:
     protocol = TurnToolProtocol()
+    init = AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "turn_init",
+            "args": {"goal": "Fix the bug"},
+            "id": "call_init",
+            "type": "tool_call",
+        }],
+    )
 
-    assert protocol.classify(_turn_stop_msg()) == TurnClassification.VALID_TURN
+    assert protocol.classify(init) == TurnClassification.VALID_INIT
     assert protocol.classify(AIMessage(content="plain")) == TurnClassification.PLAIN_TEXT
     assert protocol.classify(_loop_commit_msg()) == TurnClassification.REGULAR_TOOLS
 
 
-def test_turn_protocol_never_blocks_turn_stop() -> None:
+def test_turn_protocol_never_blocks_plain_text() -> None:
     loop = LlmLoopState(context_tokens=0)
 
-    assert TurnToolProtocol().decision_missing(_turn_stop_msg(), loop, controller=None) is False
+    assert TurnToolProtocol().decision_missing(_plain_text_msg(), loop, controller=None) is False
 
 
 # ── LoopProtocol ─────────────────────────────────────────────────────────────
@@ -87,18 +94,18 @@ def test_loop_protocol_classifies_loop_commit_as_regular_tool() -> None:
     assert LoopProtocol().classify(_loop_commit_msg()) == TurnClassification.REGULAR_TOOLS
 
 
-def test_loop_protocol_blocks_turn_stop_until_decision_submitted() -> None:
+def test_loop_protocol_blocks_plain_text_until_decision_submitted() -> None:
     controller = LoopAttemptController(spec=LoopSpec(prompt="check"))
     loop = LlmLoopState(context_tokens=0)
     protocol = LoopProtocol()
 
-    assert protocol.decision_missing(_turn_stop_msg(), loop, controller=controller) is True
+    assert protocol.decision_missing(_plain_text_msg(), loop, controller=controller) is True
 
     assert protocol.repair_prompt() == LOOP_DECISION_PROMPT
 
 
 @pytest.mark.asyncio
-async def test_loop_protocol_allows_turn_stop_after_decision() -> None:
+async def test_loop_protocol_allows_plain_text_after_decision() -> None:
     controller = LoopAttemptController(spec=LoopSpec(prompt="check"))
     loop = LlmLoopState(context_tokens=0)
 
@@ -106,7 +113,7 @@ async def test_loop_protocol_allows_turn_stop_after_decision() -> None:
         controller.spec_decision(outcome="continue", summary="done")
     )
 
-    assert LoopProtocol().decision_missing(_turn_stop_msg(), loop, controller=controller) is False
+    assert LoopProtocol().decision_missing(_plain_text_msg(), loop, controller=controller) is False
 
 
 def test_loop_protocol_stops_repairing_after_max_repairs() -> None:
@@ -114,7 +121,7 @@ def test_loop_protocol_stops_repairing_after_max_repairs() -> None:
     loop = LlmLoopState(context_tokens=0)
     loop.protocol_repairs = 2
 
-    assert LoopProtocol().decision_missing(_turn_stop_msg(), loop, controller=controller) is False
+    assert LoopProtocol().decision_missing(_plain_text_msg(), loop, controller=controller) is False
 
 
 def test_loop_protocol_blocks_plain_text_commit_without_decision() -> None:
@@ -217,7 +224,7 @@ def test_goal_protocol_blocks_intake_until_init_submitted() -> None:
     loop = LlmLoopState(context_tokens=0)
     protocol = GoalProtocol(phase="intake")
 
-    assert protocol.decision_missing(_turn_stop_msg(), loop, controller=controller) is True
+    assert protocol.decision_missing(_plain_text_msg(), loop, controller=controller) is True
     assert "goal_init" in protocol.repair_prompt()
     assert "goal_decision" not in protocol.repair_prompt()
 
@@ -233,7 +240,7 @@ def test_goal_protocol_blocks_work_until_checkpoint_submitted() -> None:
     loop = LlmLoopState(context_tokens=0)
     protocol = GoalProtocol(phase="work")
 
-    assert protocol.decision_missing(_turn_stop_msg(), loop, controller=controller) is True
+    assert protocol.decision_missing(_plain_text_msg(), loop, controller=controller) is True
     assert "goal_checkpoint" in protocol.repair_prompt()
 
 
@@ -242,7 +249,7 @@ def test_goal_protocol_blocks_evaluator_until_decision_submitted() -> None:
     loop = LlmLoopState(context_tokens=0)
     protocol = GoalProtocol(phase="evaluator")
 
-    assert protocol.decision_missing(_turn_stop_msg(), loop, controller=controller) is True
+    assert protocol.decision_missing(_plain_text_msg(), loop, controller=controller) is True
     assert "goal_decision" in protocol.repair_prompt()
 
 

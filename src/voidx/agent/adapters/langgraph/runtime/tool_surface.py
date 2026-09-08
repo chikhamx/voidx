@@ -24,7 +24,7 @@ from voidx.agent.adapters.langgraph.runtime.control_protocol import (
 
 EXECUTION_ONLY_TOOLS = frozenset({"git", "lsp_format", "compact"})
 CHILD_BLOCKED_TOOLS = CHILD_BLOCKED_TOOL_IDS
-LIFECYCLE_TOOLS = frozenset({"turn", "goal", "goal_init", "goal_checkpoint", "goal_decision", "loop"})
+LIFECYCLE_TOOLS = frozenset({"turn", "turn_init", "goal", "goal_init", "goal_checkpoint", "goal_decision", "loop"})
 
 _GOAL_PHASES = frozenset({"idle", "intake", "work", "evaluator"})
 _LOOP_PHASES = frozenset({"idle", "work"})

@@ -17,7 +17,6 @@ from tests.test_agent.adapters.langgraph.runtime.test_turn_control_e2e import (
     ScriptedStreamingModel,
     _make_graph,
     _text_chunk,
-    _turn_chunk,
 )
 
 
@@ -51,8 +50,8 @@ def _goal_decision_chunk() -> AIMessageChunk:
     )
 
 @pytest.mark.asyncio
-async def test_default_profile_injects_turn_tool(tmp_path, monkeypatch) -> None:
-    model = ScriptedStreamingModel([[_text_chunk("Hi.")], [_turn_chunk()]])
+async def test_default_profile_injects_turn_init_tool(tmp_path, monkeypatch) -> None:
+    model = ScriptedStreamingModel([[_text_chunk("Hi.")]])
     graph = _make_graph(tmp_path, model, monkeypatch)
 
     await graph._call_llm({
@@ -63,7 +62,8 @@ async def test_default_profile_injects_turn_tool(tmp_path, monkeypatch) -> None:
     })
 
     names = [d["function"]["name"] for d in model.bound_tools]
-    assert "turn" in names
+    assert "turn_init" in names
+    assert "turn" not in names
 
 
 @pytest.mark.asyncio
@@ -94,6 +94,7 @@ async def test_loop_profile_injects_loop_tool_and_not_turn(tmp_path, monkeypatch
 
     names = [d["function"]["name"] for d in model.bound_tools]
     assert "loop" in names
+    assert "turn_init" not in names
     assert "turn" not in names
 
 
@@ -137,6 +138,7 @@ async def test_goal_profile_injects_goal_tool_and_not_turn(tmp_path, monkeypatch
 
     names = [d["function"]["name"] for d in model.bound_tools]
     assert "goal_init" in names
+    assert "turn_init" not in names
     assert "turn" not in names
     assert model.call_index == 1
     assert result["turn_state"] == "committed"
