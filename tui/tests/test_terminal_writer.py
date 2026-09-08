@@ -1535,3 +1535,64 @@ async def test_worker_failure_result_callback_delay_does_not_change_private_base
     finally:
         stream.release.set()
         await asyncio.wait_for(writer.shutdown_async(), timeout=1)
+
+@pytest.mark.asyncio
+async def test_commit_preserves_remaining_baseline_without_full_screen_clear():
+    stream = _ThreadRecordingStream()
+    results: list[object] = []
+    writer = TerminalWriter(stream)
+    writer.start(
+        loop=asyncio.get_running_loop(),
+        on_frame_result=results.append,
+        on_error=lambda exc: pytest.fail(f"unexpected writer error: {exc}"),
+    )
+    frame_type = terminal_writer_module.FrameBatch
+    try:
+        writer.submit_frame(
+            frame_type(
+                generation=1,
+                start_row=2,
+                target_lines=("line-1", "line-2", "line-3", "input", "status"),
+                cursor_ansi="",
+            )
+        )
+        await asyncio.wait_for(writer.drain_async(), timeout=1)
+
+        stream_len_before_commit = len(stream.value)
+        commit = writer.submit_commit(
+            clear_start_row=2,
+            ansi="commit-1\ncommit-2\n",
+            preserve_baseline=True,
+        )
+        await asyncio.wait_for(writer.wait(commit), timeout=1)
+        commit_output = stream.value[stream_len_before_commit:]
+        assert "\x1b[J" not in commit_output
+        assert "commit-1\ncommit-2\n" in commit_output
+
+        assert writer._baseline_valid is True
+        assert writer._applied_start_row == 4
+        assert writer._applied_lines == ("line-3", "input", "status")
+
+        stream_len_before_frame2 = len(stream.value)
+        writer.submit_frame(
+            frame_type(
+                generation=2,
+                start_row=4,
+                target_lines=("line-3-updated", "input", "status"),
+                cursor_ansi="",
+            )
+        )
+        await asyncio.wait_for(writer.drain_async(), timeout=1)
+
+        assert len(results) == 2
+        assert results[1].generation == 2
+        assert results[1].strategy == "diff"
+        assert results[1].changed_lines == 1
+
+        frame2_output = stream.value[stream_len_before_frame2:]
+        assert "\x1b[J" not in frame2_output
+        assert "\x1b[4;1Hline-3-updated\x1b[K" in frame2_output
+        assert "input" not in frame2_output
+        assert "status" not in frame2_output
+    finally:
+        await asyncio.wait_for(writer.shutdown_async(), timeout=1)

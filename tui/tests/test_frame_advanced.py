@@ -3737,3 +3737,212 @@ async def test_handle_terminal_frame_result_drops_stale_restore_epoch(tmp_path):
 
     # Should be dropped and not applied
     assert tui._applied_layout_snapshot is None
+
+@pytest.mark.asyncio
+async def test_worker_mode_busy_activity_tick_does_not_recollect_bottom(tmp_path, monkeypatch):
+    from voidx_cli.terminal_writer import TerminalWriter
+
+    class _CaptureStream:
+        def __init__(self) -> None:
+            self.value = ""
+
+        def write(self, text: str) -> int:
+            self.value += text
+            return len(text)
+
+        def flush(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._running = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+
+    stream = _CaptureStream()
+    writer = TerminalWriter(stream)
+    writer.start(
+        loop=asyncio.get_running_loop(),
+        on_frame_result=tui._handle_terminal_frame_result,
+        on_error=lambda exc: pytest.fail(f"unexpected writer error: {exc}"),
+    )
+    tui._terminal_writer = writer
+    tui._terminal_writer_required = True
+
+    try:
+        tui._busy = True
+        tui._busy_activity_verb = "Sublimating"
+        tui._busy_activity_tick = 0
+
+        tui._render_frame()
+        await asyncio.wait_for(writer.drain_async(), timeout=1)
+
+        bottom_calls = 0
+        original_bottom = tui._render_bottom_elements
+        def counting_render_bottom(*args, **kwargs):
+            nonlocal bottom_calls
+            bottom_calls += 1
+            return original_bottom(*args, **kwargs)
+
+        monkeypatch.setattr(tui, "_render_bottom_elements", counting_render_bottom)
+
+        stream_len_before_tick = len(stream.value)
+        tui._busy_activity_tick = 1
+        ticked = tui._render_busy_activity_tick()
+        assert ticked is True
+        await asyncio.wait_for(writer.drain_async(), timeout=1)
+
+        assert bottom_calls == 0
+        tick_output = stream.value[stream_len_before_tick:]
+        assert "\x1b[J" not in tick_output
+        assert tui._render_stats.strategy == "diff"
+        assert tui._render_stats.changed_lines == 1
+    finally:
+        await asyncio.wait_for(writer.shutdown_async(), timeout=1)
+
+@pytest.mark.asyncio
+async def test_worker_mode_input_region_does_not_full_repaint_status(tmp_path, monkeypatch):
+    from voidx_cli.terminal_writer import TerminalWriter
+
+    class _CaptureStream:
+        def __init__(self) -> None:
+            self.value = ""
+
+        def write(self, text: str) -> int:
+            self.value += text
+            return len(text)
+
+        def flush(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._running = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+
+    stream = _CaptureStream()
+    writer = TerminalWriter(stream)
+    writer.start(
+        loop=asyncio.get_running_loop(),
+        on_frame_result=tui._handle_terminal_frame_result,
+        on_error=lambda exc: pytest.fail(f"unexpected writer error: {exc}"),
+    )
+    tui._terminal_writer = writer
+    tui._terminal_writer_required = True
+
+    try:
+        tui._render_frame()
+        await asyncio.wait_for(writer.drain_async(), timeout=1)
+
+        status_calls = 0
+        original_status = tui._render_hint_lines
+        def counting_render_status(*args, **kwargs):
+            nonlocal status_calls
+            status_calls += 1
+            return original_status(*args, **kwargs)
+
+        monkeypatch.setattr(tui, "_render_hint_lines", counting_render_status)
+
+        stream_len_before_input = len(stream.value)
+        assert tui._process_input(b"a") is True
+        tui._render_after_input()
+        await asyncio.wait_for(writer.drain_async(), timeout=1)
+
+        assert status_calls == 0
+        input_output = stream.value[stream_len_before_input:]
+        assert "\x1b[J" not in input_output
+        assert tui._render_stats.strategy == "diff"
+        assert tui._render_stats.changed_lines == 1
+    finally:
+        await asyncio.wait_for(writer.shutdown_async(), timeout=1)
+
+@pytest.mark.asyncio
+async def test_flush_committed_preserves_baseline_and_does_not_clear_bottom(tmp_path, monkeypatch):
+    from voidx_cli.terminal_writer import TerminalWriter
+
+    class _CaptureStream:
+        def __init__(self) -> None:
+            self.value = ""
+
+        def write(self, text: str) -> int:
+            self.value += text
+            return len(text)
+
+        def flush(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._running = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+
+    stream = _CaptureStream()
+    writer = TerminalWriter(stream)
+    writer.start(
+        loop=asyncio.get_running_loop(),
+        on_frame_result=tui._handle_terminal_frame_result,
+        on_error=lambda exc: pytest.fail(f"unexpected writer error: {exc}"),
+    )
+    tui._terminal_writer = writer
+    tui._terminal_writer_required = True
+
+    try:
+        dock.begin_capture()
+        dock.start_turn("initial turn")
+        dock.append_message("message 1")
+        commit1 = tui._flush_committed()
+        if commit1 is not None:
+            task1 = tui._render_state.pending_commit_tasks.get(id(commit1))
+            if task1 is not None:
+                await task1
+            else:
+                await asyncio.wait_for(writer.wait(commit1), timeout=1)
+        await asyncio.sleep(0)
+
+        tui._render_frame()
+        await asyncio.wait_for(writer.drain_async(), timeout=1)
+        await asyncio.sleep(0)
+
+        dock.append_message("message 2")
+        stream_len_before_commit = len(stream.value)
+        commit_token = tui._flush_committed()
+        assert commit_token is not None
+        pending_task = tui._render_state.pending_commit_tasks.get(id(commit_token))
+        if pending_task is not None:
+            await pending_task
+        else:
+            await asyncio.wait_for(writer.wait(commit_token), timeout=1)
+        await asyncio.sleep(0)
+
+        commit_output = stream.value[stream_len_before_commit:]
+        assert "\x1b[J" not in commit_output
+
+        stream_len_before_frame2 = len(stream.value)
+        tui._render_frame()
+        await asyncio.wait_for(writer.drain_async(), timeout=1)
+        await asyncio.sleep(0)
+
+        frame2_output = stream.value[stream_len_before_frame2:]
+        assert "\x1b[J" not in frame2_output
+        assert tui._render_stats is not None
+        assert tui._render_stats.strategy == "diff"
+    finally:
+        tui._render_scheduled = False
+        await asyncio.wait_for(writer.shutdown_async(), timeout=1)

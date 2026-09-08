@@ -1185,6 +1185,69 @@ class _FrameRendererMixin:
             payload.append(f"\x1b[{row};1H{new_lines[new_index]}\x1b[K")
             written_rows += 1
 
+        worker_mode = self._tty and self._terminal_writer_worker_mode()
+        if worker_mode:
+            generation = snapshot.generation
+            cursor_ansi = f"\x1b[{snapshot.cursor_row};{snapshot.cursor_col}H"
+            render_ms = (time.perf_counter() - started_at) * 1000
+            batch = FrameBatch(
+                generation=generation,
+                start_row=snapshot.frame_start_row,
+                target_lines=tuple(new_lines),
+                cursor_ansi=cursor_ansi,
+                render_ms=render_ms,
+                force_full=False,
+            )
+            self._layout_generation = generation
+            self._pending_layout_snapshots[generation] = snapshot
+            self._pending_layout_force_full[generation] = False
+            try:
+                self._terminal_writer.submit_frame(batch)
+            except Exception as exc:
+                self._pending_layout_snapshots.pop(generation, None)
+                self._pending_layout_force_full.pop(generation, None)
+                self._invalidate_pending_layout_after_submit_failure(exc)
+                raise
+            self._has_rendered_frame = True
+            self._last_frame_start_row = snapshot.frame_start_row
+            self._submitted_generation = generation
+            self._terminal_frame_generation = generation
+
+            vibe = next((region for region in snapshot.regions if region.key == "vibe"), None)
+            thinking = next((region for region in snapshot.regions if region.key == "thinking"), None)
+            busy_activity_rows = vibe.visual_rows if vibe is not None else 0
+            thinking_stream_rows = thinking.visual_rows if thinking is not None else 0
+            bottom_rows = snapshot.bottom.region.visual_rows
+            self._pending_worker_frame_states()[generation] = {
+                "visible_rows": self._visible_committed_rows,
+                "frame_rows": snapshot.frame_rows,
+                "start_row": snapshot.frame_start_row,
+                "bottom_rows": bottom_rows,
+                "busy_activity_rows": busy_activity_rows,
+                "busy_activity_start_row": (
+                    snapshot.frame_start_row
+                    + snapshot.frame_rows
+                    - bottom_rows
+                    - thinking_stream_rows
+                    - busy_activity_rows
+                ),
+                "thinking_stream_rows": thinking_stream_rows,
+                "width": snapshot.terminal_width,
+                "term_height": snapshot.terminal_height,
+                "lines_up": lines_up,
+                "target_lines": tuple(new_lines),
+                "render_plan": render_plan,
+            }
+            if bottom_region_dirty is not None:
+                self._bottom_region_dirty = bottom_region_dirty
+            self._render_stats = RenderStats(
+                total_lines=len(new_lines),
+                changed_lines=written_rows,
+                render_ms=render_ms,
+                strategy="diff" if written_rows else "cursor",
+            )
+            return True
+
         payload.append(f"\x1b[{snapshot.cursor_row};{snapshot.cursor_col}H")
         try:
             self._write_sync_payload("".join(payload))
@@ -1319,6 +1382,7 @@ class _FrameRendererMixin:
         force_regions: tuple[str, ...] = (),
         patch_rows: set[int] | None = None,
         bottom_region_dirty: bool | None = None,
+        cursor_pos: tuple[int, int] | None = None,
     ) -> bool:
         width = self._frame_width()
         term_height = shutil.get_terminal_size().lines
@@ -1358,6 +1422,17 @@ class _FrameRendererMixin:
             snapshot,
             generation=self._terminal_frame_generation + 1,
         )
+        if cursor_pos is not None:
+            snapshot = replace(
+                snapshot,
+                cursor_row=cursor_pos[0],
+                cursor_col=cursor_pos[1],
+                bottom=replace(
+                    snapshot.bottom,
+                    cursor_row=cursor_pos[0],
+                    cursor_col=cursor_pos[1],
+                ),
+            )
         lines_up = max(
             snapshot.frame_rows
             - (snapshot.cursor_row - snapshot.frame_start_row)
@@ -1382,9 +1457,6 @@ class _FrameRendererMixin:
         if self._full_frame_repaint_pending:
             self._render_frame()
             return
-        if self._tty and self._terminal_writer_worker_mode():
-            self._render_frame()
-            return
         if not self._tty or not self._has_rendered_frame or self._last_bottom_rows <= 0:
             self._render_frame()
             return
@@ -1392,15 +1464,64 @@ class _FrameRendererMixin:
             self._render_frame()
             return
 
+        width = self._frame_width()
+        term_height = shutil.get_terminal_size().lines
+        previous = self._applied_layout_snapshot
+        if self._sync_snapshot_is_usable(
+            previous,
+            width=width,
+            term_height=term_height,
+        ):
+            input_region = self._snapshot_region(previous, "bottom.input")
+            if input_region is not None:
+                try:
+                    input_elements = self._render_input_elements(width)
+                    rendered = self._capture_region_rows(
+                        input_elements,
+                        width,
+                        signature_context=("bottom", "input"),
+                    )
+                    if rendered.visual_rows == input_region.visual_rows:
+                        patch_rows = set(
+                            range(
+                                input_region.start_row,
+                                input_region.start_row + input_region.visual_rows,
+                            )
+                        )
+                        input_rows = self._input_display_rows(width)
+                        cursor_row_idx = min(self._cursor_row, max(len(input_rows) - 1, 0))
+                        current_line = self._current_line()
+                        display_line = self._input_display_text(current_line)
+                        cursor = min(self._cursor_col, len(current_line))
+                        render_width = self._render_line_width(width)
+                        if self._active_text_secret:
+                            before_cursor = "*" * cell_len(current_line[:cursor])
+                        else:
+                            before_cursor = display_line[:cursor]
+                        cursor_cells = self._input_line_prefix_width(cursor_row_idx) + cell_len(before_cursor)
+                        cursor_visual_row = min(cursor_cells // render_width, input_rows[cursor_row_idx] - 1)
+                        cursor_row = input_region.start_row + cursor_visual_row
+                        cursor_col = cursor_cells % render_width + 1
+
+                        if self._render_sync_local_region(
+                            key="bottom.input",
+                            rendered=rendered,
+                            force_regions=("bottom.input",),
+                            patch_rows=patch_rows,
+                            bottom_region_dirty=True,
+                            cursor_pos=(cursor_row, cursor_col),
+                        ):
+                            self._last_render_plan = None
+                            return
+                except Exception:
+                    pass
+
         self._render_sync_local_frame(bottom_region_dirty=True)
         self._last_render_plan = None
 
     def _render_choice_selection_region(self) -> bool:
         if not self._tty or self._active_choice is None:
             return False
-        if self._terminal_writer_worker_mode():
-            self._render_frame()
-            return True
         if not self._has_rendered_frame or self._last_bottom_rows <= 0:
             return False
         if self._frame_geometry_changed():
@@ -1447,6 +1568,10 @@ class _FrameRendererMixin:
             except Exception:
                 pass
 
+        if self._terminal_writer_worker_mode():
+            self._render_frame()
+            return True
+
         try:
             ansi = self._capture_renderable(self._render_bottom_impl(), width)
         except Exception:
@@ -1484,14 +1609,14 @@ class _FrameRendererMixin:
             or self._render_scheduled
         ):
             return False
-        if self._terminal_writer_worker_mode():
-            self._render_frame()
-            return True
         if self._frame_geometry_changed():
             return False
 
         plan = self._last_render_plan
         if plan is None:
+            if self._terminal_writer_worker_mode():
+                self._render_frame()
+                return True
             return False
         width = self._frame_width()
         term_height = shutil.get_terminal_size().lines
@@ -1501,6 +1626,9 @@ class _FrameRendererMixin:
             width=width,
             term_height=term_height,
         ):
+            if self._terminal_writer_worker_mode():
+                self._render_frame()
+                return True
             return False
 
         try:
@@ -1511,21 +1639,35 @@ class _FrameRendererMixin:
                 signature_context=("vibe",),
             )
         except Exception:
+            if self._terminal_writer_worker_mode():
+                self._render_frame()
+                return True
             return False
         if rendered.visual_rows <= 0:
+            if self._terminal_writer_worker_mode():
+                self._render_frame()
+                return True
             return False
         vibe = self._snapshot_region(previous, "vibe")
         if vibe is None or vibe.visual_rows != rendered.visual_rows:
+            if self._terminal_writer_worker_mode():
+                self._render_frame()
+                return True
             return False
         patch_rows = set(range(vibe.start_row, vibe.start_row + vibe.visual_rows))
         next_plan = replace(plan, busy_activity_elements=tuple(elements))
-        return self._render_sync_local_region(
+        if self._render_sync_local_region(
             key="vibe",
             rendered=rendered,
             render_plan=next_plan,
             force_regions=("vibe",),
             patch_rows=patch_rows,
-        )
+        ):
+            return True
+        if self._terminal_writer_worker_mode():
+            self._render_frame()
+            return True
+        return False
 
     def _capture_renderable(self, renderable: object, width: int) -> str:
         capture_width = max(width, 1)

@@ -736,7 +736,8 @@ class PureTui(
                     self._last_frame_start_row,
                     clear_start + update["flush_rows"],
                 )
-            self._invalidate_frame_cache()
+            if not update.get("preserve_baseline", False):
+                self._invalidate_frame_cache()
         finally:
             self._render_state.pending_commit_updates.pop(token_key, None)
             self._render_state.pending_commit_tasks.pop(token_key, None)
@@ -758,6 +759,7 @@ class PureTui(
         force_requested: bool,
         raw_echoes: list[str],
         clear_start_row: int = 0,
+        preserve_baseline: bool = False,
     ) -> None:
         token_key = id(token)
         self._render_state.pending_terminal_operations[token_key] = {
@@ -775,6 +777,7 @@ class PureTui(
             "force_requested": force_requested,
             "raw_echoes": raw_echoes,
             "clear_start_row": clear_start_row,
+            "preserve_baseline": preserve_baseline,
             "restore_epoch": self._restore_epoch,
         }
         self._render_state.pending_commit_tasks[token_key] = asyncio.create_task(
@@ -1455,11 +1458,19 @@ class PureTui(
             if self._has_rendered_frame and clear_start_row > 0:
                 self._last_frame_start_row = clear_start_row + flush_rows
 
+            preserve_baseline = bool(
+                worker_mode
+                and callable(getattr(self._terminal_writer, "wait", None))
+                and self._has_rendered_frame
+                and clear_start_row > 0
+            )
             if worker_mode:
-                self._invalidate_layout("commit")
+                if not preserve_baseline:
+                    self._invalidate_layout("commit")
                 token = self._terminal_writer.submit_commit(
                     clear_start_row=clear_start_row,
                     ansi=commit_ansi,
+                    preserve_baseline=preserve_baseline,
                 )
                 if callable(getattr(self._terminal_writer, "wait", None)):
                     self._track_pending_commit(
@@ -1470,6 +1481,7 @@ class PureTui(
                         force_requested=force_requested,
                         raw_echoes=raw_echoes,
                         clear_start_row=clear_start_row,
+                        preserve_baseline=preserve_baseline,
                     )
                 else:
                     settle_batch()
@@ -1479,12 +1491,14 @@ class PureTui(
                         term_height,
                         self._visible_committed_rows + flush_rows,
                     )
-                    self._invalidate_frame_cache()
+                    if not preserve_baseline:
+                        self._invalidate_frame_cache()
                 return token
 
             if clear_start_row > 0:
                 self._terminal_writer.write(f"\x1b[{clear_start_row};1H")
-                self._terminal_writer.write("\x1b[J")
+                if not preserve_baseline:
+                    self._terminal_writer.write("\x1b[J")
                 self._terminal_writer.flush()
             self._terminal_writer.write(commit_ansi)
             self._terminal_writer.flush()
@@ -1495,7 +1509,8 @@ class PureTui(
                 term_height,
                 self._visible_committed_rows + flush_rows,
             )
-            self._invalidate_frame_cache()
+            if not preserve_baseline:
+                self._invalidate_frame_cache()
             return None
         except Exception:
             if worker_mode:

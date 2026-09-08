@@ -72,11 +72,13 @@ class _CommitPayload:
         spool: TextIO | None = None,
         byte_length: int,
         memory_bytes: int,
+        lines_written: int = 1,
     ) -> None:
         self.text = text
         self.spool = spool
         self.byte_length = byte_length
         self.memory_bytes = memory_bytes
+        self.lines_written = lines_written
         self.closed = False
 
     def parts(self, char_limit: int) -> Iterator[str]:
@@ -104,6 +106,7 @@ class _CommitPayload:
 class _CommitBatch:
     clear_start_row: int
     payload: _CommitPayload
+    preserve_baseline: bool = False
 
 
 @dataclass(frozen=True)
@@ -489,17 +492,28 @@ class TerminalWriter:
         *,
         clear_start_row: int,
         payload: _CommitPayload,
+        preserve_baseline: bool = False,
     ) -> BatchToken:
         self._drop_pending_frame_locked()
         entry = self._new_entry_locked(
-            _CommitBatch(clear_start_row=clear_start_row, payload=payload)
+            _CommitBatch(
+                clear_start_row=clear_start_row,
+                payload=payload,
+                preserve_baseline=preserve_baseline,
+            )
         )
         self._queue.append(entry)
         self._condition.notify()
         assert entry.token is not None
         return entry.token
 
-    def _spooled_payload(self, ansi: str, byte_length: int) -> _CommitPayload:
+    def _spooled_payload(
+        self,
+        ansi: str,
+        byte_length: int,
+        *,
+        lines_written: int = 1,
+    ) -> _CommitPayload:
         spool = SpooledTemporaryFile(
             max_size=self.commit_memory_soft_limit,
             mode="w+t",
@@ -517,12 +531,20 @@ class TerminalWriter:
             spool=spool,
             byte_length=byte_length,
             memory_bytes=0,
+            lines_written=lines_written,
         )
 
-    def submit_commit(self, *, clear_start_row: int, ansi: str) -> BatchToken:
+    def submit_commit(
+        self,
+        *,
+        clear_start_row: int,
+        ansi: str,
+        preserve_baseline: bool = False,
+    ) -> BatchToken:
         if clear_start_row < 0:
             raise ValueError("commit clear_start_row cannot be negative")
         byte_length = len(ansi.encode("utf-8"))
+        lines_written = ansi.count("\n") or 1
         with self._condition:
             self._check_submit_locked()
             if self._pending_commit_bytes + byte_length <= self.commit_memory_soft_limit:
@@ -530,19 +552,25 @@ class TerminalWriter:
                     text=ansi,
                     byte_length=byte_length,
                     memory_bytes=byte_length,
+                    lines_written=lines_written,
                 )
                 self._pending_commit_bytes += byte_length
                 try:
                     return self._enqueue_commit_locked(
                         clear_start_row=clear_start_row,
                         payload=payload,
+                        preserve_baseline=preserve_baseline,
                     )
                 except Exception:
                     self._pending_commit_bytes -= byte_length
                     payload.close()
                     raise
 
-        payload = self._spooled_payload(ansi, byte_length)
+        payload = self._spooled_payload(
+            ansi,
+            byte_length,
+            lines_written=lines_written,
+        )
         try:
             with self._condition:
                 self._check_submit_locked()
@@ -551,6 +579,7 @@ class TerminalWriter:
                 return self._enqueue_commit_locked(
                     clear_start_row=clear_start_row,
                     payload=payload,
+                    preserve_baseline=preserve_baseline,
                 )
         except Exception:
             payload.close()
@@ -649,18 +678,31 @@ class TerminalWriter:
             )
             if clear_start_row > 0:
                 self._worker_write(f"\x1b[{clear_start_row};1H")
-                self._worker_write("\x1b[J")
+                if not batch.preserve_baseline:
+                    self._worker_write("\x1b[J")
             for value in batch.payload.parts(max(1, self.byte_budget)):
                 self._worker_write(value)
             self._worker_flush()
             if clear_start_row > 0:
-                lines_written = (
-                    batch.payload.text.count("\n")
-                    if batch.payload.text is not None
-                    else 1
-                )
-                self._applied_start_row = clear_start_row + lines_written
-            self._baseline_valid = False
+                lines_written = batch.payload.lines_written
+                if (
+                    batch.preserve_baseline
+                    and self._baseline_valid
+                    and clear_start_row == self._applied_start_row
+                ):
+                    if lines_written <= len(self._applied_lines):
+                        self._applied_lines = self._applied_lines[lines_written:]
+                        self._applied_start_row = clear_start_row + lines_written
+                        self._baseline_valid = True
+                    else:
+                        self._applied_start_row = clear_start_row + lines_written
+                        self._applied_lines = ()
+                        self._baseline_valid = False
+                else:
+                    self._applied_start_row = clear_start_row + lines_written
+                    self._baseline_valid = False
+            else:
+                self._baseline_valid = False
         except Exception:
             try:
                 self._release_commit_payload(batch.payload)
