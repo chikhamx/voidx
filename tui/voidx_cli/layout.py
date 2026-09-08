@@ -134,6 +134,7 @@ class LayoutSnapshot:
     cursor_col: int
     scroll_epoch: int
     generation: int
+    restore_epoch: int = 0
 
     def __post_init__(self) -> None:
         if self.terminal_width < 1 or self.terminal_height < 1:
@@ -150,6 +151,8 @@ class LayoutSnapshot:
             raise ValueError("cursor column exceeds terminal width")
         if self.scroll_epoch < 0:
             raise ValueError("scroll_epoch must not be negative")
+        if self.restore_epoch < 0:
+            raise ValueError("restore_epoch must not be negative")
         if self.generation < 0:
             raise ValueError("generation must not be negative")
         if self.bottom.cursor_row != self.cursor_row or self.bottom.cursor_col != self.cursor_col:

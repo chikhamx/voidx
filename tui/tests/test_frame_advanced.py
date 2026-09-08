@@ -3650,3 +3650,90 @@ def test_resume_restored_history_is_completed_and_inactive(tmp_path):
     assert all(node.payload.get("terminal") is True for node in nodes)
     assert all(node.payload.get("render_pending") is False for node in nodes)
     assert all(node.payload.get("stream") is not True for node in nodes)
+
+
+@pytest.mark.asyncio
+async def test_prepare_session_switch_invalidates_pending_commit(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitWriter()
+    tui._terminal_writer = writer
+
+    dock.reset()
+    dock.begin_capture()
+    dock.start_turn("old turn")
+    tool = dock.start_tool("OldTool", 'arg="val"', tool_name="tool", tool_call_id="call-old")
+    dock.finish_tool_node(tool, "OldTool", 0.1, True)
+    diff = _append_previewed_file_diff(dock, tool, "diff body", path="old.py")
+
+    token = tui._flush_committed(force=True)
+    assert token is not None
+    assert len(tui._render_state.pending_commit_tasks) == 1
+
+    old_epoch = getattr(tui, "_restore_epoch", 0)
+    await tui.prepare_session_switch()
+
+    assert getattr(tui, "_restore_epoch", 0) == old_epoch + 1
+    assert tui._visible_committed_rows == 0
+    assert tui._committed_line_count == 0
+
+    # Reset dock for the new session
+    dock.reset()
+    dock.begin_capture()
+    dock.start_turn("new turn")
+
+    # Complete the old deferred commit token
+    writer.tokens[0].future.set_result(None)
+    await asyncio.sleep(0.01)
+
+    # Verify old commit does not apply state or settle nodes on the new tree
+    assert tui._visible_committed_rows == 0
+    assert tui._committed_line_count == 0
+    assert not any(n.payload.get("settled") for n in dock.tree.root.children)
+
+
+@pytest.mark.asyncio
+async def test_handle_terminal_frame_result_drops_stale_restore_epoch(tmp_path):
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+
+    tui._restore_epoch = 1
+    lines = ["line1", "line2"]
+    snapshot = tui._layout_snapshot_for_frame(
+        generation=1,
+        width=80,
+        term_height=24,
+        start_row=1,
+        lines=lines,
+        frame_rows=2,
+        bottom_rows=1,
+        lines_up=0,
+        cursor_ansi="",
+    )
+    assert snapshot is not None
+    tui._pending_layout_snapshots[1] = snapshot
+
+    # Advance restore epoch
+    tui._restore_epoch = 2
+
+    # Simulate frame result arrival from epoch 1
+    from voidx_cli.terminal_writer import FrameResult
+    result = FrameResult(
+        generation=1,
+        total_lines=2,
+        changed_lines=2,
+        render_ms=1.0,
+        strategy="full",
+        applied=True,
+    )
+    tui._handle_terminal_frame_result(result)
+
+    # Should be dropped and not applied
+    assert tui._applied_layout_snapshot is None

@@ -547,6 +547,52 @@ class PureTui(
     def hide_command_output(self) -> None:
         return None
 
+    async def prepare_session_switch(self) -> None:
+        self._restore_epoch += 1
+        self._scroll_epoch += 1
+        self._render_scheduled = False
+        await self._stop_busy_activity_timer()
+        try:
+            await self._stop_panel_query_tasks()
+        except BaseException:
+            pass
+
+        for task in list(self._render_state.pending_commit_tasks.values()):
+            if not task.done():
+                task.cancel()
+        self._render_state.pending_commit_tasks.clear()
+        self._render_state.pending_commit_updates.clear()
+        self._render_state.pending_commit_tokens.clear()
+        self._render_state.pending_terminal_operations.clear()
+
+        self._invalidate_layout("restore", advances_scroll_epoch=False)
+        self._invalidate_frame_cache()
+
+        self._visible_committed_rows = 0
+        self._committed_line_count = 0
+        self._committed_projection = None
+        self._committed_tree_revision = -1
+        self._last_frame_start_row = 1
+        self._last_frame_rows = 0
+        self._last_bottom_start_row = 1
+        self._last_bottom_rows = 0
+        self._has_rendered_frame = False
+        self._prev_frame_lines = None
+        self._was_busy = False
+        self._restored_range_key = None
+        self._restored_committed_line_count = 0
+        self._restored_startup_flushed = False
+        self._restored_history_retired = False
+
+        if self._tty and hasattr(self._terminal_writer, "submit_barrier"):
+            token = self._terminal_writer.submit_barrier(
+                kind="restore",
+                ansi="\x1b[2J\x1b[H",
+                invalidate_frame=True,
+            )
+            if hasattr(self._terminal_writer, "wait"):
+                await self._terminal_writer.wait(token)
+
     def invalidate(self) -> None:
         self._mark_status_summary_dirty()
         if self._running:
@@ -668,12 +714,15 @@ class PureTui(
         try:
             await self._terminal_writer.wait(token)
         except BaseException as exc:
-            if update["force_requested"]:
-                dock.request_force_flush()
-            dock.restore_guidance_echoes(update["raw_echoes"])
+            if update.get("restore_epoch", 0) == self._restore_epoch:
+                if update["force_requested"]:
+                    dock.request_force_flush()
+                dock.restore_guidance_echoes(update["raw_echoes"])
             if not isinstance(exc, asyncio.CancelledError):
                 log_internal_error(exc, context="terminal_commit_wait")
         else:
+            if update.get("restore_epoch", 0) != self._restore_epoch:
+                return
             update["settle"]()
             update["apply_state"]()
             term_height = shutil.get_terminal_size().lines
@@ -696,7 +745,7 @@ class PureTui(
                 self._render_state.pending_commit_tokens.remove(token)
             except ValueError:
                 pass
-            if self._running:
+            if self._running and update.get("restore_epoch", 0) == self._restore_epoch:
                 self.invalidate()
 
     def _track_pending_commit(
@@ -715,6 +764,7 @@ class PureTui(
             "kind": "commit",
             "token": token,
             "scroll_epoch": self._scroll_epoch,
+            "restore_epoch": self._restore_epoch,
             "apply_state": apply_state,
         }
         self._render_state.pending_commit_tokens.append(token)
@@ -725,6 +775,7 @@ class PureTui(
             "force_requested": force_requested,
             "raw_echoes": raw_echoes,
             "clear_start_row": clear_start_row,
+            "restore_epoch": self._restore_epoch,
         }
         self._render_state.pending_commit_tasks[token_key] = asyncio.create_task(
             self._wait_for_pending_commit(token)

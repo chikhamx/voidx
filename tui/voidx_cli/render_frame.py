@@ -158,6 +158,7 @@ class _FrameRendererMixin:
             cursor_col=cursor_col,
             scroll_epoch=self._scroll_epoch,
             generation=generation,
+            restore_epoch=getattr(self, "_restore_epoch", 0),
         )
     def _invalidate_layout(
         self,
@@ -370,7 +371,10 @@ class _FrameRendererMixin:
         if not result.applied:
             return
         frame_states = self._pending_worker_frame_states()
-        if snapshot.scroll_epoch != self._scroll_epoch:
+        if (
+            snapshot.scroll_epoch != self._scroll_epoch
+            or getattr(snapshot, "restore_epoch", 0) != getattr(self, "_restore_epoch", 0)
+        ):
             self._pending_layout_snapshots.pop(result.generation, None)
             self._pending_layout_force_full.pop(result.generation, None)
             frame_states.pop(result.generation, None)

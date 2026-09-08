@@ -133,6 +133,7 @@ class RenderState:
     pending_layout_force_full: dict[int, bool] = field(default_factory=dict)
     pending_terminal_operations: dict[int, Any] = field(default_factory=dict)
     scroll_epoch: int = 0
+    restore_epoch: int = 0
     full_layout_invalidated: bool = False
     terminal_submission_failed: bool = False
     terminal_writer_failed: bool = False
@@ -292,6 +293,7 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_pending_layout_force_full": ("_render_state", "pending_layout_force_full"),
     "_pending_terminal_operations": ("_render_state", "pending_terminal_operations"),
     "_scroll_epoch": ("_render_state", "scroll_epoch"),
+    "_restore_epoch": ("_render_state", "restore_epoch"),
     "_full_layout_invalidated": ("_render_state", "full_layout_invalidated"),
     "_terminal_submission_failed": ("_render_state", "terminal_submission_failed"),
     "_terminal_writer_failed": ("_render_state", "terminal_writer_failed"),
