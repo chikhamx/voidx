@@ -525,3 +525,33 @@ def test_render_root_tail_excludes_prefix_without_full_render(monkeypatch):
 
     assert "startup banner" in "\n".join(tail)
     assert "history line 0" not in "\n".join(tail)
+
+
+def test_large_sibling_tree_rendering_performance_and_fidelity():
+    import time
+    tree = OutputTree()
+    turn = tree.new_node(tree.root, node_type="turn", header="Large turn")
+    assistant = tree.new_node(turn, node_type="assistant", header="Large assistant")
+
+    count = 1000
+    for i in range(count):
+        tc = tree.new_node(
+            assistant,
+            node_type="tool_call",
+            header=f"Tool call {i}",
+        )
+        tree.new_node(
+            tc,
+            node_type="tool_result",
+            header=f"Result {i}",
+            body_lines=[f"output {i}"],
+        )
+
+    t0 = time.perf_counter()
+    lines, line_map = tree.render_root_slice_with_line_map(80, 0, len(tree.root.children))
+    duration = time.perf_counter() - t0
+
+    assert len(lines) > count * 2
+    assert line_map is not None
+    # Must complete in well under 0.15s (O(N) vs previous O(N^2) taking 0.5s+)
+    assert duration < 0.15, f"Rendering took too long: {duration:.4f}s"

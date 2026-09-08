@@ -381,6 +381,7 @@ class DockEventConsumer:
                     tool_call_id=e.tool_call_id,
                     tool_name=e.tool_name,
                     raw_args=e.raw_args,
+                    display_mode=e.display_mode,
                 )
                 self._tool_nodes[e.tool_call_id] = node
                 return node
@@ -410,6 +411,7 @@ class DockEventConsumer:
                     parent=parent,
                     collapsed=e.collapsed,
                     tool_call_id=e.tool_call_id or None,
+                    display_mode=e.display_mode,
                 )
             case TodoUpdated() as e:
                 if not e.items:

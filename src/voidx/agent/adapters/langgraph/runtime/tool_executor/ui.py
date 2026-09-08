@@ -40,6 +40,7 @@ async def notify_tool_started(host, tc, display_policy) -> object | None:
                 tool_call_id=tool_event_id,
                 tool_name=tid,
                 raw_args=targs,
+                display_mode=initial_display_mode,
             )
             if host._ui.dock.current_agent is not None:
                 host._turn_node = host._ui.dock.current_agent

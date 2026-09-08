@@ -427,3 +427,43 @@ def test_mark_root_turns_committed_through_rendered_line_watermark():
     assert first.payload["committed"] is True
     assert first_child.payload["committed"] is True
     assert second.payload["committed"] is False
+def test_output_node_equality_uses_identity_semantics():
+    from voidx.presentation.output.tree import OutputNode
+
+    node1 = OutputNode(id="n1")
+    node2 = OutputNode(id="n1")
+    assert node1 != node2
+    assert node1 == node1
+
+
+def test_mark_root_turns_committed_renders_incrementally_not_quadratically_from_zero():
+    tree = OutputTree()
+    for i in range(5):
+        tree.new_node(
+            tree.root,
+            node_type="turn",
+            header=f"turn {i}",
+            payload={"transcript_turn_id": i, "durable": True, "committed": True, "active": False},
+        )
+        tree.new_node(
+            tree.root,
+            node_type="assistant",
+            header=f"answer {i}",
+            payload={"durable": True, "committed": True, "active": False},
+        )
+    total_lines = len(tree.render(80))
+
+    calls: list[tuple[int, int | None]] = []
+    real_render_root_slice = tree.render_root_slice
+
+    def tracked_render_root_slice(width: int = 80, start: int = 0, end: int | None = None):
+        calls.append((start, end))
+        return real_render_root_slice(width, start, end)
+
+    tree.render_root_slice = tracked_render_root_slice
+    committed = tree.mark_root_turns_committed_through_line(80, total_lines)
+
+    assert committed == list(range(5))
+    # Incremental rendering must not repeatedly start at 0 for every turn
+    assert len(calls) == 5
+    assert [start for start, _ in calls] == [0, 2, 4, 6, 8]

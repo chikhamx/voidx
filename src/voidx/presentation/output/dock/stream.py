@@ -20,7 +20,7 @@ from voidx.presentation.output.dock.stream_projection import (
     StreamProjectionUpdate,
     StreamingMarkdownProjection,
 )
-from voidx.presentation.output.tree import OutputNode
+from voidx.presentation.output.tree import OutputNode, has_visible_output
 
 
 @dataclass(frozen=True)
@@ -386,7 +386,28 @@ class DockStreamMixin:
             self._ignored_duplicate_stream_commit = True
             self._stream_text = canonical
             return
-        if self._stream_node is None or parent_changed:
+        reused_node = None
+        if (self._stream_node is None or parent_changed) and not parent_changed:
+            reused_node = self._find_consolidatable_stream_node(clean, target)
+
+        if reused_node is not None:
+            last_index = target.children.index(reused_node)
+            for child in list(target.children[last_index + 1:]):
+                if not has_visible_output(child):
+                    self._remove_node(child)
+            self._stream_node = reused_node
+            reused_node.header = ""
+            reused_node.body_lines = []
+            reused_node.payload["lifecycle"] = "running"
+            reused_node.payload.pop("phase", None)
+            reused_node.payload["render_pending"] = False
+            self._mark_unsettled(reused_node)
+            self._stream_projection = None
+            operation = "replace"
+            projection_input = canonical
+            stream_existed = True
+            parent_changed = False
+        elif self._stream_node is None or parent_changed:
             self._stream_node = self._new_stream_node(parent=parent)
             operation = "replace"
             projection_input = canonical
@@ -470,6 +491,38 @@ class DockStreamMixin:
             and last.payload.get("lifecycle") == "completed"
             and not last.payload.get("render_pending", False)
         )
+
+    def _find_consolidatable_stream_node(
+        self,
+        clean: str,
+        target: OutputNode,
+    ) -> OutputNode | None:
+        node_id = self._last_committed_stream_node_id
+        if not node_id:
+            return None
+        last = self._tree.get(node_id)
+        if (
+            last is None
+            or last.node_type != "assistant"
+            or last.parent is not target
+        ):
+            return None
+        if last not in target.children:
+            return None
+        last_index = target.children.index(last)
+        for child in target.children[last_index + 1:]:
+            if has_visible_output(child):
+                return None
+
+        if last.id in self._settled_node_ids:
+            return None
+
+        signature = _stream_signature(clean)
+        last_signature = self._last_committed_stream_text
+        if not last_signature or not signature.startswith(last_signature):
+            return None
+
+        return last
 
 
 def _thinking_visual_lines(text: str, width: int) -> list[str]:

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import pytest
 
+from voidx.agent.domain.display_policy import ToolDisplayMode
 from voidx.agent.domain.turn_metadata import TurnMetadata
 from voidx.presentation.gateway.adapter import UiEventItemAdapter
 from voidx.presentation.output.events.schema import (
@@ -127,6 +128,30 @@ async def test_tool_started_forwards_raw_args_for_structured_summaries():
     assert data["args"] == 'command="pytest -q", cwd="/tmp"'
     assert data["raw_args"] == raw_args
 
+
+@pytest.mark.asyncio
+async def test_hidden_tool_started_returns_none_and_ignores_finished():
+    adapter = _adapter()
+    # Hidden tools like todo/checkpoint/clarify should not produce tool items
+    msg = await adapter.handle(
+        ToolStarted(
+            tool_call_id="todo-1",
+            label="Updating",
+            tool_name="todo",
+            display_mode=ToolDisplayMode.HIDDEN,
+        )
+    )
+    assert msg is None
+
+    finished_msg = await adapter.handle(
+        ToolFinished(tool_call_id="todo-1", label="Todo", elapsed=0.1, ok=True)
+    )
+    assert finished_msg is None
+
+    result_msg = await adapter.handle(
+        ToolResultAppended(tool_call_id="todo-1", text="0/1 done")
+    )
+    assert result_msg is None
 @pytest.mark.asyncio
 async def test_tool_finished_to_item_completed():
     adapter = _adapter()

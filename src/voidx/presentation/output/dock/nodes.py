@@ -166,10 +166,12 @@ class DockNodeMixin(
         tool_call_id: str | None = None,
         tool_name: str = "",
         raw_args: dict[str, Any] | None = None,
+        display_mode: str | None = None,
     ) -> OutputNode:
         if parent is None:
             self._settle_stream_for_tool()
         raw_args = raw_args or {}
+        display_mode = getattr(display_mode, "value", display_mode)
         body_lines: list[str] = []
         if tool_name in ("bash", "powershell"):
             command = str(raw_args.get("command") or "")
@@ -187,7 +189,12 @@ class DockNodeMixin(
             collapsed=True,
             meta=tool_body,
             tool_call_id=tool_call_id,
-            payload={"tool_name": tool_name, "args": args, "raw_args": raw_args},
+            payload={
+                "tool_name": tool_name,
+                "args": args,
+                "raw_args": raw_args,
+                "display_mode": display_mode,
+            },
         )
         self._mark_unsettled(self._current_tool)
         self.refresh()
@@ -317,7 +324,12 @@ class DockNodeMixin(
         parent: OutputNode | None = None,
         collapsed: bool = False,
         tool_call_id: str | None = None,
+        display_mode: str | None = None,
     ) -> OutputNode | None:
+        display_mode = getattr(display_mode, "value", display_mode)
+        target = parent or self._current_tool or self._current_agent or self._tree.root
+        if display_mode is None and target.node_type == "tool_call":
+            display_mode = target.payload.get("display_mode")
         clean = _clean(text)
         if not clean.strip():
             return None
@@ -354,6 +366,7 @@ class DockNodeMixin(
                     "independent_result": True,
                     "result_tool_call_id": result_tool_call_id,
                     "result_anchor_id": result_anchor_id,
+                    "display_mode": display_mode,
                 },
             )
         else:
@@ -367,6 +380,7 @@ class DockNodeMixin(
                 raw_text=clean,
                 result_tool_call_id=result_tool_call_id,
                 result_anchor_id=result_anchor_id,
+                display_mode=display_mode,
             )
         self._mark_completed(node)
         self._ensure_result_spacer(node)

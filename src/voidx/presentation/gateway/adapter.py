@@ -16,6 +16,8 @@ from typing import Any
 from rich.errors import MarkupError
 from rich.text import Text
 
+from voidx.agent.domain.display_policy import ToolDisplayMode
+
 from voidx.presentation.output.events.schema import (
     AnsiAppended,
     AssistantStreamCommitted,
@@ -103,6 +105,8 @@ class UiEventItemAdapter:
         self._subagent_items: dict[str, str] = {}
         # status_id → item_id
         self._status_items: dict[str, str] = {}
+        # tool_call_ids for tools configured with ToolDisplayMode.HIDDEN
+        self._hidden_tool_ids: set[str] = set()
 
     async def handle(self, event: UiEvent) -> JsonRpcNotification | None:
         """Convert a UiEvent to a v2 notification. Returns None if unmapped.
@@ -134,6 +138,7 @@ class UiEventItemAdapter:
         self._stream_items.clear()
         self._subagent_items.clear()
         self._status_items.clear()
+        self._hidden_tool_ids.clear()
         return self._turn_id
 
     def _retire_turn(self, notification: JsonRpcNotification) -> JsonRpcNotification:
@@ -143,6 +148,7 @@ class UiEventItemAdapter:
         self._stream_items.clear()
         self._subagent_items.clear()
         self._status_items.clear()
+        self._hidden_tool_ids.clear()
         return notification
 
     def _item_notification(
@@ -169,7 +175,10 @@ class UiEventItemAdapter:
 
     # ── tool ─────────────────────────────────────────────────────────────
 
-    def _on_tool_started(self, event: ToolStarted) -> JsonRpcNotification:
+    def _on_tool_started(self, event: ToolStarted) -> JsonRpcNotification | None:
+        if event.display_mode == ToolDisplayMode.HIDDEN:
+            self._hidden_tool_ids.add(event.tool_call_id)
+            return None
         item_id = _uid()
         self._tool_items[event.tool_call_id] = item_id
         return self._item_notification(
@@ -185,7 +194,9 @@ class UiEventItemAdapter:
             },
         )
 
-    def _on_tool_finished(self, event: ToolFinished) -> JsonRpcNotification:
+    def _on_tool_finished(self, event: ToolFinished) -> JsonRpcNotification | None:
+        if event.tool_call_id in self._hidden_tool_ids:
+            return None
         item_id = self._tool_items.get(event.tool_call_id, _uid())
         return self._item_notification(
             item_id,
@@ -200,7 +211,9 @@ class UiEventItemAdapter:
             },
         )
 
-    def _on_tool_result(self, event: ToolResultAppended) -> JsonRpcNotification:
+    def _on_tool_result(self, event: ToolResultAppended) -> JsonRpcNotification | None:
+        if event.tool_call_id in self._hidden_tool_ids or event.display_mode == ToolDisplayMode.HIDDEN:
+            return None
         item_id = self._tool_items.get(event.tool_call_id, _uid())
         return self._item_notification(
             item_id,
@@ -209,7 +222,9 @@ class UiEventItemAdapter:
             {"tool_call_id": event.tool_call_id, "detail": event.text},
         )
 
-    def _on_file_change(self, event: FileChangeAppended) -> JsonRpcNotification:
+    def _on_file_change(self, event: FileChangeAppended) -> JsonRpcNotification | None:
+        if event.tool_call_id in self._hidden_tool_ids:
+            return None
         item_id = self._tool_items.get(event.tool_call_id, _uid())
         return self._item_notification(
             item_id,

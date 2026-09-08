@@ -33,7 +33,7 @@ def _visible_len(line: str) -> int:
     return cell_len(text.plain)
 
 
-@dataclass
+@dataclass(eq=False)
 class OutputNode:
     """A single node in the output tree."""
     id: str
@@ -355,6 +355,8 @@ class OutputTree:
             raise ValueError("committed line count must not be negative")
         committed: list[int] = []
         children = self.root.children
+        accumulated_lines = 0
+        last_end = 0
         for index, child in enumerate(children):
             if child.node_type != "turn":
                 continue
@@ -365,10 +367,12 @@ class OutputTree:
             while end < len(children) and children[end].node_type != "turn":
                 end += 1
             segment_line_count = len(
-                self.render_root_slice(console_width, 0, end)
+                self.render_root_slice(console_width, last_end, end)
             )
-            if segment_line_count > committed_line_count:
+            if accumulated_lines + segment_line_count > committed_line_count:
                 break
+            accumulated_lines += segment_line_count
+            last_end = end
             segment = self._root_turn_segment(child)
             for root in segment:
                 for node in _walk_subtree(root):
@@ -1070,8 +1074,17 @@ class OutputTree:
 
         # Render children with box-drawing (like depth 1 nodes)
         new_parts = ["  "]
-        for child in _visible_children(node):
-            self._walk_render(child, new_parts, lines, None)
+        visible_children = _visible_children(node)
+        last_content_idx = _sibling_layout_info(visible_children)
+        for idx, child in enumerate(visible_children):
+            self._walk_render(
+                child,
+                new_parts,
+                lines,
+                None,
+                is_first_sibling=(idx == 0),
+                effectively_last=(idx >= last_content_idx),
+            )
 
         node.collapsed = was_collapsed
 
@@ -1090,6 +1103,9 @@ class OutputTree:
         lines: list[str],
         line_map: dict[int, str] | None = None,
         click_map: dict[int, str] | None = None,
+        *,
+        is_first_sibling: bool | None = None,
+        effectively_last: bool | None = None,
     ) -> None:
         """Recursive depth-first walk to render the tree.
 
@@ -1098,28 +1114,52 @@ class OutputTree:
         Depth 2+ (nested):   dim connector on the first header, spaces after that.
         """
 
-        if _is_hidden_todo_snapshot(node):
+        if (
+            _is_hidden_todo_snapshot(node)
+            or _is_superseded_file_change_tool_call(node)
+            or _is_hidden_tool_call(node)
+            or _is_hidden_tool_result(node)
+        ):
             self._node_ranges[node.id] = (len(lines), len(lines))
             self._node_prefixes[node.id] = list(prefix_parts)
             return
 
         if node is self.root:
             prev = None
-            for child in _visible_children(node):
+            visible_children = _visible_children(node)
+            for idx, child in enumerate(visible_children):
                 if _needs_gap_between_root_blocks(prev, child):
                     lines.append("")
                 prev = child
-                self._walk_render(child, [], lines, line_map, click_map)
+                self._walk_render(
+                    child,
+                    [],
+                    lines,
+                    line_map,
+                    click_map,
+                    is_first_sibling=(idx == 0),
+                    effectively_last=(idx == len(visible_children) - 1),
+                )
             return
 
         start = len(lines)
 
         if is_transparent_container(node):
             prev_child = None
-            for child in _visible_children(node):
+            visible_children = _visible_children(node)
+            last_content_idx = _sibling_layout_info(visible_children)
+            for idx, child in enumerate(visible_children):
                 if _needs_gap_between_agent_blocks(node, prev_child, child):
                     lines.append("")
-                self._walk_render(child, prefix_parts, lines, line_map, click_map)
+                self._walk_render(
+                    child,
+                    prefix_parts,
+                    lines,
+                    line_map,
+                    click_map,
+                    is_first_sibling=(idx == 0),
+                    effectively_last=(idx >= last_content_idx),
+                )
                 prev_child = child
             self._node_ranges[node.id] = (start, len(lines))
             self._node_prefixes[node.id] = list(prefix_parts)
@@ -1169,10 +1209,20 @@ class OutputTree:
             # Children get box-drawing, indented under this node
             new_parts = [" "]
             prev_child = None
-            for child in _visible_children(node):
+            visible_children = _visible_children(node)
+            last_content_idx = _sibling_layout_info(visible_children)
+            for idx, child in enumerate(visible_children):
                 if _needs_gap_between_agent_blocks(node, prev_child, child):
                     lines.append("")
-                self._walk_render(child, new_parts, lines, line_map, click_map)
+                self._walk_render(
+                    child,
+                    new_parts,
+                    lines,
+                    line_map,
+                    click_map,
+                    is_first_sibling=(idx == 0),
+                    effectively_last=(idx >= last_content_idx),
+                )
                 prev_child = child
             self._node_ranges[node.id] = (start, len(lines))
             self._node_prefixes[node.id] = []
@@ -1180,12 +1230,14 @@ class OutputTree:
 
         # ── depth >= 2: full box-drawing ───────────────────────────────
         indent = "".join(prefix_parts)
-        effectively_last = _is_effectively_last_sibling(node)
+        if effectively_last is None:
+            effectively_last = _is_effectively_last_sibling(node)
         connector = self.BOX_LAST if effectively_last else self.BOX_BRANCH
-        is_first_sibling = (
-            node.parent is not None
-            and _visible_children(node.parent)[:1] == [node]
-        )
+        if is_first_sibling is None:
+            is_first_sibling = (
+                node.parent is not None
+                and _visible_children(node.parent)[:1] == [node]
+            )
         suppress_connector = (
             node.parent is not None
             and (
@@ -1322,10 +1374,20 @@ class OutputTree:
         # Children
         new_parts = prefix_parts if inline_tool_result else prefix_parts + [cont_suffix]
         prev_child = None
-        for child in _visible_children(node):
+        visible_children = _visible_children(node)
+        last_content_idx = _sibling_layout_info(visible_children)
+        for idx, child in enumerate(visible_children):
             if _needs_gap_between_agent_blocks(node, prev_child, child):
                 lines.append("")
-            self._walk_render(child, new_parts, lines, line_map, click_map)
+            self._walk_render(
+                child,
+                new_parts,
+                lines,
+                line_map,
+                click_map,
+                is_first_sibling=(idx == 0),
+                effectively_last=(idx >= last_content_idx),
+            )
             prev_child = child
         self._node_ranges[node.id] = (start, len(lines))
         self._node_prefixes[node.id] = list(prefix_parts)
@@ -1421,7 +1483,7 @@ def is_assistant_message(node: OutputNode) -> bool:
         node.node_type == "assistant"
         and not _is_thinking_stream(node)
         and not _is_transparent_assistant_container(node)
-        and bool(node.header or node.body_lines or _visible_children(node))
+        and bool(node.header or node.body_lines or any(_has_visible_output(child) for child in node.children))
     )
 
 
@@ -1455,12 +1517,21 @@ def _visible_children(node: OutputNode) -> list[OutputNode]:
     return [child for child in node.children if _has_visible_output(child)]
 
 
-def _has_visible_output(node: OutputNode) -> bool:
+def has_visible_output(node: OutputNode) -> bool:
     if _is_hidden_todo_snapshot(node):
         return False
+    if _is_hidden_tool_call(node):
+        return False
+    if _is_hidden_tool_result(node):
+        return False
+    if _is_superseded_file_change_tool_call(node):
+        return False
     if is_transparent_container(node):
-        return any(_has_visible_output(child) for child in node.children)
+        return any(has_visible_output(child) for child in node.children)
     return True
+
+
+_has_visible_output = has_visible_output
 
 
 def _is_hidden_todo_snapshot(node: OutputNode) -> bool:
@@ -1470,8 +1541,79 @@ def _is_hidden_todo_snapshot(node: OutputNode) -> bool:
     )
 
 
+def _find_associated_tool_call(node: OutputNode) -> OutputNode | None:
+    if node.parent is None:
+        return None
+    if node.parent.node_type == "tool_call":
+        return node.parent
+    anchor_id = node.payload.get("result_anchor_id")
+    if anchor_id:
+        for sibling in node.parent.children:
+            if sibling.id == anchor_id and sibling.node_type == "tool_call":
+                return sibling
+    tool_call_id = node.tool_call_id or node.payload.get("result_tool_call_id")
+    if tool_call_id:
+        for sibling in node.parent.children:
+            if sibling.tool_call_id == tool_call_id and sibling.node_type == "tool_call":
+                return sibling
+    return None
+
+
+def _is_hidden_tool_call(node: OutputNode) -> bool:
+    if node.node_type == "tool_call":
+        return node.payload.get("display_mode") == "hidden"
+    return False
+
+
+def _is_hidden_tool_result(node: OutputNode) -> bool:
+    if node.node_type == "tool_result":
+        tool_node = _find_associated_tool_call(node)
+        tool_payload = tool_node.payload if tool_node is not None else (
+            node.parent.payload if node.parent else {}
+        )
+        display_mode = node.payload.get("display_mode") or tool_payload.get("display_mode")
+        return display_mode in {"hidden", "summary"}
+
+    if node.node_type == "message" and bool(node.payload.get("tool_result_spacer_for")):
+        target_id = node.payload.get("tool_result_spacer_for")
+        parent = node.parent
+        if parent is not None:
+            target_node = next((c for c in parent.children if c.id == target_id), None)
+            if target_node is not None:
+                return _is_hidden_tool_result(target_node)
+        return True
+    return False
+
+
+def _is_superseded_file_change_tool_call(node: OutputNode) -> bool:
+    if node.node_type != "tool_call":
+        return False
+    if bool(node.payload.get("diff_result")):
+        return False
+    if node.parent is None:
+        return False
+    anchor_id = node.id
+    tool_call_id = node.tool_call_id
+    for sibling in node.parent.children:
+        if sibling is node:
+            continue
+        if sibling.node_type == "tool_call" and bool(sibling.payload.get("diff_result")):
+            res_anchor = sibling.payload.get("result_anchor_id")
+            res_call = sibling.payload.get("result_tool_call_id")
+            if (anchor_id and res_anchor == anchor_id) or (tool_call_id and res_call == tool_call_id):
+                return True
+    return False
+
+
 def _is_clickable(node: OutputNode) -> bool:
     return node.node_type in {"subagent", "tool_call", "tool_result", "thought", "status"}
+
+
+def _sibling_layout_info(visible_children: list[OutputNode]) -> int:
+    for idx in range(len(visible_children) - 1, -1, -1):
+        if not _is_inline_tool_result(visible_children[idx]):
+            return idx
+    return -1
 
 
 def _is_effectively_last_sibling(node: OutputNode) -> bool:
