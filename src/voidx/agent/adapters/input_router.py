@@ -127,7 +127,7 @@ class LangGraphAutonomousInputRouter:
             from voidx.agent.adapters.persistence.session_repository import load_messages
 
             rows = await load_messages(session.id)
-            if any(not is_guidance_row(row) for row in rows):
+            if not rows or any(not is_guidance_row(row) for row in rows):
                 return False
         if profile == "goal":
             return await self._handle_goal_first_message(

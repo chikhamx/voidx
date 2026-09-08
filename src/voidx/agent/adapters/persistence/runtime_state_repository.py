@@ -75,7 +75,6 @@ async def save_session_runtime_state(
                workflow_route_json = excluded.workflow_route_json,
                workflow_runs_json = excluded.workflow_runs_json,
                todo_state_json = excluded.todo_state_json,
-               compaction_summary = excluded.compaction_summary,
                session_time = excluded.session_time,
                updated_at = excluded.updated_at""",
         (
@@ -85,7 +84,7 @@ async def save_session_runtime_state(
             _dump_workflow_route(task_state.workflow_route),
             _dump_workflow_runs(task_state.workflow_runs),
             _dump_todo_state(task_state.todo_state),
-            compaction_summary,
+            "",
             session_time,
             now(),
         ),
@@ -122,6 +121,13 @@ async def load_task_state_with_session_time(session_id: str) -> tuple[TaskState,
             todo_state=_load_todo_state(row["todo_state_json"]),
         ),
         row["session_time"] or "",
+    )
+
+
+async def clear_compaction_summary(session_id: str) -> None:
+    await execute_commit(
+        "UPDATE session_runtime_state SET compaction_summary = '' WHERE session_id = ?",
+        (session_id,),
     )
 
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 import time
 
 StreamingRenderer = None
@@ -520,10 +522,37 @@ class LlmTurn:
                     context_limit=getattr(host._compaction, "context_limit", 128_000),
                     output_token_max=getattr(host._compaction, "output_token_max", 4096),
                     safety_margin=COMPACTION_BUFFER,
-                    budget_messages=raw_semantic_messages(
-                        [*state_messages, *guidance_messages]
-                    ),
                 )
+                def prepare_rollover_candidate(candidate_messages: list[BaseMessage]) -> PreparedMainRequest:
+                    rebuilt, _, _ = rebuild_llm_messages(
+                        candidate_messages, allow_inline_compaction=False,
+                    )
+                    builder = deepcopy(getattr(host, "_last_context_builder", None))
+                    if builder is None:
+                        from voidx.agent.application.runtime_context import RuntimeContextBuilder
+                        builder = RuntimeContextBuilder(
+                            config=host.config,
+                            workspace=host.config.workspace,
+                            persona=persona,
+                            interaction_mode=getattr(host, "_interaction_mode", "auto"),
+                        )
+                    rebuilt = rerender_task_context(
+                        builder, rebuilt, turn_state, runtime_task_state, persona=persona,
+                    )
+                    if final_response_prompt:
+                        rebuilt.append(HumanMessage(
+                            content=final_response_prompt,
+                            additional_kwargs={GUIDANCE_MARKER: True},
+                        ))
+                    return prepare_main_request(
+                        rebuilt, active_tool_defs,
+                        model_name=host.config.model.model,
+                        context_limit=prepared_request.context_limit,
+                        output_token_max=prepared_request.main_output_reserve,
+                        safety_margin=prepared_request.safety_margin,
+                        token_counter=prepared_request.metadata.get("token_counter"),
+                    )
+
                 if prepared_request.should_rollover:
                     if rollover_rebuild_used and live_rollover_enabled:
                         raise ContextBudgetExhausted(
@@ -533,6 +562,7 @@ class LlmTurn:
                         state_messages,
                         prepared_request=prepared_request,
                         force=True,
+                        prepare_candidate=prepare_rollover_candidate,
                     )
                     if rollover_result is None and live_rollover_enabled:
                         raise ContextBudgetExhausted(
@@ -545,6 +575,8 @@ class LlmTurn:
                         )
                         loop.context_tokens = context_tokens
                         continue
+                request_llm_messages = prepared_request.messages
+                loop.context_tokens = prepared_request.total_input_tokens
                 if active_tool_defs:
                     if forced_tool_name:
                         try:
@@ -745,6 +777,7 @@ class LlmTurn:
                             state_messages,
                             prepared_request=prepared_request,
                             force=True,
+                            prepare_candidate=prepare_rollover_candidate,
                         )
                         if result is None:
                             raise ContextBudgetExhausted(

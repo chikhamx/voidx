@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, RemoveMessage, SystemMessage, ToolMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
+from voidx.llm.message_markers import is_compaction_message, is_continuation_message
 
 import voidx.persistence.sqlite as store
 
@@ -155,14 +156,18 @@ async def test_compaction_trims_head_without_injecting_summary_into_system_promp
         AIMessage(content="old answer"),
         HumanMessage(content="current question", id="current_user"),
     ]
+    for message in messages:
+        message.content *= 3000
+    original = list(messages)
+
 
     await graph._maybe_compact(messages, [])
 
-    assert len(messages) == 3
-    assert isinstance(messages[0], HumanMessage)
-    assert messages[0].content == "old question"
-    assert messages[-1].content == "current question"
-    assert graph._pending_summary == "summary text"
+    assert isinstance(messages[0], RemoveMessage)
+    assert is_compaction_message(messages[1])
+    assert messages[1].content == "summary text"
+    assert is_continuation_message(messages[-1])
+    assert graph._pending_summary is None
 
     state = {
         "messages": messages,
@@ -327,12 +332,19 @@ async def test_compaction_auto_compacts_by_default_without_asking(tmp_path):
         AIMessage(content="old answer", id="2"),
         HumanMessage(content="current question", id="3"),
     ]
+    for message in messages:
+        message.content *= 3000
+    original = list(messages)
+
 
     await graph._maybe_compact(messages, [])
 
-    assert [message.content for message in messages] == ["old question", "old answer", "current question"]
-    assert graph._pending_summary == "auto summary"
-    assert graph._compaction_summary == "auto summary"
+    assert isinstance(messages[0], RemoveMessage)
+    assert is_compaction_message(messages[1])
+    assert messages[1].content == "auto summary"
+    assert is_continuation_message(messages[-1])
+    assert graph._pending_summary is None
+    assert not graph._compaction_summary
 
 
 @pytest.mark.asyncio
@@ -352,18 +364,23 @@ async def test_compaction_fallback_returns_removed_messages(tmp_path):
         AIMessage(content="tail 2"),
         HumanMessage(content="current", id="3"),
     ]
+    for message in messages:
+        message.content *= 3000
+    original = list(messages)
 
+
+    async def unavailable_summary(_head, _previous):
+        return None
+
+    graph._run_compaction_agent = unavailable_summary
     removed, tail_id = await graph._maybe_compact(messages, [], ask=False)
 
-    assert [message.content for message in messages] == [
-        "tail 1",
-        "tail 2",
-        "current",
-    ]
-    assert [message.content for message in removed or []] == ["old 1", "old 2"]
-    assert tail_id == "2"
-    assert "old 1" in graph._pending_summary
-    assert "old 2" in graph._pending_summary
+    assert removed == original
+    assert tail_id is None
+    assert is_compaction_message(messages[1])
+    assert "old 1" in messages[1].content
+    assert is_continuation_message(messages[-1])
+    assert graph._pending_summary is None
 
 
 @pytest.mark.asyncio
@@ -442,6 +459,7 @@ async def test_maybe_compact_preflight_preserves_current_user_message(tmp_path):
     )
 
     async def summarize(_head_messages, _previous_summary):
+        assert _head_messages[-1].content == "current question" * 3000
         return "preflight summary"
 
     graph._run_compaction_agent = summarize
@@ -452,13 +470,15 @@ async def test_maybe_compact_preflight_preserves_current_user_message(tmp_path):
         AIMessage(content="previous answer", id="previous_assistant"),
         HumanMessage(content="current question", id="current_user"),
     ]
+    for message in messages:
+        message.content *= 3000
+    original = list(messages)
+
 
     removed, tail_id = await graph._maybe_compact(messages, [], ask=False, preflight=True)
 
-    assert [message.content for message in removed or []] == ["old question", "old answer"]
-    assert tail_id == "previous_user"
-    assert [message.content for message in messages] == [
-        "previous question",
-        "previous answer",
-        "current question",
-    ]
+    assert removed == original
+    assert tail_id is None
+    assert is_compaction_message(messages[1])
+    assert messages[1].content == "preflight summary"
+    assert is_continuation_message(messages[-1])

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 
 from voidx.agent.domain.compaction import CompactionResult
+from voidx.llm.compaction import estimate_context_tokens
 
 
 class GraphCompactionAdapter:
@@ -28,12 +29,19 @@ class GraphCompactionAdapter:
         ask: bool = True,
         preflight: bool = False,
     ) -> CompactionResult | None:
-        return await self._coordinator.compact_for_live_state(
+        if not force:
+            host = self._coordinator.host
+            total_tokens = estimate_context_tokens(messages, host.config.model.model)
+            tokens = {"total": total_tokens, "input": total_tokens, "output": 0, "reasoning": 0}
+            over_hard = host._compaction.is_overflow(tokens)
+            over_soft = preflight and host._compaction.is_soft_overflow(tokens)
+            if not over_hard and not over_soft:
+                return None
+            if ask and getattr(host.config, "ask_compact", False):
+                if not await self._coordinator.ask_compact(total_tokens):
+                    return None
+        return await self._coordinator.rollover_for_live_state(
             messages,
-            session_messages,
             force=force,
-            ask=ask,
-            preflight=preflight,
             run_compaction_agent=self._run_compaction_agent,
-            persist_compaction=self._persist_compaction,
         )

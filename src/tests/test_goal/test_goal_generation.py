@@ -180,6 +180,46 @@ async def test_boundary_a_projects_checkpoint_and_enqueues_evaluator(store: Thre
     assert pending[0].payload["checkpoint"]["summary"] == checkpoint.summary
 
 
+@pytest.mark.asyncio
+async def test_checkpoint_projection_does_not_emit_pydantic_serializer_warnings(
+    store: ThreadStore,
+) -> None:
+    import warnings
+
+    await store.ensure_session(
+        "main_1", "/workspace", profile="goal", profile_snapshot=_profile_snapshot()
+    )
+    await store.initialize_goal_generation(**_boundary_kwargs(store))
+    checkpoint = WorkCheckpoint(
+        generation="gen_1",
+        attempt_number=1,
+        work_turn_id="turn_1",
+        summary="implemented",
+        evidence=("src/app.py",),
+        verification=("tests passed",),
+        progress="meaningful",
+    )
+    record = GoalProtocolRecord.submitted(
+        protocol_id="proto_cp_warning",
+        parent_session_id="main_1",
+        generation="gen_1",
+        phase="checkpoint",
+        attempt_number=1,
+        turn_id="turn_1",
+        session_id="work_1",
+        payload=checkpoint,
+    )
+    await submit_fenced_goal_protocol(store, record)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        await store.project_goal_protocol(record.protocol_id)
+        assert not [
+            warning
+            for warning in caught
+            if "Pydantic serializer warnings" in str(warning.message)
+            or "PydanticSerializationUnexpectedValue" in str(warning.message)
+        ]
 
 
 @pytest.mark.asyncio

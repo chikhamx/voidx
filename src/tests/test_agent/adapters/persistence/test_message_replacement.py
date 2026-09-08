@@ -191,3 +191,179 @@ async def test_replace_effective_message_range_hash_mismatch(tmp_path, monkeypat
             closed_segment_index=0,
             opened_segment_index=1,
         )
+
+
+async def _replacement_case(tmp_path, monkeypatch):
+    import voidx.persistence.jsonl as jsonl_mod
+    monkeypatch.setattr(jsonl_mod, "session_dir", lambda sid: tmp_path / sid)
+    session = await create_session(workspace=str(tmp_path))
+    for text in ("one", "two", "three"):
+        await save_message(MessageRow(session_id=session.id, role="user", content=text))
+    rows = await load_messages(session.id)
+    return dict(session_id=session.id, source_message_ids=[r.id for r in rows],
+                source_range_hash=compute_source_range_hash(rows),
+                replacement=MessageRow(session_id=session.id, role="user", content="summary",
+                    additional_kwargs={COMPACTION_MESSAGE_MARKER: True}), operation_id="op")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", ["role", "marker", "metadata", "reverse", "gap", "segment"])
+async def test_replacement_rejects_invalid_submission(tmp_path, monkeypatch, invalid):
+    args = await _replacement_case(tmp_path, monkeypatch)
+    if invalid == "role":
+        args["replacement"].role = "assistant"
+    elif invalid == "marker":
+        args["replacement"].additional_kwargs = {}
+    elif invalid == "metadata":
+        args["replacement"].additional_kwargs["replacement_operation_id"] = "other"
+    elif invalid == "reverse":
+        args["source_message_ids"].reverse()
+    elif invalid == "gap":
+        rows = await load_messages(args["session_id"])
+        args["source_message_ids"] = [rows[0].id, rows[2].id]
+        args["source_range_hash"] = compute_source_range_hash([rows[0], rows[2]])
+    else:
+        args["opened_segment_index"] = 3
+    with pytest.raises(ValueError):
+        await replace_effective_message_range(**args)
+    assert len(await load_messages(args["session_id"])) == 3
+
+
+@pytest.mark.asyncio
+async def test_replacement_operation_conflict_and_cas_winner(tmp_path, monkeypatch):
+    args = await _replacement_case(tmp_path, monkeypatch)
+    winner = await replace_effective_message_range(**args)
+    changed = args["replacement"].model_copy(update={"content": "different"})
+    with pytest.raises(ValueError, match="conflict"):
+        await replace_effective_message_range(**{**args, "replacement": changed})
+    loser = await replace_effective_message_range(**{**args, "operation_id": "loser"})
+    assert not loser.applied
+    assert loser.winner_operation_id == winner.operation_id
+    assert loser.replacement_message_id == winner.replacement_message_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("corruption", ["duplicate", "missing", "gap", "role"])
+async def test_replacement_replay_rejects_corruption(tmp_path, monkeypatch, corruption):
+    from voidx.persistence.jsonl import append_session_record, read_session_records
+    from voidx.agent.ports.persistence import GoalRuntimeCorruption
+    args = await _replacement_case(tmp_path, monkeypatch)
+    await replace_effective_message_range(**args)
+    records = await read_session_records(args["session_id"], "messages.jsonl")
+    event = records[-1]
+    if corruption == "duplicate":
+        event["replacement"]["content"] = "tampered"
+        await append_session_record(args["session_id"], "messages.jsonl", event)
+    else:
+        if corruption == "missing":
+            del event["replacement"]
+        elif corruption == "role":
+            event["replacement"]["role"] = "assistant"
+        else:
+            event["source_message_ids"] = [1, 3]
+            event["source_range_hash"] = compute_source_range_hash([
+                MessageRow(session_id=args["session_id"], **{k: v for k, v in r.items() if k != "type"})
+                for r in (records[0], records[2])])
+        import json
+        (tmp_path / args["session_id"] / "messages.jsonl").write_text(
+            "".join(json.dumps(r) + "\n" for r in records))
+    with pytest.raises(GoalRuntimeCorruption):
+        await load_messages(args["session_id"])
+
+
+@pytest.mark.asyncio
+async def test_replacement_retry_repairs_crash_count(tmp_path, monkeypatch):
+    import voidx.agent.adapters.persistence.session_repository as repo
+    args = await _replacement_case(tmp_path, monkeypatch)
+    original = repo._refresh_message_count_from_jsonl
+    async def crash(sid):
+        raise RuntimeError("crash")
+    monkeypatch.setattr(repo, "_refresh_message_count_from_jsonl", crash)
+    with pytest.raises(RuntimeError, match="crash"):
+        await replace_effective_message_range(**args)
+    monkeypatch.setattr(repo, "_refresh_message_count_from_jsonl", original)
+    await replace_effective_message_range(**args)
+    from voidx.persistence.sqlite import fetch_one
+    row = await fetch_one("SELECT message_count FROM sessions WHERE id = ?", (args["session_id"],))
+    assert row["message_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_goal_fenced_replacement_effective_reads_and_lease_loss(tmp_path, monkeypatch):
+    import voidx.agent.adapters.persistence.session_repository as repo
+    import runpy
+    from pathlib import Path
+    helpers = runpy.run_path(str(Path(__file__).with_name("test_goal_transcript_repository.py")))
+    _bind_goal_sessions, _activate_goal_attempt, LEASE_OWNER = (
+        helpers[name] for name in ("_bind_goal_sessions", "_activate_goal_attempt", "LEASE_OWNER")
+    )
+    import voidx.persistence.jsonl as jsonl_mod
+    from voidx.persistence.sqlite import execute_commit
+    monkeypatch.setattr(jsonl_mod, "session_dir", lambda sid: tmp_path / sid)
+    for sid in ("main-session", "work-session", "evaluator-session"):
+        await create_session(session_id=sid, profile="goal")
+    await _bind_goal_sessions()
+    await _activate_goal_attempt("a", session_id="work-session", attempt_number=1, fencing_token=7)
+    lease = dict(session_id="work-session", generation="generation-1", attempt_id="a",
+                 attempt_number=1, lease_owner=LEASE_OWNER, fencing_token=7)
+    for seq in (1, 2):
+        await repo.append_goal_transcript_message(**lease, local_sequence=seq,
+                                                  message={"role": "user", "content": str(seq)})
+    rows = await load_messages("work-session")
+    args = dict(source_message_ids=[r.id for r in rows], source_range_hash=compute_source_range_hash(rows),
+                replacement=MessageRow(session_id="work-session", role="user", content="summary",
+                    additional_kwargs={COMPACTION_MESSAGE_MARKER: True}), operation_id="goal-op")
+    with pytest.raises(ValueError, match="Goal"):
+        await replace_effective_message_range(session_id="work-session", **args)
+    result = await repo.replace_goal_transcript_message_range(**lease, local_sequence=3, **args)
+    assert result.applied
+    retry = await repo.replace_goal_transcript_message_range(**lease, local_sequence=3, **args)
+    assert not retry.applied
+    assert [r.content for r in await load_messages("work-session")] == ["summary"]
+    assert [r.content for r in await repo.load_goal_transcript_messages("work-session")] == ["summary"]
+    assert await repo.count_messages("work-session") == 1
+    await repo.append_goal_transcript_message(**lease, local_sequence=4,
+                                              message={"role": "assistant", "content": "tail"})
+    assert [r.content for r in await load_messages("work-session")] == ["summary", "tail"]
+    effective = await load_messages("work-session")
+    next_args = {**args, "source_message_ids": [r.id for r in effective],
+                 "source_range_hash": compute_source_range_hash(effective), "operation_id": "next-op"}
+    original_append = repo.append_session_bytes
+    async def append_then_expire(*a, **kw):
+        offsets = await original_append(*a, **kw)
+        await execute_commit("UPDATE runtime_turn_attempts SET lease_expires_at = 0 WHERE id = 'a'")
+        return offsets
+    before = (tmp_path / "work-session" / "messages.jsonl").read_bytes()
+    monkeypatch.setattr(repo, "append_session_bytes", append_then_expire)
+    with pytest.raises(ValueError, match="lease"):
+        await repo.replace_goal_transcript_message_range(**lease, local_sequence=5, **next_args)
+    assert (tmp_path / "work-session" / "messages.jsonl").read_bytes() == before
+    assert [r.content for r in await load_messages("work-session")] == ["summary", "tail"]
+    await execute_commit("UPDATE runtime_turn_attempts SET lease_expires_at = 0 WHERE id = 'a'")
+    with pytest.raises(ValueError, match="lease"):
+        await repo.replace_goal_transcript_message_range(**lease, local_sequence=3, **args)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_replacements_have_one_winner(tmp_path, monkeypatch):
+    import asyncio
+    args = await _replacement_case(tmp_path, monkeypatch)
+    results = await asyncio.gather(*(replace_effective_message_range(**{**args, "operation_id": op})
+                                     for op in ("one", "two")))
+    assert sum(r.applied for r in results) == 1
+    assert len({r.replacement_message_id for r in results}) == 1
+
+
+@pytest.mark.asyncio
+async def test_replacement_load_repairs_crash_count_without_retry(tmp_path, monkeypatch):
+    import voidx.agent.adapters.persistence.session_repository as repo
+    from voidx.persistence.sqlite import fetch_one
+    args = await _replacement_case(tmp_path, monkeypatch)
+    async def crash(sid):
+        raise RuntimeError("crash")
+    monkeypatch.setattr(repo, "_refresh_message_count_from_jsonl", crash)
+    with pytest.raises(RuntimeError, match="crash"):
+        await replace_effective_message_range(**args)
+    assert len(await load_messages(args["session_id"])) == 1
+    row = await fetch_one("SELECT message_count FROM sessions WHERE id = ?", (args["session_id"],))
+    assert row["message_count"] == 1

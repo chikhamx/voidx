@@ -259,7 +259,7 @@ async def test_delete_messages_through_keeps_latest_session_runtime_state():
 
         loaded = await load_runtime_state(session.id)
         assert loaded.interaction_mode == InteractionMode.GOAL
-        assert loaded.compaction_summary == "summary"
+        assert loaded.compaction_summary == ""
         assert loaded.session_time == "session-time"
         assert loaded.task_state.current_goal is not None
         assert loaded.task_state.current_goal.desc == "keep runtime"

@@ -39,20 +39,11 @@ class TestCompactionRetry:
         calls = []
 
         class FakeCoordinator:
-            async def compact_for_live_state(
-                self,
-                messages,
-                session_msgs,
-                *,
-                force,
-                ask,
-                preflight=False,
-                run_compaction_agent,
-                persist_compaction,
+            async def rollover_for_live_state(
+                self, messages, *, force, run_compaction_agent,
             ):
-                calls.append((messages, session_msgs, force, ask, preflight))
+                calls.append((list(messages), force))
                 assert await run_compaction_agent(["head"], "previous") == "summary"
-                await persist_compaction(["head"])
                 return CompactionResult(
                     summary="summary",
                     live_messages=list(messages),
@@ -83,8 +74,8 @@ class TestCompactionRetry:
         )
 
         assert result == (["head"], "tail")
-        assert calls == [(["message"], ["row"], True, False, False)]
-        assert persisted == ["head"]
+        assert calls == [(["message"], True)]
+        assert persisted == []
 
     @pytest.mark.asyncio
     async def test_run_compaction_agent_uses_removed_head_and_extracts_text(self, monkeypatch):

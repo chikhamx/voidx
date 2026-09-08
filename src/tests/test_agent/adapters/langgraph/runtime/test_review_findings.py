@@ -130,3 +130,195 @@ async def test_materialize_legacy_summary_if_needed(tmp_path, monkeypatch):
     assert created_id_again is None
     msgs_after = await load_messages(sid)
     assert len(msgs_after) == 2
+
+
+def test_prepared_budget_counts_full_provider_messages_not_semantic_subset():
+    from langchain_core.messages import SystemMessage
+    from voidx.agent.adapters.langgraph.runtime.prepared_request import prepare_main_request
+
+    user = HumanMessage(content="hello")
+    messages = [SystemMessage(content="mandatory context " * 3000), user]
+    prepared = prepare_main_request(
+        messages, [], model_name="gpt-4o", context_limit=4096,
+        output_token_max=512, safety_margin=256, budget_messages=[user],
+    )
+    complete = prepare_main_request(
+        messages, [], model_name="gpt-4o", context_limit=4096,
+        output_token_max=512, safety_margin=256,
+    )
+    assert prepared.total_input_tokens == complete.total_input_tokens
+    assert prepared.should_rollover
+
+
+def test_custom_message_counter_does_not_drop_tool_schema():
+    from voidx.agent.adapters.langgraph.runtime.prepared_request import prepare_main_request
+
+    tools = [{"type": "function", "function": {
+        "name": "read", "description": "tool instructions " * 100,
+        "parameters": {"type": "object", "properties": {}},
+    }}]
+    kwargs = dict(model_name="gpt-4o", context_limit=4096,
+                  token_counter=lambda messages, model: 10)
+    without = prepare_main_request([HumanMessage(content="hello")], [], **kwargs)
+    with_tools = prepare_main_request([HumanMessage(content="hello")], tools, **kwargs)
+    assert with_tools.total_input_tokens > without.total_input_tokens
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", [
+    [ToolMessage(content="orphan", tool_call_id="missing")],
+    [AIMessage(content="", tool_calls=[{"name": "read", "args": {}, "id": "call"}])],
+    [AIMessage(content="", tool_calls=[{"name": "read", "args": {}, "id": "call"}]),
+     ToolMessage(content="first", tool_call_id="call"),
+     ToolMessage(content="duplicate", tool_call_id="call")],
+])
+async def test_rollover_rejects_invalid_source_before_summarizing(invalid):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from voidx.agent.adapters.langgraph.runtime.compaction_coordinator import CompactionCoordinator
+    from voidx.agent.adapters.langgraph.runtime.prepared_request import prepare_main_request
+    from voidx.agent.domain.compaction import ContextBudgetExhausted
+
+    host = SimpleNamespace(_session=None, config=SimpleNamespace(model=SimpleNamespace(model="gpt-4o")))
+    coordinator = CompactionCoordinator(host)
+    summary = AsyncMock(return_value="summary")
+    messages = [HumanMessage(content="task " * 2000), *invalid]
+    prepared = prepare_main_request(messages, [], model_name="gpt-4o", context_limit=10000,
+                                    output_token_max=512, safety_margin=256)
+    with pytest.raises(ContextBudgetExhausted, match="batch"):
+        await coordinator.rollover_for_live_state(messages, prepared_request=prepared, run_compaction_agent=summary)
+    summary.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_rollover_candidate_includes_mandatory_context_before_commit():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from langchain_core.messages import SystemMessage
+    from voidx.agent.adapters.langgraph.runtime.compaction_coordinator import CompactionCoordinator
+    from voidx.agent.adapters.langgraph.runtime.prepared_request import prepare_main_request
+    from voidx.agent.domain.compaction import ContextBudgetExhausted
+
+    host = SimpleNamespace(_session=None, config=SimpleNamespace(model=SimpleNamespace(model="gpt-4o")))
+    coordinator = CompactionCoordinator(host)
+    user = HumanMessage(content="task " * 3000)
+    system = SystemMessage(content="mandatory context " * 3000)
+    prepared = prepare_main_request([system, user], [], model_name="gpt-4o",
+                                    context_limit=4096, output_token_max=512, safety_margin=256)
+    with pytest.raises(ContextBudgetExhausted):
+        await coordinator.rollover_for_live_state(
+            [user], prepared_request=prepared, run_compaction_agent=AsyncMock(return_value="summary"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_rollover_requires_spec_minimum_net_reclaim():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from voidx.agent.adapters.langgraph.runtime.compaction_coordinator import CompactionCoordinator
+    from voidx.agent.adapters.langgraph.runtime.prepared_request import prepare_main_request
+
+    host = SimpleNamespace(_session=None, config=SimpleNamespace(model=SimpleNamespace(model="gpt-4o")))
+    coordinator = CompactionCoordinator(host)
+    messages = [HumanMessage(content="task " * 100)]
+    prepared = prepare_main_request(messages, [], model_name="gpt-4o", context_limit=10000,
+                                    output_token_max=512, safety_margin=256)
+    result = await coordinator.rollover_for_live_state(
+        messages, prepared_request=prepared, run_compaction_agent=AsyncMock(return_value="summary"),
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_rollover_validates_rebuilt_candidate_with_continuation():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from langchain_core.messages import SystemMessage
+    from voidx.agent.adapters.langgraph.runtime.compaction_coordinator import CompactionCoordinator
+    from voidx.agent.adapters.langgraph.runtime.prepared_request import prepare_main_request
+    from voidx.agent.domain.compaction import ContextBudgetExhausted
+    from voidx.llm.message_markers import is_continuation_message
+
+    host = SimpleNamespace(_session=None, config=SimpleNamespace(model=SimpleNamespace(model="gpt-4o")))
+    coordinator = CompactionCoordinator(host)
+    messages = [HumanMessage(content="task " * 3000)]
+    kwargs = dict(model_name="gpt-4o", context_limit=4096, output_token_max=512, safety_margin=256)
+    prepared = prepare_main_request(messages, [], **kwargs)
+    candidates = []
+
+    def rebuild(candidate):
+        candidates.append(candidate)
+        return prepare_main_request([SystemMessage(content="runtime " * 5000), *candidate], [], **kwargs)
+
+    with pytest.raises(ContextBudgetExhausted):
+        await coordinator.rollover_for_live_state(
+            messages, prepared_request=prepared,
+            run_compaction_agent=AsyncMock(return_value="summary"), prepare_candidate=rebuild,
+        )
+    assert len(candidates) == 1
+    assert sum(is_continuation_message(m) for m in candidates[0]) == 1
+
+
+@pytest.mark.asyncio
+async def test_goal_rollover_uses_fenced_replacement_and_advances_sequence(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    import voidx.agent.adapters.langgraph.runtime.compaction_coordinator as module
+    from voidx.agent.adapters.langgraph.runtime.prepared_request import prepare_main_request
+    from voidx.agent.domain.compaction import ReplacementResult
+
+    session = SimpleNamespace(id="goal-session")
+    context = SimpleNamespace(session_id=session.id, goal_generation="gen", goal_attempt_id="attempt",
+                              goal_attempt_number=1, goal_lease_owner="owner", goal_fencing_token=7)
+    execution = SimpleNamespace(session=session, turn_context=context, turn_journal=None,
+                                segment_index=0, goal_transcript_local_sequence=4)
+    host = SimpleNamespace(_session=session, config=SimpleNamespace(model=SimpleNamespace(model="gpt-4o")))
+    rows = [MessageRow(id=1, session_id=session.id, role="user", content="task " * 4000)]
+    monkeypatch.setattr(module, "current_thread_execution_state", lambda: execution)
+    monkeypatch.setattr(module, "load_messages", AsyncMock(return_value=rows))
+    ordinary = AsyncMock(return_value=ReplacementResult(True, "op", 2, 1, [1]))
+    fenced = AsyncMock(return_value=ReplacementResult(True, "op", 2, 1, [1]))
+    monkeypatch.setattr(module, "replace_effective_message_range", ordinary)
+    monkeypatch.setattr(module, "replace_goal_transcript_message_range", fenced, raising=False)
+    monkeypatch.setattr(module, "gc_context_frames", AsyncMock())
+    messages = [HumanMessage(content=rows[0].content)]
+    prepared = prepare_main_request(messages, [], model_name="gpt-4o", context_limit=10000,
+                                    output_token_max=512, safety_margin=256)
+    result = await module.CompactionCoordinator(host).rollover_for_live_state(
+        messages, prepared_request=prepared, run_compaction_agent=AsyncMock(return_value="summary"),
+    )
+    assert result is not None
+    ordinary.assert_not_awaited()
+    assert fenced.await_args.kwargs["fencing_token"] == 7
+    assert fenced.await_args.kwargs["local_sequence"] == 5
+    assert execution.goal_transcript_local_sequence == 5
+    assert not getattr(host, "_compaction_summary", "")
+
+
+@pytest.mark.asyncio
+async def test_rollover_conflict_reloads_winner_into_live_state(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    import voidx.agent.adapters.langgraph.runtime.compaction_coordinator as module
+    from voidx.agent.adapters.langgraph.runtime.prepared_request import prepare_main_request
+    from voidx.agent.domain.compaction import ReplacementResult
+
+    session = SimpleNamespace(id="session")
+    host = SimpleNamespace(_session=session, config=SimpleNamespace(model=SimpleNamespace(model="gpt-4o")))
+    source = MessageRow(id=1, session_id=session.id, role="user", content="task " * 4000)
+    winner = MessageRow(id=2, session_id=session.id, role="user", content="winner summary",
+                        additional_kwargs=create_compaction_user_message("winner summary", CompactionMessageMetadata(
+                            compaction_id="winner", source_range_hash="hash", replacement_operation_id="winner-op",
+                        )).additional_kwargs)
+    monkeypatch.setattr(module, "load_messages", AsyncMock(side_effect=[[source], [winner]]))
+    monkeypatch.setattr(module, "replace_effective_message_range", AsyncMock(
+        return_value=ReplacementResult(False, "loser", 2, 1, [1], "winner-op")))
+    messages = [HumanMessage(content=source.content)]
+    prepared = prepare_main_request(messages, [], model_name="gpt-4o", context_limit=10000,
+                                    output_token_max=512, safety_margin=256)
+    result = await module.CompactionCoordinator(host).rollover_for_live_state(
+        messages, prepared_request=prepared, run_compaction_agent=AsyncMock(return_value="loser summary"),
+    )
+    assert result is not None
+    assert result.live_messages[1].content == "winner summary"
+    assert result.metadata["replacement_operation_id"] == "winner-op"

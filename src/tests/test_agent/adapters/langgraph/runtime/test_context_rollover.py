@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import pytest
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage, ToolMessage, RemoveMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage, ToolMessage, RemoveMessage, SystemMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from voidx.config import Config
@@ -73,7 +73,7 @@ def test_prepare_main_request_calculates_budget_and_over_budget():
 
 
 
-def test_prepare_main_request_uses_budget_view_for_token_calculation():
+def test_prepare_main_request_counts_provider_view_even_with_legacy_budget_argument():
     provider_messages = [
         HumanMessage(content="runtime system overlay"),
         HumanMessage(content="summary"),
@@ -93,10 +93,10 @@ def test_prepare_main_request_uses_budget_view_for_token_calculation():
         token_counter=lambda msgs, model="": counted.append(list(msgs)) or len(msgs) * 100,
     )
 
-    assert counted == [budget_messages]
-    assert prepared.total_input_tokens == 100
+    assert counted == [provider_messages]
+    assert prepared.total_input_tokens == 300
     assert prepared.messages == provider_messages
-    assert prepared.budget_messages == budget_messages
+    assert prepared.budget_messages == provider_messages
     assert prepared.should_rollover is False
 
 
@@ -163,10 +163,10 @@ async def test_rollover_for_live_state_two_consecutive_cycles(tmp_path, monkeypa
                 messages=messages_cycle_1,
                 tool_defs=[],
                 model_name="claude-3-5-sonnet",
-                context_limit=1000,
+                context_limit=10000,
                 output_token_max=100,
                 safety_margin=50,
-                token_counter=lambda msgs, model="": len(msgs) * 300,
+                token_counter=lambda msgs, model="": sum(3000 if isinstance(m, ToolMessage) else 100 for m in msgs),
             )
 
             # Rollover 1
@@ -216,10 +216,10 @@ async def test_rollover_for_live_state_two_consecutive_cycles(tmp_path, monkeypa
                 messages=messages_cycle_2,
                 tool_defs=[],
                 model_name="claude-3-5-sonnet",
-                context_limit=1000,
+                context_limit=10000,
                 output_token_max=100,
                 safety_margin=50,
-                token_counter=lambda msgs, model="": len(msgs) * 300,
+                token_counter=lambda msgs, model="": sum(3000 if isinstance(m, ToolMessage) else 100 for m in msgs),
             )
 
             # Rollover 2
@@ -312,6 +312,20 @@ async def test_call_llm_triggers_automatic_rollover_when_over_budget(tmp_path, m
             "persona": "coordinate",
         }
 
+        candidate_builds = []
+        original_rollover = coordinator.rollover_for_live_state
+
+        async def checked_rollover(*args, **kwargs):
+            assert callable(kwargs.get("prepare_candidate"))
+            original_prepare = kwargs["prepare_candidate"]
+            def checked_prepare(messages):
+                candidate = original_prepare(messages)
+                candidate_builds.append(candidate)
+                return candidate
+            kwargs["prepare_candidate"] = checked_prepare
+            return await original_rollover(*args, **kwargs)
+
+        monkeypatch.setattr(coordinator, "rollover_for_live_state", checked_rollover)
         # Force token counter or context limit so that prepare_main_request indicates rollover
         # E.g. context limit = 500, output_reserve = 100, safety = 50 -> limit = 350
         # messages has 3 msgs which exceed 350 tokens when using token_counter
@@ -322,10 +336,10 @@ async def test_call_llm_triggers_automatic_rollover_when_over_budget(tmp_path, m
                 msgs,
                 tool_defs,
                 model_name="claude-3-5-sonnet",
-                context_limit=500,
+                context_limit=100000,
                 output_token_max=100,
                 safety_margin=50,
-                token_counter=lambda m, mdl="": len(m) * 200,
+                token_counter=lambda m, mdl="": sum(100000 if isinstance(x, ToolMessage) else 100 for x in m),
                 budget_messages=kw.get("budget_messages"),
             ),
         )
@@ -340,6 +354,9 @@ async def test_call_llm_triggers_automatic_rollover_when_over_budget(tmp_path, m
             result = await graph._call_llm(state)
 
             assert len(summary_calls) == 1
+            assert len(candidate_builds) == 1
+            assert any(isinstance(m, SystemMessage) for m in candidate_builds[0].messages)
+            assert any(isinstance(m, SystemMessage) for m in graph.model.messages_by_call[0])
             # Messages returned to LangGraph have replacement structure
             assert isinstance(result["messages"][0], RemoveMessage)
             assert result["messages"][0].id == REMOVE_ALL_MESSAGES

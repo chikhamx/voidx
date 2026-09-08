@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from math import ceil
 
 StreamingRenderer = None
 
@@ -31,6 +32,7 @@ from voidx.agent.adapters.persistence.session_models import MessageRow
 from voidx.agent.adapters.persistence.session_repository import (
     load_messages,
     replace_effective_message_range,
+    replace_goal_transcript_message_range,
 )
 from voidx.llm.message_markers import (
     COMPACTION_MESSAGE_MARKER,
@@ -58,6 +60,7 @@ from voidx.agent.adapters.langgraph.runtime.streaming import extract_text, strea
 from voidx.agent.adapters.persistence.message_rows import messages_from_rows
 from voidx.agent.application.runtime_context import raw_semantic_messages
 from voidx.llm.compaction import (
+    COMPACTION_BUFFER,
     COMPACTION_MAX_RETRIES,
     COMPACTION_REQUEST,
     SUMMARY_TEMPLATE,
@@ -266,7 +269,8 @@ class CompactionCoordinator:
         prepared_request: PreparedMainRequest | None = None,
         force: bool = False,
         run_compaction_agent: RunCompactionAgent | None = None,
-        minimum_net_reclaim: int = 1,
+        minimum_net_reclaim: int | None = None,
+        prepare_candidate: Callable[[list[BaseMessage]], PreparedMainRequest] | None = None,
     ) -> CompactionResult | None:
         """Execute a context rollover cycle: flush journal, select tail, create recursive synthetic user summary, replace in persistence, and return live graph messages."""
         host = self.host
@@ -303,6 +307,8 @@ class CompactionCoordinator:
             and not is_context_pressure_message(m)
             and not is_step_hint_message(m)
         ]
+        if not validate_closed_tool_batches(semantic_messages):
+            raise ContextBudgetExhausted("Cannot rollover an unclosed or invalid tool batch")
         retained_tail, candidate_head = select_closed_tool_tail(
             semantic_messages,
             context_limit=context_limit,
@@ -341,6 +347,8 @@ class CompactionCoordinator:
             if not any(not is_compaction_message(m) for m in head_messages):
                 return None
 
+        if not validate_closed_tool_batches(head_messages):
+            raise ContextBudgetExhausted("Cannot replace an unclosed or invalid source tool batch")
         summary_head = compaction_summary_messages(head_messages)
         if not summary_head:
             return None
@@ -395,9 +403,13 @@ class CompactionCoordinator:
             metadata=meta,
         )
 
-        candidate_messages = [synthetic_user_msg, *retained_tail]
-        candidate_prepared = prepare_main_request(
-            messages=candidate_messages,
+        candidate_messages = [synthetic_user_msg, *retained_tail, create_continuation_message()]
+        mandatory_messages = [
+            message for message in (prepared_request.messages if prepared_request else messages)
+            if isinstance(message, SystemMessage)
+        ]
+        candidate_prepared = prepare_candidate(candidate_messages) if prepare_candidate else prepare_main_request(
+            messages=[*mandatory_messages, *candidate_messages],
             tool_defs=prepared_request.tool_defs if prepared_request is not None else [],
             model_name=model_name,
             context_limit=context_limit,
@@ -416,7 +428,8 @@ class CompactionCoordinator:
             if prepared_request is not None
             else token_counter(messages, model_name)
         )
-        if pre_tokens - candidate_prepared.total_input_tokens < minimum_net_reclaim:
+        reclaim_floor = max(1024, ceil(context_limit * 0.01), minimum_net_reclaim or 0)
+        if pre_tokens - candidate_prepared.total_input_tokens < reclaim_floor:
             return None
 
         # 7. Commit replacement in persistence
@@ -428,7 +441,7 @@ class CompactionCoordinator:
                 content_format="text",
                 additional_kwargs=dict(synthetic_user_msg.additional_kwargs),
             )
-            repl_result = await replace_effective_message_range(
+            replacement_args = dict(
                 session_id=session_id,
                 source_message_ids=source_message_ids,
                 source_range_hash=source_range_hash,
@@ -437,8 +450,40 @@ class CompactionCoordinator:
                 closed_segment_index=closed_segment_index,
                 opened_segment_index=opened_segment_index,
             )
+            turn_context = getattr(state_context, "turn_context", None)
+            generation = getattr(turn_context, "goal_generation", "")
+            if generation:
+                if turn_context.session_id != session_id:
+                    raise ValueError("Goal replacement turn/session binding is invalid")
+                local_sequence = state_context.goal_transcript_local_sequence + 1
+                repl_result = await replace_goal_transcript_message_range(
+                    **replacement_args,
+                    generation=generation,
+                    attempt_id=turn_context.goal_attempt_id,
+                    attempt_number=turn_context.goal_attempt_number,
+                    local_sequence=local_sequence,
+                    lease_owner=turn_context.goal_lease_owner,
+                    fencing_token=turn_context.goal_fencing_token,
+                )
+                if repl_result.applied:
+                    state_context.goal_transcript_local_sequence = local_sequence
+            else:
+                repl_result = await replace_effective_message_range(**replacement_args)
             if not repl_result.applied and repl_result.winner_operation_id != operation_id:
-                return None
+                winner_rows = await load_messages(session_id)
+                winner_messages = messages_from_rows(winner_rows)
+                winner = next((m for m in winner_messages if is_compaction_message(m)), None)
+                if winner is None:
+                    raise ContextBudgetExhausted("Replacement conflict has no effective summary winner")
+                if state_context is not None:
+                    state_context.segment_index = int(winner.additional_kwargs["opened_segment_index"])
+                host._session_msg_cache = winner_rows
+                return CompactionResult(
+                    summary=str(winner.content), removed_messages=list(head_messages),
+                    live_messages=[RemoveMessage(id=REMOVE_ALL_MESSAGES), *winner_messages,
+                                   create_continuation_message()],
+                    metadata=dict(winner.additional_kwargs), tail_id=None,
+                )
 
             synthetic_user_msg = create_compaction_user_message(
                 content=summary_text,
@@ -446,9 +491,7 @@ class CompactionCoordinator:
                 id=str(repl_result.replacement_message_id),
             )
             if state_context is not None:
-                state_context.compaction_summary = summary_text
                 state_context.segment_index = opened_segment_index
-            host._compaction_summary = summary_text
             if getattr(host, "_session_msg_cache", None) is not None:
                 host._session_msg_cache = await load_messages(session_id)
             try:

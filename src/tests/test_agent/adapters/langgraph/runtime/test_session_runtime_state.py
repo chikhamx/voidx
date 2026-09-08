@@ -387,7 +387,7 @@ async def test_graph_session_runtime_persists_and_restores_structured_state():
         assert host._interaction_mode == InteractionMode.GOAL
         assert host._task_state.current_goal is not None
         assert host._task_state.current_goal.desc == "ship 5B"
-        assert host._compaction_summary == "summary"
+        assert host._compaction_summary == ""
         assert host._session_date == "2026-06-11 CST"
     finally:
         await delete_session(session.id)

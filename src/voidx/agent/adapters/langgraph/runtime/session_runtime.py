@@ -11,8 +11,9 @@ from voidx.agent.application.session_service import SessionService
 from voidx.agent.domain.state import SessionRuntimeState
 from voidx.agent.adapters.persistence.memory_session import MemorySessionAdapter
 from voidx.agent.adapters.persistence.message_rows import is_user_turn_row
+from voidx.agent.adapters.persistence.runtime_state_repository import clear_compaction_summary
 from voidx.agent.adapters.persistence.session_models import MessageRow
-from voidx.agent.adapters.persistence.session_repository import count_messages, delete_session, load_messages, update_title, update_title_if_current
+from voidx.agent.adapters.persistence.session_repository import count_messages, delete_session, load_messages, materialize_legacy_summary_if_needed, update_title, update_title_if_current
 from voidx.agent.ports.presentation import NullPresentationSnapshotPort, PresentationSnapshotPort
 from voidx.observability.tool_log import log_tool_event
 from voidx.agent.adapters.tools.result_storage import cleanup_session_results
@@ -69,7 +70,12 @@ class SessionRuntime:
         runtime = await SessionService(MemorySessionAdapter()).restore_runtime(host._session.id)
         host._interaction_mode = runtime.interaction_mode
         host._task_state = runtime.task_state
-        host._compaction_summary = runtime.compaction_summary
+        if runtime.compaction_summary:
+            await materialize_legacy_summary_if_needed(
+                host._session.id, legacy_summary=runtime.compaction_summary
+            )
+            await clear_compaction_summary(host._session.id)
+        host._compaction_summary = ""
         if runtime.session_time:
             host._session_date = runtime.session_time
 
@@ -83,7 +89,6 @@ class SessionRuntime:
         runtime = SessionRuntimeState(
             interaction_mode=getattr(host, "_interaction_mode", None) or InteractionMode.AUTO,
             task_state=getattr(host, "_task_state", None) or TaskState(),
-            compaction_summary=getattr(host, "_compaction_summary", ""),
             session_time=getattr(host, "_session_date", ""),
         )
         await SessionService(MemorySessionAdapter()).persist_runtime(host._session.id, runtime)

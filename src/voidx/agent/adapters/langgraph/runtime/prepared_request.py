@@ -48,7 +48,7 @@ def prepare_main_request(
 ) -> PreparedMainRequest:
     """Construct a stable provider snapshot and calculate its logical budget."""
     provider_messages = deepcopy(list(messages))
-    logical_messages = deepcopy(list(budget_messages if budget_messages is not None else messages))
+    logical_messages = deepcopy(provider_messages)
     provider_tools = deepcopy(list(tool_defs))
     meta = deepcopy(dict(metadata or {}))
     if token_counter is not None:
@@ -56,6 +56,7 @@ def prepare_main_request(
 
     if token_counter is not None:
         total_tokens = token_counter(logical_messages, model_name)
+        total_tokens += estimate_context_tokens_with_tools([], provider_tools, model_name)
     else:
         total_tokens = estimate_context_tokens_with_tools(
             logical_messages,

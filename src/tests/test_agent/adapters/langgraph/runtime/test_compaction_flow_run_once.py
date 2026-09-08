@@ -135,15 +135,21 @@ def _tree_nodes(root):
 
 
 
-async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_path):
+async def test_compaction_uses_previous_summary_and_replaces_persisted_history(tmp_path):
+    from voidx.llm.message_markers import COMPACTION_MESSAGE_MARKER
+    from voidx.agent.adapters.persistence.message_rows import is_compaction_row, messages_from_rows
+
     session = await create_session(workspace=str(tmp_path))
     try:
-        await save_message(MessageRow(session_id=session.id, role="user", content="old question"))
-        await save_message(MessageRow(session_id=session.id, role="assistant", content="old answer"))
+        await save_message(MessageRow(
+            session_id=session.id, role="user", content="previous summary",
+            additional_kwargs={COMPACTION_MESSAGE_MARKER: True, "compaction_depth": 1},
+        ))
+        await save_message(MessageRow(session_id=session.id, role="user", content="old question" * 3000))
+        await save_message(MessageRow(session_id=session.id, role="assistant", content="old answer" * 3000))
         await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
 
         graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session)
-        graph._compaction_summary = "previous summary"
         graph._compaction.is_overflow = lambda _tokens: True
         graph._compaction.select_details = lambda messages: CompactionSelection(
             head=messages[:2],
@@ -155,6 +161,8 @@ async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_pa
 
         async def summarize(_head_messages, previous_summary):
             captured["previous"] = previous_summary
+            captured["summary_head"] = _head_messages
+            assert any(message.content == "tail question" for message in _head_messages)
             return "updated summary"
 
         class FakeGraph:
@@ -167,6 +175,11 @@ async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_pa
 
         graph._run_compaction_agent = summarize
         graph.graph = FakeGraph()
+        messages = messages_from_rows(await load_messages(session.id))
+        removed, _ = await graph._maybe_compact(messages, force=True, ask=False)
+        assert removed
+        graph._compaction.is_overflow = lambda _tokens: False
+        graph._compaction.is_soft_overflow = lambda _tokens: False
 
         test_dock = BottomInputDock()
         set_dock(test_dock)
@@ -181,21 +194,28 @@ async def test_compaction_uses_previous_summary_and_prunes_persisted_head(tmp_pa
         rows = await load_messages(session.id)
         contents = [row.content for row in rows]
         initial_contents = captured["initial_contents"]
-        assert captured["previous"] == "previous summary"
-        assert "old question" not in contents
-        assert "old answer" not in contents
-        assert "tail question" in contents
+        assert captured["previous"] is None
+        assert captured["summary_head"][0].content == "previous summary"
+        assert captured["summary_head"][0].additional_kwargs[COMPACTION_MESSAGE_MARKER]
+        assert "old question" * 3000 not in contents
+        assert "old answer" * 3000 not in contents
+        assert "tail question" not in contents
         assert "current question" in contents
-        assert "old question" not in initial_contents
-        assert "old answer" not in initial_contents
-        assert "tail question" in initial_contents
+        assert "old question" * 3000 not in initial_contents
+        assert "old answer" * 3000 not in initial_contents
+        assert "tail question" not in initial_contents
         assert "current question" in initial_contents
-        assert graph._compaction_summary == "updated summary"
+        assert not graph._compaction_summary
+        assert is_compaction_row(rows[0])
+        assert rows[0].content == "updated summary"
+        assert rows[0].additional_kwargs["compaction_depth"] == 2
+        assert "updated summary" in initial_contents
 
         resumed = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session)
         await resumed.restore_runtime_state()
 
-        assert resumed._compaction_summary == "updated summary"
+        assert not resumed._compaction_summary
+        assert (await load_messages(session.id))[0].content == "updated summary"
     finally:
         await delete_session(session.id)
 

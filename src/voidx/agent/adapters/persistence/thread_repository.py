@@ -3062,7 +3062,7 @@ def _project_goal_protocol_tx(
         state_updates.update(
             {
                 "current_phase": "evaluator",
-                "last_work_checkpoint": payload.model_dump(mode="json"),
+                "last_work_checkpoint": payload,
             }
         )
         next_phase = "evaluator"

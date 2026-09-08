@@ -184,6 +184,25 @@ async def append_goal_transcript_message(
     fencing_token: int,
     message: dict[str, Any],
 ) -> GoalTranscriptRecord:
+    return await _append_goal_transcript_record(
+        session_id=session_id, generation=generation, attempt_id=attempt_id,
+        attempt_number=attempt_number, local_sequence=local_sequence,
+        lease_owner=lease_owner, fencing_token=fencing_token, message=message,
+    )
+
+
+async def _append_goal_transcript_record(
+    *, session_id: str, generation: str, attempt_id: str, attempt_number: int,
+    local_sequence: int, lease_owner: str, fencing_token: int,
+    message: dict[str, Any], replacement_event: bool = False,
+) -> GoalTranscriptRecord:
+    def canonical(sequence: int) -> bytes:
+        if not replacement_event:
+            return _canonical_message_payload(message, sequence)
+        record = dict(message)
+        record["replacement"] = {**record["replacement"], "id": sequence}
+        return encode_jsonl_record(record)
+
     """Append and accept one fenced canonical Goal child-session message."""
     validate_session_storage_id(session_id)
     if not generation or not attempt_id or not lease_owner:
@@ -212,7 +231,7 @@ async def append_goal_transcript_message(
             ).fetchone()
             if existing is not None:
                 accepted = _goal_transcript_record(existing)
-                expected = _canonical_message_payload(message, accepted.session_sequence)
+                expected = canonical(accepted.session_sequence)
                 expected_hash = hashlib.sha256(expected[:-1]).hexdigest()
                 if (
                     accepted.generation != generation
@@ -234,7 +253,7 @@ async def append_goal_transcript_message(
         if existing is not None:
             return existing
 
-        payload = _canonical_message_payload(message, session_sequence)
+        payload = canonical(session_sequence)
         payload_hash = hashlib.sha256(payload[:-1]).hexdigest()
         start_offset, end_offset = await append_session_bytes(
             session_id,
@@ -291,9 +310,9 @@ async def append_goal_transcript_message(
                 ),
             )
             updated = conn.execute(
-                """UPDATE sessions SET message_count = message_count + 1,
+                """UPDATE sessions SET message_count = message_count + ?,
                        updated_at = ? WHERE id = ?""",
-                (accepted_at, session_id),
+                (1 - len(message["source_message_ids"]) if replacement_event else 1, accepted_at, session_id),
             )
             if updated.rowcount != 1:
                 raise ValueError("Goal transcript session does not exist")
@@ -312,21 +331,24 @@ async def append_goal_transcript_message(
 
 
 async def load_goal_transcript_messages(session_id: str) -> list[MessageRow]:
-    """Hydrate only SQLite-accepted Goal transcript byte ranges."""
+    """Hydrate the effective projection of SQLite-accepted Goal byte ranges."""
+    async with session_directory_locks((session_id,)):
+        records = await _load_goal_transcript_records(session_id)
+        messages = _project_message_records(session_id, records)
+        count_row = await fetch_one("SELECT message_count FROM sessions WHERE id = ?", (session_id,))
+        if count_row is None or int(count_row["message_count"] or 0) != len(messages):
+            raise GoalTranscriptCorruption("canonical transcript message count mismatch")
+        return messages
+
+
+async def _load_goal_transcript_records(session_id: str) -> list[dict[str, Any]]:
     validate_session_storage_id(session_id)
     rows = await fetch_all(
         """SELECT * FROM goal_transcript_records
            WHERE session_id = ? ORDER BY session_sequence""",
         (session_id,),
     )
-    count_row = await fetch_one(
-        "SELECT message_count FROM sessions WHERE id = ?",
-        (session_id,),
-    )
-    if count_row is None or int(count_row["message_count"] or 0) != len(rows):
-        raise GoalTranscriptCorruption("canonical transcript message count mismatch")
-
-    messages: list[MessageRow] = []
+    records: list[dict[str, Any]] = []
     previous_end = 0
     for expected_sequence, row in enumerate(rows, start=1):
         accepted = _goal_transcript_record(row)
@@ -356,14 +378,17 @@ async def load_goal_transcript_messages(session_id: str) -> list[MessageRow]:
             raise GoalTranscriptCorruption("canonical transcript payload corruption") from exc
         if (
             not isinstance(record, dict)
-            or record.get("type") != "message"
-            or record.get("id") != accepted.session_sequence
-            or not isinstance(record.get("role"), str)
+            or record.get("type") not in {"message", "message_replaced"}
+            or (record.get("type") == "message" and (
+                record.get("id") != accepted.session_sequence or record.get("role") not in {"user", "assistant", "tool", "system"}))
+            or (record.get("type") == "message_replaced" and (
+                not isinstance(record.get("replacement"), dict)
+                or record["replacement"].get("id") != accepted.session_sequence))
         ):
             raise GoalTranscriptCorruption("canonical transcript record corruption")
-        messages.append(_message_row_from_record(session_id, record))
+        records.append(record)
         previous_end = accepted.end_offset
-    return messages
+    return records
 
 
 # ── session CRUD ────────────────────────────────────────────────────────
@@ -726,7 +751,17 @@ async def load_messages(session_id: str) -> list[MessageRow]:
     )
     if binding is not None:
         return await load_goal_transcript_messages(session_id)
-    return await _load_messages_jsonl(session_id) or []
+    if await get_session(session_id) is None:
+        return []
+    async with session_directory_locks((session_id,)):
+        records = await read_session_records(session_id, "messages.jsonl") or []
+        messages = _project_message_records(session_id, records)
+        if any(record.get("type") == "message_replaced" for record in records):
+            await execute_commit(
+                "UPDATE sessions SET message_count = ? WHERE id = ?",
+                (len(messages), session_id),
+            )
+        return messages
 
 
 
@@ -765,8 +800,12 @@ async def _load_messages_jsonl(session_id: str) -> list[MessageRow] | None:
     if records is None:
         return None
 
+    return _project_message_records(session_id, records)
+
+
+def _project_message_records(session_id: str, records: list[dict[str, Any]]) -> list[MessageRow]:
     effective_messages: list[MessageRow] = []
-    seen_operations: set[str] = set()
+    seen_operations: dict[str, dict[str, Any]] = {}
 
     for record in records:
         rtype = record.get("type")
@@ -794,39 +833,20 @@ async def _load_messages_jsonl(session_id: str) -> list[MessageRow] | None:
             continue
         if rtype == "message_replaced":
             op_id = record.get("operation_id")
-            if op_id:
-                if op_id in seen_operations:
-                    continue
-                seen_operations.add(op_id)
-            source_ids = record.get("source_message_ids") or []
-            source_id_set = set(source_ids)
-            matched_sources = [msg for msg in effective_messages if msg.id in source_id_set]
-            if len(matched_sources) != len(source_ids):
-                raise GoalRuntimeCorruption(
-                    f"message_replaced event source messages {source_ids} missing from effective transcript ({len(matched_sources)} matched)"
-                )
-            expected_hash = record.get("source_range_hash")
-            if expected_hash:
-                from voidx.agent.adapters.persistence.message_rows import compute_source_range_hash
-                actual_hash = compute_source_range_hash(matched_sources)
-                if actual_hash != expected_hash:
-                    raise GoalRuntimeCorruption(
-                        f"message_replaced event source range hash mismatch: expected {expected_hash}, got {actual_hash}"
-                    )
-
-            insert_idx: int | None = None
-            for idx, msg in enumerate(effective_messages):
-                if msg.id in source_id_set:
-                    if insert_idx is None:
-                        insert_idx = idx
-            if insert_idx is not None:
-                effective_messages = [
-                    msg for msg in effective_messages if msg.id not in source_id_set
-                ]
-                replacement_record = record.get("replacement")
-                if isinstance(replacement_record, dict):
-                    replacement_row = _message_row_from_record(session_id, replacement_record)
-                    effective_messages.insert(insert_idx, replacement_row)
+            if op_id in seen_operations:
+                if seen_operations[op_id] != record:
+                    raise GoalRuntimeCorruption("replacement operation id conflict")
+                continue
+            try:
+                _validate_replacement_event(session_id, record, effective_messages)
+            except (ValueError, TypeError, KeyError) as exc:
+                raise GoalRuntimeCorruption(f"invalid replacement event: {exc}") from exc
+            seen_operations[op_id] = record
+            source_ids = record["source_message_ids"]
+            index = next(i for i, row in enumerate(effective_messages) if row.id == source_ids[0])
+            effective_messages[index:index + len(source_ids)] = [
+                _message_row_from_record(session_id, record["replacement"])
+            ]
             continue
         if rtype != "message":
             continue
@@ -1025,6 +1045,54 @@ async def last_messages(session_id: str, n: int = 20) -> list[MessageRow]:
     return messages[-max(n, 0):] if n > 0 else []
 
 
+def _replacement_intent(record: dict[str, Any]) -> dict[str, Any]:
+    result = {k: v for k, v in record.items() if k != "created_at"}
+    replacement = dict(result["replacement"])
+    replacement.pop("id", None)
+    replacement.pop("created_at", None)
+    extra = dict(replacement.get("additional_kwargs") or {})
+    for key in ("replacement_operation_id", "source_range_hash", "closed_segment_index", "opened_segment_index"):
+        extra.setdefault(key, record.get("operation_id") if key == "replacement_operation_id" else record.get(key))
+    replacement["additional_kwargs"] = extra
+    result["replacement"] = replacement
+    return result
+
+
+def _validate_replacement_event(session_id: str, record: dict[str, Any], effective: list[MessageRow]) -> None:
+    from voidx.agent.adapters.persistence.message_rows import compute_source_range_hash
+    from voidx.llm.message_markers import COMPACTION_MESSAGE_MARKER
+
+    ids = record.get("source_message_ids")
+    if not isinstance(ids, list) or not ids or any(type(i) is not int for i in ids) or len(set(ids)) != len(ids):
+        raise ValueError("replacement source ids must be unique integers")
+    positions = [i for i, row in enumerate(effective) if row.id in ids]
+    matched = [effective[i] for i in positions]
+    if len(matched) != len(ids):
+        raise ValueError("replacement source not found")
+    if [row.id for row in matched] != ids or positions != list(range(positions[0], positions[0] + len(ids))):
+        raise ValueError("replacement source must be ordered and contiguous")
+    if compute_source_range_hash(matched) != record.get("source_range_hash"):
+        raise ValueError("replacement source range hash mismatch")
+    repl = record.get("replacement")
+    if not isinstance(repl, dict) or repl.get("role") != "user" or type(repl.get("id")) is not int:
+        raise ValueError("replacement must be a user message")
+    if repl["id"] in {row.id for row in effective}:
+        raise ValueError("replacement message id conflict")
+    extra = repl.get("additional_kwargs")
+    if not isinstance(extra, dict) or extra.get(COMPACTION_MESSAGE_MARKER) is not True:
+        raise ValueError("replacement marker is required")
+    operation = record.get("operation_id")
+    closed, opened = record.get("closed_segment_index"), record.get("opened_segment_index")
+    if not isinstance(operation, str) or not operation or type(closed) is not int or closed < 0 or type(opened) is not int or opened != closed + 1:
+        raise ValueError("replacement operation or segment metadata invalid")
+    for key, expected in (("replacement_operation_id", operation), ("source_range_hash", record["source_range_hash"]),
+                          ("closed_segment_index", closed), ("opened_segment_index", opened)):
+        if key in extra and extra[key] != expected:
+            raise ValueError("replacement metadata conflict")
+    if "compaction_depth" in extra and (type(extra["compaction_depth"]) is not int or extra["compaction_depth"] < 1):
+        raise ValueError("replacement depth invalid")
+
+
 async def replace_effective_message_range(
     session_id: str,
     source_message_ids: list[int],
@@ -1037,8 +1105,6 @@ async def replace_effective_message_range(
 ) -> Any:
     """Atomically replace a contiguous effective message range with a synthetic summary message."""
     from voidx.agent.domain.compaction import ReplacementResult
-    from voidx.agent.adapters.persistence.message_rows import compute_source_range_hash
-    from voidx.llm.message_markers import COMPACTION_MESSAGE_MARKER
 
     session_id = validate_session_storage_id(session_id)
     if not operation_id:
@@ -1047,48 +1113,22 @@ async def replace_effective_message_range(
         raise ValueError("source_message_ids cannot be empty")
 
     async with session_directory_locks((session_id,)):
+        binding = await fetch_one(
+            "SELECT 1 FROM goal_generations WHERE work_session_id = ? OR evaluator_session_id = ?",
+            (session_id, session_id),
+        )
+        if binding is not None:
+            raise ValueError("Goal internal sessions require the fenced replacement writer")
         records = await read_session_records(session_id, "messages.jsonl") or []
-        for r in records:
-            if r.get("type") == "message_replaced" and r.get("operation_id") == operation_id:
-                repl_dict = r.get("replacement") or {}
-                repl_id = int(repl_dict.get("id") or 0)
-                current = await _load_messages_jsonl(session_id) or []
-                return ReplacementResult(
-                    applied=False,
-                    operation_id=operation_id,
-                    replacement_message_id=repl_id,
-                    effective_message_count=len(current),
-                    source_message_ids=list(source_message_ids),
-                    winner_operation_id=operation_id,
-                )
-
         effective = await _load_messages_jsonl(session_id) or []
-        source_id_set = set(source_message_ids)
-        matched_rows = [row for row in effective if row.id in source_id_set]
-
-        if len(matched_rows) != len(source_message_ids):
-            raise ValueError(
-                f"Source messages {source_message_ids} not found in effective transcript ({len(matched_rows)} matched)"
-            )
-
-        actual_hash = compute_source_range_hash(matched_rows)
-        if actual_hash != source_range_hash:
-            raise ValueError(
-                f"Source range hash mismatch: expected {source_range_hash}, got {actual_hash}"
-            )
-
-        row_id = await _next_message_id(session_id)
         extra = dict(replacement.additional_kwargs or {})
-        extra[COMPACTION_MESSAGE_MARKER] = True
-        extra["replacement_operation_id"] = operation_id
-
         record = {
             "type": "message_replaced",
             "operation_id": operation_id,
             "source_message_ids": list(source_message_ids),
             "source_range_hash": source_range_hash,
             "replacement": {
-                "id": row_id,
+                "id": await _next_message_id(session_id),
                 "role": replacement.role,
                 "content": replacement.content,
                 "content_format": replacement.content_format,
@@ -1099,7 +1139,27 @@ async def replace_effective_message_range(
             "opened_segment_index": opened_segment_index,
             "created_at": now(),
         }
-
+        for prior in records:
+            if prior.get("type") != "message_replaced":
+                continue
+            same_operation = prior.get("operation_id") == operation_id
+            same_source = (prior.get("source_message_ids") == source_message_ids
+                           and prior.get("source_range_hash") == source_range_hash)
+            if same_operation and _replacement_intent(prior) != _replacement_intent(record):
+                raise ValueError("replacement operation id conflict")
+            if same_operation or same_source:
+                await _refresh_message_count_from_jsonl(session_id)
+                return ReplacementResult(
+                    applied=False, operation_id=operation_id,
+                    replacement_message_id=prior["replacement"]["id"],
+                    effective_message_count=len(effective),
+                    source_message_ids=list(source_message_ids),
+                    winner_operation_id=prior["operation_id"],
+                )
+        _validate_replacement_event(session_id, record, effective)
+        row_id = record["replacement"]["id"]
+        extra.update(replacement_operation_id=operation_id, source_range_hash=source_range_hash,
+                     closed_segment_index=closed_segment_index, opened_segment_index=opened_segment_index)
         await append_session_record(session_id, "messages.jsonl", record)
         await _refresh_message_count_from_jsonl(session_id)
         await touch_session(session_id)
@@ -1156,3 +1216,73 @@ async def materialize_legacy_summary_if_needed(
         await _refresh_message_count_from_jsonl(session_id)
         await touch_session(session_id)
         return row_id
+
+
+async def replace_goal_transcript_message_range(
+    *, session_id: str, generation: str, attempt_id: str, attempt_number: int,
+    local_sequence: int, lease_owner: str, fencing_token: int,
+    source_message_ids: list[int], source_range_hash: str, replacement: MessageRow,
+    operation_id: str, closed_segment_index: int = 0, opened_segment_index: int = 1,
+) -> Any:
+    """Accept a replacement under the same attempt fence as Goal message appends.
+
+    local_sequence shares the attempt's append sequence namespace; callers must
+    reserve one sequence for each replacement and retain it across retries.
+    """
+    from voidx.agent.domain.compaction import ReplacementResult
+
+    validate_session_storage_id(session_id)
+    async with session_directory_locks((session_id,)):
+        def validate(conn: Any) -> None:
+            binding = _validate_goal_transcript_binding(conn, session_id, generation)
+            _validate_goal_transcript_attempt(
+                conn, binding=binding, session_id=session_id, generation=generation,
+                attempt_id=attempt_id, attempt_number=attempt_number,
+                lease_owner=lease_owner, fencing_token=fencing_token,
+            )
+        await write_transaction(validate)
+        records = await _load_goal_transcript_records(session_id)
+        effective = _project_message_records(session_id, records)
+        event = {
+            "type": "message_replaced", "operation_id": operation_id,
+            "source_message_ids": list(source_message_ids), "source_range_hash": source_range_hash,
+            "replacement": {
+                "id": len(records) + 1, "role": replacement.role, "content": replacement.content,
+                "content_format": replacement.content_format,
+                "additional_kwargs": dict(replacement.additional_kwargs or {}),
+                "created_at": replacement.created_at or now(),
+            },
+            "closed_segment_index": closed_segment_index, "opened_segment_index": opened_segment_index,
+            "created_at": now(),
+        }
+        for prior in records:
+            if prior.get("type") != "message_replaced":
+                continue
+            same_operation = prior["operation_id"] == operation_id
+            same_source = (prior["source_message_ids"] == source_message_ids
+                           and prior["source_range_hash"] == source_range_hash)
+            if same_operation and _replacement_intent(prior) != _replacement_intent(event):
+                raise ValueError("replacement operation id conflict")
+            if same_operation or same_source:
+                return ReplacementResult(
+                    applied=False, operation_id=operation_id,
+                    replacement_message_id=prior["replacement"]["id"],
+                    effective_message_count=len(effective), source_message_ids=list(source_message_ids),
+                    winner_operation_id=prior["operation_id"],
+                )
+        _validate_replacement_event(session_id, event, effective)
+        event["replacement"]["additional_kwargs"].update(
+            replacement_operation_id=operation_id, source_range_hash=source_range_hash,
+            closed_segment_index=closed_segment_index, opened_segment_index=opened_segment_index,
+        )
+        accepted = await _append_goal_transcript_record(
+            session_id=session_id, generation=generation, attempt_id=attempt_id,
+            attempt_number=attempt_number, local_sequence=local_sequence,
+            lease_owner=lease_owner, fencing_token=fencing_token,
+            message=event, replacement_event=True,
+        )
+        return ReplacementResult(
+            applied=True, operation_id=operation_id, replacement_message_id=accepted.session_sequence,
+            effective_message_count=len(effective) - len(source_message_ids) + 1,
+            source_message_ids=list(source_message_ids),
+        )
