@@ -70,7 +70,13 @@ async def notify_tool_result(host, tc, result, ok, elapsed, display_policy, tool
             ))
     elif tool_node:
         if initial_display_mode != ToolDisplayMode.HIDDEN:
-            host._ui.dock.finish_tool_node(tool_node, host._ui.title(tid), elapsed, ok)
+            host._ui.dock.finish_tool_node(
+                tool_node,
+                host._ui.title(tid),
+                elapsed,
+                ok,
+                result.summary or "",
+            )
     else:
         if initial_display_mode != ToolDisplayMode.HIDDEN:
             host._ui.ui.tool_done(tid, elapsed, ok)

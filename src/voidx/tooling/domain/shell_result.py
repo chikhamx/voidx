@@ -104,6 +104,6 @@ def build_success_result(command: str, stdout: str, stderr: str, exit_code: int,
         title=f"{tool_label}: {command}",
         output=json.dumps(payload, ensure_ascii=False, indent=2),
         display="\n".join(display_parts) or "(no output)",
-        summary="" if exit_code == 0 else f"exit {exit_code}",
+        summary="ok" if exit_code == 0 else f"exit {exit_code}",
         metadata={"command": command, "exit_code": exit_code, "ok": exit_code == 0, **({"error": True} if exit_code != 0 else {})},
     )

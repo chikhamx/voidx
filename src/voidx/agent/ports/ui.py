@@ -73,6 +73,7 @@ class AgentDock(Protocol):
         label: str,
         elapsed: float,
         ok: bool = True,
+        detail: str = "",
     ) -> None: ...
     def append_message(
         self,

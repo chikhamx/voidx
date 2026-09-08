@@ -150,8 +150,7 @@ class TestToolDisplayPolicy:
         policy = ToolDisplayPolicy.from_config(config, defaults=DEFAULT_DISPLAY_RULES)
         # bash comes from defaults, not from the invalid config entry
         assert "bash" in policy.rules
-        assert policy.rules["bash"].mode == ToolDisplayMode.SHOW
-
+        assert policy.rules["bash"].mode == ToolDisplayMode.SUMMARY
 
 class TestDefaultDisplayRules:
     def test_hidden_tools(self):
@@ -166,15 +165,15 @@ class TestDefaultDisplayRules:
         assert DEFAULT_DISPLAY_RULES["compact"].replay_sanitize is False
 
     def test_summary_tools(self):
-        summary_tools = ["search", "find", "websearch", "lsp"]
+        summary_tools = [
+            "search", "find", "websearch", "lsp",
+            "bash", "powershell", "read", "webfetch", "manage", "git",
+        ]
         for name in summary_tools:
             assert DEFAULT_DISPLAY_RULES[name].mode == ToolDisplayMode.SUMMARY, f"{name} should be summary"
+            assert DEFAULT_DISPLAY_RULES[name].summary_max_lines == 5
 
     def test_show_tools(self):
-        """Tools explicitly rendered in the UI remain visible."""
-        show_tools = ["bash", "read", "manage", "write", "replace", "webfetch", "git"]
+        show_tools = ["write", "replace"]
         for name in show_tools:
             assert DEFAULT_DISPLAY_RULES[name].mode == ToolDisplayMode.SHOW, f"{name} should be show"
-
-    def test_read_has_high_auto_summary_lines(self):
-        assert DEFAULT_DISPLAY_RULES["read"].auto_summary_lines == 100

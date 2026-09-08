@@ -125,15 +125,15 @@ DEFAULT_DISPLAY_RULES: dict[str, ToolDisplayRule] = {
     "find": ToolDisplayRule(tool_name="find", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
     "websearch": ToolDisplayRule(tool_name="websearch", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
     "lsp": ToolDisplayRule(tool_name="lsp", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
-    # ── Show + 自适应 ──
-    "bash": ToolDisplayRule(tool_name="bash", mode=ToolDisplayMode.SHOW, auto_summary_lines=50, auto_summary_chars=10000),
-    "powershell": ToolDisplayRule(tool_name="powershell", mode=ToolDisplayMode.SHOW, auto_summary_lines=50, auto_summary_chars=10000),
-    "read": ToolDisplayRule(tool_name="read", mode=ToolDisplayMode.SHOW, auto_summary_lines=100),
-    "webfetch": ToolDisplayRule(tool_name="webfetch", mode=ToolDisplayMode.SHOW, auto_summary_lines=50, auto_summary_chars=10000),
-    # ── Show ──
-    "manage": ToolDisplayRule(tool_name="manage", mode=ToolDisplayMode.SHOW),
+    # ── Summary：普通非文本编辑类工具，只输出摘要 ──
+    "bash": ToolDisplayRule(tool_name="bash", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
+    "powershell": ToolDisplayRule(tool_name="powershell", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
+    "read": ToolDisplayRule(tool_name="read", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
+    "webfetch": ToolDisplayRule(tool_name="webfetch", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
+    "manage": ToolDisplayRule(tool_name="manage", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
+    "git": ToolDisplayRule(tool_name="git", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
+    # ── Show：文本编辑类工具（有 diff 时显示 diff） ──
     "write": ToolDisplayRule(tool_name="write", mode=ToolDisplayMode.SHOW),
     "replace": ToolDisplayRule(tool_name="replace", mode=ToolDisplayMode.SHOW),
     "agent": ToolDisplayRule(tool_name="agent", mode=ToolDisplayMode.HIDDEN),
-    "git": ToolDisplayRule(tool_name="git", mode=ToolDisplayMode.SHOW),
 }

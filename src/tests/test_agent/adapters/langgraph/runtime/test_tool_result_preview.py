@@ -431,3 +431,55 @@ async def test_failed_tool_outputs_error_in_ui(tmp_path):
     assert len(final_results) == 1
     assert "command failed: exit 1" in rendered
     assert any(isinstance(msg, ToolMessage) and msg.content == "command failed: exit 1" for msg in messages)
+
+
+@pytest.mark.asyncio
+async def test_direct_dock_path_renders_summary_without_raw_success_output(tmp_path):
+    from voidx.agent.adapters.langgraph.runtime.tool_executor.ui import notify_tool_result
+    from voidx.agent.domain.display_policy import DEFAULT_DISPLAY_RULES, ToolDisplayPolicy
+
+    test_dock = BottomInputDock()
+    test_dock.begin_capture()
+    tool = test_dock.start_turn("read a file")
+    tool = test_dock.start_tool(
+        "Reading",
+        'file_path="src/app.py"',
+        tool_name="read",
+        tool_call_id="read-direct",
+        raw_args={"file_path": "src/app.py"},
+    )
+    result = ToolResult(
+        title="Read: src/app.py",
+        output="raw file contents must stay out of the TUI",
+        summary="10/200 lines",
+        metadata={"ok": True},
+    )
+
+    class _Ui:
+        dock = test_dock
+        ui = SimpleNamespace()
+
+        @staticmethod
+        def via_events():
+            return False
+
+        @staticmethod
+        def title(tool_name):
+            return tool_name
+
+    try:
+        await notify_tool_result(
+            SimpleNamespace(_ui=_Ui()),
+            {"name": "read", "id": "read-direct"},
+            result,
+            True,
+            0.1,
+            ToolDisplayPolicy.from_config({}, defaults=DEFAULT_DISPLAY_RULES),
+            tool,
+        )
+        rendered = "\n".join(test_dock.tree.render(120))
+        assert "10/200 lines" in rendered
+        assert "raw file contents must stay out of the TUI" not in rendered
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()

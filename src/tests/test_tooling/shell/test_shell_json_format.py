@@ -19,6 +19,11 @@ def test_build_success_result_json_is_indented():
     assert "\n  " in result.output, "JSON output should be indented with newlines"
 
 
+def test_build_success_result_has_ui_summary():
+    result = build_success_result("echo hi", "hello\n", "", 0, "Bash")
+    assert result.summary == "ok"
+
+
 def test_build_blocked_result_json_is_indented():
     result = build_blocked_result("rm -rf /", "dangerous")
     parsed = json.loads(result.output)
