@@ -644,7 +644,7 @@ class TerminalWriter:
         try:
             clear_start_row = (
                 self._applied_start_row
-                if self._baseline_valid
+                if self._baseline_valid and self._applied_start_row > 0
                 else batch.clear_start_row
             )
             if clear_start_row > 0:
@@ -653,6 +653,13 @@ class TerminalWriter:
             for value in batch.payload.parts(max(1, self.byte_budget)):
                 self._worker_write(value)
             self._worker_flush()
+            if clear_start_row > 0:
+                lines_written = (
+                    batch.payload.text.count("\n")
+                    if batch.payload.text is not None
+                    else 1
+                )
+                self._applied_start_row = clear_start_row + lines_written
             self._baseline_valid = False
         except Exception:
             try:

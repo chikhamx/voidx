@@ -681,6 +681,12 @@ class PureTui(
                 term_height,
                 self._visible_committed_rows + update["flush_rows"],
             )
+            clear_start = update.get("clear_start_row", 0)
+            if self._has_rendered_frame and clear_start > 0:
+                self._last_frame_start_row = max(
+                    self._last_frame_start_row,
+                    clear_start + update["flush_rows"],
+                )
             self._invalidate_frame_cache()
         finally:
             self._render_state.pending_commit_updates.pop(token_key, None)
@@ -695,13 +701,14 @@ class PureTui(
 
     def _track_pending_commit(
         self,
-        token: BatchToken,
+        token: [redacted],
         *,
         apply_state,
         settle,
         flush_rows: int,
         force_requested: bool,
         raw_echoes: list[str],
+        clear_start_row: int = 0,
     ) -> None:
         token_key = id(token)
         self._render_state.pending_terminal_operations[token_key] = {
@@ -717,6 +724,7 @@ class PureTui(
             "flush_rows": flush_rows,
             "force_requested": force_requested,
             "raw_echoes": raw_echoes,
+            "clear_start_row": clear_start_row,
         }
         self._render_state.pending_commit_tasks[token_key] = asyncio.create_task(
             self._wait_for_pending_commit(token)
@@ -1260,11 +1268,15 @@ class PureTui(
                 _rendered_row_count(flush_ansi),
                 len(echo_lines) + len(flush_lines),
             )
-            clear_start_row = (
-                self._last_frame_start_row
-                if self._has_rendered_frame and self._last_frame_start_row > 0
-                else 0
-            )
+            if self._has_rendered_frame and self._last_frame_start_row > 0:
+                clear_start_row = self._last_frame_start_row
+            elif self._has_rendered_frame:
+                clear_start_row = max(self._visible_committed_rows + 1, 1)
+            else:
+                clear_start_row = 0
+
+            if self._has_rendered_frame and clear_start_row > 0:
+                self._last_frame_start_row = clear_start_row + flush_rows
 
             if worker_mode:
                 self._invalidate_layout("commit")
@@ -1280,6 +1292,7 @@ class PureTui(
                         flush_rows=flush_rows,
                         force_requested=force_requested,
                         raw_echoes=raw_echoes,
+                        clear_start_row=clear_start_row,
                     )
                 else:
                     settle_batch()

@@ -914,3 +914,74 @@ async def test_terminal_model_search_started_and_completed_share_one_scrollback_
         assert all_rows.count("0 matches") == 1
         assert "Ruminating" not in all_rows
         assert all_rows.count("find compaction summary") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("worker", [False, True], ids=["sync", "worker"])
+async def test_terminal_model_commit_without_frame_result_never_leaks_status_or_busy(
+    tmp_path, monkeypatch, worker
+):
+    async with _terminal_tui(tmp_path, monkeypatch, worker=worker, height=12) as (
+        tui, screen, stream, drain
+    ):
+        for index in range(4):
+            dock.append_message(f"HISTORY-{index}")
+        tui._flush_committed(force=True)
+        await drain()
+
+        dock.begin_capture()
+        dock.start_turn("test question")
+        tui._busy = True
+        tui._was_busy = True
+        tui._busy_started_at = 0.0
+        tui._busy_activity_verb = "Kneading"
+        tui._render_frame()
+
+        tool = dock.start_tool(
+            "Searching",
+            'pattern="find_something"',
+            tool_name="search",
+            tool_call_id="search-1",
+            raw_args={"pattern": "find_something"},
+        )
+        dock.finish_tool_node(tool, "Search", 0.1, True, "done")
+        tui._flush_committed()
+        await drain()
+        tui._render_frame()
+        await drain()
+
+        # Commit additional tools that fill and exceed terminal height, forcing scrollback
+        tool2 = dock.start_tool(
+            "Updating",
+            'file_path="src/app.py"',
+            tool_name="update",
+            tool_call_id="update-1",
+            raw_args={"file_path": "src/app.py"},
+        )
+        dock.finish_tool_node(tool2, "Update", 0.1, True, "done")
+        tui._flush_committed()
+        await drain()
+
+        tool3 = dock.start_tool(
+            "Reading",
+            'file_path="src/app.py"',
+            tool_name="read",
+            tool_call_id="read-1",
+            raw_args={"file_path": "src/app.py"},
+        )
+        dock.finish_tool_node(tool3, "Read", 0.1, True, "done")
+        tui._flush_committed()
+        await drain()
+
+        # Check history and current rows: live overlays must never enter history
+        history_text = "\n".join(screen.history)
+        assert "Kneading" not in history_text
+        assert "status" not in history_text
+        # And in current visible rows, history must be clean
+        search_rows = [i for i, r in enumerate(screen.rows) if "Search" in r]
+        update_rows = [i for i, r in enumerate(screen.rows) if "Updating" in r or "Update" in r]
+        read_rows = [i for i, r in enumerate(screen.rows) if "Read" in r]
+        assert search_rows, f"Search missing from visible rows: {screen.rows}"
+        assert update_rows, f"Update missing from visible rows: {screen.rows}"
+        assert read_rows, f"Read missing from visible rows: {screen.rows}"
+        assert search_rows[0] < update_rows[0] < read_rows[0]

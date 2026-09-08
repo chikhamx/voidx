@@ -423,6 +423,72 @@ def test_search_started_and_completed_render_as_one_tool_row():
 
 
 
+def test_hidden_tool_display_mode_hides_tool_and_result():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("hidden tool call")
+        tool = test_dock.start_tool(
+            "Reading",
+            'file_path="src/app.py"',
+            tool_name="read",
+            tool_call_id="read-hidden",
+            raw_args={"file_path": "src/app.py"},
+            display_mode="hidden",
+        )
+        test_dock.finish_tool_node(tool, "Read", 0.1, True, "done")
+        test_dock.append_tool_result(
+            "hidden result",
+            parent=tool,
+            tool_call_id="read-hidden",
+        )
+
+        lines = [_rich_plain(line) for line in test_dock.tree.render(100)]
+        assert not any("Read" in line for line in lines)
+        assert not any("hidden result" in line for line in lines)
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+def test_file_edit_consolidates_into_single_diff_node_without_duplicate_header():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("update file")
+        tool = test_dock.start_tool(
+            "Editing",
+            'file_path="src/app.py"',
+            tool_name="replace",
+            tool_call_id="replace-1",
+            raw_args={"file_path": "src/app.py"},
+        )
+        test_dock.finish_tool_node(tool, "Update", 0.1, True, "Edited (1 operations)")
+        test_dock.append_file_change(
+            "\n".join(
+                [
+                    "--- a/src/app.py",
+                    "+++ b/src/app.py",
+                    "@@ -1,2 +1,2 @@",
+                    "-old",
+                    "+new",
+                    " keep",
+                ]
+            ),
+            parent=tool,
+            tool_call_id="replace-1",
+        )
+
+        lines = [_rich_plain(line) for line in test_dock.tree.render(100)]
+        update_headers = [line for line in lines if 'Update("src/app.py")' in line]
+        assert len(update_headers) == 1
+        assert not any("Edited (1 operations)" in line for line in lines)
+        assert any("Added 1 line, removed 1 line" in line for line in lines)
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+
 def test_assistant_messages_start_after_blank_line_independent_of_previous_node():
     from voidx.presentation.output.tree import OutputTree
 
@@ -615,3 +681,60 @@ def test_committed_todo_state_stays_internal_and_omits_progress_bar():
         test_dock.reset()
 
 
+
+
+
+def test_explicit_show_tool_display_mode_keeps_result_visible():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("show tool output")
+        tool = test_dock.start_tool(
+            "Reading",
+            'file_path="src/app.py"',
+            tool_name="read",
+            tool_call_id="read-show",
+            raw_args={"file_path": "src/app.py"},
+            display_mode="show",
+        )
+        test_dock.finish_tool_node(tool, "Read", 0.1, True, "done")
+        test_dock.append_tool_result(
+            "visible result",
+            parent=tool,
+            tool_call_id="read-show",
+        )
+
+        lines = [_rich_plain(line) for line in test_dock.tree.render(100)]
+        assert any("visible result" in line for line in lines)
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+
+def test_summary_tool_display_mode_hides_raw_result_lines():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("summarize tool output")
+        tool = test_dock.start_tool(
+            "Searching",
+            'query="pattern"',
+            tool_name="search",
+            tool_call_id="search-summary",
+            raw_args={"query": "pattern"},
+            display_mode="summary",
+        )
+        test_dock.finish_tool_node(tool, "Search", 0.1, True, "4 files")
+        test_dock.append_tool_result(
+            "raw result line 1\nraw result line 2",
+            parent=tool,
+            tool_call_id="search-summary",
+        )
+
+        lines = [_rich_plain(line) for line in test_dock.tree.render(100)]
+        assert any("Search" in line and "4 files" in line for line in lines)
+        assert not any("raw result line" in line for line in lines)
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()

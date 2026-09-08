@@ -613,6 +613,7 @@ class _FrameRendererMixin:
                     self._invalidate_pending_layout_after_submit_failure(exc)
                     raise
                 self._has_rendered_frame = True
+                self._last_frame_start_row = start_row
                 self._submitted_generation = generation
                 self._terminal_frame_generation = generation
                 self._pending_worker_frame_states()[generation] = {

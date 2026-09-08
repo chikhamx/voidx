@@ -3275,3 +3275,41 @@ def test_worker_owned_tty_scroll_never_falls_back_to_sync_writer(tmp_path):
         }
     ]
     assert tui._visible_committed_rows == 2
+
+
+@pytest.mark.asyncio
+async def test_consecutive_stream_in_turn_does_not_duplicate_assistant_header_in_tui(tmp_path):
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitFrameWriter()
+    tui._terminal_writer = writer
+
+    dock.begin_capture()
+    dock.start_turn("test question")
+    tui._flush_committed()
+
+    draft_text = "• 已完成长对话 CPU 100% 性能瓶颈的测试用例编写、根因修复与全量验证。\n### 一、根本原因分析与复现"
+    dock.set_stream(draft_text, refresh=False)
+    dock.commit_stream(refresh=False)
+    tui._flush_committed()
+    tui._render_frame()
+
+    extended_text = (
+        "• 已完成长对话 CPU 100% 性能瓶颈的测试用例编写、根因修复与全量验证。\n"
+        "### 一、根本原因分析与复现\n"
+        "通过对长会话中占满 100% CPU 的后台进程采样分析，发现以下三个瓶颈叠\n"
+        "1. OutputNode 数据类深度值比较（主要热点）\n"
+        "2. mark_root_turns_committed_through_line O(N^2) 累计渲染"
+    )
+    dock.set_stream(extended_text, refresh=False)
+    dock.commit_stream(refresh=False)
+    tui._flush_committed()
+    tui._render_frame()
+
+    lines = [line for line in dock.tree.render(80) if "已完成长对话" in line]
+    assert len(lines) == 1
+
+    agent = dock.ensure_agent()
+    assistant_children = [child for child in agent.children if child.node_type == "assistant"]
+    assert len(assistant_children) == 1
