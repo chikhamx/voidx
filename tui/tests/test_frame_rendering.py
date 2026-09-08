@@ -698,6 +698,138 @@ def test_flush_committed_reconciles_in_place_tool_growth_by_node_identity(
     assert fake_stdout.text.count("second narration") == 1
 
 
+@pytest.mark.parametrize("tty", [False, True])
+def test_scrollback_allows_file_diff_nodes_but_hides_tool_results(
+    tmp_path, monkeypatch, tty
+):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+
+    tui = _tui(tmp_path)
+    tui._tty = tty
+    if tty:
+        tui._console = Console(
+            file=None,
+            force_terminal=True,
+            width=80,
+            height=30,
+            _environ={},
+        )
+    dock.begin_capture()
+    dock.start_turn("update the file")
+    tool = dock.start_tool(
+        "Editing",
+        'file_path="src/example.py"',
+        tool_name="edit",
+        raw_args={"file_path": "src/example.py"},
+    )
+    dock.finish_tool_node(tool, "Editing", 0.1, True)
+    dock.append_tool_result(
+        "ordinary tool result that must stay in the active area",
+        parent=tool,
+        tool_call_id=tool.tool_call_id,
+    )
+    _append_previewed_file_diff(dock, tool, "added one")
+
+    tui._flush_committed(force=True)
+
+    output = Text.from_ansi(fake_stdout.text).plain
+    assert 'Update("src/example.py")' in output
+    assert "added one" in output
+    assert "Full diff" in output
+    assert "ordinary tool result that must stay in the active area" not in output
+
+
+def test_scrollback_reconciles_consecutive_file_diff_calls(
+    tmp_path, monkeypatch
+):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+
+    tui = _tui(tmp_path)
+    tui._tty = False
+    dock.begin_capture()
+    dock.start_turn("update files")
+    for index in range(2):
+        tool = dock.start_tool(
+            "Editing",
+            f'file_path="src/example{index}.py"',
+            tool_name="edit",
+            tool_call_id=f"edit-{index}",
+            raw_args={"file_path": f"src/example{index}.py"},
+        )
+        dock.finish_tool_node(tool, "Editing", 0.1, True)
+        dock.append_tool_result(
+            f"ordinary result {index}",
+            parent=tool,
+            tool_call_id=tool.tool_call_id,
+        )
+        _append_previewed_file_diff(
+            dock,
+            tool,
+            f"change {index}",
+            path=f"src/example{index}.py",
+        )
+        tui._flush_committed(force=True)
+
+    output = Text.from_ansi(fake_stdout.text).plain
+    assert 'Update("src/example0.py")' in output
+    assert 'Update("src/example1.py")' in output
+    assert "change 0" in output
+    assert "change 1" in output
+    assert "ordinary result 0" not in output
+    assert "ordinary result 1" not in output
+
+
+
+def test_scrollback_file_diff_is_not_replayed_after_resize(
+    tmp_path, monkeypatch
+):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 30)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=30, _environ={})
+    dock.begin_capture()
+    dock.start_turn("resize after edit")
+    tool = dock.start_tool(
+        "Editing",
+        'file_path="src/resize.py"',
+        tool_name="edit",
+        tool_call_id="edit-resize",
+        raw_args={"file_path": "src/resize.py"},
+    )
+    dock.finish_tool_node(tool, "Editing", 0.1, True)
+    dock.append_tool_result(
+        "ordinary resize result",
+        parent=tool,
+        tool_call_id=tool.tool_call_id,
+    )
+    _append_previewed_file_diff(
+        dock,
+        tool,
+        "resize diff",
+        path="src/resize.py",
+    )
+    tui._flush_committed(force=True)
+    fake_stdout.text = ""
+
+    tui._console = Console(file=None, force_terminal=True, width=40, height=30, _environ={})
+    tui._render_frame()
+
+    resized_output = Text.from_ansi(fake_stdout.text).plain
+    assert "ordinary resize result" in resized_output
+    assert "resize diff" not in resized_output
+
+
+
+
 def test_active_frame_reconciles_in_place_tool_growth_by_node_identity(
     tmp_path, monkeypatch
 ):

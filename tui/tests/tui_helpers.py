@@ -66,11 +66,47 @@ class _FakeStdout:
 
 
 
+def _append_previewed_file_diff(
+    presentation_dock,
+    tool,
+    marker: str,
+    *,
+    path: str = "src/example.py",
+):
+    presentation_dock.append_file_change(
+        f"""--- a/{path}
++++ b/{path}
+@@ -1 +1,2 @@
+ existing
++{marker}
+""",
+        parent=tool,
+        tool_call_id=tool.tool_call_id,
+        preview_hunks=1,
+        preview_lines=1,
+    )
+    diff_node = next(
+        node
+        for node in tool.parent.children
+        if node.payload.get("diff_result")
+        and node.payload.get("result_tool_call_id") == tool.tool_call_id
+    )
+    full_diff = next(
+        child
+        for child in diff_node.children
+        if child.payload.get("full_diff_result")
+    )
+    full_diff.collapsed = False
+    presentation_dock.tree.mark_dirty()
+    return diff_node
+
+
 __all__ = [
     "setup_dock",
     "_rich_plain",
     "_tui",
     "_render_lines",
     "_styles_covering",
+    "_append_previewed_file_diff",
     "_FakeStdout",
 ]

@@ -1846,6 +1846,27 @@ class _FrameRendererMixin:
         )
 
 
+    def _restored_active_line_indexes(
+        self,
+        lines: list[str],
+        line_map: dict[int, str],
+        committed: int,
+    ) -> list[int]:
+        bounded_committed = min(max(committed, 0), len(lines))
+        committed_indexes = set(
+            self._scrollback_line_indexes(
+                lines,
+                line_map,
+                0,
+                bounded_committed,
+            )
+        )
+        return [
+            index
+            for index in range(len(lines))
+            if index >= bounded_committed or index not in committed_indexes
+        ]
+
     def _render_impl(
         self,
         *,
@@ -1937,6 +1958,11 @@ class _FrameRendererMixin:
                 self._restored_committed_line_count,
                 len(added_lines),
             )
+            added_active_indexes = self._restored_active_line_indexes(
+                added_lines,
+                added_line_map,
+                committed_added,
+            )
             thinking_node_id = dock.active_thinking_stream_node_id()
             active_lines = [
                 line
@@ -1944,8 +1970,8 @@ class _FrameRendererMixin:
                 if history_line_map.get(index) != thinking_node_id
             ]
             active_lines.extend(
-                line
-                for index, line in enumerate(added_lines[committed_added:], start=committed_added)
+                added_lines[index]
+                for index in added_active_indexes
                 if added_line_map.get(index) != thinking_node_id
             )
         else:

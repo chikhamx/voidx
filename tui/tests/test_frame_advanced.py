@@ -15,7 +15,7 @@ from rich.console import Console
 from rich.text import Text
 
 from voidx_cli.helpers import _rendered_row_count
-from voidx.presentation.output.dock import dock
+from voidx.presentation.output.dock import BottomInputDock, dock
 
 
 def test_render_frame_collects_each_region_once_per_frame(tmp_path, monkeypatch):
@@ -601,6 +601,82 @@ def test_restored_history_flushes_new_output_without_replaying_history(
     assert fake_stdout.text == ""
 
 
+
+
+
+def test_restored_file_diff_keeps_filtered_results_in_active_area(
+    tmp_path, monkeypatch
+):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+
+    tui = _tui(tmp_path)
+    tui._tty = False
+    tui._console = Console(
+        file=None,
+        force_terminal=False,
+        width=80,
+        height=24,
+        _environ={},
+    )
+
+    restored_dock = BottomInputDock()
+    restored_dock.begin_capture()
+    restored_dock.start_turn("restored edit")
+    restored_tool = restored_dock.start_tool(
+        "Editing",
+        'file_path="src/restored.py"',
+        tool_name="edit",
+        tool_call_id="edit-restored",
+        raw_args={"file_path": "src/restored.py"},
+    )
+    restored_dock.finish_tool_node(restored_tool, "Editing", 0.1, True)
+    restored_dock.append_tool_result(
+        "ordinary restored result",
+        parent=restored_tool,
+        tool_call_id=restored_tool.tool_call_id,
+    )
+    _append_previewed_file_diff(
+        restored_dock,
+        restored_tool,
+        "restored diff",
+        path="src/restored.py",
+    )
+
+    dock.begin_capture()
+    dock.restore_tree(restored_dock.tree)
+    restored_active = "\n".join(_render_lines(tui))
+    assert "ordinary restored result" in restored_active
+
+    dock.start_turn("new edit")
+    new_tool = dock.start_tool(
+        "Editing",
+        'file_path="src/new.py"',
+        tool_name="edit",
+        tool_call_id="edit-new",
+        raw_args={"file_path": "src/new.py"},
+    )
+    dock.finish_tool_node(new_tool, "Editing", 0.1, True)
+    dock.append_tool_result(
+        "ordinary new result",
+        parent=new_tool,
+        tool_call_id=new_tool.tool_call_id,
+    )
+    _append_previewed_file_diff(
+        dock,
+        new_tool,
+        "new diff",
+        path="src/new.py",
+    )
+
+    tui._flush_committed(force=True)
+
+    output = Text.from_ansi(fake_stdout.text).plain
+    assert 'Update("src/new.py")' in output
+    assert "new diff" in output
+    assert "ordinary new result" not in output
+    active = "\n".join(_render_lines(tui))
+    assert "ordinary new result" in active
 
 
 
@@ -1611,6 +1687,49 @@ def _worker_commit_tui(tmp_path):
     return tui, writer
 
 
+def test_worker_file_diff_commit_uses_scrollback_whitelist(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui, writer = _worker_commit_tui(tmp_path)
+    tui._has_rendered_frame = True
+    tui._last_frame_start_row = 6
+    dock.begin_capture()
+    dock.start_turn("worker edit")
+    tool = dock.start_tool(
+        "Editing",
+        'file_path="src/worker.py"',
+        tool_name="edit",
+        tool_call_id="edit-worker",
+        raw_args={"file_path": "src/worker.py"},
+    )
+    dock.finish_tool_node(tool, "Editing", 0.1, True)
+    result = dock.append_tool_result(
+        "ordinary worker result",
+        parent=tool,
+        tool_call_id=tool.tool_call_id,
+    )
+    diff_node = _append_previewed_file_diff(
+        dock,
+        tool,
+        "worker diff",
+        path="src/worker.py",
+    )
+
+    tui._flush_committed(force=True)
+
+    assert len(writer.commits) == 1
+    output = Text.from_ansi(writer.commits[0]["ansi"]).plain
+    assert 'Update("src/worker.py")' in output
+    assert "worker diff" in output
+    assert "ordinary worker result" not in output
+    assert diff_node.id in dock._settled_node_ids
+    assert result.id not in dock._settled_node_ids
+
+
+
 def test_worker_flush_committed_submits_one_atomic_commit(tmp_path, monkeypatch):
     monkeypatch.setattr(
         shutil,
@@ -1799,6 +1918,62 @@ class _DeferredCommitFrameWriter(_DeferredCommitWriter):
     def submit_barrier(self, **kwargs):
         self.barriers.append(kwargs)
         return object()
+
+
+@pytest.mark.asyncio
+async def test_worker_file_diff_settles_only_after_pending_commit(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitWriter()
+    tui._terminal_writer = writer
+    dock.begin_capture()
+    dock.start_turn("deferred worker edit")
+    tool = dock.start_tool(
+        "Editing",
+        'file_path="src/deferred.py"',
+        tool_name="edit",
+        tool_call_id="edit-deferred",
+        raw_args={"file_path": "src/deferred.py"},
+    )
+    dock.finish_tool_node(tool, "Editing", 0.1, True)
+    result = dock.append_tool_result(
+        "ordinary deferred result",
+        parent=tool,
+        tool_call_id=tool.tool_call_id,
+    )
+    diff_node = _append_previewed_file_diff(
+        dock,
+        tool,
+        "deferred diff",
+        path="src/deferred.py",
+    )
+    full_diff = next(
+        child
+        for child in diff_node.children
+        if child.payload.get("full_diff_result")
+    )
+
+    token = tui._flush_committed(force=True)
+
+    assert token is writer.tokens[0]
+    assert diff_node.id not in dock._settled_node_ids
+    assert full_diff.id not in dock._settled_node_ids
+    assert result.id not in dock._settled_node_ids
+
+    await _resolve_deferred_commit(token)
+
+    assert diff_node.id in dock._settled_node_ids
+    assert full_diff.id in dock._settled_node_ids
+    assert result.id not in dock._settled_node_ids
+
 
 
 @pytest.mark.asyncio
@@ -2406,7 +2581,7 @@ async def _resolve_deferred_commit(token, *, failed=False):
 
 
 @pytest.mark.asyncio
-async def test_result_update_while_first_writer_batch_is_pending_needs_new_settle(
+async def test_result_update_while_first_writer_batch_is_pending_keeps_result_in_activity(
     tmp_path,
     monkeypatch,
 ):
@@ -2424,6 +2599,8 @@ async def test_result_update_while_first_writer_batch_is_pending_needs_new_settl
 
     tui._flush_committed(force=True)
     first_token = writer.tokens[0]
+    assert "Read" in writer.commits[0]["ansi"]
+    assert "first result" not in writer.commits[0]["ansi"]
     dock.append_tool_result(
         "second result",
         parent=tool,
@@ -2432,18 +2609,19 @@ async def test_result_update_while_first_writer_batch_is_pending_needs_new_settl
 
     await _resolve_deferred_commit(first_token)
 
+    assert tool.id in dock._settled_node_ids
     assert result.id not in dock._settled_node_ids
     tui._flush_committed(force=True)
-    assert len(writer.tokens) == 2
-    assert "second result" in writer.commits[1]["ansi"]
+    assert len(writer.tokens) == 1
     assert result.id not in dock._settled_node_ids
 
-    await _resolve_deferred_commit(writer.tokens[1])
-    assert result.id in dock._settled_node_ids
+    with tui._console.capture() as capture:
+        tui._console.print(tui._render_impl())
+    assert "second result" in capture.get()
 
 
 @pytest.mark.asyncio
-async def test_result_update_after_first_writer_batch_settles_waits_for_second_batch(
+async def test_result_update_after_first_writer_batch_stays_activity_only(
     tmp_path,
     monkeypatch,
 ):
@@ -2461,24 +2639,26 @@ async def test_result_update_after_first_writer_batch_settles_waits_for_second_b
 
     tui._flush_committed(force=True)
     await _resolve_deferred_commit(writer.tokens[0])
-    assert result.id in dock._settled_node_ids
+    assert tool.id in dock._settled_node_ids
+    assert result.id not in dock._settled_node_ids
 
     dock.append_tool_result(
         "second result",
         parent=tool,
         tool_call_id="read-deferred",
     )
-    assert result.id not in dock._settled_node_ids
     tui._flush_committed(force=True)
-    assert len(writer.tokens) == 2
-    assert result.id not in dock._settled_node_ids
 
-    await _resolve_deferred_commit(writer.tokens[1])
-    assert result.id in dock._settled_node_ids
+    assert len(writer.tokens) == 1
+    assert "second result" not in writer.commits[0]["ansi"]
+    assert result.id not in dock._settled_node_ids
+    with tui._console.capture() as capture:
+        tui._console.print(tui._render_impl())
+    assert "second result" in capture.get()
 
 
 @pytest.mark.asyncio
-async def test_result_update_after_failed_first_writer_batch_is_not_settled_by_failure(
+async def test_result_update_after_failed_first_writer_batch_retries_call_only(
     tmp_path,
     monkeypatch,
 ):
@@ -2503,17 +2683,20 @@ async def test_result_update_after_failed_first_writer_batch_is_not_settled_by_f
     )
     await _resolve_deferred_commit(first_token, failed=True)
 
+    assert tool.id not in dock._settled_node_ids
     assert result.id not in dock._settled_node_ids
     tui._flush_committed(force=True)
     assert len(writer.tokens) == 2
-    assert "second result" in writer.commits[1]["ansi"]
+    assert "Read" in writer.commits[1]["ansi"]
+    assert "second result" not in writer.commits[1]["ansi"]
 
     await _resolve_deferred_commit(writer.tokens[1])
-    assert result.id in dock._settled_node_ids
+    assert tool.id in dock._settled_node_ids
+    assert result.id not in dock._settled_node_ids
 
 
 @pytest.mark.asyncio
-async def test_result_update_during_second_writer_batch_needs_third_settle(
+async def test_multiple_result_updates_do_not_enqueue_additional_writer_batches(
     tmp_path,
     monkeypatch,
 ):
@@ -2537,22 +2720,20 @@ async def test_result_update_during_second_writer_batch_needs_third_settle(
         tool_call_id="read-deferred",
     )
     tui._flush_committed(force=True)
-    second_token = writer.tokens[1]
     dock.append_tool_result(
         "third result",
         parent=tool,
         tool_call_id="read-deferred",
     )
-
-    await _resolve_deferred_commit(second_token)
-
-    assert result.id not in dock._settled_node_ids
     tui._flush_committed(force=True)
-    assert len(writer.tokens) == 3
-    assert "third result" in writer.commits[2]["ansi"]
 
-    await _resolve_deferred_commit(writer.tokens[2])
-    assert result.id in dock._settled_node_ids
+    assert len(writer.tokens) == 1
+    assert "third result" not in writer.commits[0]["ansi"]
+    assert tool.id in dock._settled_node_ids
+    assert result.id not in dock._settled_node_ids
+    with tui._console.capture() as capture:
+        tui._console.print(tui._render_impl())
+    assert "third result" in capture.get()
 
 
 @pytest.mark.asyncio
@@ -3313,3 +3494,159 @@ async def test_consecutive_stream_in_turn_does_not_duplicate_assistant_header_in
     agent = dock.ensure_agent()
     assistant_children = [child for child in agent.children if child.node_type == "assistant"]
     assert len(assistant_children) == 1
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "label", "args", "raw_args", "call_text", "result_text"),
+    [
+        (
+            "read",
+            "Reading",
+            'file_path="src/file.py"',
+            {"file_path": "src/file.py"},
+            "Read",
+            "READ_RESULT_MUST_STAY_IN_ACTIVITY",
+        ),
+        (
+            "bash",
+            "Running",
+            'command="printf result"',
+            {"command": "printf result"},
+            "Bash",
+            "BASH_RESULT_MUST_STAY_IN_ACTIVITY",
+        ),
+    ],
+)
+def test_tool_result_stays_in_activity_area_and_tool_call_reaches_scrollback(
+    tmp_path,
+    monkeypatch,
+    tool_name,
+    label,
+    args,
+    raw_args,
+    call_text,
+    result_text,
+):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+
+    tui = _tui(tmp_path)
+    tui._tty = False
+    tui._console = Console(file=None, force_terminal=False, width=80, height=24, _environ={})
+    dock.begin_capture()
+    dock.start_turn("run a tool")
+    tool = dock.start_tool(
+        label,
+        args,
+        tool_name=tool_name,
+        tool_call_id=f"{tool_name}-scrollback",
+        raw_args=raw_args,
+    )
+    dock.finish_tool_node(tool, call_text, 0.1, True, "done")
+    dock.append_tool_result(
+        result_text,
+        parent=tool,
+        tool_call_id=f"{tool_name}-scrollback",
+    )
+
+    tui._flush_committed(force=True)
+
+    assert call_text in fake_stdout.text
+    assert result_text not in fake_stdout.text
+
+
+
+def test_restored_tool_result_remains_in_activity_after_full_watermark(
+    tmp_path,
+    monkeypatch,
+):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+
+    tui = _tui(tmp_path)
+    tui._tty = False
+    tui._console = Console(file=None, force_terminal=False, width=80, height=12, _environ={})
+
+    restored = type(dock.tree)()
+    restored.new_node(
+        parent=restored.root,
+        node_type="message",
+        header="restored history",
+        collapsed=False,
+    )
+    dock.restore_tree(restored)
+    result = dock.tree.new_node(
+        parent=dock.tree.root,
+        node_type="tool_result",
+        header="RESTORED_RESULT_MUST_STAY_IN_ACTIVITY",
+        collapsed=False,
+        status="done",
+        payload={"lifecycle": "completed"},
+    )
+
+    tui._flush_committed(force=True)
+
+    assert result.id not in dock._settled_node_ids
+    assert dock.restored_root_child_range() == (0, 1)
+    assert tui._restored_committed_line_count > 0
+    assert "RESTORED_RESULT_MUST_STAY_IN_ACTIVITY" not in fake_stdout.text
+
+    with tui._console.capture() as capture:
+        tui._console.print(tui._render_impl())
+    assert "RESTORED_RESULT_MUST_STAY_IN_ACTIVITY" in capture.get()
+
+
+
+def test_resume_restored_history_is_completed_and_inactive(tmp_path):
+    restored = type(dock.tree)()
+    turn = restored.new_node(
+        parent=restored.root,
+        node_type="turn",
+        header="[bold white]❯[/] restored question",
+        collapsed=False,
+        payload={
+            "transcript_turn_id": 1,
+            "lifecycle": "running",
+            "active": True,
+            "terminal": False,
+            "committed": False,
+            "durable": True,
+            "render_pending": True,
+        },
+    )
+    agent = restored.new_node(
+        parent=turn,
+        node_type="assistant",
+        header="",
+        collapsed=False,
+        payload={"lifecycle": "running", "active": True, "terminal": False},
+    )
+    restored.new_node(
+        parent=agent,
+        node_type="assistant",
+        header="● restored answer",
+        collapsed=False,
+        payload={
+            "lifecycle": "running",
+            "active": True,
+            "terminal": False,
+            "stream": True,
+        },
+    )
+
+    dock.reset()
+    dock.restore_tree(restored, append=True)
+
+    nodes = []
+    stack = list(dock.tree.root.children)
+    while stack:
+        node = stack.pop()
+        nodes.append(node)
+        stack.extend(node.children)
+
+    assert nodes
+    assert all(node.payload.get("lifecycle") == "completed" for node in nodes)
+    assert all(node.payload.get("active") is False for node in nodes)
+    assert all(node.payload.get("terminal") is True for node in nodes)
+    assert all(node.payload.get("render_pending") is False for node in nodes)
+    assert all(node.payload.get("stream") is not True for node in nodes)

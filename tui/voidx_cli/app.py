@@ -786,6 +786,89 @@ class PureTui(
             result[index] = (*pair, occurrence)
         return result
 
+    @staticmethod
+    def _scrollback_hidden_node(node) -> bool:
+        if node is None:
+            return False
+        if node.node_type == "tool_result":
+            return not bool(node.payload.get("full_diff_result"))
+        return (
+            node.node_type == "message"
+            and bool(node.payload.get("tool_result_spacer_for"))
+        )
+
+    @classmethod
+    def _scrollback_line_indexes(
+        cls,
+        lines: list[str],
+        line_map: dict[int, str],
+        start: int,
+        end: int,
+    ) -> list[int]:
+        hidden_node_ids = {
+            node_id
+            for node_id in line_map.values()
+            if cls._scrollback_hidden_node(dock.tree.get(node_id))
+        }
+        following_owners: list[str | None] = [None] * len(lines)
+        following: str | None = None
+        for index in range(len(lines) - 1, -1, -1):
+            owner = line_map.get(index)
+            if owner is not None:
+                following = owner
+            following_owners[index] = following
+
+        selected: list[int] = []
+        previous: str | None = None
+        for index in range(min(start, len(lines)) - 1, -1, -1):
+            owner = line_map.get(index)
+            if owner is not None:
+                previous = owner
+                break
+        for index in range(max(0, start), min(end, len(lines))):
+            owner = line_map.get(index)
+            if owner in hidden_node_ids:
+                if owner is not None:
+                    previous = owner
+                continue
+            if (
+                owner is None
+                and not lines[index].strip()
+                and (
+                    previous in hidden_node_ids
+                    or following_owners[index] in hidden_node_ids
+                )
+            ):
+                continue
+            selected.append(index)
+            if owner is not None:
+                previous = owner
+        return selected
+
+    @classmethod
+    def _scrollback_segment(
+        cls,
+        lines: list[str],
+        line_map: dict[int, str],
+        start: int = 0,
+        end: int | None = None,
+    ) -> tuple[list[str], dict[int, str]]:
+        bounded_end = len(lines) if end is None else min(end, len(lines))
+        indexes = cls._scrollback_line_indexes(
+            lines,
+            line_map,
+            start,
+            bounded_end,
+        )
+        return (
+            [lines[index] for index in indexes],
+            {
+                output_index: line_map[index]
+                for output_index, index in enumerate(indexes)
+                if line_map.get(index) is not None
+            },
+        )
+
     def _committed_projection_for_prefix(
         self,
         lines: list[str],
@@ -793,9 +876,12 @@ class PureTui(
         limit: int,
     ) -> CommittedProjection:
         bounded_limit = min(max(limit, 0), len(lines))
+        scrollback_indexes = set(
+            self._scrollback_line_indexes(lines, line_map, 0, bounded_limit)
+        )
         node_ids = {
             node_id
-            for index in range(bounded_limit)
+            for index in scrollback_indexes
             if (node_id := line_map.get(index)) is not None
         }
         node_signatures = {
@@ -806,7 +892,7 @@ class PureTui(
         unowned_keys = self._unowned_line_keys(lines, line_map)
         unowned_signatures = {
             unowned_keys[index]: lines[index]
-            for index in range(bounded_limit)
+            for index in scrollback_indexes
             if index in unowned_keys
         }
         return CommittedProjection(
@@ -814,6 +900,7 @@ class PureTui(
             node_signatures=node_signatures,
             unowned_signatures=unowned_signatures,
         )
+
 
     def _merged_committed_projection(
         self,
@@ -835,7 +922,15 @@ class PureTui(
             if dock.tree.get(node_id) is not None
         }
         node_signatures.update(current.node_signatures)
-        current_gap_keys = set(self._unowned_line_keys(lines, line_map).values())
+        current_unowned_keys = self._unowned_line_keys(lines, line_map)
+        scrollback_indexes = set(
+            self._scrollback_line_indexes(lines, line_map, 0, limit)
+        )
+        current_gap_keys = {
+            current_unowned_keys[index]
+            for index in scrollback_indexes
+            if index in current_unowned_keys
+        }
         unowned_signatures = {
             key: signature
             for key, signature in previous.unowned_signatures.items()
@@ -855,10 +950,17 @@ class PureTui(
         line_map: dict[int, str],
         limit: int,
         projection: CommittedProjection,
+        *,
+        scrollback_only: bool = False,
     ) -> list[int]:
         bounded_limit = min(max(limit, 0), len(lines))
+        candidate_indexes = (
+            self._scrollback_line_indexes(lines, line_map, 0, bounded_limit)
+            if scrollback_only
+            else list(range(bounded_limit))
+        )
         current_signatures: dict[str, tuple[Any, ...]] = {}
-        for index in range(bounded_limit):
+        for index in candidate_indexes:
             node_id = line_map.get(index)
             if node_id is None or node_id in current_signatures:
                 continue
@@ -872,7 +974,7 @@ class PureTui(
         }
         unowned_keys = self._unowned_line_keys(lines, line_map)
         result: list[int] = []
-        for index in range(bounded_limit):
+        for index in candidate_indexes:
             node_id = line_map.get(index)
             if node_id is not None:
                 if node_id in changed_nodes:
@@ -1087,10 +1189,6 @@ class PureTui(
 
             if restored_range is not None:
                 restored_start, restored_end = restored_range
-                prefix_lines: list[str] = []
-                if force and not next_restored_startup_flushed and restored_start:
-                    prefix_lines = dock.tree.render_root_slice(width, 0, restored_start)
-                    next_restored_startup_flushed = True
 
                 current_end = len(dock.tree.root.children)
                 if current_end > restored_end:
@@ -1143,30 +1241,58 @@ class PureTui(
                     len(added_lines),
                 )
 
+                added_indexes = self._scrollback_line_indexes(
+                    added_lines,
+                    added_line_map,
+                    committed_added,
+                    flush_limit,
+                )
+                added_flush_lines = [added_lines[index] for index in added_indexes]
+                added_owner_ids = frozenset(
+                    added_line_map[index]
+                    for index in added_indexes
+                    if added_line_map.get(index) is not None
+                )
+
+                prefix_lines: list[str] = []
+                if force and not next_restored_startup_flushed and restored_start:
+                    prefix_raw, prefix_map = dock.tree.render_root_slice_with_line_map(
+                        width,
+                        0,
+                        restored_start,
+                    )
+                    prefix_lines, _prefix_map = self._scrollback_segment(
+                        prefix_raw,
+                        prefix_map,
+                    )
+                    next_restored_startup_flushed = True
+
                 restored_lines: list[str] = []
                 if (
                     self._tty
                     and flush_limit > committed_added
                     and not next_restored_history_retired
                 ):
-                    restored_lines = dock.tree.render_root_slice(
-                        width,
-                        restored_start if next_restored_startup_flushed else 0,
-                        restored_end,
+                    restored_raw, restored_map = (
+                        dock.tree.render_root_slice_with_line_map(
+                            width,
+                            restored_start if next_restored_startup_flushed else 0,
+                            restored_end,
+                        )
+                    )
+                    restored_lines, _restored_map = self._scrollback_segment(
+                        restored_raw,
+                        restored_map,
                     )
 
                 flush_lines = [
                     *prefix_lines,
                     *restored_lines,
-                    *added_lines[committed_added:flush_limit],
+                    *added_flush_lines,
                 ]
-                batch_owner_ids = frozenset(
-                    owner
-                    for index, owner in added_line_map.items()
-                    if committed_added <= index < flush_limit
-                )
+                batch_owner_ids = added_owner_ids
                 next_restored_committed_line_count = flush_limit
-                if flush_limit > committed_added:
+                if added_indexes:
                     next_restored_history_retired = True
             else:
                 tree_lines, line_map = dock.tree.render_with_line_map(width)
@@ -1196,21 +1322,21 @@ class PureTui(
                         line_map,
                         flush_limit,
                         previous_projection,
-                    )
-                    flush_lines = [tree_lines[index] for index in flush_indexes]
-                    batch_owner_ids = frozenset(
-                        line_map[index]
-                        for index in flush_indexes
-                        if line_map.get(index) is not None
+                        scrollback_only=True,
                     )
                 else:
-                    flush_start = committed_count
-                    flush_lines = tree_lines[flush_start:flush_limit]
-                    batch_owner_ids = frozenset(
-                        owner
-                        for index, owner in line_map.items()
-                        if flush_start <= index < flush_limit
+                    flush_indexes = self._scrollback_line_indexes(
+                        tree_lines,
+                        line_map,
+                        committed_count,
+                        flush_limit,
                     )
+                flush_lines = [tree_lines[index] for index in flush_indexes]
+                batch_owner_ids = frozenset(
+                    line_map[index]
+                    for index in flush_indexes
+                    if line_map.get(index) is not None
+                )
                 next_committed_line_count = flush_limit
                 next_committed_projection = self._merged_committed_projection(
                     tree_lines,
