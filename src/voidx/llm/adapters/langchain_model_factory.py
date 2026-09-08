@@ -68,6 +68,7 @@ def _reasoning_kwargs(config: ModelConfig, protocol: str) -> dict:
     spec = next((item for item in PROVIDER_SPECS if item.name == config.provider), None)
     if spec is not None:
         return spec.reasoning(config) if spec.reasoning is not None else {}
+
     if protocol == "anthropic":
         return _anthropic_reasoning_kwargs(config)
     if protocol == "gemini":
@@ -81,6 +82,7 @@ def _reasoning_kwargs(config: ModelConfig, protocol: str) -> dict:
 
 _STREAM_CHUNK_TIMEOUT_ENV = "LANGCHAIN_OPENAI_STREAM_CHUNK_TIMEOUT_S"
 _REASONING_STREAM_CHUNK_TIMEOUT = 600
+_DEFAULT_REQUEST_TIMEOUT = 120.0
 
 
 def _reasoning_stream_chunk_timeout(reasoning_kwargs: dict) -> int | None:
@@ -177,11 +179,13 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
     else:
         temp = config.temperature
 
+    request_timeout = config.timeout if config.timeout is not None else _DEFAULT_REQUEST_TIMEOUT
     if protocol == "anthropic":
         kwargs = dict(
             api_key=api_key,
             model=config.model,
             max_tokens=config.max_tokens,
+            default_request_timeout=request_timeout,
         )
         if temp is not None:
             kwargs["temperature"] = temp
@@ -196,6 +200,7 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
             api_key=api_key,
             model=config.model,
             max_tokens=config.max_tokens,
+            request_timeout=request_timeout,
         )
         if temp is not None:
             kwargs["temperature"] = temp
@@ -213,6 +218,7 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
             api_key=api_key,
             model=config.model,
             max_tokens=config.max_tokens,
+            request_timeout=request_timeout,
         )
         if temp is not None:
             kwargs["temperature"] = temp
@@ -232,6 +238,7 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
         kwargs = dict(
             model=config.model,
             max_tokens=config.max_tokens,
+            timeout=request_timeout,
         )
         if temp is not None:
             kwargs["temperature"] = temp

@@ -37,3 +37,8 @@ class ModelConfig(BaseModel):
         ge=1,
         description="Override context window size in tokens. None = auto-detect by provider.",
     )
+    timeout: float | None = Field(
+        default=None,
+        gt=0.0,
+        description="Request timeout in seconds. None = use default request timeout (120s).",
+    )

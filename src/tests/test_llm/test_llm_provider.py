@@ -90,6 +90,81 @@ def test_create_chat_model_ignores_stale_openai_base_url_for_known_non_openai_pr
     assert str(model.openai_api_base).rstrip("/") == "https://api.deepseek.com/v1"
 
 
+def test_create_chat_model_sets_default_request_timeout():
+    openai_model = create_chat_model(
+        "test-key",
+        ModelConfig(provider="openai", model="gpt-4o"),
+    )
+    deepseek_model = create_chat_model(
+        "test-key",
+        ModelConfig(provider="deepseek", model="deepseek-chat"),
+    )
+    anthropic_model = create_chat_model(
+        "test-key",
+        ModelConfig(provider="anthropic", model="claude-sonnet-4-6"),
+    )
+
+    assert openai_model.request_timeout == 120.0
+    assert deepseek_model.request_timeout == 120.0
+    assert anthropic_model.default_request_timeout == 120.0
+
+
+def test_create_chat_model_custom_timeout_120ms():
+    openai_model = create_chat_model(
+        "test-key",
+        ModelConfig(provider="openai", model="gpt-4o", timeout=0.12),
+    )
+    assert openai_model.request_timeout == 0.12
+
+
+def test_chat_model_request_timeout_aborts_hanging_connection():
+    import socket
+    import threading
+    import time
+    from openai import APITimeoutError
+
+    server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_sock.bind(("127.0.0.1", 0))
+    server_sock.listen(1)
+    port = server_sock.getsockname()[1]
+
+    def _hold():
+        try:
+            conn, _ = server_sock.accept()
+            time.sleep(1.0)
+            conn.close()
+        except Exception:
+            pass
+        finally:
+            server_sock.close()
+
+    t = threading.Thread(target=_hold, daemon=True)
+    t.start()
+
+    model = create_chat_model(
+        "test-key",
+        ModelConfig(
+            provider="openai",
+            model="gpt-4o",
+            base_url=f"http://127.0.0.1:{port}/v1",
+            timeout=0.12,
+        ),
+    )
+    if hasattr(model, "root_client"):
+        model.root_client.max_retries = 0
+    if hasattr(model, "root_async_client"):
+        model.root_async_client.max_retries = 0
+
+    start = time.monotonic()
+    import pytest
+    with pytest.raises(Exception) as exc_info:
+        model.invoke([HumanMessage(content="hello")])
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 1.0, f"Expected timeout in ~120ms, took {elapsed}s"
+    assert issubclass(exc_info.type, (APITimeoutError, TimeoutError)) or "timeout" in str(exc_info.value).lower()
+
+
 def test_anthropic_adapter_receives_is_error_for_error_tool_message():
     _, formatted = _format_messages([
         HumanMessage(content="read file"),
