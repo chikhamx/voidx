@@ -533,14 +533,14 @@ class ToolExecutorAdapter:
             if getattr(result, "diff", None) and ok:
                 host._ui.session_tracker.record_diff(result.diff)
                 await notify_tool_diff(host, result, tool_event_id, tool_node)
-            else:
-                if tid == "agent":
-                    # Prefer explicit UI display; successful spawn has none (subagent tree covers it).
-                    ui_output = result.display or (
-                        _agent_result_preview(result.output) if ok else result.output
-                    )
-                else:
-                    ui_output = result.display or result.output
+            elif tid == "agent":
+                ui_output = result.display or (
+                    _agent_result_preview(result.output) if ok else result.output
+                )
+                await notify_tool_text_output(host, ui_output, tid, tool_event_id, tool_node, display_policy, ok)
+            elif not ok:
+                meta = getattr(result, "metadata", {}) or {}
+                ui_output = result.display or meta.get("error_message") or result.output
                 await notify_tool_text_output(host, ui_output, tid, tool_event_id, tool_node, display_policy, ok)
 
             persistence_tool_name = tool_name_for_persistence(result, tid)

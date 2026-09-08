@@ -258,3 +258,176 @@ async def test_agent_tool_result_preview_does_not_depend_on_debug(tmp_path):
     assert "... (2 more lines omitted; full result passed to voidx)" in final_texts[0]
 
 
+
+async def _execute_fake_tool(tmp_path, *, tool_name: str, args: dict, result: ToolResult):
+    graph = _graph(tmp_path)
+
+    class FakeTools:
+        async def execute_tool(self, tid, _targs, _ctx):
+            assert tid == tool_name
+            return result
+
+    async def allow_all(
+        tool_calls,
+        plan_mode: bool,
+        session_id: str,
+        interaction_mode=None,
+    ):
+        return tool_calls, []
+
+    graph.tools = FakeTools()
+    graph._authorize_tool_calls = allow_all
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    ui_events.start(DockEventConsumer(test_dock))
+    try:
+        graph._current_tree = test_dock.tree
+        graph._turn_node = await ui_events.request(TurnStarted(text="demo"))
+        parent = AIMessage(
+            content="",
+            tool_calls=[{
+                "name": tool_name,
+                "args": args,
+                "id": "call_test",
+                "type": "tool_call",
+            }],
+        )
+
+        exec_res = await graph._execute_tools({
+            "messages": [parent],
+            "workspace": str(tmp_path),
+            "persona": "voidx",
+            "plan_mode": False,
+        })
+        await ui_events.drain()
+
+        assistant = next(node for node in test_dock.tree.root.children if node.node_type == "assistant")
+        tool_node = next(node for node in assistant.children if node.node_type == "tool_call")
+        final_results = [
+            node for node in (*tool_node.children, *assistant.children)
+            if node.node_type == "tool_result"
+        ]
+        rendered = "\n".join(test_dock.tree.render(120))
+        return rendered, final_results, list(exec_res["messages"])
+    finally:
+        await ui_events.stop()
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
+
+
+@pytest.mark.asyncio
+async def test_bash_routed_to_git_does_not_output_json_in_ui(tmp_path):
+    json_output = json.dumps({
+        "ok": True,
+        "command": "diff",
+        "repo_root": str(tmp_path),
+        "workspace": str(tmp_path),
+        "data": {"entries": []},
+        "error": "",
+    }, indent=2)
+
+    git_routed_result = ToolResult(
+        title="git: diff",
+        output=json_output,
+        summary="ok",
+        metadata={
+            "tool": "git",
+            "routed_from": "bash",
+            "routed_command": "git diff -- tui/",
+            "command": "diff",
+            "ok": True,
+        },
+        display="",
+    )
+
+    rendered, final_results, messages = await _execute_fake_tool(
+        tmp_path,
+        tool_name="bash",
+        args={"command": "git diff -- tui/"},
+        result=git_routed_result,
+    )
+
+    assert len(final_results) == 0
+    assert '"data": {' not in rendered
+    assert any(isinstance(msg, ToolMessage) and '"command": "diff"' in msg.content and '"entries": []' in msg.content for msg in messages)
+
+
+@pytest.mark.asyncio
+async def test_git_tool_does_not_output_json_in_ui(tmp_path):
+    json_output = json.dumps({
+        "ok": True,
+        "command": "status",
+        "repo_root": str(tmp_path),
+        "workspace": str(tmp_path),
+        "data": {"entries": []},
+        "error": "",
+    }, indent=2)
+
+    git_result = ToolResult(
+        title="git: status",
+        output=json_output,
+        summary="ok",
+        metadata={
+            "command": "status",
+            "ok": True,
+        },
+        display="",
+    )
+
+    rendered, final_results, messages = await _execute_fake_tool(
+        tmp_path,
+        tool_name="git",
+        args={"args": "status"},
+        result=git_result,
+    )
+
+    assert len(final_results) == 0
+    assert '"entries": []' not in rendered
+    assert any(isinstance(msg, ToolMessage) and '"command": "status"' in msg.content and '"entries": []' in msg.content for msg in messages)
+
+
+
+@pytest.mark.asyncio
+async def test_generic_tool_does_not_output_result_in_ui_when_successful(tmp_path):
+    bash_result = ToolResult(
+        title="Bash: echo hello",
+        output="hello",
+        summary="ok",
+        display="hello",
+        metadata={"ok": True},
+    )
+
+    rendered, final_results, messages = await _execute_fake_tool(
+        tmp_path,
+        tool_name="bash",
+        args={"command": "echo hello"},
+        result=bash_result,
+    )
+
+    assert len(final_results) == 0
+    assert not any(node.node_type == "tool_result" for node in final_results)
+    assert any(isinstance(msg, ToolMessage) and msg.content == "hello" for msg in messages)
+
+
+@pytest.mark.asyncio
+async def test_failed_tool_outputs_error_in_ui(tmp_path):
+    fail_result = ToolResult(
+        title="Bash: exit 1",
+        output="command failed: exit 1",
+        summary="failed",
+        display="command failed: exit 1",
+        metadata={"ok": False, "error": True},
+    )
+
+    rendered, final_results, messages = await _execute_fake_tool(
+        tmp_path,
+        tool_name="bash",
+        args={"command": "exit 1"},
+        result=fail_result,
+    )
+
+    assert len(final_results) == 1
+    assert "command failed: exit 1" in rendered
+    assert any(isinstance(msg, ToolMessage) and msg.content == "command failed: exit 1" for msg in messages)

@@ -110,6 +110,8 @@ def notify_tool_failure(host, tc, result, display_mode, tool_event_id, ok: bool 
 
 async def notify_tool_text_output(host, output, tid, tool_event_id, tool_node, display_policy, ok) -> None:
     """Render non-diff text output across all UI channels."""
+    if not output or not str(output).strip():
+        return
     resolved_mode, resolved_max = display_policy.resolve_display_mode(tid, output, result_ok=ok)
     if resolved_mode == ToolDisplayMode.HIDDEN:
         return
