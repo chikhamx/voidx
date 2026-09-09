@@ -87,10 +87,10 @@ body.is-desktop .vx-workbench-shell.sidebar-collapsed .vx-main-header {
   color: var(--vx-text-muted);
   cursor: pointer;
   display: inline-flex;
-  height: 30px;
+  height: var(--vx-control-h);
   justify-content: center;
   padding: 0;
-  width: 32px;
+  width: var(--vx-control-h);
   -webkit-app-region: no-drag;
   transition: background var(--vx-transition-fast), color var(--vx-transition-fast);
 }
@@ -369,8 +369,9 @@ body.is-desktop.is-mac .vx-sidebar {
   cursor: pointer;
   display: flex;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--vx-text-sm);
   gap: var(--vx-space-2);
+  line-height: var(--vx-leading-tight);
   min-height: 32px;
   padding: 0 var(--vx-space-2);
   text-align: left;

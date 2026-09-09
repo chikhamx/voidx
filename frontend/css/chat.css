@@ -42,7 +42,7 @@
   display: flex;
   flex-direction: column;
   flex: 1;
-  gap: var(--vx-space-3);
+  gap: var(--vx-space-4);
   overflow-y: auto;
   padding: var(--vx-space-2) max(var(--vx-space-6), calc((100% - var(--vx-content-max)) / 2)) var(--vx-space-8);
 }
@@ -231,8 +231,11 @@
 }
 
 .tool-group-name {
+  align-items: center;
   color: inherit;
+  display: inline-flex;
   font-weight: normal;
+  gap: 6px;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -289,6 +292,9 @@
   align-items: center;
   display: inline-flex;
   flex-shrink: 0;
+  height: 14px;
+  justify-content: center;
+  width: 14px;
 }
 
 /* === 工具项 — 行式摘要 + 可展开 === */
@@ -330,12 +336,14 @@
   overflow-wrap: anywhere;
 }
 
-.tool-summary .tool-icon {
-  flex: 0 0 auto;
+.tool-summary:not(.tool-summary-command) .tool-icon {
+  margin-right: 6px;
   vertical-align: -2px;
 }
 
 .tool-summary-command {
+  align-items: center;
+  gap: 6px;
   display: inline-flex;
   overflow: hidden;
   white-space: nowrap;
@@ -422,7 +430,12 @@
   transition: opacity var(--vx-transition-fast);
 }
 
-.thought-label { font-style: italic; }
+.thought-label {
+  align-items: center;
+  display: inline-flex;
+  font-style: italic;
+  gap: 6px;
+}
 
 .thought-body {
   color: var(--vx-text-dim);

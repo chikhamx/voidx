@@ -281,7 +281,7 @@ function updateToolGroupSummary(group: HTMLElement, data: ToolItemData): void {
   const summary = getToolGroupSummary(tools);
 
   if (name) {
-    name.innerHTML = `<span class="tool-group-icon">${summary.icon}</span> ${summary.text}`;
+    name.innerHTML = `<span class="tool-group-icon">${summary.icon}</span>${summary.text}`;
   }
   if (args) {
     args.textContent = "";
@@ -355,7 +355,7 @@ function createToolItemElement(itemId: string, data: ToolItemData): HTMLElement 
   const summaryInfo = getToolItemHeaderInfo(data);
   const summary = document.createElement("span");
   summary.className = summaryInfo.command ? "tool-summary tool-summary-command" : "tool-summary";
-  summary.innerHTML = `<span class="tool-icon">${summaryInfo.icon}</span> `;
+  summary.innerHTML = `<span class="tool-icon">${summaryInfo.icon}</span>`;
   summary.append(document.createTextNode(summaryInfo.verb));
   if (summaryInfo.target) {
     summary.append(" ");
@@ -460,7 +460,7 @@ export function handleToolItem(
     const summaryInfo = getToolItemHeaderInfo(data);
     const summary = document.createElement("span");
     summary.className = summaryInfo.command ? "tool-summary tool-summary-command" : "tool-summary";
-    summary.innerHTML = `<span class="tool-icon">${summaryInfo.icon}</span> `;
+    summary.innerHTML = `<span class="tool-icon">${summaryInfo.icon}</span>`;
     summary.append(document.createTextNode(summaryInfo.verb));
     if (summaryInfo.target) {
       summary.append(" ");

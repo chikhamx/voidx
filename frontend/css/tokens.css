@@ -37,12 +37,18 @@
   --vx-text-2xl:  24px;
   --vx-text-display: 28px;
 
+  /* ── 行高 ── */
+  --vx-leading-tight:   1.3;
+  --vx-leading-normal:  1.5;
+  --vx-leading-relaxed: 1.7;
+
   /* ── 布局 ── */
   --vx-sidebar-width: 264px;
   --vx-sidebar-collapsed: 0px;
   --vx-dock-width: 380px;
   --vx-dock-collapsed: 0px;
   --vx-titlebar-height: 44px;
+  --vx-control-h: 28px;
   --vx-content-max: 768px;
 
   /* ── 动效 ── */
