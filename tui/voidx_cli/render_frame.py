@@ -541,7 +541,7 @@ class _FrameRendererMixin:
                     target_lines = self._physical_target_lines(physical)
                     frame_rows = physical.frame_rows
                     bottom_rows = physical.bottom.rendered.visual_rows
-                    busy_activity_rows = physical.projected_regions[2].visual_rows
+                    busy_activity_rows = physical.projected_regions[1].visual_rows
                     thinking_stream_rows = physical.projected_regions[3].visual_rows
                     cursor_ansi = (
                         f"\x1b[{physical.cursor_row};{physical.cursor_col}H"
@@ -626,12 +626,17 @@ class _FrameRendererMixin:
                     "start_row": start_row,
                     "bottom_rows": bottom_rows,
                     "busy_activity_rows": busy_activity_rows,
-                    "busy_activity_start_row": (
+                    "busy_activity_start_row": next(
+                        (
+                            region.start_row
+                            for region in (snapshot.regions if snapshot is not None else ())
+                            if region.key == "vibe"
+                        ),
                         start_row
                         + frame_rows
                         - bottom_rows
                         - thinking_stream_rows
-                        - busy_activity_rows
+                        - busy_activity_rows,
                     ),
                     "thinking_stream_rows": thinking_stream_rows,
                     "width": width,
@@ -686,7 +691,7 @@ class _FrameRendererMixin:
                         target_lines = self._physical_target_lines(physical)
                         frame_rows = physical.frame_rows
                         bottom_rows = physical.bottom.rendered.visual_rows
-                        busy_activity_rows = physical.projected_regions[2].visual_rows
+                        busy_activity_rows = physical.projected_regions[1].visual_rows
                         thinking_stream_rows = physical.projected_regions[3].visual_rows
                         cursor_ansi = f"\x1b[{physical.cursor_row};{physical.cursor_col}H"
                         lines_up = max(
@@ -743,14 +748,22 @@ class _FrameRendererMixin:
                 self._last_bottom_rows = bottom_rows
                 self._last_bottom_start_row = start_row + frame_rows - bottom_rows
                 if busy_activity_rows > 0:
-                    self._record_busy_activity_layout(
-                        start_row=(
+                    busy_activity_start_row = (
+                        next(
+                            (
+                                region.start_row
+                                for region in (snapshot.regions if snapshot is not None else ())
+                                if region.key == "vibe"
+                            ),
                             start_row
                             + frame_rows
                             - bottom_rows
                             - thinking_stream_rows
-                            - busy_activity_rows
-                        ),
+                            - busy_activity_rows,
+                        )
+                    )
+                    self._record_busy_activity_layout(
+                        start_row=busy_activity_start_row,
                         rows=busy_activity_rows,
                         width=width,
                         term_height=term_height,
@@ -1225,11 +1238,15 @@ class _FrameRendererMixin:
                 "bottom_rows": bottom_rows,
                 "busy_activity_rows": busy_activity_rows,
                 "busy_activity_start_row": (
-                    snapshot.frame_start_row
-                    + snapshot.frame_rows
-                    - bottom_rows
-                    - thinking_stream_rows
-                    - busy_activity_rows
+                    vibe.start_row
+                    if vibe is not None
+                    else (
+                        snapshot.frame_start_row
+                        + snapshot.frame_rows
+                        - bottom_rows
+                        - thinking_stream_rows
+                        - busy_activity_rows
+                    )
                 ),
                 "thinking_stream_rows": thinking_stream_rows,
                 "width": snapshot.terminal_width,
@@ -1833,14 +1850,14 @@ class _FrameRendererMixin:
                 signature_context=("transcript",),
             ),
             self._capture_region_rows(
-                todo_elements,
-                width,
-                signature_context=("todo",),
-            ),
-            self._capture_region_rows(
                 busy_activity_elements,
                 width,
                 signature_context=("vibe",),
+            ),
+            self._capture_region_rows(
+                todo_elements,
+                width,
+                signature_context=("todo",),
             ),
             self._capture_region_rows(
                 thinking_stream_elements,
@@ -1911,7 +1928,7 @@ class _FrameRendererMixin:
             start_row=1,
             width=width,
         )
-        source_keys = ("transcript", "todo", "vibe", "thinking")
+        source_keys = ("transcript", "vibe", "todo", "thinking")
         source_signature = tuple(
             (key, rendered.signature)
             for key, rendered in zip(source_keys, top_regions)
@@ -1946,7 +1963,7 @@ class _FrameRendererMixin:
         frame_start_row: int,
         scroll_epoch: int,
     ) -> LayoutSnapshot:
-        region_keys = ("transcript", "todo", "vibe", "thinking")
+        region_keys = ("transcript", "vibe", "todo", "thinking")
         regions: list[RegionGeometry] = []
         next_row = frame_start_row
         for key, rendered in zip(region_keys, physical.projected_regions):
@@ -2144,8 +2161,8 @@ class _FrameRendererMixin:
         ]
         full_todo_elements = pinned_todo_elements
 
-        elements.extend(pinned_todo_elements)
         elements.extend(busy_activity_elements)
+        elements.extend(pinned_todo_elements)
         elements.extend(thinking_stream_elements)
         panel_elements = self._render_panel_elements(
             panel_lines,

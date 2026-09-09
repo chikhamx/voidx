@@ -45,7 +45,7 @@ def test_todo_busy_and_choice_panel_render_once_in_full_frame(tmp_path, monkeypa
     assert rendered.count("Todo:") == 1
     assert rendered.count("Working") == 1
     assert rendered.count("Intent?") == 1
-    assert rendered.index("Todo:") < rendered.index("Working") < rendered.index("Intent?")
+    assert rendered.index("Working") < rendered.index("Todo:") < rendered.index("Intent?")
 
 
 def test_permission_choice_overlay_does_not_repeat_tool_details(tmp_path, monkeypatch):
@@ -131,7 +131,7 @@ def test_todo_busy_and_text_prompt_render_once_in_full_frame(tmp_path, monkeypat
     assert rendered.count("Todo:") == 1
     assert rendered.count("Working") == 1
     assert rendered.count("Name?") == 1
-    assert rendered.index("Todo:") < rendered.index("Working") < rendered.index("Name?")
+    assert rendered.index("Working") < rendered.index("Todo:") < rendered.index("Name?")
 
 
 def test_agent_placeholder_keeps_stream_reusable(tmp_path):

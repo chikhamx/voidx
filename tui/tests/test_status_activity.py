@@ -496,7 +496,15 @@ def test_busy_activity_tick_repaints_bottom_line_with_pinned_todo(tmp_path, monk
 
     tui._render_frame()
     initial = _rich_plain(fake_stdout.text)
-    assert tui._last_busy_activity_start_row == tui._last_bottom_start_row - 1
+    snapshot = tui._applied_layout_snapshot
+    assert snapshot is not None
+    vibe = tui._snapshot_region(snapshot, "vibe")
+    todo = tui._snapshot_region(snapshot, "todo")
+    assert vibe is not None
+    assert todo is not None
+    assert tui._last_busy_activity_start_row == vibe.start_row
+    assert vibe.start_row + vibe.visual_rows == todo.start_row
+    assert todo.start_row + todo.visual_rows == tui._last_bottom_start_row
     assert "voidx" not in initial
     assert "Todo:" in initial
     assert "Brewing (1s)" in initial

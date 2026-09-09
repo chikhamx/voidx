@@ -469,7 +469,7 @@ def project_bottom_viewport(
 
 
 
-_TOP_REGION_KEYS = ("transcript", "todo", "vibe", "thinking")
+_TOP_REGION_KEYS = ("transcript", "vibe", "todo", "thinking")
 
 
 def _empty_rendered_rows(width: int) -> RenderedRows:
