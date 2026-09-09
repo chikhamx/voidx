@@ -391,6 +391,26 @@ class NoticeSet(UiEventBase):
     text: str
 
 
+class IntegrationStartupItem(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    category: Literal["mcp", "lsp"]
+    key: str
+    label: str
+    detail: str = ""
+    status: Literal["connecting", "warming", "ready", "failed"]
+    error: str = ""
+
+
+class IntegrationStartupUpdated(UiEventBase):
+    kind: Literal["integration_startup.updated"] = "integration_startup.updated"
+    items: list[IntegrationStartupItem]
+
+
+class IntegrationStartupFinished(UiEventBase):
+    kind: Literal["integration_startup.finished"] = "integration_startup.finished"
+
+
 UiEvent: TypeAlias = (
     CaptureStarted
     | CaptureStopped
@@ -438,4 +458,6 @@ UiEvent: TypeAlias = (
     | GoalSpecDecisionSubmitted
     | InputSet
     | NoticeSet
+    | IntegrationStartupUpdated
+    | IntegrationStartupFinished
 )

@@ -51,6 +51,8 @@ from voidx.presentation.output.events.schema import (
     MarkdownAppended,
     MessageAppended,
     NoticeSet,
+    IntegrationStartupUpdated,
+    IntegrationStartupFinished,
     PermissionPromptCleared,
     PermissionPromptShown,
     RefreshRequested,
@@ -212,6 +214,7 @@ class DockEventConsumer:
         self._hidden_tool_ids.clear()
         self._agent_nodes.clear()
         self._agents_with_specific_status.clear()
+        self._dock.clear_integration_startup(dismiss=True)
 
     def handle(self, event: UiEvent) -> Any:
         match event:
@@ -323,6 +326,10 @@ class DockEventConsumer:
                     ok=e.ok,
                     remove=True,
                 )
+            case IntegrationStartupUpdated() as e:
+                return self._dock.set_integration_startup_items(e.items)
+            case IntegrationStartupFinished():
+                return self._dock.clear_integration_startup()
             case AssistantStreamStarted() as e:
                 if e.agent_id >= 0:
                     return None

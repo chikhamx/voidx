@@ -21,6 +21,11 @@ from voidx.agent.ports.presentation import (
 )
 from voidx.agent.ports.ui import AgentUiPort
 from voidx.agent.ports.workspace_lock import WorkspaceWriteLockBinder
+from voidx.agent.domain.ui_events import (
+    IntegrationStartupItem,
+    IntegrationStartupUpdated,
+    IntegrationStartupFinished,
+)
 from voidx.presentation.commands import COMMANDS
 from voidx.presentation.output.events import CompositeEventConsumer, DockEventConsumer
 from voidx.presentation.output.types import McpServerStatus, UiStatus
@@ -224,53 +229,8 @@ class TerminalRunLoop:
             else:
                 self._ui.dock.append_message(f"Web UI gateway: {gateway_server.url}")
 
-        async def show_lsp_startup() -> None:
-            checks = await self._integrations.initialize_lsp()
-            try:
-                lsp_lines = []
-                for check in checks:
-                    if check.available and check.enabled:
-                        source = f" [dim][{check.detected_source}][/dim]" if check.detected_source else ""
-                        suffix = " [dim](warming...)[/dim]"
-                        lsp_lines.append(
-                            f"  [cyan]{check.language}[/cyan] [dim]→[/dim] "
-                            f"{check.resolved_path}{source}{suffix}"
-                        )
-                if lsp_lines:
-                    self._ui.dock.append_message("\n".join(lsp_lines), markup=True)
-                results = await self._integrations.warm_up_lsp()
-                if results:
-                    warmup_lines = []
-                    for check in checks:
-                        if not check.available or not check.enabled or check.language not in results:
-                            continue
-                        source = f" [dim][{check.detected_source}][/dim]" if check.detected_source else ""
-                        result = results[check.language]
-                        if result == "ok":
-                            suffix = " [green]ready[/green]"
-                        else:
-                            detail = result.removeprefix("error: ").strip()
-                            suffix = f" [red]failed[/red] [dim]{detail}[/dim]"
-                        warmup_lines.append(
-                            f"  [cyan]{check.language}[/cyan] [dim]→[/dim] "
-                            f"{check.resolved_path}{source}{suffix}"
-                        )
-                    if warmup_lines:
-                        self._ui.dock.append_message("\n".join(warmup_lines), markup=True)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                self._ui.dock.append_message(f"[dim]LSP setup failed: {exc}[/dim]", markup=True)
-
-        if self._integrations.has_lsp():
-            lsp_startup_tasks.append(asyncio.create_task(show_lsp_startup()))
-
-        if self._integrations.has_mcp():
-            enabled_names = self._integrations.enabled_mcp_names()
-            if enabled_names:
-                names = ", ".join(enabled_names)
-                self._ui.dock.append_message(f"[dim]MCP connecting: {names}…[/dim]", markup=True)
-            await self._integrations.start_mcp()
+        if self._integrations.has_lsp() or self._integrations.has_mcp():
+            lsp_startup_tasks.append(asyncio.create_task(self._show_integrations_startup()))
 
         async def handle_user_input(
             user_input: str,
@@ -308,3 +268,104 @@ class TerminalRunLoop:
             await cleanup_run_loop()
             if exit_message:
                 self._ui.ui.print(exit_message)
+
+
+    async def _show_integrations_startup(self, *, finish_delay: float = 0.8) -> None:
+        startup_items: dict[str, IntegrationStartupItem] = {}
+
+        async def emit_items() -> None:
+            if startup_items:
+                await self._ui.events.emit(
+                    IntegrationStartupUpdated(items=list(startup_items.values()))
+                )
+
+        mcp_task = None
+        try:
+            if self._integrations.has_mcp():
+                enabled_names = self._integrations.enabled_mcp_names()
+                for name in enabled_names:
+                    startup_items[f"mcp:{name}"] = IntegrationStartupItem(
+                        category="mcp",
+                        key=f"mcp:{name}",
+                        label=name,
+                        status="connecting",
+                    )
+                await emit_items()
+                mcp_task = asyncio.create_task(self._integrations.start_mcp())
+
+            lsp_checks = []
+            if self._integrations.has_lsp():
+                lsp_checks = await self._integrations.initialize_lsp()
+                for check in lsp_checks:
+                    if check.available and check.enabled:
+                        source = f" [{check.detected_source}]" if check.detected_source else ""
+                        startup_items[f"lsp:{check.language}"] = IntegrationStartupItem(
+                            category="lsp",
+                            key=f"lsp:{check.language}",
+                            label=check.language,
+                            detail=f"{check.resolved_path}{source}",
+                            status="warming",
+                        )
+                await emit_items()
+
+            if mcp_task is not None:
+                try:
+                    await mcp_task
+                    mcp_statuses = {s.name: s for s in self._integrations.mcp_statuses()}
+                    for key, item in list(startup_items.items()):
+                        if item.category == "mcp":
+                            st = mcp_statuses.get(item.label)
+                            if st and getattr(st, "status", None) == "error":
+                                startup_items[key] = item.model_copy(update={
+                                    "status": "failed",
+                                    "error": getattr(st, "error_message", "") or "error",
+                                })
+                            else:
+                                startup_items[key] = item.model_copy(update={"status": "ready"})
+                    await emit_items()
+                except Exception as exc:
+                    for key, item in list(startup_items.items()):
+                        if item.category == "mcp":
+                            startup_items[key] = item.model_copy(update={
+                                "status": "failed",
+                                "error": str(exc),
+                            })
+                    await emit_items()
+
+            if self._integrations.has_lsp() and lsp_checks:
+                results = await self._integrations.warm_up_lsp()
+                for check in lsp_checks:
+                    key = f"lsp:{check.language}"
+                    if not check.available or not check.enabled or check.language not in results:
+                        continue
+                    result = results[check.language]
+                    if result == "ok":
+                        if key in startup_items:
+                            startup_items[key] = startup_items[key].model_copy(update={"status": "ready"})
+                    else:
+                        detail = result.removeprefix("error: ").strip()
+                        if key in startup_items:
+                            startup_items[key] = startup_items[key].model_copy(update={
+                                "status": "failed",
+                                "error": detail,
+                            })
+                await emit_items()
+
+            if startup_items:
+                if finish_delay > 0:
+                    await asyncio.sleep(finish_delay)
+                await self._ui.events.emit(IntegrationStartupFinished())
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            try:
+                await self._ui.events.emit(IntegrationStartupFinished())
+            except Exception:
+                pass
+        finally:
+            if mcp_task is not None and not mcp_task.done():
+                mcp_task.cancel()
+                try:
+                    await mcp_task
+                except (asyncio.CancelledError, Exception):
+                    pass

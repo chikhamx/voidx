@@ -101,6 +101,9 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._restored_root_child_start: int | None = None
         self._restored_root_child_end: int | None = None
         self._next_transcript_turn_id = 0
+        self._integration_startup_items: dict[str, Any] = {}
+        self._integration_startup_active: bool = False
+        self._integration_startup_dismissed: bool = False
 
     @property
     def active(self) -> bool:
@@ -818,6 +821,67 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         if not self.has_active_thinking_stream() or node is None:
             return []
         return self._tree.render_node_lines(node.id, width)
+
+    def set_integration_startup_items(self, items: Sequence[Any]) -> None:
+        if self._integration_startup_dismissed or self._turn_in_progress:
+            return
+        for item in items:
+            self._integration_startup_items[item.key] = item
+        self._integration_startup_active = True
+        self.refresh()
+
+    def clear_integration_startup(self, *, dismiss: bool = False) -> None:
+        if dismiss:
+            self._integration_startup_dismissed = True
+        if not self._integration_startup_active and not self._integration_startup_items:
+            return
+        self._integration_startup_items.clear()
+        self._integration_startup_active = False
+        self.refresh()
+
+    def has_active_integration_startup(self) -> bool:
+        if self._integration_startup_dismissed or self._turn_in_progress:
+            return False
+        return self._integration_startup_active and bool(self._integration_startup_items)
+
+    def active_integration_startup_lines(self, width: int) -> list[str]:
+        if not self.has_active_integration_startup():
+            return []
+        items = list(self._integration_startup_items.values())
+        lines: list[str] = []
+
+        mcp_items = [item for item in items if item.category == "mcp"]
+        lsp_items = [item for item in items if item.category == "lsp"]
+
+        if mcp_items:
+            connecting = [item.label for item in mcp_items if item.status == "connecting"]
+            failed = [item for item in mcp_items if item.status == "failed"]
+            ready = [item.label for item in mcp_items if item.status == "ready"]
+            if connecting:
+                names = ", ".join(item.label for item in mcp_items)
+                lines.append(f"[dim]MCP connecting: {escape(names)}…[/dim]")
+            else:
+                if ready:
+                    names = ", ".join(ready)
+                    lines.append(f"[dim]MCP ready: {escape(names)}[/dim]")
+                if failed:
+                    failed_names = ", ".join(f"{item.label} ({item.error})" if item.error else item.label for item in failed)
+                    lines.append(f"[red]MCP failed:[/red] [dim]{escape(failed_names)}[/dim]")
+
+        for item in lsp_items:
+            detail_str = f" {escape(item.detail)}" if item.detail else ""
+            if item.status == "ready":
+                suffix = " [green]ready[/green]"
+            elif item.status == "failed":
+                err = f" [dim]{escape(item.error)}[/dim]" if item.error else ""
+                suffix = f" [red]failed[/red]{err}"
+            elif item.status == "connecting":
+                suffix = " [dim](connecting...)[/dim]"
+            else:
+                suffix = " [dim](warming...)[/dim]"
+            lines.append(f"  [cyan]{escape(item.label)}[/cyan] [dim]→[/dim]{detail_str}{suffix}")
+
+        return lines
 
     def mark_node_settled(self, node: OutputNode | None) -> None:
         self._mark_subtree_settled(node)
