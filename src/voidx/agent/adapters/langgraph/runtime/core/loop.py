@@ -38,9 +38,15 @@ class LlmRetryResult:
 
 
 async def _emit_terminal_error(ui: Any, message: str) -> None:
-    if await ui.events.emit(ErrorAppended(message=message)):
-        return
-    ui.ui.error(message)
+    try:
+        if await ui.events.emit(ErrorAppended(message=message)):
+            return
+    except Exception:
+        pass
+    try:
+        ui.ui.error(message)
+    except Exception:
+        pass
 
 
 async def handle_llm_exception(

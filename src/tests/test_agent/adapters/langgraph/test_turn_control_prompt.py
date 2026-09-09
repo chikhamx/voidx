@@ -70,7 +70,8 @@ def test_turn_init_tool_and_runtime_prompt_own_lifecycle_protocol():
     assert TURN_TOOL_DEFINITION["function"]["name"] == "turn_init"
     assert "goal" in description
     assert "turn_init" in description
-    assert "plain text" in description
+    assert "plain text" not in description
+    assert "when finished" not in description
     assert "stop" not in description
     assert "operation" not in description
     assert "turn_init" in TURN_INIT_PROMPT

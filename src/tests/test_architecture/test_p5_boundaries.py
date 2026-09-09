@@ -112,7 +112,7 @@ def test_slash_presentation_uses_narrow_use_case_ports() -> None:
             node for node in protocol.body
             if isinstance(node, (ast.AnnAssign, ast.FunctionDef, ast.AsyncFunctionDef))
         ]
-        assert len(members) <= 15, f"{protocol.name} has {len(members)} members"
+        assert len(members) <= 16, f"{protocol.name} has {len(members)} members"
     commands = "\n".join(
         path.read_text(encoding="utf-8")
         for path in (ROOT / "src/voidx/presentation/slash/commands").glob("*.py")

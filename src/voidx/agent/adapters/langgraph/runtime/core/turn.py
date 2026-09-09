@@ -12,6 +12,7 @@ from voidx.agent.adapters.langgraph.runtime.turn_control import (
     TURN_INIT_PROMPT,
     TURN_TOOL_NAME,
     TurnClassification,
+    _extract_goal_from_args,
     normalize_terminal_message,
 )
 from voidx.agent.domain.task.state import GoalResolution, GoalSpec, TaskState
@@ -249,7 +250,7 @@ async def _handle_turn_init(
         return TurnControlResult("retry", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
 
     init_args = (init_call or {}).get("args") or {}
-    goal_text = str(init_args.get("goal") or "").strip()
+    goal_text = _extract_goal_from_args(init_args) or str(init_args.get("goal") or "").strip()
     resolution = GoalResolution(
         goal=GoalSpec(desc=goal_text),
         plan=None,
@@ -284,7 +285,7 @@ async def _handle_turn_init(
         *llm_messages,
         assistant_msg,
         ToolMessage(
-            content="Turn initialized. Continue the work or provide the final response as plain text.",
+            content="Turn initialized. Continue the work.",
             tool_call_id=tool_call_id,
             name=TURN_TOOL_NAME,
         ),

@@ -22,8 +22,7 @@ TURN_TOOL_DEFINITION: dict[str, Any] = {
         "description": (
             "Initialize the turn with a short goal. "
             "Call turn_init once at the beginning of a turn; it may be combined "
-            "with regular tools in the same response, and initialization is applied first. "
-            "When the final answer is ready, output plain text without calling a lifecycle tool."
+            "with regular tools in the same response, and initialization is applied first."
         ),
         "strict": True,
         "parameters": {
@@ -57,15 +56,12 @@ FIRST_MISS_PROMPT = (
 SECOND_MISS_PROMPT = FIRST_MISS_PROMPT
 
 INVALID_TURN_PROMPT = (
-    "Use only the bound turn_init({goal}) call to initialize the turn, or use a regular tool. "
-    "When finished, output the final answer as plain text."
+    "Use only the bound turn_init({goal}) call to initialize the turn, or use a regular tool."
 )
 
 LOOP_DECISION_PROMPT = (
     "This is a /loop iteration. The turn cannot end until you submit the iteration "
-    "decision with the loop tool: outcome=continue to schedule the next wakeup. "
-    "Use it even when this iteration's work is done or you are waiting on "
-    "something — the loop only ends when the user stops it."
+    "decision with loop_commit: outcome='continue' and summary='...'."
 )
 
 
@@ -90,13 +86,27 @@ def _is_non_empty_text(text: Any) -> bool:
     return False
 
 
-def _valid_init_args(args: Any) -> bool:
-    if not isinstance(args, dict):
-        return False
-    if set(args) != {"goal"}:
-        return False
+def _extract_goal_from_args(args: Any, *, _depth: int = 0) -> str | None:
+    if _depth > 3 or not isinstance(args, dict):
+        return None
     goal = args.get("goal")
-    return isinstance(goal, str) and bool(goal.strip())
+    if isinstance(goal, str) and goal.strip():
+        return goal.strip()
+    for key in ("objective", "task", "description", "target", "query"):
+        val = args.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    for key in ("params", "parameters", "arguments", "input"):
+        nested = args.get(key)
+        if isinstance(nested, dict):
+            nested_goal = _extract_goal_from_args(nested, _depth=_depth + 1)
+            if nested_goal:
+                return nested_goal
+    return None
+
+
+def _valid_init_args(args: Any) -> bool:
+    return bool(_extract_goal_from_args(args))
 
 
 def classify_turn_call(msg: AIMessage) -> TurnClassification:

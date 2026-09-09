@@ -23,7 +23,11 @@ from voidx.agent.adapters.langgraph.runtime.core.context import (
     rerender_task_context,
     save_main_context_frame,
 )
-from voidx.agent.adapters.langgraph.runtime.core.loop import LlmLoopState, handle_llm_exception
+from voidx.agent.adapters.langgraph.runtime.core.loop import (
+    LlmLoopState,
+    _emit_terminal_error,
+    handle_llm_exception,
+)
 from voidx.agent.adapters.langgraph.runtime.core.turn import handle_turn_control_response
 from voidx.agent.adapters.langgraph.runtime.core.helpers import _invalidate_tui, _merge_workflow_runs, _persona_for_workflow_runs, _task_state_for_context, _LLM_MAX_RETRIES, _LLM_TIMEOUT_MAX_RETRIES
 from voidx.agent.domain.compaction import CompactionResult, ContextBudgetExhausted
@@ -693,6 +697,7 @@ class LlmTurn:
                     failure_msg = AIMessage(
                         content="LLM call failed: model returned an invalid or incomplete tool call."
                     )
+                    await _emit_terminal_error(host._ui, failure_msg.content)
                     return {
                         "messages": replacement_messages(failure_msg),
                         "step_count": step,
@@ -726,6 +731,12 @@ class LlmTurn:
                     continue
                 if turn_result.action == "fail":
                     host._last_stop_signal = turn_result.stop_signal
+                    failure_text = (
+                        extract_text(turn_result.failure_msg)
+                        if turn_result.failure_msg
+                        else "LLM call failed: turn control failed."
+                    )
+                    await _emit_terminal_error(host._ui, failure_text)
                     return {
                         "messages": replacement_messages(turn_result.failure_msg),
                         "step_count": step + 1,

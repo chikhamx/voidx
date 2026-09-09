@@ -581,7 +581,8 @@ async def test_call_llm_injects_loop_only_for_loop_profile(tmp_path, monkeypatch
         _CURRENT_THREAD_EXECUTION_STATE.reset(token)
 
     tool_names = [tool["function"]["name"] for tool in model.bound_tools]
-    assert tool_names.count("loop") == 1
+    assert "loop_start" in tool_names
+    assert "loop_commit" in tool_names
 
 
 @pytest.mark.asyncio

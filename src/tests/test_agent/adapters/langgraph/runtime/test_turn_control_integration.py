@@ -243,12 +243,22 @@ async def test_legacy_turn_without_text_is_repaired_then_regular_tool_continues(
 
 @pytest.mark.asyncio
 async def test_repeated_legacy_turn_calls_fail_without_executing_tools(tmp_path, monkeypatch):
+    from voidx.agent.domain.ui_events import ErrorAppended
+
     model = ScriptedStreamingModel([
         [_legacy_turn_chunk()],
         [_legacy_turn_chunk()],
         [_legacy_turn_chunk()],
     ])
     graph = _make_graph(tmp_path, model, monkeypatch)
+    captured_events = []
+    original_emit = graph._ui.events.emit
+
+    async def mock_emit(event):
+        captured_events.append(event)
+        return await original_emit(event)
+
+    monkeypatch.setattr(graph._ui.events, "emit", mock_emit)
 
     result = await graph._call_llm({
         "messages": [HumanMessage(content="hello")],
@@ -260,12 +270,34 @@ async def test_repeated_legacy_turn_calls_fail_without_executing_tools(tmp_path,
     assert "invalid turn control call" in result["messages"][0].content
     assert not result["messages"][0].tool_calls
     assert model.call_index == 3
+    assert any(isinstance(e, ErrorAppended) and "invalid turn control call" in e.message for e in captured_events)
 
 
 @pytest.mark.asyncio
-async def test_turn_init_strict_args_are_repaired(tmp_path, monkeypatch):
+async def test_turn_init_accepts_extra_args_without_repair(tmp_path, monkeypatch):
     model = ScriptedStreamingModel([
         [_turn_init_with_args_chunk({"goal": "Fix it", "extra": True})],
+        [_text_chunk("Done.")],
+    ])
+    graph = _make_graph(tmp_path, model, monkeypatch)
+
+    result = await graph._call_llm({
+        "messages": [HumanMessage(content="hello")],
+        "step_count": 0,
+        "persona": "coordinate",
+    })
+
+    assert result["turn_state"] == "committed"
+    assert result["messages"][0].content == "Done."
+    assert graph._task_state.current_goal is not None
+    assert graph._task_state.current_goal.desc == "Fix it"
+    assert model.call_index == 2
+
+
+@pytest.mark.asyncio
+async def test_turn_init_invalid_args_are_repaired(tmp_path, monkeypatch):
+    model = ScriptedStreamingModel([
+        [_turn_init_with_args_chunk({"goal": ""})],
         [_text_chunk("Done after repair.")],
     ])
     graph = _make_graph(tmp_path, model, monkeypatch)

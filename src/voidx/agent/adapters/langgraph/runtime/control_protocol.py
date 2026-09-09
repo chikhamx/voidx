@@ -180,10 +180,7 @@ class LoopProtocol:
     def repair_prompt(self) -> str:
         if self.phase == "idle":
             return "Call loop_init(prompt=...) to propose the loop specification."
-        return (
-            "This is a /loop iteration. The turn cannot end until you submit the iteration "
-            "decision with loop_commit: outcome='continue' and summary='...'."
-        )
+        return LOOP_DECISION_PROMPT
 
 
 class GoalProtocol:

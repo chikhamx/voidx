@@ -58,7 +58,8 @@ def test_turn_init_tool_description_has_no_stop_semantics():
     description = TURN_TOOL_DEFINITION["function"]["description"].lower()
     assert "turn_init" in description
     assert "goal" in description
-    assert "plain text" in description
+    assert "plain text" not in description
+    assert "when finished" not in description
     assert "stop" not in description
     assert "operation" not in description
 
@@ -95,15 +96,31 @@ def test_classify_turn_init_with_regular_tools_is_order_independent():
 @pytest.mark.parametrize(
     "args",
     [
+        {"goal": "Fix it", "extra": True},
+        {"goal": "Fix it", "thought": "thinking"},
+        {"params": {"goal": "Fix it"}},
+        {"arguments": {"goal": "Fix it"}},
+        {"task": "Fix it"},
+        {"objective": "Fix it"},
+    ],
+)
+def test_classify_turn_init_accepts_relaxed_args(args):
+    msg = AIMessage(content="", tool_calls=[_call("turn_init", args)])
+    assert classify_turn_call(msg) == TurnClassification.VALID_INIT
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
         {},
         {"goal": ""},
         {"goal": "  "},
         {"goal": [{"type": "text", "text": "Fix it"}]},
-        {"goal": "Fix it", "extra": True},
-        {"operation": "start", "params": {"goal": "Fix it"}},
+        {"goal": None},
+        {"other": 123},
     ],
 )
-def test_classify_turn_init_rejects_non_strict_args(args):
+def test_classify_turn_init_rejects_empty_or_invalid_args(args):
     msg = AIMessage(content="", tool_calls=[_call("turn_init", args)])
     assert classify_turn_call(msg) == TurnClassification.INVALID_TURN
 
@@ -260,5 +277,6 @@ def test_turn_init_prompt_requests_initialization_and_plain_text_completion():
 def test_invalid_turn_prompt_does_not_expose_stop_semantics():
     prompt = INVALID_TURN_PROMPT.lower()
     assert "turn_init" in prompt
-    assert "plain text" in prompt
+    assert "plain text" not in prompt
+    assert "when finished" not in prompt
     assert "stop" not in prompt

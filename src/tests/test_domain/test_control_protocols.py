@@ -81,13 +81,15 @@ def test_turn_protocol_never_blocks_plain_text() -> None:
 # ── LoopProtocol ─────────────────────────────────────────────────────────────
 
 
-def test_loop_protocol_injects_loop_tool_only() -> None:
+def test_loop_protocol_injects_phase_bound_loop_tools() -> None:
     defs = LoopProtocol().tool_definitions()
 
     names = [d["function"]["name"] for d in defs]
-    assert names == ["loop"]
-    schema = defs[0]["function"]["parameters"]
-    assert "operation" in schema.get("properties", {})
+    assert names == ["loop_start", "loop_commit"]
+    start_schema = defs[0]["function"]["parameters"]
+    commit_schema = defs[1]["function"]["parameters"]
+    assert "goal" in start_schema.get("properties", {})
+    assert "outcome" in commit_schema.get("properties", {})
 
 
 def test_loop_protocol_classifies_loop_commit_as_regular_tool() -> None:
