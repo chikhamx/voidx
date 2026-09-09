@@ -24,6 +24,21 @@ def test_build_success_result_has_ui_summary():
     assert result.summary == "ok"
 
 
+
+
+def test_build_failed_result_shortens_stderr_for_ui():
+    stderr = (
+        "Traceback (most recent call last):\n"
+        "  File \"<string>\", line 5, in <module>\n"
+        "AttributeError: _convert_responses_chunk_to_generation_chunk. "
+        "Did you mean: '_convert_chunk_to_generation_chunk'?\n"
+    )
+    result = build_success_result("python -c ...", "", stderr, 1, "Bash")
+
+    assert result.summary == "exit 1"
+    assert "AttributeError: _convert_responses_chunk_to_generation_chunk." in result.display
+    assert "Traceback (most recent call last)" not in result.display
+    assert json.loads(result.output)["stderr"] == stderr
 def test_build_blocked_result_json_is_indented():
     result = build_blocked_result("rm -rf /", "dangerous")
     parsed = json.loads(result.output)

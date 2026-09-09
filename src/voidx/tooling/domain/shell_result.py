@@ -88,22 +88,33 @@ def build_timeout_result(command: str, timeout: int) -> ToolResult:
     )
 
 
+def _last_nonempty_line(text: str, *, max_chars: int = 500) -> str:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    line = lines[-1]
+    return line if len(line) <= max_chars else f"{line[:max_chars]}…"
+
+
 def build_success_result(command: str, stdout: str, stderr: str, exit_code: int, tool_label: str) -> ToolResult:
-    display_parts = []
-    if stdout:
-        display_parts.append(stdout)
-    if stderr:
-        display_parts.append(f"[stderr]\n{stderr}")
-    if exit_code != 0 and not stdout and not stderr:
-        display_parts.append(
-            "Interactive commands that read from stdin are not supported. "
-            "Use non-interactive flags or pipe input."
+    if exit_code != 0:
+        display = (
+            _last_nonempty_line(stderr)
+            or _last_nonempty_line(stdout)
+            or "Interactive commands that read from stdin are not supported. Use non-interactive flags or pipe input."
         )
+    else:
+        display_parts = []
+        if stdout:
+            display_parts.append(stdout)
+        if stderr:
+            display_parts.append(f"[stderr]\n{stderr}")
+        display = "\n".join(display_parts) or "(no output)"
     payload = {"ok": exit_code == 0, "exit_code": exit_code, "stdout": stdout, "stderr": stderr}
     return ToolResult(
         title=f"{tool_label}: {command}",
         output=json.dumps(payload, ensure_ascii=False, indent=2),
-        display="\n".join(display_parts) or "(no output)",
+        display=display,
         summary="ok" if exit_code == 0 else f"exit {exit_code}",
         metadata={"command": command, "exit_code": exit_code, "ok": exit_code == 0, **({"error": True} if exit_code != 0 else {})},
     )

@@ -205,7 +205,15 @@ class FindTool:
         try:
             inp = FindInput.model_validate(args)
         except Exception as exc:
-            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
+            message = str(exc).splitlines()
+            detail = message[1].strip() if len(message) > 1 else str(exc).strip()
+            detail = detail.removeprefix("Value error, ").split(" [", 1)[0].strip()
+            return ToolResult(
+                output=f"Invalid arguments: {exc}",
+                display=f"Invalid arguments: {detail}",
+                summary="invalid arguments",
+                metadata={"error": True},
+            )
         base, scope = _resolve_scope(ctx, inp.path)
         if scope is None:
             return ToolResult(output=f"Path traversal blocked: {inp.path}", metadata={"error": True})

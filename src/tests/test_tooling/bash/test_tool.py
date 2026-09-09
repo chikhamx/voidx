@@ -59,7 +59,7 @@ class TestBash:
         assert data["exit_code"] == 0
         assert "hello" in data["stdout"]
         assert "hello" in result.display
-        assert result.summary == ""
+        assert result.summary == "ok"
         assert result.metadata["exit_code"] == 0
 
     @pytest.mark.asyncio
