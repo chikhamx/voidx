@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import errno
 import io
 import os
@@ -1567,7 +1568,7 @@ async def test_commit_preserves_remaining_baseline_without_full_screen_clear():
         await asyncio.wait_for(writer.wait(commit), timeout=1)
         commit_output = stream.value[stream_len_before_commit:]
         assert "\x1b[J" not in commit_output
-        assert "commit-1\ncommit-2\n" in commit_output
+        assert "commit-1\x1b[K\ncommit-2\x1b[K\n" in commit_output
 
         assert writer._baseline_valid is True
         assert writer._applied_start_row == 4
@@ -1594,5 +1595,148 @@ async def test_commit_preserves_remaining_baseline_without_full_screen_clear():
         assert "\x1b[4;1Hline-3-updated\x1b[K" in frame2_output
         assert "input" not in frame2_output
         assert "status" not in frame2_output
+    finally:
+        await asyncio.wait_for(writer.shutdown_async(), timeout=1)
+
+
+class _ScreenEmulator:
+    """Minimal ANSI screen: absolute positioning, erase-in-line/display, newlines."""
+
+    _CSI_RE = re.compile(r"\x1b\[([0-9;?]*)([@-~])")
+
+    def __init__(self, cols: int = 120, rows: int = 40) -> None:
+        self.cols = cols
+        self.grid = [[" "] * cols for _ in range(rows)]
+        self.row = 1
+        self.col = 1
+
+    def feed(self, data: str) -> None:
+        index = 0
+        while index < len(data):
+            char = data[index]
+            if char == "\x1b":
+                match = self._CSI_RE.match(data, index)
+                if match is None:
+                    index += 1
+                    continue
+                self._handle_csi(match.group(1), match.group(2))
+                index = match.end()
+                continue
+            if char == "\n":
+                self.row += 1
+                self.col = 1
+            elif char == "\r":
+                self.col = 1
+            else:
+                self.grid[self.row - 1][self.col - 1] = char
+                self.col += 1
+            index += 1
+
+    def _handle_csi(self, params: str, final: str) -> None:
+        if params.startswith("?"):
+            return
+        values = [int(part) for part in params.split(";") if part]
+        if final in "Hf":
+            self.row = values[0] if values else 1
+            self.col = values[1] if len(values) > 1 else 1
+        elif final == "J":
+            for row in range(self.row - 1, len(self.grid)):
+                start = (self.col - 1) if row == self.row - 1 else 0
+                for col in range(start, self.cols):
+                    self.grid[row][col] = " "
+        elif final == "K":
+            for col in range(self.col - 1, self.cols):
+                self.grid[self.row - 1][col] = " "
+
+    def line(self, row: int) -> str:
+        return "".join(self.grid[row - 1]).rstrip()
+
+
+@pytest.mark.asyncio
+async def test_preserved_baseline_commit_erases_overwritten_longer_row_tails():
+    stream = _ThreadRecordingStream()
+    writer = TerminalWriter(stream)
+    writer.start(
+        loop=asyncio.get_running_loop(),
+        on_frame_result=lambda result: None,
+        on_error=lambda exc: pytest.fail(f"unexpected writer error: {exc}"),
+    )
+    frame_type = terminal_writer_module.FrameBatch
+    try:
+        writer.submit_frame(
+            frame_type(
+                generation=1,
+                start_row=2,
+                target_lines=(
+                    "vibe-busy-line-with-tokens-up-80k-down-2k",
+                    "thinking",
+                    "input",
+                    "status",
+                ),
+                cursor_ansi="",
+            )
+        )
+        await asyncio.wait_for(writer.drain_async(), timeout=1)
+
+        commit = writer.submit_commit(
+            clear_start_row=2,
+            ansi="short-feed\n",
+            preserve_baseline=True,
+        )
+        await asyncio.wait_for(writer.wait(commit), timeout=1)
+
+        screen = _ScreenEmulator()
+        screen.feed(stream.value)
+        assert screen.line(2) == "short-feed"
+        assert screen.line(3) == "thinking"
+        assert screen.line(4) == "input"
+        assert screen.line(5) == "status"
+        assert writer._baseline_valid is True
+        assert writer._applied_start_row == 3
+        assert writer._applied_lines == ("thinking", "input", "status")
+    finally:
+        await asyncio.wait_for(writer.shutdown_async(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_preserved_baseline_commit_erases_tail_without_trailing_newline():
+    stream = _ThreadRecordingStream()
+    writer = TerminalWriter(stream)
+    writer.start(
+        loop=asyncio.get_running_loop(),
+        on_frame_result=lambda result: None,
+        on_error=lambda exc: pytest.fail(f"unexpected writer error: {exc}"),
+    )
+    frame_type = terminal_writer_module.FrameBatch
+    try:
+        writer.submit_frame(
+            frame_type(
+                generation=1,
+                start_row=2,
+                target_lines=(
+                    "vibe-busy-line-with-tokens-up-80k-down-2k",
+                    "thinking",
+                    "input",
+                    "status",
+                ),
+                cursor_ansi="",
+            )
+        )
+        await asyncio.wait_for(writer.drain_async(), timeout=1)
+
+        commit = writer.submit_commit(
+            clear_start_row=2,
+            ansi="no-newline",
+            preserve_baseline=True,
+        )
+        await asyncio.wait_for(writer.wait(commit), timeout=1)
+
+        screen = _ScreenEmulator()
+        screen.feed(stream.value)
+        assert screen.line(2) == "no-newline"
+        assert screen.line(3) == "thinking"
+        assert writer._baseline_valid is True
+        assert writer._applied_start_row == 3
+        assert writer._applied_lines == ("thinking", "input", "status")
     finally:
         await asyncio.wait_for(writer.shutdown_async(), timeout=1)

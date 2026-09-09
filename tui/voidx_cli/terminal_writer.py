@@ -680,8 +680,15 @@ class TerminalWriter:
                 self._worker_write(f"\x1b[{clear_start_row};1H")
                 if not batch.preserve_baseline:
                     self._worker_write("\x1b[J")
+            erase_tail = batch.preserve_baseline and clear_start_row > 0
+            wrote_newline = True
             for value in batch.payload.parts(max(1, self.byte_budget)):
+                if erase_tail and value:
+                    value = value.replace("\n", "\x1b[K\n")
+                    wrote_newline = value.endswith("\n")
                 self._worker_write(value)
+            if erase_tail and not wrote_newline:
+                self._worker_write("\x1b[K")
             self._worker_flush()
             if clear_start_row > 0:
                 lines_written = batch.payload.lines_written
