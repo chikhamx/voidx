@@ -1902,8 +1902,8 @@ class _DeferredCommitWriter(_WorkerCommitWriter):
         return token
 
     async def wait(self, token):
-        await token.future
-
+        if hasattr(token, "future"):
+            await token.future
 
 
 class _DeferredCommitFrameWriter(_DeferredCommitWriter):
@@ -3828,6 +3828,72 @@ def test_resume_restored_history_is_completed_and_inactive(tmp_path):
     assert all(node.payload.get("stream") is not True for node in nodes)
 
 
+
+@pytest.mark.asyncio
+async def test_resume_restored_tool_results_do_not_linger_in_active_frame(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._running = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitFrameWriter()
+    tui._terminal_writer = writer
+
+    restored = type(dock.tree)()
+    turn = restored.new_node(
+        parent=restored.root,
+        node_type="turn",
+        header="[bold white]❯[/] run test",
+        collapsed=False,
+        payload={"transcript_turn_id": 1, "lifecycle": "running"},
+    )
+    agent = restored.new_node(
+        parent=turn,
+        node_type="assistant",
+        header="",
+        collapsed=False,
+    )
+    tool = restored.new_node(
+        parent=agent,
+        node_type="tool_call",
+        header="● Bash(pytest)",
+        collapsed=False,
+        payload={"tool_name": "bash", "lifecycle": "running"},
+    )
+    result = restored.new_node(
+        parent=agent,
+        node_type="tool_result",
+        header="== build ==",
+        body_lines=["pressure_passed=200", "ALL PASSED"],
+        collapsed=False,
+        payload={"tool_name": "bash", "lifecycle": "running"},
+    )
+
+    dock.reset()
+    await tui.prepare_session_switch()
+    dock.restore_tree(restored, append=True)
+    dock.append_message("Resumed session")
+
+    flush_task = asyncio.create_task(tui.flush_after_restore())
+    await asyncio.sleep(0)
+    while writer.tokens:
+        tok = writer.tokens.pop(0)
+        if not tok.future.done():
+            tok.future.set_result(None)
+        await asyncio.sleep(0)
+    await flush_task
+
+    assert result.collapsed is True
+    active_lines = "\n".join(writer.frames[-1].target_lines) if writer.frames else ""
+    assert "pressure_passed=200" not in active_lines
+    assert "ALL PASSED" not in active_lines
+    assert "== build ==" not in active_lines
 @pytest.mark.asyncio
 async def test_prepare_session_switch_invalidates_pending_commit(tmp_path, monkeypatch):
     monkeypatch.setattr(

@@ -286,6 +286,8 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
                 terminal=True,
                 render_pending=False,
             )
+            if node.node_type == "tool_result" and not bool(node.payload.get("full_diff_result")):
+                node.collapsed = True
             node.payload.pop("phase", None)
             node.payload.pop("stream", None)
             stack.extend(node.children)

@@ -973,16 +973,25 @@ class PureTui(
         lines: list[str],
         line_map: dict[int, str],
         limit: int,
+        *,
+        hidden_node_limit: int = 0,
     ) -> CommittedProjection:
         bounded_limit = min(max(limit, 0), len(lines))
         scrollback_indexes = set(
             self._scrollback_line_indexes(lines, line_map, 0, bounded_limit)
         )
+        hidden_limit = min(max(hidden_node_limit, 0), bounded_limit)
         node_ids = {
             node_id
             for index in scrollback_indexes
             if (node_id := line_map.get(index)) is not None
         }
+        for index in range(hidden_limit):
+            node_id = line_map.get(index)
+            if node_id is not None:
+                node_ids.add(node_id)
+
+        unowned_indexes = scrollback_indexes | set(range(hidden_limit))
         node_signatures = {
             node_id: self._committed_node_signature(node)
             for node_id in node_ids
@@ -991,7 +1000,7 @@ class PureTui(
         unowned_keys = self._unowned_line_keys(lines, line_map)
         unowned_signatures = {
             unowned_keys[index]: lines[index]
-            for index in scrollback_indexes
+            for index in unowned_indexes
             if index in unowned_keys
         }
         return CommittedProjection(
@@ -1261,6 +1270,7 @@ class PureTui(
                     lines,
                     line_map,
                     self._committed_line_count,
+                    hidden_node_limit=restored_history_line_count,
                 )
                 self._record_committed_live_history(width)
             if restored_range is None and tree_changed_before_apply:
