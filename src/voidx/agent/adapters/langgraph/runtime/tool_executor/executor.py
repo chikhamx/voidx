@@ -538,10 +538,6 @@ class ToolExecutorAdapter:
                     _agent_result_preview(result.output) if ok else result.output
                 )
                 await notify_tool_text_output(host, ui_output, tid, tool_event_id, tool_node, display_policy, ok)
-            elif not ok:
-                meta = getattr(result, "metadata", {}) or {}
-                ui_output = result.display or meta.get("error_message") or result.output
-                await notify_tool_text_output(host, ui_output, tid, tool_event_id, tool_node, display_policy, ok)
 
             persistence_tool_name = tool_name_for_persistence(result, tid)
             llm_content = maybe_persist_tool_result(

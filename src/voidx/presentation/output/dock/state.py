@@ -36,6 +36,7 @@ class _DockProxy:
                 "append_guidance_turn",
                 "append_ansi",
                 "begin_capture",
+                "commit_stream",
                 "deactivate",
                 "print",
                 "capture",

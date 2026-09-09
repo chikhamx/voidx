@@ -847,21 +847,26 @@ class LlmTurn:
                 else:
                     get_dock = getattr(host._ui, "get_dock", None)
                     dock = get_dock() if callable(get_dock) else None
-                    set_stream = getattr(dock, "set_stream", None) if dock is not None else None
-                    commit_stream = getattr(dock, "commit_stream", None) if dock is not None else None
-                    if (
-                        dock is not None
-                        and getattr(dock, "active", False)
-                        and callable(set_stream)
-                        and callable(commit_stream)
-                        and set_stream(
-                            final_text,
-                            phase="text",
-                            refresh=False,
-                            snapshot_contract="cumulative",
-                        )
-                    ):
-                        commit_stream()
+                    if bool(dock) and getattr(dock, "active", False):
+                        set_stream = getattr(dock, "set_stream", None)
+                        commit_stream = getattr(dock, "commit_stream", None)
+                        if (
+                            callable(set_stream)
+                            and callable(commit_stream)
+                            and set_stream(
+                                final_text,
+                                phase="text",
+                                refresh=False,
+                                snapshot_contract="cumulative",
+                            )
+                        ):
+                            commit_stream()
+                        else:
+                            markdown = getattr(host._ui.ui, "markdown", None)
+                            if callable(markdown):
+                                markdown(final_text)
+                            else:
+                                host._ui.ui.print(final_text)
                     else:
                         markdown = getattr(host._ui.ui, "markdown", None)
                         if callable(markdown):

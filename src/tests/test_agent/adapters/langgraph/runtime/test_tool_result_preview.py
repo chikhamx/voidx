@@ -53,6 +53,7 @@ from voidx.agent.domain.automation.workflow import WorkflowRoute
 from voidx.tooling.domain.context import ToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import ToolResult
 from voidx.agent.adapters.tools.subagent import AgentResultContract, AgentTool
+from voidx.tooling.builtin.file.search import FindTool
 from voidx.tooling.application.registry import ToolRegistry
 from voidx.presentation.output.dock import BottomInputDock, set_dock
 from voidx.presentation.output.events import DockEventConsumer, TurnStarted, ui_events
@@ -412,7 +413,7 @@ async def test_generic_tool_does_not_output_result_in_ui_when_successful(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_failed_tool_outputs_error_in_ui(tmp_path):
+async def test_failed_tool_does_not_output_error_in_ui(tmp_path):
     fail_result = ToolResult(
         title="Bash: exit 1",
         output="command failed: exit 1",
@@ -428,9 +429,50 @@ async def test_failed_tool_outputs_error_in_ui(tmp_path):
         result=fail_result,
     )
 
-    assert len(final_results) == 1
-    assert "command failed: exit 1" in rendered
+    assert len(final_results) == 0
+    assert "command failed: exit 1" not in rendered
     assert any(isinstance(msg, ToolMessage) and msg.content == "command failed: exit 1" for msg in messages)
+
+
+@pytest.mark.asyncio
+async def test_failed_read_tool_does_not_output_error_in_ui(tmp_path):
+    fail_result = ToolResult(
+        title="Read: nonexistent.py",
+        output="File not found: nonexistent.py",
+        summary="",
+        metadata={"error": True},
+    )
+
+    rendered, final_results, messages = await _execute_fake_tool(
+        tmp_path,
+        tool_name="read",
+        args={"file_path": "nonexistent.py"},
+        result=fail_result,
+    )
+
+    assert len(final_results) == 0
+    assert "File not found: nonexistent.py" not in rendered
+    assert any(isinstance(msg, ToolMessage) and msg.content == "File not found: nonexistent.py" for msg in messages)
+
+
+@pytest.mark.asyncio
+async def test_find_invalid_arguments_does_not_render_in_ui(tmp_path):
+    result = await FindTool().execute({}, ToolContext(workspace=str(tmp_path)))
+
+    rendered, final_results, messages = await _execute_fake_tool(
+        tmp_path,
+        tool_name="find",
+        args={},
+        result=result,
+    )
+
+    assert len(final_results) == 0
+    assert "Invalid arguments" not in rendered
+    assert any(
+        isinstance(message, ToolMessage)
+        and "validation error for FindInput" in message.content
+        for message in messages
+    )
 
 
 @pytest.mark.asyncio
