@@ -288,8 +288,11 @@ class ModelCommandsMixin:
             self.model_port.ui.print("[yellow]No profiles configured. Use /model new first.[/yellow]")
             return
 
-        self.model_port.ui.print(f"[bold]{action}[/bold] — select profile (↑↓ Enter, ESC cancel):")
-        idx = await _select_from_list(self.model_port.prompt_ui, action, names)
+        idx = await _select_from_list(
+            self.model_port.prompt_ui,
+            f"{action} — select profile (↑↓ Enter, ESC cancel):",
+            names,
+        )
         if idx is None:
             self.model_port.ui.print("[dim]Cancelled.[/dim]")
             return

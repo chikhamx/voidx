@@ -802,3 +802,33 @@ async def test_switch_model_spec_does_not_show_startup(tmp_path, monkeypatch):
         assert startup_calls == []
     finally:
         await delete_model_profile_async("deepseek/deepseek-v4-pro")
+
+@pytest.mark.asyncio
+async def test_pick_or_act_puts_prompt_in_selection_and_avoids_terminal_print(tmp_path, monkeypatch):
+    profile_name = f"deepseek/{tmp_path.name}-pick"
+    settings = await Settings.create(str(tmp_path))
+    await save_model_profile_async(ModelProfileRow(
+        name=profile_name,
+        provider="deepseek",
+        model=f"{tmp_path.name}-pick",
+    ))
+    fake_app = FakeChoiceApp(result="0")
+    graph = command_context(
+        settings=settings,
+        app=fake_app,
+    )
+    handler = SlashHandler(graph)
+    captured_output = _capture_handler_output(monkeypatch)
+
+    picked: list[str] = []
+
+    async def pick_cb(name: str) -> None:
+        picked.append(name)
+
+    try:
+        await handler._pick_or_act("Switch", "", pick_cb)
+        assert fake_app.prompt == "Switch — select profile (↑↓ Enter, ESC cancel):"
+        assert not any("select profile" in line for line in captured_output)
+        assert picked == [profile_name]
+    finally:
+        await delete_model_profile_async(profile_name)
