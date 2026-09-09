@@ -981,26 +981,31 @@ class PureTui(
             self._scrollback_line_indexes(lines, line_map, 0, bounded_limit)
         )
         hidden_limit = min(max(hidden_node_limit, 0), bounded_limit)
+        unowned_keys = self._unowned_line_keys(lines, line_map)
+        committed_indexes = (
+            scrollback_indexes
+            | set(range(hidden_limit))
+            | self._settled_hidden_line_indexes(
+                lines,
+                line_map,
+                scrollback_indexes,
+                bounded_limit,
+                unowned_keys,
+            )
+        )
         node_ids = {
             node_id
-            for index in scrollback_indexes
+            for index in committed_indexes
             if (node_id := line_map.get(index)) is not None
         }
-        for index in range(hidden_limit):
-            node_id = line_map.get(index)
-            if node_id is not None:
-                node_ids.add(node_id)
-
-        unowned_indexes = scrollback_indexes | set(range(hidden_limit))
         node_signatures = {
             node_id: self._committed_node_signature(node)
             for node_id in node_ids
             if (node := dock.tree.get(node_id)) is not None
         }
-        unowned_keys = self._unowned_line_keys(lines, line_map)
         unowned_signatures = {
             unowned_keys[index]: lines[index]
-            for index in unowned_indexes
+            for index in committed_indexes
             if index in unowned_keys
         }
         return CommittedProjection(
@@ -1009,6 +1014,49 @@ class PureTui(
             unowned_signatures=unowned_signatures,
         )
 
+    @classmethod
+    def _settled_hidden_line_indexes(
+        cls,
+        lines: list[str],
+        line_map: dict[int, str],
+        scrollback_indexes: set[int],
+        bounded_limit: int,
+        unowned_keys: dict[int, tuple[str | None, str | None, int]],
+    ) -> set[int]:
+        """Scrollback-excluded lines whose turn has ended.
+
+        Hidden nodes (tool results, spacers) and their adjacent gap blanks
+        never reach scrollback.  While their turn is live they must stay in
+        the active frame; once the turn is terminal they must be recorded as
+        committed, otherwise the active-frame diff keeps them forever.
+        """
+        excluded = set(range(bounded_limit)) - scrollback_indexes
+        if not excluded:
+            return set()
+        turn_live = bool(getattr(dock, "turn_in_progress", False))
+
+        def _hidden_settled(owner: str | None) -> bool:
+            if owner is None:
+                return False
+            node = dock.tree.get(owner)
+            if node is None or not cls._scrollback_hidden_node(node):
+                return False
+            return bool(node.payload.get("terminal")) or not turn_live
+
+        settled: set[int] = set()
+        for index in excluded:
+            owner = line_map.get(index)
+            if owner is not None:
+                if _hidden_settled(owner):
+                    settled.add(index)
+                continue
+            previous, following, _occurrence = unowned_keys.get(
+                index,
+                (None, None, 0),
+            )
+            if _hidden_settled(previous) or _hidden_settled(following):
+                settled.add(index)
+        return settled
 
     def _merged_committed_projection(
         self,
