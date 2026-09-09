@@ -608,6 +608,7 @@ class _FrameRendererMixin:
                         term_height=term_height,
                         frame_start_row=start_row,
                         scroll_epoch=self._scroll_epoch,
+                        restore_epoch=self._restore_epoch,
                     )
                 else:
                     snapshot = self._layout_snapshot_for_frame(
@@ -729,6 +730,7 @@ class _FrameRendererMixin:
                             term_height=term_height,
                             frame_start_row=start_row,
                             scroll_epoch=self._scroll_epoch,
+                            restore_epoch=self._restore_epoch,
                         )
                     else:
                         snapshot = self._layout_snapshot_for_frame(
@@ -1372,6 +1374,7 @@ class _FrameRendererMixin:
                 term_height=term_height,
                 frame_start_row=previous.frame_start_row,
                 scroll_epoch=self._scroll_epoch,
+                restore_epoch=self._restore_epoch,
             )
             if not self._snapshot_geometry_matches(previous, snapshot):
                 self._render_plan = None
@@ -2009,6 +2012,7 @@ class _FrameRendererMixin:
         term_height: int,
         frame_start_row: int,
         scroll_epoch: int,
+        restore_epoch: int,
     ) -> LayoutSnapshot:
         region_keys = ("transcript", "vibe", "todo", "thinking")
         regions: list[RegionGeometry] = []
@@ -2038,6 +2042,7 @@ class _FrameRendererMixin:
             cursor_col=physical.cursor_col,
             scroll_epoch=scroll_epoch,
             generation=generation,
+            restore_epoch=restore_epoch,
         )
 
     def _physical_viewport_for_frame(

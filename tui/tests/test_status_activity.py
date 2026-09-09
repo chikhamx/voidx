@@ -889,7 +889,11 @@ async def test_invalidate_coalesces_render_until_throttle_window(tmp_path, monke
     tui._running = True
     calls = {"flush": 0, "render": 0}
 
-    monkeypatch.setattr(tui, "_flush_committed", lambda: calls.__setitem__("flush", calls["flush"] + 1))
+    def flush_committed(*, force: bool) -> None:
+        assert force is False
+        calls["flush"] += 1
+
+    monkeypatch.setattr(tui, "_flush_committed", flush_committed)
     monkeypatch.setattr(tui, "_render_frame", lambda: calls.__setitem__("render", calls["render"] + 1))
 
     tui.invalidate()

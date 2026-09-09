@@ -550,7 +550,7 @@ class PureTui(
     async def prepare_session_switch(self) -> None:
         self._restore_epoch += 1
         self._scroll_epoch += 1
-        self._render_scheduled = False
+        self._cancel_scheduled_render()
         await self._stop_busy_activity_timer()
         try:
             await self._stop_panel_query_tasks()
@@ -593,31 +593,76 @@ class PureTui(
             if hasattr(self._terminal_writer, "wait"):
                 await self._terminal_writer.wait(token)
 
+    def _cancel_scheduled_render(self) -> None:
+        handle = self._render_timer_handle
+        if handle is not None:
+            handle.cancel()
+        self._render_timer_handle = None
+        self._render_scheduled = False
+        self._render_schedule_generation += 1
+
     def invalidate(self) -> None:
         self._mark_status_summary_dirty()
         if self._running:
             if self._render_scheduled:
                 return
             self._render_scheduled = True
+            self._render_schedule_generation += 1
+            schedule_generation = self._render_schedule_generation
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
-                self._run_scheduled_render()
+                self._run_scheduled_render(schedule_generation)
                 return
-            loop.call_later(self.RENDER_THROTTLE_SECONDS, self._run_scheduled_render)
+            self._render_timer_handle = loop.call_later(
+                self.RENDER_THROTTLE_SECONDS,
+                self._run_scheduled_render,
+                schedule_generation,
+            )
 
-    def _run_scheduled_render(self) -> None:
-        self._render_scheduled = False
+    def _run_scheduled_render(
+        self,
+        schedule_generation: int | None = None,
+        *,
+        force: bool = False,
+    ) -> BatchToken | None:
+        if schedule_generation is None:
+            self._cancel_scheduled_render()
+        elif schedule_generation != self._render_schedule_generation:
+            return None
+        else:
+            self._render_timer_handle = None
+            self._render_scheduled = False
         if not self._running:
-            return
+            return None
         restore_needs_first_frame = (
             dock.restored_root_child_range() is not None
             and not self._has_rendered_frame
         )
-        self._flush_committed()
+        commit = self._flush_committed(force=force)
         self._render_frame()
         if restore_needs_first_frame:
-            self._flush_committed()
+            commit = self._flush_committed(force=force)
+            self._render_frame()
+        return commit
+
+    async def flush_after_restore(self) -> None:
+        self._cancel_scheduled_render()
+        if not self._running:
+            return
+
+        commit = self._run_scheduled_render(force=True)
+        if commit is not None:
+            pending_task = self._pending_commit_tasks.get(id(commit))
+            if pending_task is not None:
+                await pending_task
+            else:
+                wait = getattr(self._terminal_writer, "wait", None)
+                if callable(wait):
+                    await wait(commit)
+
+        self._cancel_scheduled_render()
+        if self._running:
             self._render_frame()
 
     def _choose_busy_activity_verb(self) -> str:

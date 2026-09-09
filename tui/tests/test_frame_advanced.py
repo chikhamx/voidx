@@ -2033,6 +2033,70 @@ async def test_worker_resume_scheduled_render_commits_before_first_input(
 
 
 @pytest.mark.asyncio
+async def test_worker_physical_snapshot_preserves_restore_epoch(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._running = True
+    tui._restore_epoch = 7
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitFrameWriter()
+    tui._terminal_writer = writer
+    dock.begin_capture()
+    dock.append_message("restored frame")
+
+    tui._render_frame()
+
+    assert len(writer.frames) == 1
+    snapshot = tui._pending_layout_snapshots[writer.frames[0].generation]
+    assert snapshot.restore_epoch == tui._restore_epoch
+
+
+@pytest.mark.asyncio
+async def test_flush_after_restore_commits_before_return(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._running = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitFrameWriter()
+    tui._terminal_writer = writer
+    restored = type(dock.tree)()
+    restored.new_node(
+        parent=restored.root,
+        node_type="message",
+        header="restored history",
+        collapsed=False,
+    )
+
+    dock.reset()
+    dock.restore_tree(restored, append=True)
+    dock.append_message("Resumed session")
+
+    flush_task = asyncio.create_task(tui.flush_after_restore())
+    await asyncio.sleep(0)
+
+    assert not flush_task.done()
+    assert len(writer.commits) == 1
+    commit_ansi = writer.commits[0]["ansi"]
+    assert commit_ansi.index("restored history") < commit_ansi.index("Resumed session")
+
+    writer.tokens[0].future.set_result(None)
+    await asyncio.wait_for(flush_task, timeout=1)
+
+    assert dock.restored_root_child_range() is None
+    assert tui._pending_commit_tokens == []
+
+
+@pytest.mark.asyncio
 async def test_worker_clear_keeps_startup_in_first_frame_and_first_input(
     tmp_path, monkeypatch
 ):
