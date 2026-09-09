@@ -201,6 +201,7 @@ async def test_checkpoint_decision_renders_as_full_width_user_row_with_adjacent_
             for span in Text.from_markup(lines[user_index]).spans
         )
         assert plan_line.index("Plan:") == decision_line.index("Decision:")
+        assert plain_lines[user_index - 1].strip() == ""
         assert plain_lines[user_index + 1].startswith("● 先删除临时文件")
     finally:
         await bus.stop()
@@ -344,6 +345,7 @@ async def test_clarify_answer_renders_as_full_width_user_row_with_adjacent_reply
             for span in Text.from_markup(lines[user_index]).spans
         )
         assert question_line.index("Question:") == answer_line.index("Answer:")
+        assert plain_lines[user_index - 1].strip() == ""
         assert plain_lines[user_index + 1].startswith("● 开始实现方案")
     finally:
         await bus.stop()
@@ -543,7 +545,59 @@ from voidx.presentation.output.events import (
     GoalSpecDecisionSubmitted,
     GoalSpecPayload,
     GoalSpecPromptShown,
+    LoopSpecChoicePayload,
+    LoopSpecDecisionSubmitted,
+    LoopSpecPayload,
+    LoopSpecPromptShown,
 )
+
+
+@pytest.mark.asyncio
+async def test_loop_spec_prompt_event_renders_spec_and_decision(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.emit(LoopSpecPromptShown(
+            prompt_id="ls_bus_1",
+            spec=LoopSpecPayload(
+                prompt="Monitor CI health",
+                interval_seconds=60,
+            ),
+            choices=[
+                LoopSpecChoicePayload(
+                    label="Approve and start",
+                    value="approved",
+                    description="Accept the loop spec and start the loop",
+                )
+            ],
+        ))
+        await bus.drain()
+
+        rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(120))
+        nodes = _tree_nodes(isolated_dock.tree.root)
+        spec_node = next(node for node in nodes if node.node_type == "loop_spec")
+
+        assert "loop spec" in rendered
+        assert "Loop: Monitor CI health" in rendered
+        assert "Interval: 60s (fixed)" in rendered
+        assert spec_node.payload["prompt_id"] == "ls_bus_1"
+
+        await bus.emit(LoopSpecDecisionSubmitted(
+            prompt_id="ls_bus_1",
+            decision="approved",
+            response="",
+        ))
+        await bus.drain()
+
+        rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(120))
+        assert spec_node.status == "done"
+        assert "loop spec approved" in rendered
+        assert "Decision: approved" in rendered
+        assert spec_node.payload["decision"] == "approved"
+    finally:
+        await bus.stop()
 
 
 @pytest.mark.asyncio
@@ -613,6 +667,130 @@ async def test_goal_spec_decision_for_unknown_id_does_not_fail(isolated_dock):
     finally:
         await bus.stop()
 
+
+
+@pytest.mark.asyncio
+async def test_goal_spec_decision_renders_as_full_width_user_row_with_adjacent_reply(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.emit(GoalSpecPromptShown(
+            prompt_id="gs_gap_1",
+            spec=GoalSpecPayload(
+                objective="Deliver feature X",
+                acceptance_condition="All tests pass",
+            ),
+            choices=[
+                GoalSpecChoicePayload(
+                    label="Approve and start",
+                    value="approved",
+                    description="Accept and start",
+                )
+            ],
+        ))
+        await bus.emit(GoalSpecDecisionSubmitted(
+            prompt_id="gs_gap_1",
+            decision="approved",
+            response="Approve and start",
+        ))
+        await bus.emit(AssistantStreamUpdated(text="开始执行目标任务。"))
+        await bus.drain()
+
+        lines = isolated_dock.tree.render(80)
+        plain_lines = [_rich_plain(line) for line in lines]
+        decision_text = "   Decision: Approve and start"
+        user_index = plain_lines.index(decision_text + (" " * (80 - len(decision_text))))
+        goal_line = next(line for line in plain_lines if "Goal:" in line)
+        decision_line = plain_lines[user_index]
+
+        assert Text.from_markup(lines[user_index]).cell_len == 80
+        assert any("on #3a3937" in str(span.style) for span in Text.from_markup(lines[user_index]).spans)
+        assert any(
+            "#ebcb8b" in str(span.style).lower()
+            and span.start <= decision_line.index("Decision:") < span.end
+            for span in Text.from_markup(lines[user_index]).spans
+        )
+        assert goal_line.index("Goal:") == decision_line.index("Decision:")
+        assert plain_lines[user_index - 1].strip() == ""
+        assert plain_lines[user_index + 1].startswith("● 开始执行目标任务")
+    finally:
+        await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_loop_spec_decision_renders_as_full_width_user_row_with_adjacent_reply(isolated_dock):
+    isolated_dock.begin_capture()
+    bus = UiEventBus()
+    bus.start(DockEventConsumer(isolated_dock))
+    try:
+        await bus.request(TurnStarted(text="demo"))
+        await bus.emit(LoopSpecPromptShown(
+            prompt_id="ls_gap_1",
+            spec=LoopSpecPayload(
+                prompt="Monitor service heartbeat",
+                interval_seconds=30,
+            ),
+            choices=[
+                LoopSpecChoicePayload(
+                    label="Approve and start",
+                    value="approved",
+                    description="Accept and start",
+                )
+            ],
+        ))
+        await bus.emit(LoopSpecDecisionSubmitted(
+            prompt_id="ls_gap_1",
+            decision="approved",
+            response="Approve and start",
+        ))
+        await bus.emit(AssistantStreamUpdated(text="开始进入循环监控。"))
+        await bus.drain()
+
+        lines = isolated_dock.tree.render(80)
+        plain_lines = [_rich_plain(line) for line in lines]
+        decision_text = "   Decision: Approve and start"
+        user_index = plain_lines.index(decision_text + (" " * (80 - len(decision_text))))
+        loop_line = next(line for line in plain_lines if "Loop:" in line)
+        decision_line = plain_lines[user_index]
+
+        assert Text.from_markup(lines[user_index]).cell_len == 80
+        assert any("on #3a3937" in str(span.style) for span in Text.from_markup(lines[user_index]).spans)
+        assert any(
+            "#ebcb8b" in str(span.style).lower()
+            and span.start <= decision_line.index("Decision:") < span.end
+            for span in Text.from_markup(lines[user_index]).spans
+        )
+        assert loop_line.index("Loop:") == decision_line.index("Decision:")
+        assert plain_lines[user_index - 1].strip() == ""
+        assert plain_lines[user_index + 1].startswith("● 开始进入循环监控")
+    finally:
+        await bus.stop()
+
+
+def test_dock_show_and_resolve_loop_spec(isolated_dock):
+    isolated_dock.begin_capture()
+    try:
+        node = isolated_dock.show_loop_spec(
+            prompt_id="ls_1",
+            spec={"prompt": "Auto monitor service", "interval_seconds": 15},
+            choices=[{"label": "Approve and start", "value": "approved"}],
+        )
+        assert node.node_type == "loop_spec"
+        assert "loop spec" in node.header
+        rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(100))
+        assert "Loop: Auto monitor service" in rendered
+        assert "Interval: 15s (fixed)" in rendered
+
+        isolated_dock.resolve_loop_spec("ls_1", "approved", "approved")
+        assert node.status == "done"
+        assert "loop spec approved" in node.header
+        rendered_after = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(100))
+        assert "Decision: approved" in rendered_after
+    finally:
+        isolated_dock.deactivate()
+        isolated_dock.reset()
 
 @pytest.mark.asyncio
 async def test_clarify_resolution_is_completed_but_not_writer_settled(isolated_dock):

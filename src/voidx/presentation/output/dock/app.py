@@ -87,6 +87,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._checkpoint_nodes: dict[str, OutputNode] = {}
         self._clarify_nodes: dict[str, OutputNode] = {}
         self._goal_spec_nodes: dict[str, OutputNode] = {}
+        self._loop_spec_nodes: dict[str, OutputNode] = {}
         self._guidance_preview: str = ""
         self._guidance_echoes: list[str] = []
         self._settled_node_ids: set[str] = set()
@@ -354,6 +355,7 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
         self._checkpoint_nodes = {}
         self._clarify_nodes = {}
         self._goal_spec_nodes = {}
+        self._loop_spec_nodes = {}
 
     def start_turn(self, text: str, *, metadata: TurnMetadata | None = None, raw_text: str | None = None) -> OutputNode:
         self.commit_stream()

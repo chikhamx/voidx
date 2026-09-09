@@ -69,6 +69,27 @@ class GoalSpecDecisionSubmitted(ToolUiEventBase):
     response: str = ""
 
 
+class LoopSpecPayload(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    prompt: str
+    interval_seconds: float | None = None
+
+
+class LoopSpecPromptShown(ToolUiEventBase):
+    kind: Literal["loop_spec_prompt.shown"] = "loop_spec_prompt.shown"
+    prompt_id: str
+    spec: LoopSpecPayload
+    choices: list[ChoicePayload] = Field(default_factory=list)
+
+
+class LoopSpecDecisionSubmitted(ToolUiEventBase):
+    kind: Literal["loop_spec_decision.submitted"] = "loop_spec_decision.submitted"
+    prompt_id: str
+    decision: str
+    response: str = ""
+
+
 class ClarifyPromptShown(ToolUiEventBase):
     kind: Literal["clarify_prompt.shown"] = "clarify_prompt.shown"
     clarify_id: str
@@ -89,6 +110,8 @@ ToolUiEvent: TypeAlias = (
     | CheckpointDecisionSubmitted
     | GoalSpecPromptShown
     | GoalSpecDecisionSubmitted
+    | LoopSpecPromptShown
+    | LoopSpecDecisionSubmitted
     | ClarifyPromptShown
     | ClarifyAnswerSubmitted
 )

@@ -13,9 +13,17 @@ from voidx.agent.domain.task.state import GoalSpec, ToolStatePatch
 from voidx.agent.domain.automation.loop import LoopSpec
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import ToolResult
+from uuid import uuid4
 from voidx.tooling.domain.interaction import UserInteraction
 from voidx.tooling.domain.arguments import keep_tool_args
 from voidx.tooling.domain.schema import model_to_json_schema
+from voidx.tooling.domain.ui_events import (
+    ChoicePayload,
+    LoopSpecDecisionSubmitted,
+    LoopSpecPayload,
+    LoopSpecPromptShown,
+    ToolUiEventPublisher,
+)
 
 
 class LoopDecisionInput(BaseModel):
@@ -219,20 +227,64 @@ async def _submit_init(inp: LoopDecisionInput, ctx: ToolContext) -> ToolResult:
 async def _request_loop_init_approval(spec: LoopSpec, ctx: ToolContext) -> str:
     if ctx.runtime.interaction is None:
         return "auto_approved"
+    prompt_id = uuid4().hex
+    event_ui_active = _emit_loop_spec_shown(ctx.runtime.events, prompt_id, spec)
     response = await ctx.runtime.interaction(UserInteraction(
-        prompt=_loop_init_approval_prompt(spec),
+        prompt="Loop spec:" if event_ui_active else _loop_init_approval_prompt(spec),
         options=_LOOP_INIT_APPROVAL_OPTIONS,
         timeout=_LOOP_INIT_APPROVAL_TIMEOUT_SECONDS,
     ))
     if response.cancelled:
-        return "auto_approved"
-    if response.free_text:
-        return f"revise:{response.value}"
-    if response.value == "approved":
-        return "approved"
-    if response.value == "cancelled":
-        return "cancelled"
-    return "revise:"
+        decision = "auto_approved"
+    elif response.free_text:
+        decision = f"revise:{response.value}"
+    elif response.value == "approved":
+        decision = "approved"
+    elif response.value == "cancelled":
+        decision = "cancelled"
+    else:
+        decision = "revise:"
+    _emit_loop_spec_decision(ctx.runtime.events, prompt_id, decision)
+    return decision
+
+
+def _emit_loop_spec_shown(
+    publisher: ToolUiEventPublisher | None,
+    prompt_id: str,
+    spec: LoopSpec,
+) -> bool:
+    if publisher is None or not publisher.is_running:
+        return False
+    publisher.emit(LoopSpecPromptShown(
+        prompt_id=prompt_id,
+        spec=LoopSpecPayload(
+            prompt=spec.prompt,
+            interval_seconds=spec.interval_seconds,
+        ),
+        choices=[
+            ChoicePayload(label=label, value=value, description=description)
+            for label, value, description in _LOOP_INIT_APPROVAL_OPTIONS
+        ],
+    ))
+    return True
+
+
+def _emit_loop_spec_decision(
+    publisher: ToolUiEventPublisher | None,
+    prompt_id: str,
+    decision: str,
+) -> None:
+    if publisher is None or not publisher.is_running:
+        return
+    if decision.startswith("revise:"):
+        kind, response = "revised", decision.removeprefix("revise:").strip()
+    else:
+        kind, response = decision, ""
+    publisher.emit(LoopSpecDecisionSubmitted(
+        prompt_id=prompt_id,
+        decision=kind,
+        response=response,
+    ))
 
 
 def _loop_init_approval_prompt(spec: LoopSpec) -> str:

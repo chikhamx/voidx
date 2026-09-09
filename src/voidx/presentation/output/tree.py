@@ -1468,7 +1468,7 @@ def _needs_gap_between_message_blocks(
         return False
     if (
         child.node_type == "assistant"
-        and prev.node_type in {"checkpoint", "clarify"}
+        and prev.node_type in {"checkpoint", "clarify", "goal_spec", "loop_spec"}
         and any(_is_full_width_user_row(grandchild) for grandchild in prev.children)
     ):
         return False

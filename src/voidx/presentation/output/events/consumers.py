@@ -44,6 +44,8 @@ from voidx.presentation.output.events.schema import (
     ErrorAppended,
     GoalSpecDecisionSubmitted,
     GoalSpecPromptShown,
+    LoopSpecDecisionSubmitted,
+    LoopSpecPromptShown,
     FileChangeAppended,
     GuidanceCommitted,
     GuidanceSubmitted,
@@ -595,6 +597,20 @@ class DockEventConsumer:
                 )
             case GoalSpecDecisionSubmitted() as e:
                 return self._dock.resolve_goal_spec(
+                    e.prompt_id,
+                    e.decision,
+                    e.response,
+                )
+            case LoopSpecPromptShown() as e:
+                choices = [choice.model_dump(mode="json") for choice in e.choices]
+                return self._dock.show_loop_spec(
+                    e.prompt_id,
+                    e.spec.model_dump(mode="json"),
+                    choices,
+                    parent=self._agent_parent(e.agent_id),
+                )
+            case LoopSpecDecisionSubmitted() as e:
+                return self._dock.resolve_loop_spec(
                     e.prompt_id,
                     e.decision,
                     e.response,

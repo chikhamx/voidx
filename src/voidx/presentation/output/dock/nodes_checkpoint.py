@@ -58,6 +58,8 @@ class DockCheckpointNodeMixin:
         node.payload["decision"] = decision
         node.payload["response"] = display_response
         node.payload["was_custom_input"] = was_custom_input
+        if not node.body_lines or node.body_lines[-1] != "":
+            node.body_lines.append("")
         child = self._tree.new_node(
             parent=node,
             node_type="message",

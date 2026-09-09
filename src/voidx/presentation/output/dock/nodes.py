@@ -26,6 +26,7 @@ from voidx.presentation.output.dock.nodes_permission import DockPermissionNodeMi
 from voidx.presentation.output.dock.nodes_checkpoint import DockCheckpointNodeMixin
 from voidx.presentation.output.dock.nodes_clarify import DockClarifyNodeMixin
 from voidx.presentation.output.dock.nodes_goal_spec import DockGoalSpecNodeMixin
+from voidx.presentation.output.dock.nodes_loop_spec import DockLoopSpecNodeMixin
 
 
 class DockNodeMixin(
@@ -35,6 +36,7 @@ class DockNodeMixin(
     DockCheckpointNodeMixin,
     DockClarifyNodeMixin,
     DockGoalSpecNodeMixin,
+    DockLoopSpecNodeMixin,
 ):
     def _new_completed_node(
         self,

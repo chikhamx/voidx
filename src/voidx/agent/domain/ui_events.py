@@ -363,6 +363,33 @@ class GoalSpecDecisionSubmitted(UiEventBase):
     response: str = ""
 
 
+class LoopSpecChoicePayload(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    label: str
+    value: str
+    description: str = ""
+
+
+class LoopSpecPayload(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    prompt: str
+    interval_seconds: float | None = None
+
+
+class LoopSpecPromptShown(UiEventBase):
+    kind: Literal["loop_spec_prompt.shown"] = "loop_spec_prompt.shown"
+    prompt_id: str
+    spec: LoopSpecPayload
+    choices: list[LoopSpecChoicePayload] = Field(default_factory=list)
+
+
+class LoopSpecDecisionSubmitted(UiEventBase):
+    kind: Literal["loop_spec_decision.submitted"] = "loop_spec_decision.submitted"
+    prompt_id: str
+    decision: str
+    response: str = ""
 
 
 class ClarifyPromptShown(UiEventBase):
@@ -456,6 +483,8 @@ UiEvent: TypeAlias = (
     | ClarifyAnswerSubmitted
     | GoalSpecPromptShown
     | GoalSpecDecisionSubmitted
+    | LoopSpecPromptShown
+    | LoopSpecDecisionSubmitted
     | InputSet
     | NoticeSet
     | IntegrationStartupUpdated

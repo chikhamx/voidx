@@ -32,6 +32,8 @@ from voidx.presentation.output.events.schema import (
     ClarifyPromptShown,
     GoalSpecDecisionSubmitted,
     GoalSpecPromptShown,
+    LoopSpecDecisionSubmitted,
+    LoopSpecPromptShown,
     DiffAppended,
     ErrorAppended,
     FileChangeAppended,
@@ -550,6 +552,31 @@ class UiEventItemAdapter:
             },
         )
 
+    def _on_loop_spec_prompt(self, event: LoopSpecPromptShown) -> JsonRpcNotification:
+        return self._item_notification(
+            _uid(),
+            "prompt",
+            "started",
+            {
+                "prompt_type": "loop_spec",
+                "prompt_id": event.prompt_id,
+                "spec": event.spec.model_dump(),
+                "choices": [c.model_dump() for c in event.choices],
+            },
+        )
+
+    def _on_loop_spec_decision(self, event: LoopSpecDecisionSubmitted) -> JsonRpcNotification:
+        return self._item_notification(
+            _uid(),
+            "prompt",
+            "completed",
+            {
+                "prompt_type": "loop_spec",
+                "prompt_id": event.prompt_id,
+                "decision": event.decision,
+            },
+        )
+
     # ── non-Item notifications ───────────────────────────────────────────
 
     def _on_turn_started(self, event: TurnStarted) -> JsonRpcNotification:
@@ -681,6 +708,8 @@ _HANDLERS: dict[
     ClarifyAnswerSubmitted: UiEventItemAdapter._on_clarify_answer,
     GoalSpecPromptShown: UiEventItemAdapter._on_goal_spec_prompt,
     GoalSpecDecisionSubmitted: UiEventItemAdapter._on_goal_spec_decision,
+    LoopSpecPromptShown: UiEventItemAdapter._on_loop_spec_prompt,
+    LoopSpecDecisionSubmitted: UiEventItemAdapter._on_loop_spec_decision,
     # non-Item notifications
     TurnStarted: UiEventItemAdapter._on_turn_started,
     TurnCompleted: UiEventItemAdapter._on_turn_completed,

@@ -837,27 +837,20 @@ async def test_resume_compaction_uses_token_threshold_not_message_count(tmp_path
             session=session,
             ui=runtime_ui_port,
         )
-        execution.config = SimpleNamespace(
-            workspace=str(tmp_path),
-            model=ModelConfig(provider="mimo", model="mimo-v2.5", reasoning_effort="high"),
-            agent=SimpleNamespace(recursion_limit=5),
-        )
-        execution._interaction_mode = InteractionMode.AUTO
-        execution._task_state = TaskState()
-        preflight_calls: list[dict] = []
+        await execution.resume_session(session)
+        summary_calls: list[tuple[int, str | None]] = []
 
-        async def fake_preflight_compact(self, messages, session_msgs=None, **kwargs):
-            preflight_calls.append(kwargs)
-            return None, PreflightCompactionResult(compacted=False)
+        async def summarize(head_messages, previous_summary):
+            summary_calls.append((len(head_messages), previous_summary))
+            return "unexpected compaction"
 
         async def fake_astream(initial, _config, *, stream_mode="values"):
             if False:
                 yield
             yield {"messages": initial["messages"], "task_state": initial["task_state"]}
 
-        execution._preflight_compact_if_needed = MethodType(fake_preflight_compact, execution)
+        execution._run_compaction_agent = summarize
         execution.graph = SimpleNamespace(astream=fake_astream)
-        execution._compaction = SimpleNamespace(prune=lambda _messages: None)
 
         test_dock = BottomInputDock()
         set_dock(test_dock)
@@ -871,7 +864,99 @@ async def test_resume_compaction_uses_token_threshold_not_message_count(tmp_path
                 ),
             )
 
-            assert preflight_calls == [{"force": False, "ask": True, "reason": "soft_threshold"}]
+            rows = await load_messages(session.id)
+            assert summary_calls == []
+            assert len(rows) == 502
+            assert rows[-1].content == "hello world"
+            assert not any(is_compaction_row(row) for row in rows)
+            assert execution._session_msg_cache is not None
+            assert len(execution._session_msg_cache) == 502
+        finally:
+            test_dock.deactivate()
+            test_dock.reset()
+            set_dock(None)
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_resume_compaction_triggers_on_tokens_before_message_count(tmp_path):
+    session = await create_session(
+        workspace=str(tmp_path),
+        provider="mimo",
+        model="mimo-v2.5",
+    )
+    try:
+        history_contents = [f"history-{index} " + ("history " * 3500) for index in range(6)]
+        for index, history_content in enumerate(history_contents):
+            await save_message(
+                MessageRow(
+                    session_id=session.id,
+                    role="user" if index % 2 == 0 else "assistant",
+                    content=history_content,
+                )
+            )
+
+        execution = make_langgraph_execution(
+            Config(
+                workspace=str(tmp_path),
+                model=ModelConfig(
+                    provider="mimo",
+                    model="mimo-v2.5",
+                    max_tokens=1000,
+                    context_window=40_000,
+                ),
+            ),
+            api_key="test-key",
+            session=session,
+            ui=runtime_ui_port,
+        )
+        await execution.resume_session(session)
+        summary_calls: list[tuple[int, str | None]] = []
+        preflight_results = []
+
+        async def summarize(head_messages, previous_summary):
+            summary_calls.append((len(head_messages), previous_summary))
+            return "soft-threshold summary"
+
+        original_preflight = execution._preflight_compact_if_needed
+
+        async def observe_preflight(messages, session_msgs=None, **kwargs):
+            result, metadata = await original_preflight(messages, session_msgs, **kwargs)
+            preflight_results.append(metadata)
+            return result, metadata
+
+        async def fake_astream(initial, _config, *, stream_mode="values"):
+            if False:
+                yield
+            yield {"messages": initial["messages"], "task_state": initial["task_state"]}
+
+        execution._run_compaction_agent = summarize
+        execution._preflight_compact_if_needed = observe_preflight
+        execution.graph = SimpleNamespace(astream=fake_astream)
+
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        try:
+            await execution.run_turn(
+                "current question",
+                context=TurnExecutionContext(
+                    thread_id=execution.session_id or "coding",
+                    session_id=execution.session_id or "",
+                ),
+            )
+
+            rows = await load_messages(session.id)
+            assert len(summary_calls) == 1
+            assert len(preflight_results) == 1
+            preflight = preflight_results[0]
+            assert preflight.compacted is True
+            assert preflight.summary == "soft-threshold summary"
+            assert preflight.reason == "soft_threshold"
+            assert preflight.pre_tokens >= execution._compaction.soft_threshold()
+            assert preflight.pre_tokens < int(execution._compaction.context_limit * 0.90)
+            assert rows[-1].content == "current question"
         finally:
             test_dock.deactivate()
             test_dock.reset()
