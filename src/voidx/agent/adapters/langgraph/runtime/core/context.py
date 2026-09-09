@@ -45,9 +45,13 @@ def rebuild_llm_messages(
     compaction_happened: bool,
     inline_compaction_guide_for: Callable[[list[BaseMessage]], HumanMessage | None],
     message_token_estimator: Callable[[BaseMessage], int] | None = None,
+    strip_consumed_images: bool = False,
 ) -> tuple[list[BaseMessage], list[HumanMessage], bool]:
+    combined = [*messages, *guidance_messages]
+    if strip_consumed_images:
+        combined = _strip_consumed_images(combined)
     base_messages = trim_superseded_file_tools(
-        _strip_consumed_images([*messages, *guidance_messages]),
+        combined,
         token_estimator=message_token_estimator,
     )
     if allow_inline_compaction and not compaction_happened:

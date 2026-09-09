@@ -257,6 +257,11 @@ class LlmTurn:
                     message,
                     host.config.model.model,
                 ),
+                strip_consumed_images=(
+                    host.image_strip_enabled()
+                    if callable(getattr(host, "image_strip_enabled", None))
+                    else bool(getattr(host, "image_strip_enabled", False))
+                ),
             )
 
         async def save_context_frame(

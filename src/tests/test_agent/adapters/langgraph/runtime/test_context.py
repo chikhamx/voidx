@@ -3,13 +3,14 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from voidx.agent.adapters.langgraph.runtime.core.context import rebuild_llm_messages
 
 
-def _rebuild(messages):
+def _rebuild(messages, *, strip_consumed_images: bool = False):
     rebuilt, convergence_messages, convergence_forced = rebuild_llm_messages(
         messages,
         [],
         allow_inline_compaction=False,
         compaction_happened=False,
         inline_compaction_guide_for=lambda _messages: None,
+        strip_consumed_images=strip_consumed_images,
     )
     assert convergence_messages == []
     assert convergence_forced is False
@@ -32,7 +33,18 @@ def test_rebuild_keeps_images_until_the_message_is_consumed():
     assert rebuilt[0].content == image_message.content
 
 
-def test_rebuild_removes_consumed_images_and_preserves_text():
+def test_rebuild_default_keeps_consumed_images():
+    image_message = _image_message()
+
+    rebuilt = _rebuild([
+        image_message,
+        AIMessage(content="done"),
+    ])
+
+    assert rebuilt[0].content == image_message.content
+
+
+def test_rebuild_removes_consumed_images_and_preserves_text_when_strip_enabled():
     image_message = _image_message()
 
     rebuilt = _rebuild([
@@ -47,7 +59,7 @@ def test_rebuild_removes_consumed_images_and_preserves_text():
             }],
         ),
         ToolMessage(content="contents", tool_call_id="read-1"),
-    ])
+    ], strip_consumed_images=True)
 
     assert rebuilt[0].content == [{"type": "text", "text": "describe this"}]
     assert image_message.content[1]["type"] == "image_url"
@@ -62,7 +74,7 @@ def test_rebuild_removes_old_images_but_keeps_new_unconsumed_images():
         old_image,
         AIMessage(content="done"),
         new_image,
-    ])
+    ], strip_consumed_images=True)
 
     assert rebuilt[0].content == [{"type": "text", "text": "old"}]
     assert rebuilt[2].content == new_image.content
@@ -73,7 +85,7 @@ def test_rebuild_uses_empty_text_when_consumed_message_only_had_images():
         {"type": "image_url", "image_url": {"url": "data:image/png;base64,image"}},
     ])
 
-    rebuilt = _rebuild([image_message, AIMessage(content="done")])
+    rebuilt = _rebuild([image_message, AIMessage(content="done")], strip_consumed_images=True)
 
     assert rebuilt[0].content == ""
 
@@ -105,7 +117,7 @@ def test_rebuild_does_not_revive_images_when_old_file_tool_group_is_trimmed():
         ToolMessage(content="1\told", tool_call_id="old-read"),
         new_read,
         ToolMessage(content="1\tnew", tool_call_id="new-read"),
-    ])
+    ], strip_consumed_images=True)
 
     assert rebuilt[0].content == [{"type": "text", "text": "describe this"}]
     assert not any(

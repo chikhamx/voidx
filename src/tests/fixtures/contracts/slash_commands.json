@@ -97,6 +97,12 @@
   },
   {
     "arg": "args",
+    "desc": "Configure image handling (strip on/off)",
+    "method": "_image",
+    "name": "/image"
+  },
+  {
+    "arg": "args",
     "desc": "Generate AGENTS.md for this project",
     "method": "_init",
     "name": "/init"

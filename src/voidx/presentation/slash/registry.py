@@ -34,6 +34,7 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand("/goal", "Switch to goal mode or manage the current goal", "_goal", "args"),
     SlashCommand("/guide", "Add guidance to the running agent turn", "_guide", "args"),
     SlashCommand("/help", "Show all commands", "_show_help", "none"),
+    SlashCommand("/image", "Configure image handling (strip on/off)", "_image", "args"),
     SlashCommand("/init", "Generate AGENTS.md for this project", "_init", "args"),
     SlashCommand("/lang", "Set response language preference", "_lang", "args"),
     SlashCommand("/list", "List saved sessions", "_list_sessions", "none"),

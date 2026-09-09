@@ -88,6 +88,59 @@ class ModeCommandsMixin:
         state = "on" if self.mode_port.debug_enabled() else "off"
         self.mode_port.ui.print(f"[dim]debug {state}[/dim]")
 
+    async def _image(self, arg: str) -> None:
+        parts = arg.strip().split()
+        if not parts:
+            app = self.mode_port.prompt_ui
+            if app is not None:
+                choices = [
+                    ("Strip off (default)", "strip_off", "Keep all images across conversational turns."),
+                    ("Strip on", "strip_on", "Strip consumed images from past turns to save context tokens."),
+                ]
+                selected = await app.ask_choice("Image handling", choices)
+                if selected == "strip_on":
+                    self.mode_port.set_image_strip(True)
+                elif selected == "strip_off":
+                    self.mode_port.set_image_strip(False)
+                else:
+                    return
+                state = "on" if self.mode_port.image_strip_enabled() else "off"
+                self.mode_port.ui.print(f"[dim]image strip: {state}[/dim]")
+                return
+
+            state = "on" if self.mode_port.image_strip_enabled() else "off"
+            self.mode_port.ui.print(f"[dim]image strip: {state}[/dim]")
+            self.mode_port.ui.print("Usage: /image [strip [on|off]]")
+            return
+
+        cmd = parts[0].lower()
+        if cmd == "strip":
+            if len(parts) == 1:
+                self.mode_port.set_image_strip(not self.mode_port.image_strip_enabled())
+            else:
+                val = parts[1].lower()
+                if val in ("on", "true", "1", "yes", "enable"):
+                    self.mode_port.set_image_strip(True)
+                elif val in ("off", "false", "0", "no", "disable"):
+                    self.mode_port.set_image_strip(False)
+                else:
+                    self.mode_port.ui.error("Usage: /image [strip [on|off]]")
+                    return
+        elif cmd in ("on", "true", "1", "yes", "enable"):
+            self.mode_port.set_image_strip(True)
+        elif cmd in ("off", "false", "0", "no", "disable"):
+            self.mode_port.set_image_strip(False)
+        elif cmd == "status":
+            state = "on" if self.mode_port.image_strip_enabled() else "off"
+            self.mode_port.ui.print(f"[dim]image strip: {state}[/dim]")
+            return
+        else:
+            self.mode_port.ui.error("Usage: /image [strip [on|off]]")
+            return
+
+        state = "on" if self.mode_port.image_strip_enabled() else "off"
+        self.mode_port.ui.print(f"[dim]image strip: {state}[/dim]")
+
     def _log(self, arg: str) -> None:
         config = self.mode_port.log_config
         if config is None:

@@ -200,9 +200,19 @@ class ModeSlashAdapter:
     @property
     def log_config(self): return _LogConfigView(self._execution)
     async def clear_current_session(self): return await self._execution.clear_current_session()
+    @property
+    def prompt_ui(self): return _PromptUi(self._execution) if self._execution.presentation_ui._interaction_frontend is not None else None
     def debug_enabled(self): return self._execution.debug_enabled
+    def image_strip_enabled(self):
+        val = getattr(self._execution, "image_strip_enabled", False)
+        if isinstance(val, property):
+            return bool(val.__get__(self._execution, type(self._execution)))
+        if callable(val):
+            return bool(val())
+        return bool(val)
     def interaction_mode_value(self): return self._execution.interaction_mode_value()
     def set_debug(self, value): return self._execution.set_debug(value)
+    def set_image_strip(self, value): return self._execution.set_image_strip(value)
     def set_interaction_mode(self, mode): return self._execution.set_interaction_mode(mode)
 
 

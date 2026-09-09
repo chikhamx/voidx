@@ -464,6 +464,7 @@ class LangGraphExecution:
 
         self._interaction_mode: InteractionMode = InteractionMode.AUTO
         self._debug: bool = False
+        self._image_strip: bool = False
         self._instruction.set_debug(self._debug)
         self._ui.ui.set_debug(self._debug)
 
@@ -1278,6 +1279,13 @@ class LangGraphExecution:
         self._debug = value
         self._instruction.set_debug(value)
         self._ui.ui.set_debug(value)
+
+    @property
+    def image_strip_enabled(self) -> bool:
+        return getattr(self, "_image_strip", False)
+
+    def set_image_strip(self, value: bool) -> None:
+        self._image_strip = bool(value)
 
     def _build(self) -> None:
         self.graph = build_graph(self)
