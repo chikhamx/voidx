@@ -246,6 +246,7 @@ class FileReadTool:
             return ToolResult(
                 title=f"Read 0 lines",
                 output=f"Offset {inp.offset} is beyond end of file (file has {len(lines)} lines).",
+                summary=f"[0,0]/{len(lines)}",
                 metadata={"file": inp.file_path, "lines": 0, "total_lines": len(lines), "error": True, "reason": "offset_beyond_eof"},
             )
         end = start + (inp.limit or len(lines))
@@ -258,10 +259,12 @@ class FileReadTool:
             covered_lines = requested_end - requested_start + 1
             bounded = _bounded_numbered_read_output(sliced, start + 1)
             output = bounded.output
+            start_line = start + 1 if bounded.lines > 0 else 0
+            end_line = bounded.end_line if bounded.lines > 0 else 0
             return ToolResult(
                 title=f"Read {bounded.lines} lines",
                 output=output,
-                summary=f"{bounded.lines}/{len(lines)} lines",
+                summary=f"[{start_line},{end_line}]/{len(lines)}",
                 metadata={
                     "file": inp.file_path,
                     "lines": bounded.lines,
@@ -283,10 +286,12 @@ class FileReadTool:
         if bounded.lines > 0:
             record_read_range(ctx, path, start + 1, bounded.end_line)
 
+        start_line = start + 1 if bounded.lines > 0 else 0
+        end_line = bounded.end_line if bounded.lines > 0 else 0
         return ToolResult(
             title=f"Read {bounded.lines} lines",
             output=bounded.output,
-            summary=f"{bounded.lines}/{len(lines)} lines",
+            summary=f"[{start_line},{end_line}]/{len(lines)}",
             metadata={
                 "file": inp.file_path,
                 "lines": bounded.lines,

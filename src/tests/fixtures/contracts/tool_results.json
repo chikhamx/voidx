@@ -2,7 +2,7 @@
   "file_read_success": {
     "title": "Read 2 lines",
     "output": "1\talpha\n2\tbeta",
-    "summary": "2/2 lines",
+    "summary": "[1,2]/2",
     "metadata": {
       "file": "${WORKSPACE}/sample.txt",
       "lines": 2,

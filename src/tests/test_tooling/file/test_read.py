@@ -49,6 +49,7 @@ class TestFileOps:
         assert result.output.strip() == expected
         assert result.metadata["lines"] == 3
         assert result.metadata["total_lines"] == 3
+        assert result.summary == "[1,3]/3"
 
     @pytest.mark.asyncio
     async def test_read_empty_file_reports_zero_lines(self, tmp_path):
@@ -62,6 +63,7 @@ class TestFileOps:
         assert result.metadata["lines"] == 0
         assert result.metadata["total_lines"] == 0
         assert "Read 0 lines" in result.title
+        assert result.summary == "[0,0]/0"
 
     @pytest.mark.asyncio
     async def test_read_rejects_files_with_null_bytes(self, tmp_path):
@@ -161,7 +163,7 @@ class TestFileOps:
         assert "[Lines " not in second.output
         assert "were already read" not in second.output
         assert second.title == "Read 51 lines"
-        assert second.summary == "51/120 lines"
+        assert second.summary == "[50,100]/120"
 
     @pytest.mark.asyncio
     async def test_already_read_repeated_output_stays_within_llm_message_budget(self, tmp_path):
@@ -186,6 +188,24 @@ class TestFileOps:
         assert len(second.output) <= DEFAULT_TOOL_MESSAGE_MAX_CHARS
         sanitized = sanitize_tool_message_content(second.output, workspace=str(tmp_path))
         assert "[Tool output truncated" not in sanitized
+    @pytest.mark.asyncio
+    async def test_read_summary_range_format(self, tmp_path):
+        f = tmp_path / "numbers.txt"
+        f.write_text("\n".join(f"num {i}" for i in range(1, 201)) + "\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+
+        # Reading subrange: lines 123 to 156 (34 lines) of 200 total lines
+        sub = await r.execute_tool("read", {"file_path": "numbers.txt", "offset": 123, "limit": 34}, ctx)
+        assert sub.summary == "[123,156]/200"
+
+        # Reading single line: line 5 of 200 total lines
+        single = await r.execute_tool("read", {"file_path": "numbers.txt", "offset": 5, "limit": 1}, ctx)
+        assert single.summary == "[5,5]/200"
+
+        # Reading beyond EOF: offset 250 of 200 total lines
+        beyond = await r.execute_tool("read", {"file_path": "numbers.txt", "offset": 250}, ctx)
+        assert beyond.summary == "[0,0]/200"
 
     @pytest.mark.asyncio
     @pytest.mark.asyncio
