@@ -116,7 +116,7 @@ async def test_checkpoint_prompt_event_renders_voidx_plan_and_decision(isolated_
         nodes = _tree_nodes(isolated_dock.tree.root)
         checkpoint = next(node for node in nodes if node.node_type == "checkpoint")
 
-        assert "voidx plan" in rendered
+        assert checkpoint.header == ""
         assert "Plan: Add checkpoint node" in rendered
         assert "1. Add event schema" in rendered
         assert "src/voidx/tools/plan_checkpoint.py" in rendered
@@ -127,9 +127,9 @@ async def test_checkpoint_prompt_event_renders_voidx_plan_and_decision(isolated_
         assert any("1." in line and "#61AFEF" in line for line in checkpoint.body_lines)
         assert any("src/voidx/tools/plan_checkpoint.py" in line and "#56D4DD" in line for line in checkpoint.body_lines)
         assert any("Do not duplicate hidden JSON result" in line and "#E06C75" in line for line in checkpoint.body_lines)
-        assert checkpoint.status == "running"
+        assert checkpoint.payload["lifecycle"] == "completed"
         assert checkpoint.payload["checkpoint_id"] == "cp_1"
-        assert isolated_dock.safe_flush_line_count(120, 0) < len(
+        assert isolated_dock.safe_flush_line_count(120, 0) == len(
             isolated_dock.tree.render(120)
         )
 
@@ -144,7 +144,7 @@ async def test_checkpoint_prompt_event_renders_voidx_plan_and_decision(isolated_
         rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(120))
 
         assert checkpoint.status == "done"
-        assert "voidx plan approved" in rendered
+        assert checkpoint.header == ""
         assert "Decision: Implement directly" in rendered
         assert "User: Implement directly" not in rendered
         assert checkpoint.payload["decision"] == "approved"
@@ -234,7 +234,10 @@ async def test_checkpoint_needs_doc_uses_distinct_header_style(isolated_dock):
             if node.node_type == "checkpoint"
         )
 
-        assert "[yellow]voidx plan needs_doc[/yellow]" in checkpoint.header
+        assert checkpoint.header == ""
+        assert checkpoint.payload["decision"] == "needs_doc"
+        rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(120))
+        assert "Decision: Document first" in rendered
     finally:
         await bus.stop()
 
@@ -274,18 +277,18 @@ async def test_clarify_prompt_event_renders_voidx_clarify_and_answer(isolated_do
         nodes = _tree_nodes(isolated_dock.tree.root)
         clarify = next(node for node in nodes if node.node_type == "clarify")
 
-        assert "voidx clarify" in rendered
+        assert clarify.header == ""
         assert "Question: Which approach should I take?" in rendered
         assert "Suggestions" in rendered
         assert "implement directly" in rendered
         assert "document first" in rendered
         assert any("Question:" in line and "#EBCB8B" in line for line in clarify.body_lines)
         assert any("-" in line and "#61AFEF" in line for line in clarify.body_lines)
-        assert clarify.status == "running"
+        assert clarify.payload["lifecycle"] == "completed"
         assert clarify.payload["clarify_id"] == "cl_1"
         assert clarify.payload["question"] == "Which approach should I take?"
         assert clarify.payload["options"] == ["implement directly", "document first"]
-        assert isolated_dock.safe_flush_line_count(120, 0) < len(
+        assert isolated_dock.safe_flush_line_count(120, 0) == len(
             isolated_dock.tree.render(120)
         )
 
@@ -298,7 +301,7 @@ async def test_clarify_prompt_event_renders_voidx_clarify_and_answer(isolated_do
         rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(120))
 
         assert clarify.status == "done"
-        assert "voidx clarify answered" in rendered
+        assert clarify.header == ""
         assert "Answer: implement directly" in rendered
         assert "User: implement directly" not in rendered
         assert clarify.payload["answer"] == "implement directly"
@@ -375,7 +378,7 @@ async def test_clarify_cancelled_renders_skipped_header(isolated_dock):
             if node.node_type == "clarify"
         )
 
-        assert "[red]voidx clarify skipped[/red]" in clarify.header
+        assert clarify.header == ""
         assert clarify.status == "done"
         assert clarify.payload["cancelled"] is True
         rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(120))
@@ -579,10 +582,14 @@ async def test_loop_spec_prompt_event_renders_spec_and_decision(isolated_dock):
         nodes = _tree_nodes(isolated_dock.tree.root)
         spec_node = next(node for node in nodes if node.node_type == "loop_spec")
 
-        assert "loop spec" in rendered
+        assert spec_node.header == ""
         assert "Loop: Monitor CI health" in rendered
         assert "Interval: 60s (fixed)" in rendered
         assert spec_node.payload["prompt_id"] == "ls_bus_1"
+        assert spec_node.payload["lifecycle"] == "completed"
+        assert isolated_dock.safe_flush_line_count(120, 0) == len(
+            isolated_dock.tree.render(120)
+        )
 
         await bus.emit(LoopSpecDecisionSubmitted(
             prompt_id="ls_bus_1",
@@ -593,7 +600,7 @@ async def test_loop_spec_prompt_event_renders_spec_and_decision(isolated_dock):
 
         rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(120))
         assert spec_node.status == "done"
-        assert "loop spec approved" in rendered
+        assert spec_node.header == ""
         assert "Decision: approved" in rendered
         assert spec_node.payload["decision"] == "approved"
     finally:
@@ -629,12 +636,16 @@ async def test_goal_spec_prompt_event_renders_spec_and_decision(isolated_dock):
         nodes = _tree_nodes(isolated_dock.tree.root)
         spec_node = next(node for node in nodes if node.node_type == "goal_spec")
 
-        assert "goal spec" in rendered
+        assert spec_node.header == ""
         assert "Goal: Fix flaky tests" in rendered
         assert "Suite green 3 runs in a row" in rendered
         assert "Stabilize retries first" in rendered
         assert "12" in rendered
         assert spec_node.payload["prompt_id"] == "gs_1"
+        assert spec_node.payload["lifecycle"] == "completed"
+        assert isolated_dock.safe_flush_line_count(120, 0) == len(
+            isolated_dock.tree.render(120)
+        )
 
         await bus.emit(GoalSpecDecisionSubmitted(
             prompt_id="gs_1",
@@ -645,7 +656,7 @@ async def test_goal_spec_prompt_event_renders_spec_and_decision(isolated_dock):
 
         rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(120))
         assert spec_node.status == "done"
-        assert "goal spec approved" in rendered
+        assert spec_node.header == ""
         assert "Decision: approved" in rendered
         assert spec_node.payload["decision"] == "approved"
     finally:
@@ -778,14 +789,14 @@ def test_dock_show_and_resolve_loop_spec(isolated_dock):
             choices=[{"label": "Approve and start", "value": "approved"}],
         )
         assert node.node_type == "loop_spec"
-        assert "loop spec" in node.header
+        assert node.header == ""
         rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(100))
         assert "Loop: Auto monitor service" in rendered
         assert "Interval: 15s (fixed)" in rendered
 
         isolated_dock.resolve_loop_spec("ls_1", "approved", "approved")
         assert node.status == "done"
-        assert "loop spec approved" in node.header
+        assert node.header == ""
         rendered_after = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(100))
         assert "Decision: approved" in rendered_after
     finally:
@@ -810,7 +821,7 @@ async def test_clarify_resolution_is_completed_but_not_writer_settled(isolated_d
             if node.node_type == "clarify"
         )
 
-        assert clarify.payload["lifecycle"] == "running"
+        assert clarify.payload["lifecycle"] == "completed"
         assert clarify.id not in isolated_dock._settled_node_ids
 
         await bus.emit(ClarifyAnswerSubmitted(
@@ -842,7 +853,7 @@ async def test_checkpoint_resolution_is_completed_but_not_writer_settled(isolate
             if node.node_type == "checkpoint"
         )
 
-        assert checkpoint.payload["lifecycle"] == "running"
+        assert checkpoint.payload["lifecycle"] == "completed"
         assert checkpoint.id not in isolated_dock._settled_node_ids
 
         await bus.emit(CheckpointDecisionSubmitted(

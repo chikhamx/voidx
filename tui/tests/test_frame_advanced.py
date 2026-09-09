@@ -404,21 +404,23 @@ def test_interactive_prompt_flushes_only_final_version(
     dock.start_turn("demo")
     if interaction == "clarify":
         dock.show_clarify("cl_1", "Which approach?", ["implement", "document"])
-        prompt_text = "voidx clarify"
         detail_text = "Question: Which approach?"
+        decision_text = "Answer: implement"
     else:
         dock.show_checkpoint(
             "cp_1",
             {"goal": "Add checkpoint node", "steps": ["Render TUI node"]},
             [],
         )
-        prompt_text = "voidx plan"
         detail_text = "Plan: Add checkpoint node"
+        decision_text = "Decision: Implement directly"
 
     tui._flush_committed()
 
-    assert prompt_text not in fake_stdout.text
-    assert detail_text not in fake_stdout.text
+    assert "voidx clarify" not in fake_stdout.text
+    assert "voidx plan" not in fake_stdout.text
+    assert detail_text in fake_stdout.text
+    assert decision_text not in fake_stdout.text
 
     if interaction == "clarify":
         dock.resolve_clarify("cl_1", "implement")
@@ -431,8 +433,10 @@ def test_interactive_prompt_flushes_only_final_version(
         )
     tui._flush_committed()
 
-    assert fake_stdout.text.count(prompt_text) == 1
+    assert "voidx clarify" not in fake_stdout.text
+    assert "voidx plan" not in fake_stdout.text
     assert fake_stdout.text.count(detail_text) == 1
+    assert fake_stdout.text.count(decision_text) == 1
 
 
 def test_typing_redraws_input_region_without_rewriting_transcript(tmp_path, monkeypatch):

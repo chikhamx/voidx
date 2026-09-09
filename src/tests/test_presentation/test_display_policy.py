@@ -94,7 +94,7 @@ class TestToolDisplayPolicy:
         mode, _ = policy.resolve_display_mode("bash", "error", result_ok=False)
         assert mode == ToolDisplayMode.SHOW
 
-    @pytest.mark.parametrize("tool_name", ["clarify", "checkpoint", "loop", "goal"])
+    @pytest.mark.parametrize("tool_name", ["clarify", "checkpoint", "loop", "goal", "loop_init", "goal_init"])
     def test_resolve_display_mode_hidden_failure_stays_hidden(self, tool_name):
         policy = ToolDisplayPolicy(rules=DEFAULT_DISPLAY_RULES)
         mode, _ = policy.resolve_display_mode(tool_name, "error", result_ok=False)

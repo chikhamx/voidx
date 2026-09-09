@@ -20,12 +20,15 @@ class DockCheckpointNodeMixin:
         parent: OutputNode | None = None,
     ) -> OutputNode:
         body = _checkpoint_body(plan)
+        if body:
+            body.append("")
         node = self._tree.new_node(
             parent=parent or self.ensure_agent(),
             node_type="checkpoint",
-            header="[yellow]●[/yellow] [bold]voidx plan[/bold]",
+            header="",
             body_lines=body,
             collapsed=False,
+            status="done",
             payload={
                 "interaction": "checkpoint",
                 "checkpoint_id": checkpoint_id,
@@ -34,7 +37,7 @@ class DockCheckpointNodeMixin:
             },
         )
         self._checkpoint_nodes[checkpoint_id] = node
-        self._mark_unsettled(node)
+        self._mark_completed(node)
         self.refresh()
         return node
 
@@ -52,14 +55,10 @@ class DockCheckpointNodeMixin:
             log_tool_event("ui_checkpoint_orphan", tool_name="dock", message=f"Checkpoint decision received for unknown checkpoint_id={checkpoint_id}")
             return
         display_response = response or label or decision
-        color = _decision_color(decision)
-        node.header = f"[{color}]●[/{color}] [{color}]voidx plan {escape(decision)}[/{color}]"
         node.status = "done"
         node.payload["decision"] = decision
         node.payload["response"] = display_response
         node.payload["was_custom_input"] = was_custom_input
-        if not node.body_lines or node.body_lines[-1] != "":
-            node.body_lines.append("")
         child = self._tree.new_node(
             parent=node,
             node_type="message",
@@ -116,11 +115,3 @@ def _string_list(value: object) -> list[str]:
     return [str(item) for item in value if str(item).strip()]
 
 
-def _decision_color(decision: str) -> str:
-    if decision == "rejected":
-        return "red"
-    if decision == "needs_doc":
-        return "yellow"
-    if decision == "modified":
-        return "cyan"
-    return "dim"

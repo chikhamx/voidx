@@ -18,12 +18,15 @@ class DockClarifyNodeMixin:
         parent: OutputNode | None = None,
     ) -> OutputNode:
         body = _clarify_body(question, options)
+        if body:
+            body.append("")
         node = self._tree.new_node(
             parent=parent or self.ensure_agent(),
             node_type="clarify",
-            header="[yellow]●[/yellow] [bold]voidx clarify[/bold]",
+            header="",
             body_lines=body,
             collapsed=False,
+            status="done",
             payload={
                 "interaction": "clarify",
                 "clarify_id": clarify_id,
@@ -32,7 +35,7 @@ class DockClarifyNodeMixin:
             },
         )
         self._clarify_nodes[clarify_id] = node
-        self._mark_unsettled(node)
+        self._mark_completed(node)
         self.refresh()
         return node
 
@@ -49,15 +52,10 @@ class DockClarifyNodeMixin:
             log_tool_event("ui_clarify_orphan", tool_name="dock", message=f"Clarify answer received for unknown clarify_id={clarify_id}")
             return
         display_response = answer or ("skipped" if cancelled else "")
-        color = "red" if cancelled else "cyan"
-        state = "skipped" if cancelled else "answered"
-        node.header = f"[{color}]●[/{color}] [{color}]voidx clarify {escape(state)}[/{color}]"
         node.status = "done"
         node.payload["answer"] = answer
         node.payload["cancelled"] = cancelled
         node.payload["was_custom_input"] = was_custom_input
-        if not node.body_lines or node.body_lines[-1] != "":
-            node.body_lines.append("")
         child = self._tree.new_node(
             parent=node,
             node_type="message",

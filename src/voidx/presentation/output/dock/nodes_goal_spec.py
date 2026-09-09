@@ -19,12 +19,16 @@ class DockGoalSpecNodeMixin:
         *,
         parent: OutputNode | None = None,
     ) -> OutputNode:
+        body = _goal_spec_body(spec)
+        if body:
+            body.append("")
         node = self._tree.new_node(
             parent=parent or self.ensure_agent(),
             node_type="goal_spec",
-            header="[yellow]●[/yellow] [bold]goal spec[/bold]",
-            body_lines=_goal_spec_body(spec),
+            header="",
+            body_lines=body,
             collapsed=False,
+            status="done",
             payload={
                 "interaction": "goal_spec",
                 "prompt_id": prompt_id,
@@ -33,7 +37,7 @@ class DockGoalSpecNodeMixin:
             },
         )
         self._goal_spec_nodes[prompt_id] = node
-        self._mark_unsettled(node)
+        self._mark_completed(node)
         self.refresh()
         return node
 
@@ -48,12 +52,8 @@ class DockGoalSpecNodeMixin:
             log_tool_event("ui_goal_spec_orphan", tool_name="dock", message=f"Goal spec decision received for unknown prompt_id={prompt_id}")
             return
         label = _DECISION_LABELS.get(decision, decision)
-        color = _decision_color(decision)
-        node.header = f"[{color}]●[/{color}] [{color}]goal spec {escape(label)}[/{color}]"
         node.status = "done"
         node.payload["decision"] = decision
-        if not node.body_lines or node.body_lines[-1] != "":
-            node.body_lines.append("")
         child_text = response or label
         child = self._tree.new_node(
             parent=node,
@@ -107,9 +107,3 @@ def _goal_spec_body(spec: dict[str, Any]) -> list[str]:
     return body
 
 
-def _decision_color(decision: str) -> str:
-    if decision in {"approved", "auto_approved"}:
-        return "green"
-    if decision == "cancelled":
-        return "red"
-    return "yellow"
