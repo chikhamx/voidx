@@ -93,9 +93,44 @@ async def test_loop_profile_injects_loop_tool_and_not_turn(tmp_path, monkeypatch
         _CURRENT_THREAD_EXECUTION_STATE.reset(token)
 
     names = [d["function"]["name"] for d in model.bound_tools]
-    assert "loop" in names
+    assert "loop_commit" in names
+    assert "loop_start" in names
+    assert "loop" not in names
     assert "turn_init" not in names
     assert "turn" not in names
+
+
+@pytest.mark.asyncio
+async def test_loop_profile_idle_injects_loop_init_tool(tmp_path, monkeypatch) -> None:
+    model = ScriptedStreamingModel([[_text_chunk("proposing")]])
+    graph = _make_graph(tmp_path, model, monkeypatch)
+    token = _CURRENT_THREAD_EXECUTION_STATE.set(
+        ThreadExecutionState(
+            runtime_profile=LOOP_PROFILE,
+            turn_context=TurnExecutionContext(
+                thread_id="loop:t",
+                session_id="loop:t",
+                runtime_profile=LOOP_PROFILE,
+                workspace=str(tmp_path),
+                loop_phase="idle",
+            ),
+        )
+    )
+    try:
+        await graph._call_llm({
+            "messages": [HumanMessage(content="start loop")],
+            "step_count": 0,
+            "persona": "coordinate",
+            "turn_state": "running",
+        })
+    finally:
+        _CURRENT_THREAD_EXECUTION_STATE.reset(token)
+
+    names = [d["function"]["name"] for d in model.bound_tools]
+    assert "loop_init" in names
+    assert "loop_start" not in names
+    assert "loop_commit" not in names
+    assert "loop" not in names
 
 
 @pytest.mark.asyncio

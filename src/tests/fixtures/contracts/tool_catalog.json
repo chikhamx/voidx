@@ -920,6 +920,119 @@
   {
     "type": "function",
     "function": {
+      "name": "loop_init",
+      "description": "Submit a LoopSpec for user approval during shaping/idle phase. Requires prompt, and optional integer interval_seconds for fixed intervals.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "description": "The loop prompt/goal describing what the autonomous loop should do.",
+            "title": "Prompt",
+            "type": "string"
+          },
+          "interval_seconds": {
+            "default": null,
+            "description": "Fixed interval in whole seconds (integer only, >= 1). Omit for dynamic mode.",
+            "title": "Interval Seconds",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "prompt",
+          "interval_seconds"
+        ],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "loop_start",
+      "description": "Declare the specific micro-goal for this loop iteration.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "goal": {
+            "description": "Iteration micro-goal. Declares what this specific iteration aims to accomplish.",
+            "title": "Goal",
+            "type": "string"
+          }
+        },
+        "required": [
+          "goal"
+        ],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "loop_commit",
+      "description": "Submit the iteration decision, durable summary, and schedule the next wakeup. The loop only ends when the user stops it — outcome must be 'continue'.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "const": "continue",
+            "default": "continue",
+            "description": "Iteration outcome. The only valid value is 'continue' to schedule the next wakeup.",
+            "title": "Outcome",
+            "type": "string"
+          },
+          "summary": {
+            "description": "Concise durable summary of what was accomplished in this iteration.",
+            "title": "Summary",
+            "type": "string"
+          },
+          "progress": {
+            "default": "none",
+            "description": "Progress toward the loop goal: none, partial, or meaningful.",
+            "enum": [
+              "none",
+              "partial",
+              "meaningful"
+            ],
+            "title": "Progress",
+            "type": "string"
+          },
+          "next_delay_seconds": {
+            "default": null,
+            "description": "Optional custom delay in whole seconds until next iteration (dynamic mode only, integer >= 1).",
+            "title": "Next Delay Seconds",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "reason": {
+            "default": "",
+            "description": "Optional rationale for delay or progress assessment.",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "outcome",
+          "summary",
+          "progress",
+          "next_delay_seconds",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "loop",
       "description": "Runtime-backed /loop lifecycle control. The loop only ends when the user runs /loop stop or closes voidx — never end or pause it yourself. Call operation='start' with goal at iteration start. Call operation='commit' with outcome='continue' and a summary to submit the iteration decision and schedule the next wakeup — use it even when this iteration's work is done or you are waiting on something.",
       "parameters": {
@@ -950,10 +1063,10 @@
           },
           "interval_seconds": {
             "default": null,
-            "description": "For operation=init: fixed interval in seconds. Omit for dynamic mode.",
+            "description": "For operation=init: fixed interval in seconds (integer only). Omit for dynamic mode.",
             "title": "Interval Seconds",
             "type": [
-              "number",
+              "integer",
               "null"
             ]
           },
@@ -985,9 +1098,10 @@
           },
           "next_delay_seconds": {
             "default": null,
+            "description": "Delay in seconds (integer only).",
             "title": "Next Delay Seconds",
             "type": [
-              "number",
+              "integer",
               "null"
             ]
           },

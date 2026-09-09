@@ -83,7 +83,7 @@ def test_loop_profile_exposes_loop_in_idle_and_work() -> None:
 
     # loop/goal 运行时的 agent 屏蔽由闭集 policy 承担，resolver 不做特判。
     policy = _Deny({"agent"})
-    for phase in ("idle", "work"):
+    for phase, expected_in in (("idle", ["loop_init"]), ("work", ["loop_start", "loop_commit"])):
         surface = resolve_tool_surface(
             registry,
             ToolSurfaceContext(
@@ -93,10 +93,46 @@ def test_loop_profile_exposes_loop_in_idle_and_work() -> None:
             ),
         )
         names = _names(surface)
-        assert "loop" in names
+        for expected in expected_in:
+            assert expected in names
+        assert "loop" not in names
         for hidden in ("goal", "turn", "agent"):
             assert hidden not in names
 
+def test_loop_profile_exposes_phase_specific_tools_by_phase() -> None:
+    profile = RuntimeProfile(profile_id="loop", revision=1, name="Loop", protocol="loop")
+    registry = _registry(
+        "read", "agent", "loop", "loop_init", "loop_start", "loop_commit",
+    )
+    policy = _Deny({"agent"})
+
+    # idle phase -> loop_init only
+    idle_surface = resolve_tool_surface(
+        registry,
+        ToolSurfaceContext(
+            runtime_profile=profile,
+            loop_phase="idle",
+            tool_policy=policy,
+        ),
+    )
+    idle_names = _names(idle_surface)
+    assert "loop_init" in idle_names
+    assert "loop_start" not in idle_names
+    assert "loop_commit" not in idle_names
+
+    # work phase -> loop_start and loop_commit
+    work_surface = resolve_tool_surface(
+        registry,
+        ToolSurfaceContext(
+            runtime_profile=profile,
+            loop_phase="work",
+            tool_policy=policy,
+        ),
+    )
+    work_names = _names(work_surface)
+    assert "loop_init" not in work_names
+    assert "loop_start" in work_names
+    assert "loop_commit" in work_names
 
 def test_goal_profile_exposes_phase_specific_tool_by_phase() -> None:
     profile = RuntimeProfile(profile_id="goal", revision=1, name="Goal", protocol="goal")
@@ -284,7 +320,7 @@ def test_policy_applies_to_protocol_injected_tools() -> None:
 
 
 def test_protocol_definition_overrides_catalog_same_name() -> None:
-    registry = _registry("read", "loop")
+    registry = _registry("read", "loop_commit")
     profile = RuntimeProfile(profile_id="loop", revision=1, name="Loop", protocol="loop")
 
     surface = resolve_tool_surface(
@@ -292,9 +328,9 @@ def test_protocol_definition_overrides_catalog_same_name() -> None:
         ToolSurfaceContext(runtime_profile=profile, loop_phase="work", tool_policy=_AllowAll()),
     )
 
-    loop_defs = [item for item in surface.definitions if item["function"]["name"] == "loop"]
+    loop_defs = [item for item in surface.definitions if item["function"]["name"] == "loop_commit"]
     assert len(loop_defs) == 1
-    assert loop_defs[0]["function"]["description"] != "loop description"
+    assert loop_defs[0]["function"]["description"] != "loop_commit description"
 
 
 def test_goal_evaluator_surface_is_read_only_plus_goal_decision() -> None:

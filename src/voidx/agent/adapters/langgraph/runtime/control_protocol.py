@@ -121,20 +121,33 @@ _GOAL_FINAL_RESPONSE_PROMPT = (
 
 
 class LoopProtocol:
-    """Loop protocol: the loop tool replaces turn; a submitted decision ends the iteration."""
+    """Loop protocol: phase-specific lifecycle tools; submitted decision ends iteration."""
 
     protocol_id = "loop"
 
+    def __init__(self, *, phase: str = "work") -> None:
+        self.phase = phase
+
     def tool_definitions(self) -> list[dict[str, Any]]:
-        schema = LoopTool().parameters_schema()
+        from voidx.agent.adapters.tools.automation.loop import (
+            LoopCommitTool,
+            LoopInitTool,
+            LoopStartTool,
+        )
+
+        if self.phase == "idle":
+            tools = [LoopInitTool()]
+        else:
+            tools = [LoopStartTool(), LoopCommitTool()]
+
         return [{
             "type": "function",
             "function": {
-                "name": "loop",
-                "description": LoopTool.description,
-                "parameters": schema,
+                "name": tool.id,
+                "description": tool.description,
+                "parameters": tool.parameters_schema(),
             },
-        }]
+        } for tool in tools]
 
     def controller(self, ctx: ControlContext | TurnExecutionContext | None) -> Any | None:
         turn_context = turn_context_from(ctx)
@@ -165,7 +178,12 @@ class LoopProtocol:
         return controller.final_decision() is None
 
     def repair_prompt(self) -> str:
-        return LOOP_DECISION_PROMPT
+        if self.phase == "idle":
+            return "Call loop_init(prompt=...) to propose the loop specification."
+        return (
+            "This is a /loop iteration. The turn cannot end until you submit the iteration "
+            "decision with loop_commit: outcome='continue' and summary='...'."
+        )
 
 
 class GoalProtocol:

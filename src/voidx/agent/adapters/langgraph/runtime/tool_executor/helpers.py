@@ -344,6 +344,8 @@ def _is_barrier_tool(tool_call: dict) -> bool:
         "workflow",
         "compact",
         "loop",
+        "loop_init",
+        "loop_commit",
         "goal",
         "goal_init",
         "goal_checkpoint",

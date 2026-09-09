@@ -24,7 +24,10 @@ from voidx.agent.adapters.langgraph.runtime.control_protocol import (
 
 EXECUTION_ONLY_TOOLS = frozenset({"git", "lsp_format", "compact"})
 CHILD_BLOCKED_TOOLS = CHILD_BLOCKED_TOOL_IDS
-LIFECYCLE_TOOLS = frozenset({"turn", "turn_init", "goal", "goal_init", "goal_checkpoint", "goal_decision", "loop"})
+LIFECYCLE_TOOLS = frozenset({
+    "turn", "turn_init", "goal", "goal_init", "goal_checkpoint", "goal_decision",
+    "loop", "loop_init", "loop_start", "loop_commit",
+})
 
 _GOAL_PHASES = frozenset({"idle", "intake", "work", "evaluator"})
 _LOOP_PHASES = frozenset({"idle", "work"})
@@ -118,8 +121,10 @@ def resolve_tool_surface(registry, context: ToolSurfaceContext) -> ToolSurface:
         protocol_id, phase = lifecycle
         if protocol_id == "turn":
             injected = protocol.tool_definitions()
-        elif protocol_id == "loop":
-            injected = protocol.tool_definitions()
+        elif protocol_id == "loop" and phase in _LOOP_PHASES:
+            from voidx.agent.adapters.langgraph.runtime.control_protocol import LoopProtocol
+
+            injected = LoopProtocol(phase=phase).tool_definitions()
         elif protocol_id == "goal" and phase in _GOAL_VISIBLE_PHASES:
             from voidx.agent.adapters.langgraph.runtime.control_protocol import GoalProtocol
 

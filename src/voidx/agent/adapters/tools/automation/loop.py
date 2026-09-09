@@ -7,15 +7,16 @@ closing voidx, so the model-facing surface exposes no terminal outcome.
 from __future__ import annotations
 
 from typing import Any, Literal
-
-from pydantic import BaseModel, Field
-from voidx.agent.domain.task.state import GoalSpec, ToolStatePatch
-from voidx.agent.domain.automation.loop import LoopSpec
-from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext
-from voidx.tooling.domain.result import ToolResult
 from uuid import uuid4
-from voidx.tooling.domain.interaction import UserInteraction
+
+from pydantic import BaseModel, Field, field_validator
+
+from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext
+from voidx.agent.domain.automation.loop import LoopSpec
+from voidx.agent.domain.task.state import GoalSpec, ToolStatePatch
 from voidx.tooling.domain.arguments import keep_tool_args
+from voidx.tooling.domain.interaction import UserInteraction
+from voidx.tooling.domain.result import ToolResult
 from voidx.tooling.domain.schema import model_to_json_schema
 from voidx.tooling.domain.ui_events import (
     ChoicePayload,
@@ -24,6 +25,90 @@ from voidx.tooling.domain.ui_events import (
     LoopSpecPromptShown,
     ToolUiEventPublisher,
 )
+
+
+def _validate_positive_int(field_name: str, value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field_name} must be an integer >= 1")
+    if value < 1:
+        raise ValueError(f"{field_name} must be >= 1")
+    return value
+
+
+class LoopInitInput(BaseModel):
+    prompt: str = Field(
+        description="The loop prompt/goal describing what the autonomous loop should do.",
+    )
+    interval_seconds: int | None = Field(
+        default=None,
+        ge=1,
+        description="Fixed interval in whole seconds (integer only, >= 1). Omit for dynamic mode.",
+    )
+
+    @field_validator("prompt")
+    @classmethod
+    def require_prompt(cls, value: str) -> str:
+        prompt = value.strip()
+        if not prompt:
+            raise ValueError("prompt must not be empty")
+        return prompt
+
+    @field_validator("interval_seconds")
+    @classmethod
+    def check_interval(cls, value: Any) -> int | None:
+        return _validate_positive_int("interval_seconds", value)
+
+
+class LoopStartInput(BaseModel):
+    goal: str = Field(
+        description="Iteration micro-goal. Declares what this specific iteration aims to accomplish.",
+    )
+
+    @field_validator("goal")
+    @classmethod
+    def require_goal(cls, value: str) -> str:
+        goal = value.strip()
+        if not goal:
+            raise ValueError("goal must not be empty")
+        return goal
+
+
+class LoopCommitInput(BaseModel):
+    outcome: Literal["continue"] = Field(
+        default="continue",
+        description="Iteration outcome. The only valid value is 'continue' to schedule the next wakeup.",
+    )
+    summary: str = Field(
+        description="Concise durable summary of what was accomplished in this iteration.",
+    )
+    progress: Literal["none", "partial", "meaningful"] = Field(
+        default="none",
+        description="Progress toward the loop goal: none, partial, or meaningful.",
+    )
+    next_delay_seconds: int | None = Field(
+        default=None,
+        ge=1,
+        description="Optional custom delay in whole seconds until next iteration (dynamic mode only, integer >= 1).",
+    )
+    reason: str = Field(
+        default="",
+        description="Optional rationale for delay or progress assessment.",
+    )
+
+    @field_validator("summary")
+    @classmethod
+    def require_summary(cls, value: str) -> str:
+        summary = value.strip()
+        if not summary:
+            raise ValueError("summary must not be empty")
+        return summary
+
+    @field_validator("next_delay_seconds")
+    @classmethod
+    def check_delay(cls, value: Any) -> int | None:
+        return _validate_positive_int("next_delay_seconds", value)
 
 
 class LoopDecisionInput(BaseModel):
@@ -40,9 +125,10 @@ class LoopDecisionInput(BaseModel):
         default="",
         description="For operation=init: the loop prompt/goal. Required for init.",
     )
-    interval_seconds: float | None = Field(
+    interval_seconds: int | None = Field(
         default=None,
-        description="For operation=init: fixed interval in seconds. Omit for dynamic mode.",
+        ge=1,
+        description="For operation=init: fixed interval in seconds (integer only). Omit for dynamic mode.",
     )
     outcome: Literal["continue"] | None = Field(
         default=None,
@@ -60,8 +146,22 @@ class LoopDecisionInput(BaseModel):
             "honestly — consecutive 'none' iterations auto-pause the loop for user review."
         ),
     )
-    next_delay_seconds: float | None = Field(default=None)
+    next_delay_seconds: int | None = Field(
+        default=None,
+        ge=1,
+        description="Delay in seconds (integer only).",
+    )
     reason: str = Field(default="")
+
+    @field_validator("interval_seconds")
+    @classmethod
+    def check_interval(cls, value: Any) -> int | None:
+        return _validate_positive_int("interval_seconds", value)
+
+    @field_validator("next_delay_seconds")
+    @classmethod
+    def check_delay(cls, value: Any) -> int | None:
+        return _validate_positive_int("next_delay_seconds", value)
 
 
 def _normalize_loop_args(args: Any) -> Any:
@@ -78,6 +178,109 @@ def _normalize_loop_args(args: Any) -> Any:
             {"operation", "outcome", "summary", "progress", "next_delay_seconds", "reason"},
         )
     return args
+
+
+def _decision_result_from_committed(committed, controller) -> ToolResult:
+    spec = getattr(controller, "spec", None)
+    mode = spec.mode.value if spec is not None else "unknown"
+    terminal = committed.outcome in {"completed", "failed", "stop"}
+    next_delay = None if terminal else committed.next_delay_seconds
+    return ToolResult(
+        output=f"Loop decision recorded: {committed.outcome}.",
+        metadata={
+            "outcome": committed.outcome,
+            "summary": committed.summary,
+            "progress": committed.progress,
+            "reason": committed.reason,
+            "next_delay_seconds": next_delay,
+            "terminal": terminal,
+            "mode": mode,
+            "fixed": mode == "fixed",
+        },
+    )
+
+
+class LoopInitTool:
+    id = "loop_init"
+    description = (
+        "Submit a LoopSpec for user approval during shaping/idle phase. "
+        "Requires prompt, and optional integer interval_seconds for fixed intervals."
+    )
+
+    def parameters_schema(self) -> dict:
+        return model_to_json_schema(LoopInitInput)
+
+    async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+        try:
+            inp = LoopInitInput.model_validate(args)
+        except Exception as exc:
+            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
+        return await _submit_init(inp.prompt, inp.interval_seconds, ctx)
+
+
+class LoopStartTool:
+    id = "loop_start"
+    description = "Declare the specific micro-goal for this loop iteration."
+
+    def parameters_schema(self) -> dict:
+        return model_to_json_schema(LoopStartInput)
+
+    async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+        try:
+            inp = LoopStartInput.model_validate(args)
+        except Exception as exc:
+            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
+        controller = ctx.runtime.loop_control
+        if controller is None:
+            return ToolResult(
+                output="No active runtime-backed /loop controller is available in this tool context.",
+                metadata={"error": True, "loop_active": False},
+            )
+        return ToolResult(
+            output=f"Loop iteration started: {inp.goal.strip()}",
+            metadata={
+                "operation": "start",
+                "goal": inp.goal.strip(),
+                "state_patch": ToolStatePatch(
+                    goal=GoalSpec(desc=inp.goal.strip())
+                ).model_dump(mode="json", exclude_unset=True),
+            },
+        )
+
+
+class LoopCommitTool:
+    id = "loop_commit"
+    description = (
+        "Submit the iteration decision, durable summary, and schedule the next wakeup. "
+        "The loop only ends when the user stops it — outcome must be 'continue'."
+    )
+
+    def parameters_schema(self) -> dict:
+        return model_to_json_schema(LoopCommitInput)
+
+    async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
+        try:
+            inp = LoopCommitInput.model_validate(args)
+        except Exception as exc:
+            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
+        controller = ctx.runtime.loop_control
+        if controller is None:
+            return ToolResult(
+                output="No active runtime-backed /loop controller is available in this tool context.",
+                metadata={"error": True, "loop_active": False},
+            )
+        decision = {
+            "outcome": inp.outcome,
+            "summary": inp.summary,
+            "progress": inp.progress,
+            "next_delay_seconds": inp.next_delay_seconds,
+            "reason": inp.reason,
+        }
+        try:
+            committed = await controller.submit_decision(decision)
+        except Exception as exc:
+            return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
+        return _decision_result_from_committed(committed, controller)
 
 
 class LoopTool:
@@ -101,7 +304,7 @@ class LoopTool:
             return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
 
         if inp.operation == "init":
-            return await _submit_init(inp, ctx)
+            return await _submit_init(inp.prompt, inp.interval_seconds, ctx)
         controller = ctx.runtime.loop_control
         if controller is None:
             return ToolResult(
@@ -146,28 +349,11 @@ class LoopTool:
             committed = await controller.submit_decision(decision)
         except Exception as exc:
             return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
-        return self._decision_result(committed, controller)
+        return _decision_result_from_committed(committed, controller)
 
     @staticmethod
     def _decision_result(committed, controller) -> ToolResult:
-        spec = getattr(controller, "spec", None)
-        mode = spec.mode.value if spec is not None else "unknown"
-        terminal = committed.outcome in {"completed", "failed", "stop"}
-        next_delay = None if terminal else committed.next_delay_seconds
-        return ToolResult(
-            output=f"Loop decision recorded: {committed.outcome}.",
-            metadata={
-                "outcome": committed.outcome,
-                "summary": committed.summary,
-                "progress": committed.progress,
-                "reason": committed.reason,
-                "next_delay_seconds": next_delay,
-                "terminal": terminal,
-                "mode": mode,
-                "fixed": mode == "fixed",
-            },
-        )
-
+        return _decision_result_from_committed(committed, controller)
 
 
 _LOOP_INIT_APPROVAL_OPTIONS: list[tuple[str, str, str]] = [
@@ -178,21 +364,21 @@ _LOOP_INIT_APPROVAL_OPTIONS: list[tuple[str, str, str]] = [
 _LOOP_INIT_APPROVAL_TIMEOUT_SECONDS = 300.0
 
 
-async def _submit_init(inp: LoopDecisionInput, ctx: ToolContext) -> ToolResult:
+async def _submit_init(prompt: str, interval_seconds: int | None, ctx: ToolContext) -> ToolResult:
     controller = ctx.runtime.loop_intake
     if ctx.runtime.loop_phase != "idle" or controller is None:
         return ToolResult(
             output="Loop init is only available while shaping a loop; this call was not submitted.",
             metadata={"loop_init_submitted": False, "guidance_only": True},
         )
-    prompt = inp.prompt.strip()
+    prompt = prompt.strip()
     if not prompt:
         return ToolResult(
             output="operation=init requires a non-empty prompt.",
             metadata={"error": True},
         )
     try:
-        spec = LoopSpec(prompt=prompt, interval_seconds=inp.interval_seconds)
+        spec = LoopSpec(prompt=prompt, interval_seconds=interval_seconds)
     except Exception as exc:
         return ToolResult(output=f"Invalid loop init: {exc}", metadata={"error": True})
     approval = await _request_loop_init_approval(spec, ctx)
@@ -208,7 +394,7 @@ async def _submit_init(inp: LoopDecisionInput, ctx: ToolContext) -> ToolResult:
             output=(
                 "The user requested changes to the loop spec and it was not submitted. "
                 f"Feedback: {feedback or '(no details)'}. "
-                "Revise the spec accordingly and call loop(operation=\"init\") again with the updated fields."
+                "Revise the spec accordingly and call loop_init again with the updated fields."
             ),
             metadata={"loop_init_submitted": False, "loop_init_decision": "revised"},
         )
@@ -290,7 +476,19 @@ def _emit_loop_spec_decision(
 def _loop_init_approval_prompt(spec: LoopSpec) -> str:
     parts = [f"Prompt: {spec.prompt}"]
     if spec.interval_seconds is not None:
-        parts.append(f"Interval: {spec.interval_seconds:g}s (fixed)")
+        parts.append(f"Interval: {spec.interval_seconds:d}s (fixed)")
     else:
         parts.append("Interval: dynamic")
     return "\n".join(parts)
+
+
+__all__ = [
+    "LoopCommitInput",
+    "LoopCommitTool",
+    "LoopDecisionInput",
+    "LoopInitInput",
+    "LoopInitTool",
+    "LoopStartInput",
+    "LoopStartTool",
+    "LoopTool",
+]

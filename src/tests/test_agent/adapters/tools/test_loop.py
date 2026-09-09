@@ -107,6 +107,80 @@ async def test_loop_rejects_terminal_outcomes_from_model(outcome: str) -> None:
 
 
 @pytest.mark.asyncio
+async def test_split_loop_init_tool() -> None:
+    from voidx.agent.adapters.tools.automation.loop import LoopInitTool
+    from voidx.agent.application.automation.loop.intake_controller import LoopIntakeController
+
+    class FakeInteraction:
+        async def __call__(self, interaction):
+            from voidx.tooling.domain.interaction import UserResponse
+            return UserResponse(value="approved")
+
+    tool = LoopInitTool()
+    assert tool.id == "loop_init"
+    controller = LoopIntakeController()
+    ctx = ToolContext(
+        workspace="/tmp/workspace",
+        runtime=AgentToolRuntime(loop_intake=controller, interaction=FakeInteraction(), loop_phase="idle"),
+    )
+
+    result = await tool.execute({"prompt": "monitor status", "interval_seconds": 60}, ctx)
+    assert result.metadata["loop_init_submitted"] is True
+    spec = controller.final_spec()
+    assert spec is not None
+    assert spec.interval_seconds == 60
+
+    # Reject float interval_seconds
+    float_result = await tool.execute({"prompt": "monitor status", "interval_seconds": 60.5}, ctx)
+    assert float_result.metadata.get("error") is True
+
+
+@pytest.mark.asyncio
+async def test_split_loop_start_tool() -> None:
+    from voidx.agent.adapters.tools.automation.loop import LoopStartTool
+
+    tool = LoopStartTool()
+    assert tool.id == "loop_start"
+    controller = FakeLoopController()
+    ctx = ToolContext(workspace="/tmp/workspace", runtime=AgentToolRuntime(loop_control=controller))
+
+    result = await tool.execute({"goal": "investigate memory leak"}, ctx)
+    assert result.metadata["operation"] == "start"
+    assert result.metadata["goal"] == "investigate memory leak"
+    assert "state_patch" in result.metadata
+
+    # Requires non-empty goal
+    empty_result = await tool.execute({"goal": ""}, ctx)
+    assert empty_result.metadata.get("error") is True
+
+
+@pytest.mark.asyncio
+async def test_split_loop_commit_tool() -> None:
+    from voidx.agent.adapters.tools.automation.loop import LoopCommitTool
+
+    tool = LoopCommitTool()
+    assert tool.id == "loop_commit"
+    controller = FakeLoopController()
+    ctx = ToolContext(workspace="/tmp/workspace", runtime=AgentToolRuntime(loop_control=controller))
+
+    result = await tool.execute(
+        {"outcome": "continue", "summary": "round 1 complete", "progress": "meaningful", "next_delay_seconds": 120},
+        ctx,
+    )
+    assert result.metadata["outcome"] == "continue"
+    assert result.metadata["summary"] == "round 1 complete"
+    assert result.metadata["next_delay_seconds"] == 120
+    assert len(controller.decisions) == 1
+
+    # Rejects float next_delay_seconds
+    float_res = await tool.execute(
+        {"outcome": "continue", "summary": "round 2", "next_delay_seconds": 12.5},
+        ctx,
+    )
+    assert float_res.metadata.get("error") is True
+
+
+@pytest.mark.asyncio
 async def test_loop_rejects_stop_operation_from_model() -> None:
     controller = FakeLoopController()
     tool = LoopTool()

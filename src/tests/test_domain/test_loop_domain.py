@@ -34,6 +34,24 @@ def test_loop_spec_rejects_empty_prompt() -> None:
         LoopSpec(prompt="   ")
 
 
+def test_loop_spec_rejects_non_integer_interval_seconds() -> None:
+    with pytest.raises(Exception):
+        LoopSpec(prompt="check deploy", interval_seconds=1.5)
+
+
+def test_loop_tool_view_phase_bindings() -> None:
+    available = {
+        "read", "find", "search", "loop", "loop_init", "loop_start", "loop_commit", "clarify",
+    }
+    idle_view = LoopToolView.default(phase="idle").bind(available)
+    assert "loop_init" in idle_view.bound_tool_ids
+    assert "loop_start" not in idle_view.bound_tool_ids
+    assert "loop_commit" not in idle_view.bound_tool_ids
+
+    work_view = LoopToolView.default(phase="work").bind(available)
+    assert "loop_init" not in work_view.bound_tool_ids
+    assert "loop_start" in work_view.bound_tool_ids
+    assert "loop_commit" in work_view.bound_tool_ids
 def test_loop_tool_view_is_closed_world_for_automatic_wakeups() -> None:
     available = {
         "read",

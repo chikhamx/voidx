@@ -25,7 +25,12 @@ from voidx.agent.adapters.tools.result_storage import (
 )
 from voidx.agent.adapters.langgraph.runtime.todo_events import todo_updated_event
 from voidx.agent.ports.ui import UiEventTimeout
-from voidx.agent.adapters.tools.automation.loop import LoopTool
+from voidx.agent.adapters.tools.automation.loop import (
+    LoopCommitTool,
+    LoopInitTool,
+    LoopStartTool,
+    LoopTool,
+)
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext, AgentToolRuntime
 from voidx.agent.adapters.tools.plugins import bind_agent_tool_runtime
 from voidx.tooling.application.execution import (
@@ -126,11 +131,15 @@ def _loop_commit_terminal_message(
 
 def _has_loop_commit_call(source_msg: AIMessage) -> bool:
     for call in getattr(source_msg, "tool_calls", None) or []:
-        if not isinstance(call, dict) or call.get("name") != "loop":
+        if not isinstance(call, dict):
             continue
-        args = call.get("args")
-        if isinstance(args, dict) and args.get("operation") == "commit":
+        name = call.get("name")
+        if name == "loop_commit":
             return True
+        if name == "loop":
+            args = call.get("args")
+            if isinstance(args, dict) and args.get("operation") == "commit":
+                return True
     return False
 
 
@@ -466,6 +475,12 @@ class ToolExecutorAdapter:
                     )
                     if tid == "loop" and tool_ctx.runtime.loop_control is not None:
                         return await LoopTool().execute(targs, tool_ctx)
+                    if tid == "loop_commit" and tool_ctx.runtime.loop_control is not None:
+                        return await LoopCommitTool().execute(targs, tool_ctx)
+                    if tid == "loop_start" and tool_ctx.runtime.loop_control is not None:
+                        return await LoopStartTool().execute(targs, tool_ctx)
+                    if tid == "loop_init":
+                        return await LoopInitTool().execute(targs, tool_ctx)
                     return await tools.execute_tool(tid, targs, tool_ctx)
 
                 try:

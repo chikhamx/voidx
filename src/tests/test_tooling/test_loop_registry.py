@@ -72,7 +72,9 @@ def test_loop_tool_view_filters_real_llm_tool_definitions_via_resolver() -> None
     )
     visible_tool_names = {tool["function"]["name"] for tool in surface.definitions}
 
-    assert "loop" in visible_tool_names
+    assert "loop_start" in visible_tool_names
+    assert "loop_commit" in visible_tool_names
+    assert "loop" not in visible_tool_names
     assert "read" in visible_tool_names
     assert "schedule_wakeup" not in visible_tool_names
     assert "bash" in visible_tool_names

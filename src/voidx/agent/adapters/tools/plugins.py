@@ -11,7 +11,12 @@ from voidx.agent.adapters.tools.automation.goal import (
     GoalDecisionTool,
     GoalInitTool,
 )
-from voidx.agent.adapters.tools.automation.loop import LoopTool
+from voidx.agent.adapters.tools.automation.loop import (
+    LoopCommitTool,
+    LoopInitTool,
+    LoopStartTool,
+    LoopTool,
+)
 from voidx.agent.adapters.tools.automation.workflow import WorkflowTool
 from voidx.agent.adapters.tools.compaction import CompactContextTool
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext, AgentToolRuntime
@@ -87,6 +92,9 @@ def build_agent_plugins(
         GoalInitTool(),
         GoalCheckpointTool(),
         GoalDecisionTool(),
+        LoopInitTool(),
+        LoopStartTool(),
+        LoopCommitTool(),
         LoopTool(),
         TodoWriteTool(tracker=tracker),
         AgentTool(

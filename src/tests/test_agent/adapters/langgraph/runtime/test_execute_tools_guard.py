@@ -2213,6 +2213,99 @@ async def test_execute_tools_skips_calls_after_loop_commit_in_same_batch(tmp_pat
         test_dock.reset()
         set_dock(None)
 
+@pytest.mark.asyncio
+async def test_execute_tools_skips_calls_after_loop_commit_tool_in_same_batch(tmp_path):
+    from voidx.agent.domain.automation.loop import LOOP_PROFILE, LoopSpec
+    from voidx.agent.domain.turn_context import TurnExecutionContext
+    from voidx.agent.adapters.langgraph.runtime.thread_context import (
+        ThreadExecutionState,
+        _CURRENT_THREAD_EXECUTION_STATE,
+    )
+    from voidx.agent.application.automation.loop.controller import LoopAttemptController
+    from voidx.agent.adapters.tools.automation.loop import LoopCommitTool
+
+    events: list[object] = []
+
+    class RecordingConsumer:
+        def handle(self, event):
+            events.append(event)
+            return None
+
+    test_dock = BottomInputDock()
+    set_dock(test_dock)
+    test_dock.begin_capture()
+    if ui_events.is_running:
+        await ui_events.stop()
+    ui_events.start(RecordingConsumer())
+    controller = LoopAttemptController(spec=LoopSpec(prompt="check"))
+    token = _CURRENT_THREAD_EXECUTION_STATE.set(ThreadExecutionState(
+        thread_id="loop-thread",
+        turn_context=TurnExecutionContext(
+            thread_id="loop-thread",
+            session_id="loop-session",
+            runtime_profile=LOOP_PROFILE,
+            workspace=str(tmp_path),
+            loop_controller=controller,
+        ),
+        workspace=str(tmp_path),
+    ))
+    try:
+        graph = _graph(tmp_path)
+        graph.tools.replace("loop_commit", LoopCommitTool(), "loop_commit", {"type": "object", "properties": {}})
+
+        executed = []
+
+        class FakeMcpTool:
+            child_shareable = True
+            id = "mcp"
+            description = "fake mcp"
+
+            def parameters_schema(self):
+                return {"type": "object", "properties": {}}
+
+            async def execute(self, args: dict, ctx) -> ToolResult:
+                executed.append("mcp")
+                return ToolResult(output="mcp output")
+
+        graph.tools.replace("mcp", FakeMcpTool(), "fake mcp", {"type": "object", "properties": {}})
+
+        async def allow_all(tool_calls, plan_mode: bool, session_id: str, interaction_mode=None):
+            return tool_calls, []
+
+        graph._authorize_tool_calls = allow_all
+        parent = AIMessage(
+            content="",
+            tool_calls=[
+                {"name": "loop_commit", "args": {"outcome": "continue", "summary": "done", "next_delay_seconds": 1800}, "id": "call_commit", "type": "tool_call"},
+                {"name": "mcp", "args": {"op": "call"}, "id": "call_mcp", "type": "tool_call"},
+            ],
+        )
+
+        result = await graph._execute_tools({
+            "messages": [parent],
+            "workspace": str(tmp_path),
+            "persona": "voidx",
+            "plan_mode": False,
+        })
+        await ui_events.drain()
+
+        assert controller.final_decision() is not None
+        assert executed == [], "mcp must not run after the loop commit"
+        contents = {m.tool_call_id: m.content for m in result["messages"] if isinstance(m, ToolMessage)}
+        assert "call_commit" in contents and "call_mcp" in contents
+        assert "skipped" in contents["call_mcp"]
+        assert result["should_continue"] is False
+
+        assistant_messages = [message for message in result["messages"] if isinstance(message, AIMessage)]
+        assert assistant_messages[-1].content == "done"
+        assert any(isinstance(event, AssistantStreamUpdated) and event.text == "done" for event in events)
+        assert any(isinstance(event, AssistantStreamCommitted) for event in events)
+    finally:
+        _CURRENT_THREAD_EXECUTION_STATE.reset(token)
+        await ui_events.stop()
+        test_dock.deactivate()
+        test_dock.reset()
+        set_dock(None)
 
 @pytest.mark.asyncio
 async def test_execute_tools_stops_turn_after_goal_intake_init(tmp_path):
