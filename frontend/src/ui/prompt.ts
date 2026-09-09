@@ -4,7 +4,7 @@ import {
   requestTranscriptFollowAfterMutation,
 } from "../utils/stream";
 
-export type ConversationPromptType = "clarify" | "checkpoint" | "goal_spec";
+export type ConversationPromptType = "clarify" | "checkpoint" | "goal_spec" | "loop_spec";
 
 export interface ConversationPromptChoice {
   label: string;
@@ -94,7 +94,7 @@ function stringList(value: unknown): string[] {
 
 function promptType(data: Record<string, unknown>): ConversationPromptType | null {
   const type = data.prompt_type;
-  return type === "clarify" || type === "checkpoint" || type === "goal_spec"
+    return type === "clarify" || type === "checkpoint" || type === "goal_spec" || type === "loop_spec"
     ? type
     : null;
 }
@@ -186,6 +186,20 @@ export function formatConversationPrompt(data: Record<string, unknown>): string 
       markdownSection("最大尝试次数", attempts),
     ].filter(Boolean).join("\n\n");
   }
+
+    if (type === "loop_spec") {
+        const spec = data.spec && typeof data.spec === "object"
+            ? data.spec as Record<string, unknown>
+            : {};
+        const interval = typeof spec.interval_seconds === "number"
+            ? `${spec.interval_seconds}s (fixed)`
+            : "dynamic";
+        return [
+            "请确认以下循环任务设定。",
+            markdownSection("任务目标", asString(spec.prompt)),
+            markdownSection("执行周期", interval),
+        ].filter(Boolean).join("\n\n");
+    }
 
   return "";
 }

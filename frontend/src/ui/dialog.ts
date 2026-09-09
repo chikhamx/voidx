@@ -179,6 +179,29 @@ export function showPromptItemRequest(data: Record<string, unknown>): void {
     showRequest({
       kind: "choice",
       request_id: (data.prompt_id as string) || (data.request_id as string) || "goal_spec",
+        thread_id: (data.thread_id as string) || "",
+        prompt: lines.join("\n"),
+        choices,
+        response_method: "session.respond",
+    });
+    }
+    if (promptType === "loop_spec") {
+        const spec = (data.spec as Record<string, unknown>) || {};
+        const choices = ((data.choices as Array<Record<string, unknown>>) || []).map((choice) => [
+            (choice.label as string) || (choice.value as string) || "",
+            (choice.value as string) || (choice.label as string) || "",
+            (choice.description as string) || "",
+        ]);
+        const interval = typeof spec.interval_seconds === "number"
+            ? `${spec.interval_seconds}s (fixed)`
+            : "dynamic";
+        const lines = [
+            `Loop: ${(spec.prompt as string) || ""}`,
+            `Interval: ${interval}`,
+        ];
+        showRequest({
+            kind: "choice",
+            request_id: (data.prompt_id as string) || (data.request_id as string) || "loop_spec",
       thread_id: (data.thread_id as string) || "",
       prompt: lines.join("\n"),
       choices,
