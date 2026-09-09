@@ -21,7 +21,8 @@
       "protocol": null,
       "provider": "anthropic",
       "reasoning_effort": "xhigh",
-      "temperature": 0.3
+      "temperature": 0.3,
+      "timeout": null
     },
     "permission_mode": "safe",
     "persistent_readable_dirs": [],
