@@ -348,3 +348,39 @@ def test_settled_stream_node_is_not_reused_for_later_stream_extension():
         assert assistants[1].payload["raw_text"] == "stable heading\nfirst body\nextension"
     finally:
         dock.deactivate()
+
+
+
+def test_stream_bullet_transitions_from_running_to_dim_on_commit():
+    dock = BottomInputDock()
+    dock.begin_capture()
+    try:
+        dock.start_turn("Goal: test bullet color")
+        dock.set_stream("first response line", refresh=False)
+        stream_node = dock._stream_node
+        assert stream_node is not None
+        # While running, bullet is green (163, 190, 140)
+        assert "\x1b[38;2;163;190;140m●\x1b[0m" in stream_node.header
+
+        dock.commit_stream(refresh=False)
+        # After commit, bullet is dim gray
+        assert "\x1b[38;2;163;190;140m●\x1b[0m" not in stream_node.header
+        assert "\x1b[2m●\x1b[0m" in stream_node.header
+    finally:
+        dock.deactivate()
+
+
+def test_plain_stream_projection_bullet_is_dim():
+    from voidx.presentation.output.dock.stream import StreamCommitWorkItem, build_plain_stream_projection
+
+    work_item = StreamCommitWorkItem(
+        node_id="n1",
+        parent_id=None,
+        revision=1,
+        generation=1,
+        raw_text="plain text response",
+        phase="text",
+        width=80,
+    )
+    projection = build_plain_stream_projection(work_item)
+    assert projection.header.startswith("[dim]●[/dim]")

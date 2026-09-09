@@ -429,7 +429,7 @@ class DockNodeMixin(
                 body_lines = render_full_file_diff_lines(file_diff)
                 omitted = False
             header = (
-                f"[#A3BE8C]●[/#A3BE8C] "
+                f"[dim]●[/dim] "
                 f"{_operation_header(file_diff.operation, file_diff.path)}"
             )
             show_diff = file_diff.operation == "Update"

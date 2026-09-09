@@ -187,6 +187,7 @@ def test_file_change_result_does_not_rewrite_tool_request():
         assert tool.body_lines == request_body
         assert result.payload["lifecycle"] == "completed"
         assert result.payload["diff_text"]
+        assert result.header.startswith("[dim]●[/dim]")
     finally:
         test_dock.deactivate()
         test_dock.reset()

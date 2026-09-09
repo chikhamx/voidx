@@ -66,7 +66,7 @@ def _stream_projection(
         if not any(line.strip() for line in lines):
             return StreamCommitProjection("", (), content, "text")
         return StreamCommitProjection(
-            header=escape(f"● {lines[0]}"),
+            header=f"[dim]●[/dim] {escape(lines[0])}",
             body_lines=tuple(escape(f"  {line}") for line in lines[1:]),
             raw_text=content,
             phase="text",
@@ -75,7 +75,7 @@ def _stream_projection(
     lines = _markdown_lines(content, width)
     if not lines:
         return StreamCommitProjection("", (), content, "text")
-    bullet = _ansi_rgb("●", (163, 190, 140))
+    bullet = "\x1b[2m●\x1b[0m"
     return StreamCommitProjection(
         header=_ansi_line(f"{bullet} {lines[0]}"),
         body_lines=tuple(_ansi_line(f"  {line}") for line in lines[1:]),
