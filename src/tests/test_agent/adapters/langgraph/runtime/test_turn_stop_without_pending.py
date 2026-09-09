@@ -138,4 +138,63 @@ async def test_plain_text_emits_one_user_visible_committed_stream(tmp_path, monk
     assert model.call_index == 2
     stream_updates = [event for event in emitted if isinstance(event, AssistantStreamUpdated)]
     assert any("Review completed: PASS" in event.text for event in stream_updates)
+
+
     assert sum(isinstance(event, AssistantStreamCommitted) for event in emitted) == 1
+
+
+@pytest.mark.asyncio
+async def test_loop_repair_does_not_render_provisional_answer_twice(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
+    from voidx.agent.adapters.langgraph.runtime.thread_context import (
+        ThreadExecutionState,
+        _CURRENT_THREAD_EXECUTION_STATE,
+    )
+    from voidx.agent.application.automation.loop.controller import LoopAttemptController
+    from voidx.agent.domain.automation.loop import LOOP_PROFILE, LoopSpec
+    from voidx.agent.domain.turn_context import TurnExecutionContext
+    from voidx.presentation.output.console import StreamingRenderer
+    from voidx.presentation.output.dock import BottomInputDock, reset_dock, set_dock
+    from voidx.presentation.output.events import ui_events
+
+    model = ScriptedStreamingModel([
+        [_text_chunk("same **answer**")],
+        [_text_chunk("same **answer**")],
+        [_text_chunk("same **answer**")],
+    ])
+    graph = _make_graph(tmp_path, model, monkeypatch)
+    monkeypatch.setattr(graph_module, "StreamingRenderer", StreamingRenderer)
+
+    dock = BottomInputDock()
+    dock.begin_capture()
+    dock_token = set_dock(dock)
+    if ui_events.is_running:
+        await ui_events.stop()
+    controller = LoopAttemptController(spec=LoopSpec(prompt="check"))
+    state_token = _CURRENT_THREAD_EXECUTION_STATE.set(ThreadExecutionState(
+        thread_id="loop:test",
+        turn_context=TurnExecutionContext(
+            thread_id="loop:test",
+            session_id="loop:test",
+            runtime_profile=LOOP_PROFILE,
+            workspace=str(tmp_path),
+            loop_controller=controller,
+        ),
+        runtime_profile=LOOP_PROFILE,
+        workspace=str(tmp_path),
+    ))
+    try:
+        result = await graph._call_llm({
+            "messages": [HumanMessage(content="Run review")],
+            "step_count": 1,
+            "persona": "coordinate",
+            "turn_state": "running",
+        })
+
+        assert result["messages"][0].content == "same **answer**"
+        assert [node.node_type for node in dock.tree.root.children] == ["assistant"]
+    finally:
+        _CURRENT_THREAD_EXECUTION_STATE.reset(state_token)
+        dock.deactivate()
+        dock.reset()
+        reset_dock(dock_token)
