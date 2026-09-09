@@ -305,8 +305,8 @@ def _logical_plan_for_viewport(
         source_regions=(
             _rendered("transcript 0", "transcript 1", "transcript 2", "transcript 3", "transcript 4", "transcript 5"),
             _rendered("vibe"),
-            _rendered("todo 0", "todo 1"),
             _rendered("thinking 0", "thinking 1"),
+            _rendered("todo 0", "todo 1"),
         ),
         bottom_source=bottom,
         source_cursor=("input", 1),
@@ -326,14 +326,14 @@ def test_physical_viewport_keeps_region_order_and_takes_transcript_tail_last():
     assert [region.rows for region in physical.projected_regions] == [
         ("transcript 5",),
         ("vibe",),
-        ("todo 0", "todo 1"),
         ("thinking 0", "thinking 1"),
+        ("todo 0", "todo 1"),
     ]
     assert [slice_.key for slice_ in physical.source_slices] == [
         "transcript",
         "vibe",
-        "todo",
         "thinking",
+        "todo",
         "bottom.input",
         "bottom.status",
     ]
@@ -361,7 +361,7 @@ def test_physical_viewport_reprojects_bottom_for_late_frame_start():
         normalize_rendered_rows("", width=20),
         normalize_rendered_rows("", width=20),
         normalize_rendered_rows("", width=20),
-        normalize_rendered_rows("thinking 1", width=20),
+        normalize_rendered_rows("todo 1", width=20),
     )
     assert physical.bottom.region.start_row == 4
     assert physical.bottom.rendered.visual_rows == 3

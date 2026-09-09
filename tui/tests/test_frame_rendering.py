@@ -998,3 +998,84 @@ def test_active_thinking_stream_does_not_leave_separator_in_transcript(
     transcript = logical.source_regions[0]
     assert transcript.visual_rows == 1
     assert all(row.strip() for row in transcript.rows)
+
+
+def test_committed_tool_spacers_do_not_linger_in_active_frame(tmp_path, monkeypatch):
+    """Spacer blanks are excluded from scrollback, but once their turn ends
+    they must be recorded in the committed projection — otherwise the active
+    frame keeps one blank row per tool call forever."""
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 30)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(
+        file=fake_stdout, force_terminal=True, width=80, height=30, _environ={}
+    )
+    width = tui._frame_width()
+
+    def active_lines():
+        tree_lines, line_map = dock.tree.render_with_line_map(width)
+        indexes = tui._active_identity_line_indexes(tree_lines, line_map)
+        return [tree_lines[i] for i in indexes]
+
+    dock.begin_capture()
+    dock.start_turn("edit files")
+
+    for i in range(3):
+        tool = dock.start_tool(
+            "Editing",
+            f'file_path="f{i}.py"',
+            tool_name="edit",
+            raw_args={"file_path": f"f{i}.py"},
+        )
+        dock.finish_tool_node(tool, "Edit", 0.1, True)
+        _append_previewed_file_diff(dock, tool, f"marker{i}", path=f"src/f{i}.py")
+        tui._flush_committed(force=True)
+
+    # Mid-turn the spacers belong to the live turn and stay in the frame.
+    assert any(not line.strip() for line in active_lines())
+
+    dock.set_stream("final answer body")
+    dock.commit_stream(refresh=False)
+    dock.append_message("[dim]✻ 12s[/dim] · 3 calls", markup=True)
+    dock.end_turn(outcome="completed")
+    tui._flush_committed(force=True)
+
+    assert all(line.strip() for line in active_lines())
+
+
+def test_thinking_stream_renders_below_vibe_and_above_todo(tmp_path, monkeypatch):
+    monkeypatch.setattr("voidx_cli.render_activity.time.monotonic", lambda: 105.0)
+    tui = _tui(tmp_path)
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    tui._busy = True
+    tui._busy_started_at = 100.0
+
+    dock.begin_capture()
+    dock.start_turn("inspecting question")
+    dock.set_stream("analysis in progress", phase="thinking")
+    dock.set_todo_state(
+        "0/2 done · 1 active · 1 pending",
+        [
+            {"content": "inspect behavior", "status": "active"},
+            {"content": "write regression", "status": "pending"},
+        ],
+    )
+
+    rendered = "\n".join(_rich_plain(line) for line in _render_lines(tui, width=80))
+
+    assert "Thinking" in rendered
+    assert "analysis in progress" in rendered
+    assert "Todo:" in rendered
+
+    vibe_pos = rendered.index("Thinking")
+    thinking_pos = rendered.index("analysis in progress")
+    todo_pos = rendered.index("Todo:")
+
+    assert vibe_pos < thinking_pos < todo_pos

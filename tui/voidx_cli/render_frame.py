@@ -1905,14 +1905,14 @@ class _FrameRendererMixin:
                 signature_context=("vibe",),
             ),
             self._capture_region_rows(
-                todo_elements,
-                width,
-                signature_context=("todo",),
-            ),
-            self._capture_region_rows(
                 thinking_stream_elements,
                 width,
                 signature_context=("thinking",),
+            ),
+            self._capture_region_rows(
+                todo_elements,
+                width,
+                signature_context=("todo",),
             ),
         )
         separator = Text("─" * width, style="dim")
@@ -1978,7 +1978,7 @@ class _FrameRendererMixin:
             start_row=1,
             width=width,
         )
-        source_keys = ("transcript", "vibe", "todo", "thinking")
+        source_keys = ("transcript", "vibe", "thinking", "todo")
         source_signature = tuple(
             (key, rendered.signature)
             for key, rendered in zip(source_keys, top_regions)
@@ -2014,7 +2014,7 @@ class _FrameRendererMixin:
         scroll_epoch: int,
         restore_epoch: int,
     ) -> LayoutSnapshot:
-        region_keys = ("transcript", "vibe", "todo", "thinking")
+        region_keys = ("transcript", "vibe", "thinking", "todo")
         regions: list[RegionGeometry] = []
         next_row = frame_start_row
         for key, rendered in zip(region_keys, physical.projected_regions):
@@ -2214,8 +2214,8 @@ class _FrameRendererMixin:
         full_todo_elements = pinned_todo_elements
 
         elements.extend(busy_activity_elements)
-        elements.extend(pinned_todo_elements)
         elements.extend(thinking_stream_elements)
+        elements.extend(pinned_todo_elements)
         panel_elements = self._render_panel_elements(
             panel_lines,
             width,

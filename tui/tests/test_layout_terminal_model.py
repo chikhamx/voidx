@@ -613,7 +613,7 @@ async def test_terminal_model_thinking_all_blank_content_uses_no_rows(
         await drain()
 
         current = _assert_applied_screen(tui, screen)
-        thinking = tui._last_render_plan.logical_plan.source_regions[3]
+        thinking = tui._last_render_plan.logical_plan.source_regions[2]
 
         assert thinking.visual_rows == 0
         assert current.frame_rows <= 12
@@ -636,7 +636,7 @@ async def test_terminal_model_thinking_space_content_is_one_real_row(
         await drain()
 
         current = _assert_applied_screen(tui, screen)
-        thinking = tui._last_render_plan.logical_plan.source_regions[3]
+        thinking = tui._last_render_plan.logical_plan.source_regions[2]
 
         assert thinking.visual_rows == 1
         assert current.frame_rows <= 12
