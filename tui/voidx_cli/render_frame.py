@@ -178,6 +178,22 @@ class _FrameRendererMixin:
         if advances_scroll_epoch:
             self._scroll_epoch += 1
 
+    def _invalidate_layout_snapshots_for_commit(self) -> None:
+        """Drop pre-commit layout snapshots without forcing a full repaint.
+
+        A pending commit shifts the frame start row on the worker, so
+        snapshots captured before the commit would patch stale absolute
+        rows. The worker keeps its own baseline intact (preserve_baseline),
+        therefore the next frame may still diff.
+        """
+        self._applied_layout_snapshot = None
+        self._pending_layout_snapshots.clear()
+        self._pending_layout_force_full.clear()
+        pending_frame_states = getattr(self, "_pending_frame_states", None)
+        if pending_frame_states is not None:
+            pending_frame_states.clear()
+        self._scroll_epoch += 1
+
     def _handle_terminal_submission_failure(
         self,
         operation: str,
@@ -1470,6 +1486,33 @@ class _FrameRendererMixin:
             return False
         return True
 
+    def _input_region_panel_content_changed(
+        self,
+        previous: LayoutSnapshot,
+        width: int,
+    ) -> bool:
+        panel_lines = self._render_panel_lines(width)
+        previous_panel = self._snapshot_region(previous, "bottom.panel")
+        if not panel_lines:
+            return previous_panel is not None and previous_panel.visual_rows > 0
+        _, panel_ansi = self._panel_row_count_and_ansi(panel_lines, width)
+        panel_elements = self._render_panel_elements(
+            panel_lines,
+            width,
+            panel_ansi=panel_ansi,
+        )
+        rendered = self._capture_region_rows(
+            panel_elements,
+            width,
+            signature_context=("bottom", "panel"),
+        )
+        if previous_panel is None:
+            return True
+        return (
+            rendered.visual_rows != previous_panel.visual_rows
+            or rendered.signature != previous_panel.content_signature
+        )
+
     def _render_input_region(self) -> None:
         if self._full_frame_repaint_pending:
             self._render_frame()
@@ -1492,6 +1535,10 @@ class _FrameRendererMixin:
             input_region = self._snapshot_region(previous, "bottom.input")
             if input_region is not None:
                 try:
+                    if self._input_region_panel_content_changed(previous, width):
+                        self._render_sync_local_frame(bottom_region_dirty=True)
+                        self._last_render_plan = None
+                        return
                     input_elements = self._render_input_elements(width)
                     rendered = self._capture_region_rows(
                         input_elements,
@@ -2213,6 +2260,8 @@ class _FrameRendererMixin:
 
     def _active_thinking_stream_elements(self, width: int) -> list[Text]:
         lines = dock.active_thinking_stream_lines(width)
+        if not lines and hasattr(dock, "active_integration_startup_lines"):
+            lines = dock.active_integration_startup_lines(width)
         if not lines:
             return []
         return self._transcript_elements_for_rows(lines, width, len(lines))

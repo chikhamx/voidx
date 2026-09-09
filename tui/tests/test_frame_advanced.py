@@ -2931,6 +2931,118 @@ def test_sync_input_region_without_snapshot_falls_back_to_full_frame(tmp_path, m
 
 
 
+
+def test_sync_input_region_repaints_when_command_panel_appears(tmp_path, monkeypatch):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 20)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=20, _environ={})
+    dock.append_message("stable transcript")
+    tui._render_frame()
+    fake_stdout.text = ""
+
+    tui._process_input(b"/")
+    tui._render_after_input()
+
+    output = Text.from_ansi(fake_stdout.text).plain
+    assert tui._command_panel_active is True
+    assert "/agents" in output
+
+
+def test_sync_input_region_repaints_when_command_panel_filter_changes(tmp_path, monkeypatch):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 20)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=20, _environ={})
+    dock.append_message("stable transcript")
+    tui._render_frame()
+
+    tui._process_input(b"/")
+    tui._render_after_input()
+    fake_stdout.text = ""
+
+    tui._process_input(b"age")
+    tui._render_after_input()
+
+    output = Text.from_ansi(fake_stdout.text).plain
+    assert "/agents" in output
+    assert "/allow" not in output
+
+
+def test_sync_input_region_repaints_when_command_panel_disappears(tmp_path, monkeypatch):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 20)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=20, _environ={})
+    dock.append_message("stable transcript")
+    tui._render_frame()
+
+    tui._process_input(b"/")
+    tui._render_after_input()
+    fake_stdout.text = ""
+
+    tui._process_input(b"\x7f")
+    tui._render_after_input()
+
+    output = Text.from_ansi(fake_stdout.text).plain
+    assert tui._command_panel_active is False
+    assert "/agents" not in output
+    # Stale panel rows (below the 4-row bottom: transcript, separator, input, separator) must be erased.
+    assert "\x1b[5;1H\x1b[K" in fake_stdout.text
+
+
+def test_sync_input_region_keeps_local_patch_when_panel_unchanged(tmp_path, monkeypatch):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 20)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=20, _environ={})
+    dock.append_message("stable transcript")
+    tui._render_frame()
+    fake_stdout.text = ""
+
+    fallback_calls = []
+    monkeypatch.setattr(
+        tui,
+        "_render_sync_local_frame",
+        lambda **kwargs: fallback_calls.append(kwargs) or True,
+    )
+
+    tui._process_input(b"a")
+    tui._render_after_input()
+
+    output = Text.from_ansi(fake_stdout.text).plain
+    assert fallback_calls == []
+    assert "a" in output
+
+
 def test_sync_choice_selection_patch_only_writes_choice_region(tmp_path, monkeypatch):
     fake_stdout = _FakeStdout()
     monkeypatch.setattr(sys, "stdout", fake_stdout)
@@ -3946,3 +4058,224 @@ async def test_flush_committed_preserves_baseline_and_does_not_clear_bottom(tmp_
     finally:
         tui._render_scheduled = False
         await asyncio.wait_for(writer.shutdown_async(), timeout=1)
+
+
+def test_thinking_stream_elements_falls_back_to_integration_startup(tmp_path):
+    tui = _tui(tmp_path)
+    dock.clear_integration_startup()
+    assert tui._active_thinking_stream_elements(80) == []
+
+    from voidx.agent.domain.ui_events import IntegrationStartupItem
+    dock.set_integration_startup_items([
+        IntegrationStartupItem(
+            category="mcp",
+            key="mcp:test",
+            label="test",
+            status="connecting",
+        )
+    ])
+    try:
+        elements = tui._active_thinking_stream_elements(80)
+        assert len(elements) >= 1
+        assert any("test" in e.plain for e in elements)
+    finally:
+        dock.clear_integration_startup()
+    assert tui._active_thinking_stream_elements(80) == []
+
+
+@pytest.mark.asyncio
+async def test_worker_pending_commit_invalidates_layout_snapshot(tmp_path, monkeypatch):
+    from voidx_cli.terminal_writer import FrameResult
+
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitFrameWriter()
+    tui._terminal_writer = writer
+    dock.begin_capture()
+    dock.append_message("committed history")
+
+    tui._render_frame()
+    assert len(writer.frames) == 1
+    batch = writer.frames[0]
+    tui._handle_terminal_frame_result(
+        FrameResult(batch.generation, len(batch.target_lines), 0, 1.0, "full", True)
+    )
+    assert tui._applied_layout_snapshot is not None
+
+    token = tui._flush_committed()
+    assert token is writer.tokens[0]
+    assert writer.commits[0]["preserve_baseline"] is True
+
+    # The pending commit shifts the frame start row on the worker; the
+    # pre-commit layout snapshot must not survive, or sync-local repaint
+    # paths would patch stale absolute rows.
+    assert tui._applied_layout_snapshot is None
+
+    await _resolve_deferred_commit(token)
+
+
+@pytest.mark.asyncio
+async def test_worker_frame_result_after_commit_does_not_promote_stale_snapshot(
+    tmp_path, monkeypatch
+):
+    from voidx_cli.terminal_writer import FrameResult
+
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitFrameWriter()
+    tui._terminal_writer = writer
+    dock.begin_capture()
+    dock.append_message("committed history")
+
+    tui._render_frame()
+    assert len(writer.frames) == 1
+    generation = writer.frames[0].generation
+
+    token = tui._flush_committed()
+    assert token is writer.tokens[0]
+
+    # A frame result queued before the commit must not promote the stale
+    # pre-commit snapshot while the commit is still pending.
+    tui._handle_terminal_frame_result(
+        FrameResult(generation, 1, 1, 1.0, "diff", True)
+    )
+    assert tui._applied_layout_snapshot is None
+
+    await _resolve_deferred_commit(token)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("trigger", ["input", "choice", "vibe"])
+async def test_worker_pending_commit_blocks_local_repaints(
+    tmp_path, monkeypatch, trigger
+):
+    from voidx_cli.terminal_writer import FrameResult
+
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitFrameWriter()
+    tui._terminal_writer = writer
+    dock.begin_capture()
+    dock.append_message("initial history")
+
+    first_commit = tui._flush_committed()
+    assert first_commit is writer.tokens[0]
+    await _resolve_deferred_commit(first_commit)
+
+    tui._render_frame()
+    assert len(writer.frames) == 1
+    first_frame = writer.frames[0]
+    tui._handle_terminal_frame_result(
+        FrameResult(
+            first_frame.generation,
+            len(first_frame.target_lines),
+            len(first_frame.target_lines),
+            1.0,
+            "full",
+            True,
+        )
+    )
+    assert tui._applied_layout_snapshot is not None
+
+    dock.append_message("pending history")
+    pending_commit = tui._flush_committed()
+    assert pending_commit is writer.tokens[1]
+    assert writer.commits[1]["preserve_baseline"] is True
+    assert tui._applied_layout_snapshot is None
+
+    frame_count = len(writer.frames)
+    if trigger == "input":
+        assert tui._process_input(b"a") is True
+        tui._render_after_input()
+    elif trigger == "choice":
+        tui._active_choice = [("one", "one", "first")]
+        assert tui._render_choice_selection_region() is True
+    else:
+        tui._busy = True
+        tui._busy_activity_verb = "Sublimating"
+        tui._busy_activity_tick = 1
+        tui._render_scheduled = False
+        monkeypatch.setattr(tui, "_busy_activity_tick_active", lambda: True)
+        assert tui._render_busy_activity_tick() is True
+
+    assert len(writer.frames) == frame_count
+
+    await _resolve_deferred_commit(pending_commit)
+    tui._render_frame()
+    assert len(writer.frames) == frame_count + 1
+    tui._running = False
+
+
+@pytest.mark.asyncio
+async def test_worker_commit_snapshot_invalidation_preserves_baseline_state(
+    tmp_path, monkeypatch
+):
+    from voidx_cli.terminal_writer import FrameResult
+
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitFrameWriter()
+    tui._terminal_writer = writer
+    dock.begin_capture()
+    dock.append_message("initial history")
+
+    first_commit = tui._flush_committed()
+    await _resolve_deferred_commit(first_commit)
+    tui._render_frame()
+    first_frame = writer.frames[0]
+    tui._handle_terminal_frame_result(
+        FrameResult(
+            first_frame.generation,
+            len(first_frame.target_lines),
+            len(first_frame.target_lines),
+            1.0,
+            "full",
+            True,
+        )
+    )
+    previous_baseline = (
+        tui._prev_frame_lines,
+        tui._prev_frame_start_row,
+        tui._prev_frame_width,
+        tui._prev_frame_term_height,
+    )
+    previous_epoch = tui._scroll_epoch
+
+    dock.append_message("next history")
+    pending_commit = tui._flush_committed()
+
+    assert (
+        tui._prev_frame_lines,
+        tui._prev_frame_start_row,
+        tui._prev_frame_width,
+        tui._prev_frame_term_height,
+    ) == previous_baseline
+    assert tui._scroll_epoch == previous_epoch + 1
+    assert tui._full_layout_invalidated is False
+
+    await _resolve_deferred_commit(pending_commit)
+    tui._running = False

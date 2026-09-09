@@ -1465,7 +1465,9 @@ class PureTui(
                 and clear_start_row > 0
             )
             if worker_mode:
-                if not preserve_baseline:
+                if preserve_baseline:
+                    self._invalidate_layout_snapshots_for_commit()
+                else:
                     self._invalidate_layout("commit")
                 token = self._terminal_writer.submit_commit(
                     clear_start_row=clear_start_row,
