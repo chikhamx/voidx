@@ -1,5 +1,7 @@
 # Goal Evaluator 轮上下文污染问题分析
 
+> **Status: Done** — Archived on 2026-09-09.
+
 ## 状态
 
 已修复，测试覆盖完成。

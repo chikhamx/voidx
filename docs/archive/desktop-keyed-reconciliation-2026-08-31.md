@@ -1,5 +1,7 @@
 # Desktop Transcript Keyed Reconciliation — P1 技术规格
 
+> **Status: Done** — Archived on 2026-09-08.
+
 > **Status: Approved — independent execution-readiness review PASS; implementation not started.**
 > **Date: 2026-08-31**
 > **Audience: Human + LLM**
