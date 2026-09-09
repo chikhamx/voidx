@@ -41,7 +41,7 @@ from voidx.agent.domain.task.state import (
 from voidx.llm.message_status import message_status
 from voidx.observability.tool_log import log_tool_event
 from voidx.agent.adapters.persistence.session_models import MessageRow
-from voidx.agent.adapters.persistence.session_repository import count_messages, create_session, delete_messages_from, load_messages, touch_session, update_title
+from voidx.agent.adapters.persistence.session_repository import create_session, delete_messages_from, load_messages, touch_session, update_title
 from voidx.agent.adapters.persistence.runtime_state_repository import MessageRuntimeSnapshot, save_message_runtime_snapshot
 from voidx.persistence.sqlite import now as memorynow
 from voidx.agent.application.automation.workflow.service import reconcile_workflow_runs_for_turn
@@ -52,7 +52,6 @@ class _EmptyReferenceMessage:
     remove_spans: list[tuple[int, int]] = []
 
 
-RESUME_FORCE_COMPACT_MESSAGE_COUNT = 500
 DEFAULT_RECURSION_LIMIT = 2000
 RECENT_EXCHANGE_LIMIT = 3
 ASSISTANT_TEXT_MAX_CHARS = 500
@@ -315,30 +314,10 @@ class TurnRunner:
                         turn_display_text, metadata=turn_metadata, raw_text=payload.raw_text
                     )
                 # Load session messages — use in-memory cache when available
-                force_resume_compaction = False
                 if host._session_msg_cache is not None:
                     session_msgs = list(host._session_msg_cache)
                 else:
                     if host._session:
-                        message_count = await count_messages(host._session.id)
-                        force_resume_compaction = (
-                            host.model is not None
-                            and message_count > RESUME_FORCE_COMPACT_MESSAGE_COUNT
-                            and not (host._pending_summary or host._compaction_summary)
-                        )
-                        if force_resume_compaction:
-                            if host._ui.via_events():
-                                await host._ui.events.emit(StatusUpdated(
-                                    status_id="turn:analyzing",
-                                    label="Resuming long session",
-                                    detail=f"{message_count} persisted messages; preparing compaction",
-                                    stage="analyzing",
-                                    display="record_only",
-                                ))
-                            else:
-                                host._ui.ui.warn(
-                                    f"Session has {message_count} messages; compacting older context before continuing"
-                                )
                         session_msgs = await load_messages(host._session.id)
                     else:
                         session_msgs = []
@@ -482,9 +461,9 @@ class TurnRunner:
                 preflight_result, _preflight_metadata = await host._preflight_compact_if_needed(
                     msgs,
                     session_msgs,
-                    force=force_resume_compaction,
-                    ask=not force_resume_compaction,
-                    reason="resume" if force_resume_compaction else "soft_threshold",
+                    force=False,
+                    ask=True,
+                    reason="soft_threshold",
                 )
                 if preflight_result is not None:
                     msgs.clear()

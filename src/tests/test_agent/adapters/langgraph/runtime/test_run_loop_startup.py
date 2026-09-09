@@ -16,6 +16,7 @@ from voidx.agent.adapters.langgraph.execution import LangGraphExecution
 from tests.langgraph_execution import make_langgraph_execution
 from voidx.agent.adapters.presentation_adapter import LangGraphRuntimeStatusReader
 from voidx.agent.adapters.langgraph.runtime.compaction_coordinator import PreflightCompactionResult
+from voidx.agent.adapters.persistence.message_rows import is_compaction_row
 from voidx.agent.application.coding_service import CODING_PROFILE, CodingService
 from voidx.agent.application.agent_service import AgentService
 from voidx.agent.adapters.langgraph.execution import _sanitize_generated_title
@@ -32,7 +33,7 @@ from voidx.config import Config
 from voidx.llm.domain.model import ModelConfig
 from voidx.llm.usage import UsageStats
 from voidx.agent.adapters.persistence.runtime_state_repository import RuntimeStateSnapshot, save_runtime_state
-from voidx.agent.adapters.persistence.session_repository import MessageRow, create_session, get_session, load_messages, save_message, update_title
+from voidx.agent.adapters.persistence.session_repository import MessageRow, create_session, delete_session, get_session, load_messages, save_message, update_title
 from voidx.update.service import UpdateCheckResult
 from voidx.agent.application.automation.workflow.runtime import WorkflowActivationSource, WorkflowRunState, WorkflowRunStatus
 from voidx.agent.application.runtime.task_tracker import TaskTracker
@@ -809,6 +810,74 @@ async def test_run_turn_cancel_preserves_pending_user_message(tmp_path):
         test_dock.deactivate()
         test_dock.reset()
         set_dock(None)
+
+
+
+
+@pytest.mark.asyncio
+async def test_resume_compaction_uses_token_threshold_not_message_count(tmp_path):
+    session = await create_session(
+        workspace=str(tmp_path),
+        provider="mimo",
+        model="mimo-v2.5",
+    )
+    try:
+        for index in range(501):
+            await save_message(
+                MessageRow(
+                    session_id=session.id,
+                    role="user" if index % 2 == 0 else "assistant",
+                    content="short history",
+                )
+            )
+
+        execution = make_langgraph_execution(
+            Config(workspace=str(tmp_path)),
+            api_key="test-key",
+            session=session,
+            ui=runtime_ui_port,
+        )
+        execution.config = SimpleNamespace(
+            workspace=str(tmp_path),
+            model=ModelConfig(provider="mimo", model="mimo-v2.5", reasoning_effort="high"),
+            agent=SimpleNamespace(recursion_limit=5),
+        )
+        execution._interaction_mode = InteractionMode.AUTO
+        execution._task_state = TaskState()
+        preflight_calls: list[dict] = []
+
+        async def fake_preflight_compact(self, messages, session_msgs=None, **kwargs):
+            preflight_calls.append(kwargs)
+            return None, PreflightCompactionResult(compacted=False)
+
+        async def fake_astream(initial, _config, *, stream_mode="values"):
+            if False:
+                yield
+            yield {"messages": initial["messages"], "task_state": initial["task_state"]}
+
+        execution._preflight_compact_if_needed = MethodType(fake_preflight_compact, execution)
+        execution.graph = SimpleNamespace(astream=fake_astream)
+        execution._compaction = SimpleNamespace(prune=lambda _messages: None)
+
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        try:
+            await execution.run_turn(
+                "hello world",
+                context=TurnExecutionContext(
+                    thread_id=execution.session_id or "coding",
+                    session_id=execution.session_id or "",
+                ),
+            )
+
+            assert preflight_calls == [{"force": False, "ask": True, "reason": "soft_threshold"}]
+        finally:
+            test_dock.deactivate()
+            test_dock.reset()
+            set_dock(None)
+    finally:
+        await delete_session(session.id)
 
 
 @pytest.mark.asyncio
