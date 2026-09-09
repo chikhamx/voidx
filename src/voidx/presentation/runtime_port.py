@@ -133,3 +133,12 @@ class PresentationUiAdapter:
         result = prepare()
         if inspect.isawaitable(result):
             await result
+
+    async def flush_after_restore(self) -> None:
+        frontend = self._status_frontend
+        flush = getattr(frontend, "flush_after_restore", None)
+        if not callable(flush):
+            return
+        result = flush()
+        if inspect.isawaitable(result):
+            await result

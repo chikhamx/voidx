@@ -315,6 +315,7 @@ class SessionCommandsMixin:
         await self.session_port.resume_session(session)
         await self._restore_transcript_snapshot(append=True)
         self.session_port.ui.print(f"[dim]Resumed: {session.id} — {session.title} ({session.message_count} msgs)[/dim]")
+        await self.session_port.flush_after_restore()
 
     async def _set_title(self, cmd: str) -> None:
         session = self.session_port.session

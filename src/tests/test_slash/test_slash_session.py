@@ -374,11 +374,15 @@ async def test_session_resume_alias_resumes_savedsession(monkeypatch, isolated_m
             calls.append(f"restore:{append}")
             return True
 
+        async def flush_after_restore() -> None:
+            calls.append("flush-after-restore")
+
         graph = command_context(
             clear_current_session=clear_current_session,
             prepare_session_switch=prepare_session_switch,
             resume_session=resume_session,
             restore_transcript_snapshot=restore_transcript_snapshot,
+            flush_after_restore=flush_after_restore,
         )
 
         assert await SlashHandler(graph).dispatch(f"/session resume {session.id}") is True
@@ -388,6 +392,7 @@ async def test_session_resume_alias_resumes_savedsession(monkeypatch, isolated_m
             "terminal-clear",
             f"resume:{session.id}",
             "restore:True",
+            "flush-after-restore",
         ]
         assert any(f"Resumed: {session.id}" in line and "Resume Me" in line for line in output)
     finally:

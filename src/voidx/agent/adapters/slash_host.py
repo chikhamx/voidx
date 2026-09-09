@@ -232,6 +232,14 @@ class SessionSlashAdapter:
             result = self._execution.presentation_ui.prepare_session_switch()
         if hasattr(result, "__await__"):
             await result
+    async def flush_after_restore(self):
+        flush = getattr(self._execution, "flush_after_restore", None)
+        if callable(flush):
+            result = flush()
+        else:
+            result = self._execution.presentation_ui.flush_after_restore()
+        if hasattr(result, "__await__"):
+            await result
     async def set_session_title(self, title): return await self._execution.set_session_title(title)
     async def show_startup(self, *, prefer_direct=False): return await self._execution.show_startup(prefer_direct=prefer_direct)
 
