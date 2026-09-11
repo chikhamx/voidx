@@ -344,7 +344,7 @@ class PermissionFlow:
             elif (
                 decision.action == Action.ASK
                 and decision.risk is not None
-                and decision.risk.level == RiskLevel.DANGEROUS
+                and decision.risk.level in {RiskLevel.DANGEROUS, RiskLevel.EXTREME}
                 and getattr(host._permission, "permission_mode", "") == PermissionMode.AI_APPROVAL.value
                 and _tool_call_key(tc) in getattr(host, "_successful_dangerous_calls", set())
             ):

@@ -173,7 +173,7 @@ def _fit_json_output(
     overflow_path = None
     try:
         overflow_path = persist_named_tool_result(
-            full_output,
+            json.dumps(full_payload, ensure_ascii=False, indent=2) + "\n",
             _overflow_name(tool_name, full_output),
             session_id=ctx.session_id,
             workspace=ctx.workspace,

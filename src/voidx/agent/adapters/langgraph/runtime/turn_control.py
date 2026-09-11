@@ -92,7 +92,7 @@ def _extract_goal_from_args(args: Any, *, _depth: int = 0) -> str | None:
     goal = args.get("goal")
     if isinstance(goal, str) and goal.strip():
         return goal.strip()
-    for key in ("objective", "task", "description", "target", "query"):
+    for key in ("objective", "task", "description", "target", "query", "prompt"):
         val = args.get(key)
         if isinstance(val, str) and val.strip():
             return val.strip()

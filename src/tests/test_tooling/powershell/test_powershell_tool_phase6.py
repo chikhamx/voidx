@@ -17,7 +17,13 @@ from voidx.tooling.builtin.shell.powershell.tool import PowerShellTool
 
 
 def _payload(result):
-    return json.loads(result.output)
+    return {
+        "ok": result.metadata.get("ok", not result.metadata.get("error", False)),
+        "blocked": result.metadata.get("blocked", False),
+        "exit_code": result.metadata.get("exit_code"),
+        "stdout": result.output,
+        "stderr": result.metadata.get("stderr", result.output),
+    }
 
 
 @pytest.mark.asyncio

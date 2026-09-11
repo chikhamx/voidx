@@ -322,7 +322,7 @@ async def test_agent_tool_spawn_uses_gateway_when_available(tmp_path):
 
     assert result.metadata["run_id"]
     assert result.metadata["status"] == "running"
-    assert "[running]" in result.output
+    assert "status: running" in result.output
     assert result.metadata["run_id"] in result.output
     assert "agent_control" not in result.output
     assert "agent_control" in (result.next_step_hint or "")
@@ -552,16 +552,16 @@ async def test_agent_spawn_result_uses_stable_display_name_contract(tmp_path):
 
     run_id = result.metadata["run_id"]
     display_name = subagent_display_name(run_id)
-    assert result.output == f"{display_name} [running]\nrun_id: {run_id}"
+    assert result.output == (
+        f"name: {display_name}\n"
+        f"status: running\n"
+        f"run_id: {run_id}"
+    )
     assert result.title == f"{display_name}: Review spawn contract"
-    assert result.summary == f"{display_name} spawned"
+    assert result.summary == "spawned"
     assert result.display == ""
     assert result.metadata == {"agent": "voidx", "mode": "review", "run_id": run_id, "status": "running"}
-    assert result.next_step_hint == (
-        "Use agent_control(action='wait') when the result is needed, "
-        "or continue with other independent work."
-    )
-    assert run_id not in result.next_step_hint
+    assert f"run_id='{run_id}'" in result.next_step_hint
 
 
 @pytest.mark.asyncio

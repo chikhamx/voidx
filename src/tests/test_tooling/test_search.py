@@ -164,7 +164,9 @@ async def test_find_output_stays_within_char_budget_and_persists_overflow(tmp_pa
     assert 0 < len(data["files"]) < 200
     overflow_path = data.get("overflow_path")
     assert overflow_path
-    overflow = json.loads(Path(overflow_path).read_text(encoding="utf-8"))
+    overflow_text = Path(overflow_path).read_text(encoding="utf-8")
+    overflow = json.loads(overflow_text)
+    assert overflow_text.count("\n") > 1
     assert len(overflow["files"]) == 200
     assert overflow["truncated"] is False
 
@@ -187,7 +189,9 @@ async def test_search_output_stays_within_char_budget_and_persists_overflow(tmp_
     assert 0 < total_hits < 80
     overflow_path = data.get("overflow_path")
     assert overflow_path
-    overflow = json.loads(Path(overflow_path).read_text(encoding="utf-8"))
+    overflow_text = Path(overflow_path).read_text(encoding="utf-8")
+    overflow = json.loads(overflow_text)
+    assert overflow_text.count("\n") > 1
     overflow_hits = sum(len(item["hits"]) for item in overflow["matches"])
     assert overflow_hits == 80
 

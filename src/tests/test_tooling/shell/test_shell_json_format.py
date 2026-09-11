@@ -1,8 +1,6 @@
-"""Tests that shell tool JSON output is indented for LLM readability."""
+"""Tests that shell tool text output is formatted cleanly across multiple lines."""
 
 from __future__ import annotations
-
-import json
 
 from voidx.tooling.builtin.shell.common import (
     build_blocked_result,
@@ -11,19 +9,19 @@ from voidx.tooling.builtin.shell.common import (
 )
 
 
-def test_build_success_result_json_is_indented():
-    result = build_success_result("echo hi", "hello\n", "", 0, "Bash")
-    parsed = json.loads(result.output)
-    assert parsed["ok"] is True
-    assert parsed["stdout"] == "hello\n"
-    assert "\n  " in result.output, "JSON output should be indented with newlines"
+def test_build_success_result_output_is_multiline():
+    result = build_success_result("echo hi", "line1\nline2\n", "", 0, "Bash")
+    assert result.metadata["ok"] is True
+    assert result.metadata["exit_code"] == 0
+    # Output should directly contain unescaped multi-line content
+    assert "line1\nline2" in result.output
+    assert "\\n" not in result.output
+    assert "exit code: 0" in result.output
 
 
 def test_build_success_result_has_ui_summary():
     result = build_success_result("echo hi", "hello\n", "", 0, "Bash")
     assert result.summary == "ok"
-
-
 
 
 def test_build_failed_result_shortens_stderr_for_ui():
@@ -38,23 +36,27 @@ def test_build_failed_result_shortens_stderr_for_ui():
     assert result.summary == "exit 1"
     assert "AttributeError: _convert_responses_chunk_to_generation_chunk." in result.display
     assert "Traceback (most recent call last)" not in result.display
-    assert json.loads(result.output)["stderr"] == stderr
-def test_build_blocked_result_json_is_indented():
+    assert "exit code: 1" in result.output
+    assert "AttributeError: _convert_responses_chunk_to_generation_chunk." in result.output
+    assert "\\n" not in result.output
+
+
+def test_build_blocked_result_output_is_multiline():
     result = build_blocked_result("rm -rf /", "dangerous")
-    parsed = json.loads(result.output)
-    assert parsed["blocked"] is True
-    assert "\n  " in result.output, "JSON output should be indented with newlines"
+    assert result.metadata["blocked"] is True
+    assert "[blocked]" in result.output
+    assert "dangerous" in result.output
+    assert "\\n" not in result.output
 
 
-def test_build_timeout_result_json_is_indented():
+def test_build_timeout_result_output_is_multiline():
     result = build_timeout_result("sleep 999", 10)
-    parsed = json.loads(result.output)
-    assert parsed["timeout"] is True
-    assert "\n  " in result.output, "JSON output should be indented with newlines"
+    assert result.metadata["timeout"] is True
+    assert "timed out after 10s" in result.output
+    assert "\\n" not in result.output
 
 
 def test_build_blocked_result_includes_static_policy_hint():
     result = build_blocked_result("python x.py", "shell policy deferred: nested interpreter")
-    parsed = json.loads(result.output)
-    assert parsed["blocked"] is True
-    assert "rephrasing" in parsed["stderr"]
+    assert result.metadata["blocked"] is True
+    assert "rephrasing" in result.output
