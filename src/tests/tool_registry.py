@@ -46,7 +46,6 @@ def build_registry(
         "manage",
         "write",
         "replace",
-        "git",
         "find",
         "search",
         "lsp",

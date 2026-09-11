@@ -11,7 +11,6 @@ from voidx.tooling.adapters.scoped_plugin import FileScopedPlugin, ShellScopedPl
 from voidx.tooling.builtin.document import DocumentTool
 from voidx.tooling.builtin.file import FileReadTool, FileReplaceTool, ManageTool, WriteTool
 from voidx.tooling.builtin.file.search import FindTool, SearchTool
-from voidx.tooling.builtin.git import GitTool
 from voidx.tooling.builtin.shell.bash import BashTool
 from voidx.tooling.builtin.shell.powershell import PowerShellTool
 from voidx.tooling.ports.post_edit import PostEditFormatter
@@ -35,7 +34,6 @@ def build_builtin_plugins(
         ManageTool(),
         WriteTool(),
         FileReplaceTool(),
-        GitTool(),
         FindTool(),
         SearchTool(),
     ]

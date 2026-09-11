@@ -28,7 +28,6 @@ from voidx.skills.service import SkillService
 from voidx.tooling.adapters.skills import SkillsTool
 from voidx.tooling.builtin.document import DocumentTool
 from voidx.agent.adapters.tools.subagent import AgentTool
-from voidx.tooling.builtin.git import GitTool
 
 _CTX = ToolContext(workspace="/tmp")
 

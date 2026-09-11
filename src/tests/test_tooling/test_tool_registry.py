@@ -138,7 +138,7 @@ class TestToolRegistry:
         assert "delete" not in ids
         assert "find" in ids
         assert "search" in ids
-        assert "git" in ids
+        assert "git" not in ids
         assert ("bash" if os.name != "nt" else "powershell") in ids
         assert "clarify" in ids
         assert "checkpoint" in ids
@@ -161,7 +161,7 @@ class TestToolRegistry:
         assert "line" not in names
         assert "edit" not in names
         # Execution-only tools stay in the catalog serialization; the resolver hides them.
-        assert "git" in names
+        assert "git" not in names
         assert "lsp_format" in names
         for t in tools:
             assert t["type"] == "function"

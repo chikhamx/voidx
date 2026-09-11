@@ -25,7 +25,6 @@ import voidx.tooling.application.file_state as file_state
 from voidx.tooling.builtin.file.search import FindInput, SearchInput, FindTool, SearchTool
 from voidx.tooling.builtin.shell.bash import BashInput, BashTool
 from voidx.tooling.builtin.shell.powershell import PowerShellTool
-from voidx.tooling.builtin.git import GitTool
 from voidx.tooling.adapters.lsp import LspTool, LspFormatTool
 from voidx.agent.adapters.tools.subagent import AgentInput, AgentTool
 from voidx.agent.adapters.tools.subagent_control import AgentControlInput, AgentControlTool
@@ -219,7 +218,6 @@ class TestToolSchemas:
         assert inp.timeout == 120
 
     def test_execution_and_discovery_tool_descriptions_are_precise_for_llms(self, tmp_path):
-        git_schema = GitTool().parameters_schema()
         bash_schema = BashTool().parameters_schema()
         powershell_schema = PowerShellTool().parameters_schema()
         find_schema = FindTool().parameters_schema()
@@ -229,8 +227,6 @@ class TestToolSchemas:
         skills_api = SkillsApi(SkillService(SkillRegistry(str(tmp_path))))
         skill_schema = SkillsTool(skills_api).parameters_schema()
 
-        assert "do not include the git executable" in git_schema["properties"]["args"]["description"]
-        assert "read-only commands return structured JSON" in GitTool.description
         assert "working directory is the workspace root" in BashTool.description
         assert "non-interactive" in bash_schema["properties"]["command"]["description"]
         assert "terminated" in bash_schema["properties"]["timeout"]["description"]

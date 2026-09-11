@@ -249,36 +249,6 @@
   {
     "type": "function",
     "function": {
-      "name": "git",
-      "description": "Run path-scoped git commands. Pass only the git subcommand in args. Core read-only commands return structured JSON; other allowed commands return raw stdout/stderr inside JSON. Write commands require approval; destructive commands are denied.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "path": {
-            "default": "",
-            "description": "Repository working directory. Relative paths resolve from the workspace; empty uses the workspace root.",
-            "title": "Path",
-            "type": "string"
-          },
-          "args": {
-            "description": "raw git subcommand and arguments only. Do not include git itself; do not include the git executable, e.g. \"status --porcelain\" or \"log --oneline -5\".",
-            "minLength": 1,
-            "title": "Args",
-            "type": "string"
-          }
-        },
-        "required": [
-          "path",
-          "args"
-        ],
-        "additionalProperties": false
-      },
-      "strict": true
-    }
-  },
-  {
-    "type": "function",
-    "function": {
       "name": "find",
       "description": "Find files by filename substring and extension filters with stable structured results.",
       "parameters": {

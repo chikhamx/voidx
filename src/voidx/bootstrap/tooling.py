@@ -24,7 +24,6 @@ TOOL_CAPABILITIES = {
     "manage": ToolCapability.EXECUTION_GATED,
     "write": ToolCapability.EXECUTION_GATED,
     "replace": ToolCapability.EXECUTION_GATED,
-    "git": ToolCapability.EXECUTION_GATED,
     "find": ToolCapability.READ_ONLY,
     "search": ToolCapability.READ_ONLY,
     "lsp": ToolCapability.READ_ONLY,
@@ -52,7 +51,7 @@ TOOL_CAPABILITIES = {
 }
 
 _CATALOG_ORDER = (
-    "read", "manage", "write", "replace", "git", "find", "search",
+    "read", "manage", "write", "replace", "find", "search",
     "lsp", "lsp_format", "clarify", "checkpoint", "workflow", "compact",
     "document", "goal_init", "goal_checkpoint", "goal_decision",
     "loop_init", "loop_start", "loop_commit", "loop",
