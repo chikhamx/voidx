@@ -741,7 +741,14 @@
       "parameters": {
         "type": "object",
         "properties": {
+          "goal": {
+            "default": "",
+            "description": "Objective sentence or goal for the autonomous Goal.",
+            "title": "Goal",
+            "type": "string"
+          },
           "objective": {
+            "default": "",
             "description": "Objective sentence for the autonomous Goal.",
             "title": "Objective",
             "type": "string"
@@ -767,7 +774,7 @@
           }
         },
         "required": [
-          "objective",
+          "goal",
           "acceptance_condition"
         ],
         "additionalProperties": false
@@ -925,7 +932,14 @@
       "parameters": {
         "type": "object",
         "properties": {
+          "goal": {
+            "default": "",
+            "description": "The loop goal/task instructions describing what the autonomous loop should do.",
+            "title": "Goal",
+            "type": "string"
+          },
           "prompt": {
+            "default": "",
             "description": "The loop prompt/goal describing what the autonomous loop should do.",
             "title": "Prompt",
             "type": "string"
@@ -941,8 +955,7 @@
           }
         },
         "required": [
-          "prompt",
-          "interval_seconds"
+          "goal"
         ],
         "additionalProperties": false
       },
