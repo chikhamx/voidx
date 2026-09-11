@@ -141,6 +141,42 @@ class ModeCommandsMixin:
         state = "on" if self.mode_port.image_strip_enabled() else "off"
         self.mode_port.ui.print(f"[dim]image strip: {state}[/dim]")
 
+    async def _taskstate(self, arg: str) -> None:
+        port = self.task_state_port
+        if port is None:
+            self.mode_port.ui.error("Task-state history control is unavailable.")
+            return
+        parts = arg.lower().split()
+        usage = "Usage: /taskstate [strip [on|off] | status]"
+        value = None
+        if not parts:
+            app = self.mode_port.prompt_ui
+            if app is not None:
+                selected = await app.ask_choice("Task-state history", [
+                    ("Strip on (default)", "strip_on", "Replace old task state with the latest state."),
+                    ("Strip off (experiment)", "strip_off", "Retain sent task states in this running session; uses more context."),
+                ])
+                if selected not in ("strip_on", "strip_off"):
+                    return
+                value = selected == "strip_on"
+        elif parts == ["strip"]:
+            value = not port.strip_enabled()
+        elif parts == ["status"]:
+            pass
+        else:
+            if parts[0] == "strip":
+                parts = parts[1:]
+            if len(parts) != 1 or parts[0] not in ("on", "off"):
+                self.mode_port.ui.error(usage)
+                return
+            value = parts[0] == "on"
+        if value is not None:
+            port.set_strip(value)
+        state = "on" if port.strip_enabled() else "off"
+        self.mode_port.ui.print(f"[dim]taskstate strip: {state}[/dim]")
+        if not arg.strip() and self.mode_port.prompt_ui is None:
+            self.mode_port.ui.print(usage)
+
     def _log(self, arg: str) -> None:
         config = self.mode_port.log_config
         if config is None:

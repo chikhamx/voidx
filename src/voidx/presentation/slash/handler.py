@@ -12,6 +12,7 @@ from voidx.presentation.slash.port import (
     PreferencesSlashPort,
     SessionSlashPort,
     SlashControlPort,
+    TaskStateSlashPort,
 )
 from voidx.presentation.slash.registry import REGISTRY, SLASH_COMMANDS, SlashCommand
 from voidx.presentation.slash.runtime import prompt_text
@@ -63,6 +64,7 @@ class SlashHandler(
         model_port: ModelSlashPort,
         integrations_port: IntegrationsSlashPort,
         preferences_port: PreferencesSlashPort,
+        task_state_port: TaskStateSlashPort | None = None,
         *,
         session_repository: Any | None = None,
         session_cleanup: Any | None = None,
@@ -74,6 +76,7 @@ class SlashHandler(
         self.model_port = model_port
         self.integrations_port = integrations_port
         self.preferences_port = preferences_port
+        self.task_state_port = task_state_port
         self.session_repository = session_repository
         self.session_cleanup = session_cleanup
 
@@ -136,4 +139,3 @@ class SlashHandler(
         if isawaitable(result):
             await result
         return True
-

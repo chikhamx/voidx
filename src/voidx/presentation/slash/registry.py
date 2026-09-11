@@ -52,6 +52,7 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand("/rollback", "Revert file changes from the current turn", "_rollback", "none"),
     SlashCommand("/session", "Manage sessions (new/list/resume/del)", "_session", "args"),
     SlashCommand("/skills", "Manage local skills", "_skills", "args"),
+    SlashCommand("/taskstate", "Configure task-state history (strip on/off)", "_taskstate", "args"),
     SlashCommand("/tavily", "Configure Tavily API key for web search", "_tavily", "args"),
     SlashCommand("/title", "Set session title", "_set_title", "inp"),
     SlashCommand("/tone", "Set response tone preference", "_tone", "args"),

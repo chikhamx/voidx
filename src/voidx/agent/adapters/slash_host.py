@@ -332,6 +332,18 @@ class PreferencesSlashAdapter:
     def clear_successful_dangerous_calls(self): return self._execution.clear_successful_dangerous_calls()
 
 
+class TaskStateSlashAdapter:
+    def __init__(self, execution):
+        self._execution = execution
+
+    def strip_enabled(self) -> bool:
+        value = getattr(self._execution, "task_state_strip_enabled", True)
+        return bool(value() if callable(value) else value)
+
+    def set_strip(self, value: bool) -> None:
+        self._execution.set_task_state_strip(value)
+
+
 def build_slash_ports(execution):
     return (
         SlashControlAdapter(execution),
@@ -341,4 +353,5 @@ def build_slash_ports(execution):
         ModelSlashAdapter(execution),
         IntegrationsSlashAdapter(execution),
         PreferencesSlashAdapter(execution),
+        TaskStateSlashAdapter(execution),
     )
