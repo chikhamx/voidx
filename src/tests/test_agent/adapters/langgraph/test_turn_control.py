@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 from voidx.agent.adapters.langgraph.runtime.core.loop import LlmLoopState
 from voidx.agent.adapters.langgraph.runtime.core.turn import handle_turn_control_response
@@ -228,6 +228,38 @@ async def test_invalid_turn_is_repaired_twice_before_failing():
         messages = result.llm_messages
 
     assert [result.action for result in results] == ["retry", "retry", "fail"]
+
+
+@pytest.mark.asyncio
+async def test_initial_turn_auto_initializes_when_repairs_exhausted():
+    graph = _graph()
+    loop = LlmLoopState(context_tokens=0)
+    runtime_task_state = TaskState()
+    assistant = AIMessage(content="", tool_calls=[_call("turn_init", {}, "bad")])
+    user_msg = HumanMessage(content="Explain the code architecture")
+
+    results = []
+    messages = []
+    for _ in range(3):
+        result = await handle_turn_control_response(
+            graph=graph,
+            assistant_msg=assistant,
+            llm_messages=messages,
+            loop=loop,
+            turn_state="initial",
+            runtime_task_state=runtime_task_state,
+            state_messages=[user_msg],
+            interaction_mode_value="auto",
+            estimate_tokens=len,
+            rerender_task_context=lambda current, _state, _task: current,
+        )
+        results.append(result)
+        messages = result.llm_messages
+
+    assert [result.action for result in results] == ["retry", "retry", "retry"]
+    assert results[-1].turn_state == "running"
+    assert runtime_task_state.current_goal is not None
+    assert runtime_task_state.current_goal.desc == "Explain the code architecture"
 
 
 @pytest.mark.asyncio

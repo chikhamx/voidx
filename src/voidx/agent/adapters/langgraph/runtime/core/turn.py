@@ -125,6 +125,9 @@ async def handle_turn_control_response(
             turn_state=turn_state,
             runtime_task_state=runtime_task_state,
             estimate_tokens=estimate_tokens,
+            state_messages=state_messages,
+            rerender_task_context=rerender_task_context,
+            workflow_dag=workflow_dag,
         )
 
     if classification == TurnClassification.PLAIN_TEXT:
@@ -136,6 +139,9 @@ async def handle_turn_control_response(
             turn_state=turn_state,
             runtime_task_state=runtime_task_state,
             estimate_tokens=estimate_tokens,
+            state_messages=state_messages,
+            rerender_task_context=rerender_task_context,
+            workflow_dag=workflow_dag,
         )
 
     graph._turn_metrics.increment("turn_control_prompt_succeeded")
@@ -343,6 +349,9 @@ def _handle_invalid_turn(
     turn_state: str,
     runtime_task_state: TaskState,
     estimate_tokens: Any,
+    state_messages: list[BaseMessage] | None = None,
+    rerender_task_context: Any | None = None,
+    workflow_dag: WorkflowDAG | None = None,
 ) -> TurnControlResult:
     has_text = bool(extract_text(assistant_msg).strip())
     if has_text:
@@ -365,6 +374,22 @@ def _handle_invalid_turn(
         ]
         loop.context_tokens = estimate_tokens(llm_messages)
         return TurnControlResult("retry", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
+    has_legacy_turn = any(
+        isinstance(call, dict) and str(call.get("name") or "") == "turn"
+        for call in getattr(assistant_msg, "tool_calls", None) or []
+    )
+    if turn_state == "initial" and not has_legacy_turn:
+        return _fallback_turn_init(
+            graph=graph,
+            assistant_msg=assistant_msg,
+            llm_messages=llm_messages,
+            loop=loop,
+            runtime_task_state=runtime_task_state,
+            estimate_tokens=estimate_tokens,
+            state_messages=state_messages,
+            rerender_task_context=rerender_task_context,
+            workflow_dag=workflow_dag,
+        )
     return _invalid_turn_failure(llm_messages, loop, turn_state, runtime_task_state)
 
 
@@ -377,6 +402,9 @@ def _handle_plain_text(
     turn_state: str,
     runtime_task_state: TaskState,
     estimate_tokens: Any,
+    state_messages: list[BaseMessage] | None = None,
+    rerender_task_context: Any | None = None,
+    workflow_dag: WorkflowDAG | None = None,
 ) -> TurnControlResult:
     text = extract_text(assistant_msg).strip()
     if text:
@@ -402,7 +430,93 @@ def _handle_plain_text(
         ]
         loop.context_tokens = estimate_tokens(llm_messages)
         return TurnControlResult("retry", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
+    if turn_state == "initial":
+        return _fallback_turn_init(
+            graph=graph,
+            assistant_msg=assistant_msg,
+            llm_messages=llm_messages,
+            loop=loop,
+            runtime_task_state=runtime_task_state,
+            estimate_tokens=estimate_tokens,
+            state_messages=state_messages,
+            rerender_task_context=rerender_task_context,
+            workflow_dag=workflow_dag,
+        )
     return _invalid_turn_failure(llm_messages, loop, turn_state, runtime_task_state)
+
+
+def _fallback_turn_init(
+    *,
+    graph: Any,
+    assistant_msg: AIMessage,
+    llm_messages: list[BaseMessage],
+    loop: LlmLoopState,
+    runtime_task_state: TaskState,
+    estimate_tokens: Any,
+    state_messages: list[BaseMessage] | None = None,
+    rerender_task_context: Any | None = None,
+    workflow_dag: WorkflowDAG | None = None,
+) -> TurnControlResult:
+    from voidx.agent.adapters.langgraph.runtime.topology import latest_user_text
+
+    graph._turn_metrics.increment("turn_control_third_miss_fallback")
+    init_call = _turn_call_from_message(assistant_msg)
+    tool_call_id = str((init_call or {}).get("id") or "")
+
+    init_args = (init_call or {}).get("args") or {}
+    goal_text = _extract_goal_from_args(init_args) or str(init_args.get("goal") or "").strip()
+    if not goal_text and state_messages:
+        goal_text = latest_user_text(state_messages)
+    if not goal_text:
+        goal_text = latest_user_text(llm_messages)
+    if not goal_text:
+        goal_text = "Continue the work"
+
+    apply_turn_goal(
+        graph=graph,
+        runtime_task_state=runtime_task_state,
+        goal_text=goal_text,
+        workflow_dag=workflow_dag,
+    )
+    turn_state = "running"
+    loop.turn_prompt_active = False
+    if rerender_task_context is not None:
+        llm_messages = rerender_task_context(llm_messages, "running", runtime_task_state)
+
+    regular_calls = [
+        call
+        for call in (getattr(assistant_msg, "tool_calls", None) or [])
+        if isinstance(call, dict) and str(call.get("name") or "") != TURN_TOOL_NAME
+    ]
+    if regular_calls:
+        loop.terminal_msg = _message_with_tool_calls(assistant_msg, regular_calls)
+        return TurnControlResult(
+            "break",
+            llm_messages,
+            estimate_tokens(llm_messages),
+            turn_state,
+            runtime_task_state,
+        )
+
+    if tool_call_id:
+        response_msg: BaseMessage = ToolMessage(
+            content="Turn initialized automatically. Continue the work.",
+            tool_call_id=tool_call_id,
+            name=TURN_TOOL_NAME,
+        )
+    else:
+        response_msg = HumanMessage(
+            content="Turn initialized automatically. Continue the work.",
+            additional_kwargs={GUIDANCE_MARKER: True},
+        )
+
+    llm_messages = [
+        *llm_messages,
+        assistant_msg,
+        response_msg,
+    ]
+    loop.context_tokens = estimate_tokens(llm_messages)
+    return TurnControlResult("retry", llm_messages, loop.context_tokens, turn_state, runtime_task_state)
 
 
 def _invalid_turn_failure(
