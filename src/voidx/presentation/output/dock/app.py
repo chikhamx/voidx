@@ -765,31 +765,18 @@ class BottomInputDock(DockStreamMixin, DockStatusMixin, DockNodeMixin):
                     break
                 previous_node = self._tree.get(previous_owners[index])
                 following_node = self._tree.get(following_owners[index])
-                if (
-                    following_node is not None
-                    and not self._is_node_chain_completed(
-                        following_node.id,
-                        allow_untracked=allow_untracked,
-                    )
-                    and not is_assistant_message(following_node)
-                ):
+                if following_node is None:
                     break
-                same_non_root_parent = (
-                    previous_node is not None
-                    and following_node is not None
-                    and previous_node.parent is not None
-                    and previous_node.parent is following_node.parent
-                    and previous_node.parent is not self._tree.root
-                )
-                if (
-                    same_non_root_parent
-                    and is_assistant_message(following_node)
-                    and not self._is_node_chain_completed(
-                        following_node.id,
-                        allow_untracked=allow_untracked,
-                    )
+                if not self._is_node_chain_completed(
+                    following_node.id,
+                    allow_untracked=allow_untracked,
                 ):
-                    break
+                    if (
+                        previous_node is None
+                        or previous_node.node_type != "turn"
+                        or not is_assistant_message(following_node)
+                    ):
+                        break
                 index += 1
                 continue
             if not self._is_node_chain_completed(

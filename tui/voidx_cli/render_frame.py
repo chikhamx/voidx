@@ -585,7 +585,7 @@ class _FrameRendererMixin:
                     frame_rows = physical.frame_rows
                     bottom_rows = physical.bottom.rendered.visual_rows
                     busy_activity_rows = physical.projected_regions[1].visual_rows
-                    thinking_stream_rows = physical.projected_regions[3].visual_rows
+                    thinking_stream_rows = physical.projected_regions[2].visual_rows
                     start_row = physical.frame_start_row
                     cursor_ansi = (
                         f"\x1b[{physical.cursor_row};{physical.cursor_col}H"
@@ -753,7 +753,7 @@ class _FrameRendererMixin:
                         frame_rows = physical.frame_rows
                         bottom_rows = physical.bottom.rendered.visual_rows
                         busy_activity_rows = physical.projected_regions[1].visual_rows
-                        thinking_stream_rows = physical.projected_regions[3].visual_rows
+                        thinking_stream_rows = physical.projected_regions[2].visual_rows
                         start_row = physical.frame_start_row
                         cursor_ansi = f"\x1b[{physical.cursor_row};{physical.cursor_col}H"
                         lines_up = max(

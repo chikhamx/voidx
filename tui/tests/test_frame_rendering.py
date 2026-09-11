@@ -1386,3 +1386,17 @@ def test_frame_shrink_lifts_bottom_and_clears_old_tail(tmp_path, monkeypatch):
     assert not tui._bottom_dock_is_anchored(20)
     assert "\x1b[20;1H\x1b[K" in output.text
     assert "\x1b[1;17r" not in output.text
+
+
+def test_thinking_stream_records_correct_thinking_rows_in_frame_state(tmp_path, monkeypatch):
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._busy = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    dock.begin_capture()
+    dock.start_turn("question")
+    dock.set_stream("thinking line 1\nthinking line 2", phase="thinking")
+
+    tui._render_frame()
+
+    assert tui._last_busy_activity_thinking_rows == 2
