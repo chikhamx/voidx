@@ -20,9 +20,11 @@ from voidx.tooling.policy.shell.constants import (
     GIT_READ_ONLY_FLAGS,
     GIT_READ_ONLY_OPTIONS_WITH_VALUE,
     GIT_READ_ONLY_OPTIONS_WITH_OPTIONAL_VALUE,
+    GIT_COMMON_OPTIONS_WITH_VALUE,
     GIT_REF_WRITE_FLAGS,
     GIT_READ_ONLY_OUTPUT_FLAGS,
     GIT_READ_ONLY_UNSAFE_OPTIONS,
+    GIT_SUBCOMMAND_OPTIONS_WITH_VALUE,
     GIT_SAFE_ENV_NAMES,
     GIT_UNSAFE_GLOBAL_OPTIONS,
     NESTED_INTERPRETERS,
@@ -792,7 +794,7 @@ def _bash_single_policy(words: list[str]) -> ShellPolicyDecision:
             False,
             False,
             f"git write command: {git_subcommand(words)}" if git_subcommand(words) else "unknown git command",
-            read_paths=redirect_reads,
+            read_paths=_path_union(_git_access_paths(words), redirect_reads),
             write_paths=_path_union(_git_write_paths(words), redirect_writes),
         )
 
@@ -910,7 +912,7 @@ def _powershell_single_policy(words: list[str]) -> ShellPolicyDecision:
             False,
             False,
             f"git write command: {git_subcommand(words)}" if git_subcommand(words) else "unknown git command",
-            read_paths=redirect_reads,
+            read_paths=_path_union(_git_access_paths(words), redirect_reads),
             write_paths=_path_union(_git_write_paths(words), redirect_writes),
         )
 
@@ -1535,6 +1537,24 @@ def _has_git_read_only_unsafe_option(args: list[str]) -> bool:
     )
 
 
+def _git_subcommand_value_options(subcommand: str) -> frozenset[str]:
+    specific = GIT_SUBCOMMAND_OPTIONS_WITH_VALUE.get(subcommand)
+    if specific:
+        return specific | GIT_COMMON_OPTIONS_WITH_VALUE
+    return GIT_COMMON_OPTIONS_WITH_VALUE
+
+
+_GIT_READ_PATH_OPTIONS = frozenset({
+    "-F", "--file",
+    "-t", "--template",
+    "--contents",
+    "--ignore-revs-file",
+    "--exclude-from",
+    "--reference",
+    "--reference-if-able",
+})
+
+
 def _git_access_paths(words: list[str]) -> tuple[Path, ...]:
     parts = parse_git_command(words)
     paths: list[Path] = []
@@ -1543,15 +1563,38 @@ def _git_access_paths(words: list[str]) -> tuple[Path, ...]:
         if name in {"-C", "--git-dir", "--work-tree"} and value:
             paths.append(Path(_clean_path_arg(value)))
 
+    value_options = _git_subcommand_value_options(parts.subcommand)
     after_separator = False
-    for arg in parts.args:
+    index = 0
+    args = parts.args
+    while index < len(args):
+        arg = args[index]
         if arg == "--":
             after_separator = True
+            index += 1
             continue
-        if arg.startswith("-") or "=" in arg:
-            continue
+        if not after_separator:
+            if arg in _GIT_READ_PATH_OPTIONS and index + 1 < len(args):
+                paths.append(Path(_clean_path_arg(args[index + 1])))
+                index += 2
+                continue
+            if arg.startswith(("-F", "-t")) and len(arg) > 2:
+                paths.append(Path(_clean_path_arg(arg[2:].lstrip("="))))
+                index += 1
+                continue
+            if any(arg.startswith(f"{opt}=") for opt in _GIT_READ_PATH_OPTIONS if opt.startswith("--")):
+                paths.append(Path(_clean_path_arg(arg.split("=", 1)[1])))
+                index += 1
+                continue
+            if arg in value_options and index + 1 < len(args):
+                index += 2
+                continue
+            if arg.startswith("-") or "=" in arg:
+                index += 1
+                continue
         if after_separator or _looks_like_path(arg):
             paths.append(Path(_clean_path_arg(arg)))
+        index += 1
     return tuple(dict.fromkeys(paths))
 
 
@@ -1563,6 +1606,7 @@ def _git_write_paths(words: list[str]) -> tuple[Path, ...]:
         if name in {"-C", "--git-dir", "--work-tree"} and value:
             paths.append(Path(_clean_path_arg(value)))
 
+    value_options = _git_subcommand_value_options(parts.subcommand)
     after_separator = False
     index = 0
     args = parts.args
@@ -1573,22 +1617,34 @@ def _git_write_paths(words: list[str]) -> tuple[Path, ...]:
             index += 1
             continue
         if not after_separator:
-            if arg in {"-o", "--output"} and index + 1 < len(args):
+            if (arg in {"--output", "--output-directory"} or (arg == "-o" and parts.subcommand != "ls-files")) and index + 1 < len(args):
                 paths.append(Path(_clean_path_arg(args[index + 1])))
                 index += 2
                 continue
-            if arg.startswith("--output="):
+            if arg.startswith(("--output=", "--output-directory=")):
                 paths.append(Path(_clean_path_arg(arg.split("=", 1)[1])))
                 index += 1
                 continue
             if arg.startswith("-o") and len(arg) > 2 and parts.subcommand != "ls-files":
-                paths.append(Path(_clean_path_arg(arg[2:])))
+                paths.append(Path(_clean_path_arg(arg[2:].lstrip("="))))
                 index += 1
+                continue
+            if arg in _GIT_READ_PATH_OPTIONS and index + 1 < len(args):
+                index += 2
+                continue
+            if any(arg.startswith(f"{opt}=") for opt in _GIT_READ_PATH_OPTIONS if opt.startswith("--")):
+                index += 1
+                continue
+            if arg.startswith(("-F", "-t")) and len(arg) > 2:
+                index += 1
+                continue
+            if arg in value_options and index + 1 < len(args):
+                index += 2
                 continue
             if arg.startswith("-") or "=" in arg:
                 index += 1
                 continue
-        if after_separator or _looks_like_path(arg):
+        if parts.subcommand not in GIT_READ_ONLY_SUBCOMMANDS and (after_separator or _looks_like_path(arg)):
             paths.append(Path(_clean_path_arg(arg)))
         index += 1
     return tuple(dict.fromkeys(paths))
@@ -1606,4 +1662,14 @@ def _looks_like_path(value: str) -> bool:
     value = _clean_path_arg(value)
     if not value or value.startswith("-"):
         return False
-    return value.startswith(("/", "~", ".")) or "/" in value or "\\" in value or "." in Path(value).name
+    if "\n" in value or "\r" in value:
+        return False
+    if len(value) > 4096:
+        return False
+    if any(len(segment) > 255 for segment in value.replace("\\", "/").split("/")):
+        return False
+    try:
+        name = Path(value).name
+    except (ValueError, OSError):
+        return False
+    return value.startswith(("/", "~", ".")) or "/" in value or "\\" in value or "." in name

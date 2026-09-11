@@ -171,3 +171,42 @@ GIT_SAFE_ENV_NAMES = frozenset({
 GIT_REF_WRITE_FLAGS = frozenset({
     "-d", "-D", "-m", "-M", "--delete", "--move", "--force",
 })
+
+GIT_COMMON_OPTIONS_WITH_VALUE = frozenset({
+    "--message",
+    "--file",
+    "--template",
+    "--reedit-message",
+    "--reuse-message",
+    "--fixup",
+    "--squash",
+    "--author",
+    "--committer",
+    "--date",
+    "--cleanup",
+    "--strategy",
+    "--strategy-option",
+    "--encoding",
+    "--grep",
+    "--grep-reflog",
+})
+
+GIT_SUBCOMMAND_OPTIONS_WITH_VALUE: dict[str, frozenset[str]] = {
+    **GIT_READ_ONLY_OPTIONS_WITH_VALUE,
+    "commit": frozenset({
+        "-m", "--message", "-F", "--file", "-t", "--template",
+        "-c", "-C", "--reedit-message", "--reuse-message",
+        "--fixup", "--squash", "--author", "--date", "--cleanup",
+    }),
+    "tag": frozenset({"-m", "--message", "-F", "--file", "-u", "--local-user"}),
+    "merge": frozenset({"-m", "--message", "-F", "--file", "-s", "--strategy", "-X", "--strategy-option"}),
+    "revert": frozenset({"-m", "--mainline", "-s", "--strategy", "-X", "--strategy-option"}),
+    "cherry-pick": frozenset({"-s", "--strategy", "-X", "--strategy-option", "-m", "--mainline"}),
+    "rebase": frozenset({"--onto", "-s", "--strategy", "-X", "--strategy-option"}),
+    "stash": frozenset({"-m", "--message"}),
+    "format-patch": frozenset({"-o", "--output-directory"}),
+    "checkout": frozenset({"-b", "-B", "-t", "--track"}),
+    "switch": frozenset({"-c", "-C", "-t", "--track"}),
+    "notes": frozenset({"-m", "--message", "-F", "--file", "-c", "-C", "--reedit-message", "--reuse-message"}),
+    "clone": frozenset({"-b", "--branch", "--reference", "--reference-if-able", "--template", "--origin", "-o", "-u", "--upload-pack"}),
+}

@@ -37,7 +37,7 @@ def resolve_access(
 
     workspace_path = Path(workspace).expanduser().resolve()
     is_workspace_path = _contains(workspace_path, normalized)
-    resolved_object_type: ObjectType = object_type or ("dir" if normalized.is_dir() else "file")
+    resolved_object_type: ObjectType = object_type or ("dir" if _safe_is_dir(normalized) else "file")
     intent = AccessIntent(
         requested_path=file_path,
         normalized_path=normalized,
@@ -57,9 +57,9 @@ def resolve_access(
         return AccessResolution("allow", intent=intent)
     if not grants.permission_state_ready:
         return AccessResolution("deny", intent=intent, reason="Permission state not ready.")
-    if require_exists and not normalized.exists():
+    if require_exists and not _safe_exists(normalized):
         return AccessResolution("defer", intent=intent, reason=f"File not found; external path deferred: {file_path}")
-    if access == "write" and not normalized.exists() and not allow_missing_write_file:
+    if access == "write" and not _safe_exists(normalized) and not allow_missing_write_file:
         return AccessResolution("defer", intent=intent, reason=f"Path does not exist; external path deferred: {file_path}")
     if _matches_grant(
         normalized,
@@ -174,5 +174,19 @@ def _normalized_grants(grants: tuple[str, ...] | list[str]) -> list[Path]:
 def _contains(base: Path, path: Path) -> bool:
     try:
         return path == base or path.is_relative_to(base)
+    except (OSError, ValueError):
+        return False
+
+
+def _safe_is_dir(path: Path) -> bool:
+    try:
+        return path.is_dir()
+    except (OSError, ValueError):
+        return False
+
+
+def _safe_exists(path: Path) -> bool:
+    try:
+        return path.exists()
     except (OSError, ValueError):
         return False
