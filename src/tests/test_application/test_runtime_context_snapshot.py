@@ -11,7 +11,7 @@ def test_snapshot_data_normalizes_the_rendered_sections():
         ContextSection(name="Empty", content="  "),
     ])
     assert context.snapshot_data == [{"name": "Task", "content": "full goal\nconstraint"}]
-    assert context.render_task_context() == "VOIDX_RUNTIME_CONTEXT\n\n## Task\nfull goal\nconstraint"
+    assert context.render_task_context() == "<task>\nfull goal\nconstraint\n</task>"
     context.snapshot_data[0]["content"] = "changed"
     assert "changed" not in context.render_task_context()
 

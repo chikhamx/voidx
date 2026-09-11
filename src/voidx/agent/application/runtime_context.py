@@ -7,6 +7,7 @@ from datetime import datetime
 import hashlib
 import json
 import platform
+import re
 from typing import Any, Iterable, Protocol
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
@@ -130,7 +131,11 @@ class RuntimeContext(BaseModel):
         data = self.snapshot_data
         if not data:
             return ""
-        return _render_sections([ContextSection(**section) for section in data])
+        parts = []
+        for section in data:
+            tag = _section_to_tag(section["name"])
+            parts.append(f"<{tag}>\n{section['content']}\n</{tag}>")
+        return "\n\n".join(parts)
 
     def apply_to_messages(self, messages: list[BaseMessage]) -> None:
         ContextCompiler(self).apply_to_messages(messages)
@@ -409,8 +414,18 @@ def _render_task_state_todo_lines(todo_state_value: object | None) -> list[str]:
     return lines
 
 
+_TASK_TAG_PATTERN = re.compile(
+    r"^\s*<(current_task_state|task)>[\s\S]*?</\1>\s*",
+    re.DOTALL,
+)
+
+
+def _section_to_tag(name: str) -> str:
+    return name.strip().lower().replace(" ", "_")
+
+
 def _render_sections(sections: list[ContextSection]) -> str:
-    parts = [_CONTEXT_MARKER]
+    parts: list[str] = []
     for section in sections:
         if not section.content.strip():
             continue
@@ -469,12 +484,25 @@ def _starts_with_marker(content: object, marker: str) -> bool:
 
 def _is_standalone_runtime_context(content: object) -> bool:
     if isinstance(content, str):
-        return content.startswith(_CONTEXT_MARKER) and not _is_turn_overlay_text(content)
-    if isinstance(content, list) and content:
+        text = content
+    elif isinstance(content, list) and len(content) == 1:
         first = content[0]
         if isinstance(first, dict) and first.get("type") == "text":
-            text = first.get("text", "")
-            return isinstance(text, str) and text.startswith(_CONTEXT_MARKER) and not _is_turn_overlay_text(text)
+            first_text = first.get("text", "")
+            if isinstance(first_text, str):
+                text = first_text
+            else:
+                return False
+        else:
+            return False
+    else:
+        return False
+    if not text:
+        return False
+    if text.startswith(_CONTEXT_MARKER) and not _is_turn_overlay_text(text):
+        return True
+    if _TASK_TAG_PATTERN.match(text) and not _strip_turn_overlay_text(text).strip():
+        return True
     return False
 
 
@@ -542,6 +570,11 @@ def _strip_turn_overlay(message: BaseMessage) -> BaseMessage:
 def _strip_turn_overlay_text(content: str) -> str:
     if not _is_turn_overlay_text(content):
         return content
+    # First handle XML tag format
+    match = _TASK_TAG_PATTERN.match(content)
+    if match:
+        return content[match.end():]
+    # Legacy markers compatibility
     for delimiter in (_TASK_CONTEXT_DELIMITER, _LEGACY_USER_MESSAGE_DELIMITER):
         if delimiter in content:
             return content.split(delimiter, 1)[1]
@@ -553,6 +586,8 @@ def _strip_turn_overlay_text(content: str) -> str:
 
 
 def _is_turn_overlay_text(content: str) -> bool:
+    if _TASK_TAG_PATTERN.match(content):
+        return True
     return content.startswith(_CONTEXT_MARKER) and (
         "\n\n## Task Context" in content
         or "\n\n## User Message" in content
@@ -663,13 +698,12 @@ def _platform_info() -> str:
 
 def _prepend_task_context(message: BaseMessage, task_context: str) -> BaseMessage:
     content = message.content
-    header = f"{task_context}\n\n## Task Context"
     if isinstance(content, str):
-        new_content = f"{header}\n{content}"
+        new_content = f"{task_context}\n\n{content}" if content else task_context
     elif isinstance(content, list):
-        new_content = [{"type": "text", "text": header}, *content]
+        new_content = [{"type": "text", "text": f"{task_context}\n\n"}, *content]
     else:
-        new_content = f"{header}\n{content}"
+        new_content = f"{task_context}\n\n{content}" if content else task_context
     return message.model_copy(update={"content": new_content})
 
 

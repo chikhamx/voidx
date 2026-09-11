@@ -92,9 +92,9 @@ async def test_subagent_preserves_unchanged_snapshot_position(tmp_path, monkeypa
     first_step_messages = history[0]
     second_step_messages = history[1]
 
-    assert sum(str(m.content).count("## Current Task State") for m in first_step_messages) == 1
+    assert sum(str(m.content).count("<current_task_state>") for m in first_step_messages) == 1
 
-    assert sum(str(m.content).count("## Current Task State") for m in second_step_messages) == 1
+    assert sum(str(m.content).count("<current_task_state>") for m in second_step_messages) == 1
     first_snapshot = next(m for m in first_step_messages if m.additional_kwargs.get("_voidx_task_state_snapshot"))
     assert second_step_messages[first_step_messages.index(first_snapshot)].content == first_snapshot.content
 
@@ -135,7 +135,7 @@ async def test_subagent_does_not_append_unchanged_snapshot(tmp_path, monkeypatch
     assert len(history) == 2
 
     second_step_messages = history[1]
-    assert sum(str(m.content).count("## Current Task State") for m in second_step_messages) == 1
+    assert sum(str(m.content).count("<current_task_state>") for m in second_step_messages) == 1
 
 
 def test_subagent_has_no_retention_switch():

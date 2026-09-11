@@ -69,7 +69,7 @@ def _install_old_builder(graph, tmp_path) -> None:
 
 
 def _assert_latest_prompt(prompt: str, *, goal: str, todo_content: str) -> None:
-    assert prompt.count("## Current Task State") == 1
+    assert prompt.count("<current_task_state>") == 1
     assert "Current persona: implement" in prompt
     assert "Turn state: running" in prompt
     assert f"Goal: {goal}" in prompt

@@ -50,6 +50,58 @@ def test_compaction_summary_messages_strips_runtime_turn_overlay() -> None:
     assert filtered[0].content == "actual user request"
 
 
+def test_compaction_summary_messages_strips_xml_task_state_overlay() -> None:
+    filtered = compaction_summary_messages([
+        HumanMessage(
+            content=(
+                "<current_task_state>\n- Current persona: voidx\n</current_task_state>\n\nactual user request"
+            )
+        )
+    ])
+
+    assert len(filtered) == 1
+    assert filtered[0].content == "actual user request"
+
+
+def test_compaction_summary_messages_strips_multimodal_task_state_overlay() -> None:
+    filtered = compaction_summary_messages([
+        HumanMessage(
+            content=[
+                {"type": "text", "text": "<current_task_state>\n- Current persona: voidx\n</current_task_state>\n\nactual user request"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,123"}},
+            ]
+        )
+    ])
+
+    assert len(filtered) == 1
+    assert filtered[0].content[0]["text"] == "actual user request"
+    assert filtered[0].content[1]["type"] == "image_url"
+
+
+def test_compaction_summary_messages_does_not_drop_user_custom_xml_tags() -> None:
+    filtered = compaction_summary_messages([
+        HumanMessage(content="<code>print('hello')</code>"),
+        HumanMessage(content="<sql>SELECT * FROM users;</sql>"),
+    ])
+
+    assert len(filtered) == 2
+    assert filtered[0].content == "<code>print('hello')</code>"
+    assert filtered[1].content == "<sql>SELECT * FROM users;</sql>"
+
+
+def test_compaction_summary_messages_drops_standalone_task_state_overlay() -> None:
+    filtered = compaction_summary_messages([
+        HumanMessage(content="<current_task_state>\n- Current persona: voidx\n</current_task_state>"),
+        HumanMessage(content="valid user question"),
+        HumanMessage(content=[
+            {"type": "text", "text": "<current_task_state>\n- Current persona: voidx\n</current_task_state>"},
+        ]),
+    ])
+
+    assert len(filtered) == 1
+    assert filtered[0].content == "valid user question"
+
+
 def test_fallback_summary_with_previous_preserves_anchored_history() -> None:
     summary = fallback_summary_with_previous(
         [

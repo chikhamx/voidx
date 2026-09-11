@@ -33,11 +33,11 @@ async def test_retains_sent_task_state_through_tools_and_new_user_message(tmp_pa
     messages += [AIMessage(content='', tool_calls=[{'name': 'read_file', 'args': {}, 'id': 'call_read', 'type': 'tool_call'}]), ToolMessage(content='result', tool_call_id='call_read')]
     second = await call('second goal')
     assert wire(second[:len(first)]) == wire(first)
-    assert sum(str(m.content).count('## Current Task State') for m in second) == 2
+    assert sum(str(m.content).count('<current_task_state>') for m in second) == 2
     messages += [AIMessage(content='done'), HumanMessage(content='continue')]
     third = await call('third goal')
     assert wire(third[:len(second)]) == wire(second)
-    assert sum(str(m.content).count('## Current Task State') for m in third) == 3
+    assert sum(str(m.content).count('<current_task_state>') for m in third) == 3
     fourth = await call('third goal')
     assert wire(fourth) == wire(third)
     assert graph.task_state_reminder_policy.state.calls_since_snapshot == 1
@@ -86,7 +86,7 @@ async def test_failed_provider_request_does_not_add_a_retained_snapshot(tmp_path
     await graph._call_llm({'messages': [HumanMessage(content='work')], 'step_count': 1, 'persona': 'implement', 'turn_state': 'running', 'task_state': TaskState(current_goal=GoalSpec(desc='goal')).model_dump(mode='json')})
     assert len(graph.model.attempts) == 2
     for attempt in graph.model.attempts:
-        assert sum(str(m.content).count('## Current Task State') for m in attempt) == 1
+        assert sum(str(m.content).count('<current_task_state>') for m in attempt) == 1
 
 
 @pytest.mark.asyncio
@@ -148,7 +148,7 @@ async def test_repair_requests_commit_only_once_after_acceptance(tmp_path, monke
     monkeypatch.setattr(module, '_stream_llm', stream)
     await graph._call_llm({'messages': [HumanMessage(content='work')], 'step_count': 1, 'turn_state': 'running'})
     assert len(requests) == 2
-    assert all(sum('## Current Task State' in str(m.content) for m in request) == 1 for request in requests)
+    assert all(sum('<current_task_state>' in str(m.content) for m in request) == 1 for request in requests)
     assert graph.task_state_history.snapshot_count == 1
     assert graph.task_state_reminder_policy.state.calls_since_snapshot == 0
 
@@ -167,7 +167,7 @@ async def test_profile_suppression_preserves_container_without_injection(tmp_pat
     await graph._call_llm(state)
     assert graph.task_state_history.snapshot_count == 1
     assert graph.task_state_reminder_policy.state.snapshot is None
-    assert not any('## Current Task State' in str(m.content) for m in graph.model.messages)
+    assert not any('<current_task_state>' in str(m.content) for m in graph.model.messages)
     graph._last_context_builder._suppress_sections.clear()
     await graph._call_llm(state)
     assert graph.task_state_history.snapshot_count == 2
@@ -178,7 +178,7 @@ def reminder_request(tmp_path, monkeypatch):
     import voidx.agent.adapters.langgraph.runtime.llm_turn as module
 
     monkeypatch.setattr(module, 'StreamingRenderer', FakeRenderer)
-    graph = make_langgraph_execution(Config(model=ModelConfig(provider='openai', model='gpt-4o'), workspace=str(tmp_path)), api_key="test")
+    graph = make_langgraph_execution(Config(model=ModelConfig(provider='openai', model='gpt-4o'), workspace=str(tmp_path)), api_key='test-key')
     graph.model = TrackingStreamingModel()
     _install_old_builder(graph, tmp_path)
     state = {'messages': [HumanMessage(content='work')], 'step_count': 1, 'turn_state': 'running'}
@@ -186,7 +186,7 @@ def reminder_request(tmp_path, monkeypatch):
 
 
 def snapshots(messages):
-    return [m for m in messages if '## Current Task State' in str(m.content)]
+    return [m for m in messages if '<current_task_state>' in str(m.content)]
 
 
 def reminder_log(caplog):

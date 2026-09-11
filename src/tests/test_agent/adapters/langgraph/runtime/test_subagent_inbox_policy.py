@@ -61,7 +61,7 @@ async def test_child_own_profile_suppresses_real_request(tmp_path, monkeypatch):
     monkeypatch.setattr(module, "stream_llm", stream)
     await invoke(tmp_path, runtime_profile=CHAT_PROFILE)
     assert requests
-    assert all("## Current Task State" not in str(m.content) for m in requests[0])
+    assert all("<current_task_state>" not in str(m.content) for m in requests[0])
 
 
 @pytest.mark.asyncio
@@ -90,7 +90,7 @@ async def test_paused_invocations_keep_independent_policy(tmp_path, monkeypatch)
         assert await asyncio.gather(*tasks) == ["done", "done"]
         assert policies[0] is not policies[1]
         assert [[d.reason for d in policy.commits] for policy in policies] == [["initial"], ["initial"]]
-        assert all(sum("## Current Task State" in str(m.content) for m in request) == 1 for request in requests)
+        assert all(sum("<current_task_state>" in str(m.content) for m in request) == 1 for request in requests)
     finally:
         for task in tasks:
             if not task.done():

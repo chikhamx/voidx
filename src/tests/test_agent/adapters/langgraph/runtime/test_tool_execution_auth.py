@@ -423,6 +423,6 @@ async def test_prepare_renders_plan_mode_constraint_without_mode_prompt(tmp_path
     assert isinstance(messages[0], SystemMessage)
     assert "## Mode" not in messages[0].content
     assert "## PLAN MODE ACTIVE" not in messages[0].content
-    assert "## Current Task State" in messages[-1].content
+    assert "<current_task_state>" in messages[-1].content
     assert "plan mode blocks write/insert/replace/edit" in messages[-1].content
     assert "implement delegation" not in messages[-1].content

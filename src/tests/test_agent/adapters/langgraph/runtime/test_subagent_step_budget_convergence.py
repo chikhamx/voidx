@@ -187,8 +187,7 @@ async def test_subagent_skill_context_matches_orchestrator(tmp_path, monkeypatch
     task_messages = [
         message for message in captured["messages"]
         if isinstance(message, HumanMessage)
-        and str(message.content).startswith("VOIDX_RUNTIME_CONTEXT")
-        and "## Current Task State" in str(message.content)
+        and str(message.content).startswith("<current_task_state>")
     ]
     assert all(
         not (

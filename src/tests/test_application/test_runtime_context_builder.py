@@ -207,7 +207,7 @@ def test_runtime_context_applies_task_context_before_current_user(tmp_path):
     assert "Active Skills" not in messages[-1].content
     assert "Current DateTime" not in messages[-1].content
     assert "## Runtime State" not in messages[-1].content
-    assert "Current Task State" in messages[-1].content
+    assert "<current_task_state>" in messages[-1].content
     assert "Todo: 1/2 done · 1 active · 0 pending" in messages[-1].content
     assert "  - active ctx: update runtime context" in messages[-1].content
     assert "Active/Pending" not in messages[-1].content
@@ -336,7 +336,7 @@ def test_runtime_context_omits_goal_resolution_guide(tmp_path):
     assert _runtime_state_human_messages(messages) == []
     assert messages[1].content == "old question"
     assert messages[2].content == "old answer"
-    assert "Current Task State" in messages[3].content
+    assert "<current_task_state>" in messages[3].content
     assert messages[3].content.endswith("current request")
 
     context.apply_to_messages(messages)
@@ -491,7 +491,7 @@ def test_runtime_context_recompile_does_not_duplicate_turn_overlay(tmp_path):
 
     assert isinstance(messages[-1], HumanMessage)
     assert isinstance(messages[-1].content, str)
-    assert messages[-1].content.count("VOIDX_RUNTIME_CONTEXT") == 1
+    assert messages[-1].content.count("<current_task_state>") == 1
     assert "2026-06-06 10:02 CST" not in messages[-1].content
     assert "2026-06-06 10:01 CST" not in messages[-1].content
     assert messages[-1].content.endswith("current request")
@@ -521,13 +521,23 @@ def test_runtime_context_preserves_multimodal_user_message_without_extra_system(
     assert isinstance(messages[-1], HumanMessage)
     assert isinstance(messages[-1].content, list)
     assert messages[-1].content[0]["type"] == "text"
-    assert "Current Task State" in messages[-1].content[0]["text"]
+    assert "<current_task_state>" in messages[-1].content[0]["text"]
     assert "## Runtime State" not in messages[-1].content[0]["text"]
-    assert "## Task Context" in messages[-1].content[0]["text"]
+    assert "</current_task_state>" in messages[-1].content[0]["text"]
     assert "Current DateTime" not in messages[-1].content[0]["text"]
     assert "Active Skills" not in messages[-1].content[0]["text"]
     assert messages[-1].content[1]["type"] == "text"
     assert messages[-1].content[2]["type"] == "image_url"
+
+    # Re-compilation test: ensure raw_semantic_messages preserves the multimodal message
+    from voidx.agent.application.runtime_context import raw_semantic_messages
+    semantic = raw_semantic_messages(messages)
+    assert len(semantic) == 1
+    assert isinstance(semantic[0], HumanMessage)
+    assert isinstance(semantic[0].content, list)
+    assert len(semantic[0].content) == 2
+    assert semantic[0].content[0]["text"] == "describe image"
+    assert semantic[0].content[1]["type"] == "image_url"
 
 
 def test_runtime_context_goal_mode_omits_legacy_task_state_goal_constraint(tmp_path):
@@ -571,7 +581,7 @@ def test_runtime_context_migrates_task_overlay_from_ai_message_to_latest_message
     assert assistant_message.content == "assistant visible text"
     assert latest_tool.content == "latest tool result"
     assert isinstance(messages[-1], HumanMessage)
-    assert str(messages[-1].content).startswith("VOIDX_RUNTIME_CONTEXT")
+    assert str(messages[-1].content).startswith("<current_task_state>")
 
 
 def test_runtime_context_migrates_task_overlay_from_ai_list_content_to_latest_message(tmp_path):
@@ -608,7 +618,7 @@ def test_runtime_context_migrates_task_overlay_from_ai_list_content_to_latest_me
     ]
     assert latest_tool.content == "latest tool result"
     assert isinstance(messages[-1], HumanMessage)
-    assert str(messages[-1].content).startswith("VOIDX_RUNTIME_CONTEXT")
+    assert str(messages[-1].content).startswith("<current_task_state>")
 
 
 def test_runtime_context_migrates_task_overlay_from_tool_message_to_latest_message(tmp_path):
@@ -639,7 +649,7 @@ def test_runtime_context_migrates_task_overlay_from_tool_message_to_latest_messa
     assert old_tool.content == "tool visible text"
     assert old_tool.tool_call_id == "call_old"
     assert isinstance(latest_ai.content, str)
-    assert latest_ai.content.startswith("VOIDX_RUNTIME_CONTEXT")
+    assert latest_ai.content.startswith("<current_task_state>")
     assert latest_ai.content.endswith("latest assistant reply")
 
 
@@ -666,6 +676,30 @@ def test_apply_to_messages_does_not_trim_state(tmp_path):
     tool_ids = {m.tool_call_id for m in messages if isinstance(m, ToolMessage)}
     assert "old" in tool_ids
     assert "new" in tool_ids
+
+
+def test_runtime_context_preserves_user_xml_tags(tmp_path):
+    from voidx.agent.application.runtime_context import raw_semantic_messages
+
+    messages = [
+        HumanMessage(content="<code>print('hello')</code>"),
+        AIMessage(content="looks good"),
+        HumanMessage(content="<sql>SELECT 1</sql>"),
+    ]
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="voidx",
+        interaction_mode=InteractionMode.AUTO,
+    ).build()
+
+    context.apply_to_messages(messages)
+    semantic = raw_semantic_messages(messages)
+    assert len(semantic) == 3
+    assert semantic[0].content == "<code>print('hello')</code>"
+    assert semantic[1].content == "looks good"
+    assert semantic[2].content == "<sql>SELECT 1</sql>"
 
 
 def _child_run(

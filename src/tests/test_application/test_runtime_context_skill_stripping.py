@@ -87,7 +87,7 @@ def test_runtime_context_strips_tool_skill_context_before_latest_ai_message(tmp_
     latest_ai = next(message for message in messages if isinstance(message, AIMessage))
     assert SKILL_TOOL_CONTEXT_STRIPPED_MARKER in historical_tool.content
     assert "Full skill body" not in historical_tool.content
-    assert latest_ai.content.startswith("VOIDX_RUNTIME_CONTEXT")
+    assert latest_ai.content.startswith("<current_task_state>")
 
 
 def test_runtime_context_preserves_latest_tool_skill_context(tmp_path):
@@ -118,7 +118,7 @@ def test_runtime_context_preserves_latest_tool_skill_context(tmp_path):
     assert "Full skill body" in latest_tool.content
     assert latest_tool.content == tool_output
     assert isinstance(messages[-1], HumanMessage)
-    assert str(messages[-1].content).startswith("VOIDX_RUNTIME_CONTEXT")
+    assert str(messages[-1].content).startswith("<current_task_state>")
 
 
 def test_runtime_context_preserves_current_tool_skill_context_batch(tmp_path):
@@ -168,7 +168,7 @@ def test_runtime_context_preserves_current_tool_skill_context_batch(tmp_path):
     assert "Second skill body" in tool_messages[1].content
     assert tool_messages[1].content == second_tool_output
     assert isinstance(messages[-1], HumanMessage)
-    assert str(messages[-1].content).startswith("VOIDX_RUNTIME_CONTEXT")
+    assert str(messages[-1].content).startswith("<current_task_state>")
 
 
 def test_runtime_context_strips_multiple_historical_skill_tool_context_blocks(tmp_path):

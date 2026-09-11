@@ -775,7 +775,7 @@ async def test_call_llm_refreshes_current_task_state_after_pressure_rebuild(tmp_
     })
 
     prompt = "\n".join(str(message.content) for message in graph.model.messages)
-    assert prompt.count("## Current Task State") == 1
+    assert prompt.count("<current_task_state>") == 1
     assert "Current persona: implement" in prompt
     assert "Turn state: running" in prompt
     assert "Goal: new pressure goal" in prompt

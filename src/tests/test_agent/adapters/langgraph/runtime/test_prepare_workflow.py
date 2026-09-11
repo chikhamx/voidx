@@ -434,8 +434,7 @@ async def test_implement_subagent_injects_workflow_nodes(tmp_path, monkeypatch):
         for message in captured["messages"]
         if (
             isinstance(message, HumanMessage)
-            and str(message.content).startswith("VOIDX_RUNTIME_CONTEXT")
-            and "## Current Task State" in str(message.content)
+            and str(message.content).startswith("<current_task_state>")
         )
     )
     assert "Workflow Node: tdd" in system_prompt
