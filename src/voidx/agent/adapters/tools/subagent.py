@@ -222,12 +222,12 @@ class AgentTool:
             display_name = subagent_display_name(run.run_id)
             return ToolResult(
                 title=f"{display_name}: {inp.goal.strip()[:60]}",
-                output=f"{display_name} [running]\nrun_id: {run.run_id}",
-                summary=f"{display_name} spawned",
+                output=f"name: {display_name}\nstatus: {run.status}\nrun_id: {run.run_id}",
+                summary="spawned",
                 display="",
                 metadata=metadata,
                 next_step_hint=(
-                    "Use agent_control(action='wait') when the result is needed, "
+                    f"Use agent_control(action='wait', run_id='{run.run_id}') when the result is needed, "
                     "or continue with other independent work."
                 ),
             )

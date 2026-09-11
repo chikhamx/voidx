@@ -186,3 +186,64 @@ async def test_message_result_sets_child_run_result(tmp_path):
     assert started is True
     assert run.status == "completed"
     assert run.result == {"result": "explicit child result"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [{}, {"result": ""}, {"result": "   "}, {"mode": "review"}, {"finish_reason": "final_answer"}],
+)
+async def test_result_message_without_content_is_rejected(tmp_path, payload):
+    gateway = InProcessSubagentGateway()
+    root_id = gateway.ensure_root("session-empty-result")
+    child = await gateway.spawn(
+        session_id="session-empty-result",
+        parent_run_id=root_id,
+        agent_name="child",
+        description="empty result",
+        runner=lambda _run_id: asyncio.sleep(60),
+    )
+    ctx = ToolContext(
+        workspace=str(tmp_path),
+        session_id="session-empty-result",
+        runtime=AgentToolRuntime(subagent_transport=gateway, run_id=child.run_id),
+    )
+
+    result = await MessageTool(result_only=True).execute(
+        {"action": "send", "message_type": "result", "payload": payload},
+        ctx,
+    )
+
+    assert result.metadata["error"] is True
+    assert result.metadata["reason"] == "empty_result_payload"
+    assert gateway.lookup_run(child.run_id).status == "running"
+    assert await gateway.receive(run_id=root_id, limit=1, timeout=0) == []
+    await gateway.cancel(requester_run_id=root_id, target_run_id=child.run_id)
+
+
+@pytest.mark.asyncio
+async def test_result_message_with_content_is_accepted(tmp_path):
+    gateway = InProcessSubagentGateway()
+    root_id = gateway.ensure_root("session-valid-result")
+    child = await gateway.spawn(
+        session_id="session-valid-result",
+        parent_run_id=root_id,
+        agent_name="child",
+        description="valid result",
+        runner=lambda _run_id: asyncio.sleep(60),
+    )
+    ctx = ToolContext(
+        workspace=str(tmp_path),
+        session_id="session-valid-result",
+        runtime=AgentToolRuntime(subagent_transport=gateway, run_id=child.run_id),
+    )
+
+    result = await MessageTool(result_only=True).execute(
+        {"action": "send", "message_type": "result", "payload": {"result": "full report"}},
+        ctx,
+    )
+
+    assert result.metadata.get("error") is not True
+    terminal = gateway.lookup_run(child.run_id)
+    assert terminal.status == "completed"
+    assert "full report" in str((terminal.result or {}).get("result") or "")

@@ -101,7 +101,8 @@ def test_agent_control_schema_and_timeout_mapping():
     assert set(schema["properties"]) == {"action", "run_id"}
     assert set(schema["properties"]["action"]["enum"]) == {"wait", "cancel"}
     assert schema["properties"]["run_id"]["type"] == ["string", "array"]
-    assert _WAIT_TIMEOUT == 256.0
+    assert _WAIT_TIMEOUT == 1024.0
+    assert "1024" in AgentControlTool.description
 
 
 def test_agent_control_normalizes_and_deduplicates_run_ids():
@@ -144,8 +145,8 @@ async def test_wait_single_completed_uses_compact_output_and_compatible_metadata
 
     name = subagent_display_name(run.run_id)
     assert result.output == f"{name} [completed]\nResult:\nverdict: PASS"
-    assert result.display == f"{name} completed."
-    assert result.summary == f"{name} completed"
+    assert result.display == "completed."
+    assert result.summary == "completed"
     assert result.next_step_hint == ""
     assert set(result.metadata) == {
         "run", "status", "wait_outcome", "result_quality", "finish_reason"
@@ -153,6 +154,17 @@ async def test_wait_single_completed_uses_compact_output_and_compatible_metadata
     assert "terminal" not in result.metadata
     assert "active_tools" not in result.metadata["run"]
     assert "last_tool" not in result.metadata["run"]
+
+
+@pytest.mark.asyncio
+async def test_wait_single_running_summary_omits_redundant_agent_name():
+    run = _run("run_running", status="running", wait_outcome="timed_out")
+    result = await AgentControlTool().execute(
+        {"action": "wait", "run_id": run.run_id},
+        _ctx(FakeTransport({run.run_id: run})),
+    )
+    assert result.display == "running."
+    assert result.summary == "running"
 
 
 @pytest.mark.asyncio
@@ -321,10 +333,14 @@ async def test_wait_failed_and_incomplete_results_emit_recovery_hints():
     )
 
     assert failed_result.output.endswith("[failed]\nError: provider failed")
+    assert failed_result.display == "failed."
+    assert failed_result.summary == "failed"
     assert failed_result.next_step_hint == (
         "Inspect the error and start a replacement run if the task is still needed."
     )
     assert "[completed; finish_reason=contract_unsatisfied]" in incomplete_result.output
+    assert incomplete_result.display == "completed."
+    assert incomplete_result.summary == "completed"
     assert incomplete_result.next_step_hint == (
         "Use the partial result if sufficient; otherwise start a narrower replacement task."
     )
@@ -371,7 +387,7 @@ async def test_batch_wait_is_concurrent_ordered_and_reports_partial_error(monkey
         first.run_id, "run_denied", third.run_id
     ]
     assert result.next_step_hint == "\n".join([
-        f"{subagent_display_name(third.run_id)}: no activity was observed during the 256s wait; "
+        f"{subagent_display_name(third.run_id)}: no activity was observed during the 1024s wait; "
         "current state is thinking and its last activity was 1s ago. "
         "Cancel the child agent unless this duration is expected.",
         "Verify the run IDs and parent-child control relationship before retrying.",

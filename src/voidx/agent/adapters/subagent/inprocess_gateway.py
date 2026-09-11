@@ -28,6 +28,8 @@ from voidx.agent.domain.subagent import (
     ensure_open_send,
     ensure_send_route,
     finish_run,
+    backfill_run_result,
+    result_payload_has_content,
 )
 
 
@@ -199,6 +201,16 @@ class InProcessSubagentGateway:
                 break
         return messages
 
+    async def backfill_result(self, *, run_id: str, result: dict[str, Any]) -> bool:
+        record = self._runs.get(run_id)
+        if record is None:
+            return False
+        updated = backfill_run_result(record.run, result=result)
+        if updated is None:
+            return False
+        record.run = updated
+        return True
+
     async def wait(self, *, requester_run_id: str, target_run_id: str, timeout: float) -> AgentRun:
         if timeout < 0:
             raise AgentGatewayError("timeout must be greater than or equal to 0")
@@ -206,16 +218,20 @@ class InProcessSubagentGateway:
         target = self._require_run(target_run_id)
         ensure_control_route(requester.run, target.run)
         if target.run.status in TERMINAL_STATUSES:
+            self._drain_terminal_messages(requester, target)
             return self._copy_run(target.run, wait_outcome="already_terminal")
         if timeout == 0:
             await target.done.wait()
+            self._drain_terminal_messages(requester, target)
             return self._copy_run(target.run, wait_outcome="terminal_reached_during_wait")
         try:
             await asyncio.wait_for(target.done.wait(), timeout=timeout)
         except TimeoutError:
             if target.run.status in TERMINAL_STATUSES:
+                self._drain_terminal_messages(requester, target)
                 return self._copy_run(target.run, wait_outcome="terminal_reached_during_wait")
             return self._copy_run(target.run, wait_outcome="timed_out")
+        self._drain_terminal_messages(requester, target)
         return self._copy_run(target.run, wait_outcome="terminal_reached_during_wait")
 
     def get_run(self, *, requester_run_id: str, target_run_id: str) -> AgentRun:
@@ -550,6 +566,35 @@ class InProcessSubagentGateway:
             else:
                 raise AgentGatewayError("Inbox is full")
         await record.inbox.put(message)
+
+    def _drain_terminal_messages(self, requester: _RunRecord, target: _RunRecord) -> None:
+        drained: list[AgentMessage] = []
+        kept: list[AgentMessage] = []
+        while True:
+            try:
+                message = requester.inbox.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if message.source_run_id == target.run.run_id and (
+                message.type == "result" or message.type in TERMINAL_STATUSES
+            ):
+                drained.append(message)
+            else:
+                kept.append(message)
+        for message in kept:
+            requester.inbox.put_nowait(message)
+        if result_payload_has_content(target.run.result):
+            return
+        for message in drained:
+            candidate: Any = message.payload
+            if message.type != "result":
+                candidate = message.payload.get("result")
+            if not isinstance(candidate, dict):
+                continue
+            updated = backfill_run_result(target.run, result=candidate)
+            if updated is not None:
+                target.run = updated
+                return
 
 
 

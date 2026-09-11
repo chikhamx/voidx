@@ -216,3 +216,42 @@ def _result_payload(result: dict[str, Any] | str) -> dict[str, Any]:
     if isinstance(result, dict):
         return dict(result)
     return {"result": result}
+
+
+_RESULT_METADATA_KEYS = frozenset({"mode", "status", "finish_reason"})
+
+
+def result_payload_has_content(payload: dict[str, Any] | None) -> bool:
+    if not isinstance(payload, dict) or not payload:
+        return False
+    for key, value in payload.items():
+        if key in _RESULT_METADATA_KEYS:
+            continue
+        if _has_content_value(value):
+            return True
+    return False
+
+
+def _has_content_value(value: Any) -> bool:
+    if value is None or value is False:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, dict, set)):
+        return bool(value)
+    return True
+
+
+def backfill_run_result(run: AgentRun, *, result: dict[str, Any]) -> AgentRun | None:
+    if run.status not in TERMINAL_STATUSES:
+        return None
+    if result_payload_has_content(run.result):
+        return None
+    if not result_payload_has_content(result):
+        return None
+    envelope = (
+        _terminal_result(run, status=run.status, result=result, error=run.error)
+        if run.mode
+        else _result_payload(result)
+    )
+    return run.model_copy(update={"result": envelope})

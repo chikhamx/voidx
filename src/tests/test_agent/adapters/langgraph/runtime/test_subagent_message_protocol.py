@@ -281,3 +281,69 @@ async def test_result_only_message_tool_unit_sends_result() -> None:
 
 async def _never() -> str:
     raise AssertionError("runner must not be invoked")
+
+
+@pytest.mark.asyncio
+async def test_child_bare_result_message_rejected_then_final_answer_reported(tmp_path, monkeypatch):
+    """A bare message(result) must be rejected; the later final answer becomes the result."""
+    calls = 0
+
+    async def fake_stream_llm(_model, _messages, _renderer, _protocol, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "message",
+                    "args": {"action": "send", "message_type": "result", "payload": "{}"},
+                    "id": "bare-result",
+                }],
+            )
+        return AIMessage(content="verdict: PASS\nfindings: none")
+
+    monkeypatch.setattr(subagent_module, "create_chat_model", lambda *_a, **_k: _CapturingModel())
+    monkeypatch.setattr(subagent_module, "stream_llm", fake_stream_llm)
+
+    gateway = InProcessSubagentGateway()
+    root_id = gateway.ensure_root("session-bare-result")
+    seen_outputs: list[str] = []
+
+    original_execute = MessageTool.execute
+
+    async def recording_execute(self, args, ctx):
+        result = await original_execute(self, args, ctx)
+        seen_outputs.append(result.output)
+        return result
+
+    monkeypatch.setattr(MessageTool, "execute", recording_execute)
+
+    async def runner(run_id: str) -> str:
+        return await run_subagent(
+            AgentDef(name="voidx", description="test", when_to_use="test", can_write=False, can_delegate=False),
+            "Report via bare result then final answer",
+            "test-key",
+            Config(workspace=str(tmp_path)),
+            goal_resolution=_goal_resolution(),
+            result_contract=_contract(),
+            debug=False,
+            agent_gateway=gateway,
+            agent_run_id=run_id,
+            parent_tools=build_registry(),
+            ui_port=_FakeUiPort(),
+        )
+
+    run = await gateway.spawn(
+        session_id="session-bare-result",
+        parent_run_id=root_id,
+        agent_name="voidx",
+        description="Bare result",
+        runner=runner,
+    )
+    run = await gateway.wait(requester_run_id=root_id, target_run_id=run.run_id, timeout=10)
+
+    assert run.status == "completed"
+    assert seen_outputs, "message tool was never executed"
+    assert any("payload" in output.lower() for output in seen_outputs), seen_outputs
+    assert "verdict: PASS" in str((run.result or {}).get("result") or "")
+    assert await gateway.receive(run_id=root_id, limit=10, timeout=0) == []

@@ -270,18 +270,21 @@ async def test_terminal_lifecycle_payload_contains_authoritative_envelope():
         runner=runner,
         mode="review",
     )
-    await gateway.wait(
-        requester_run_id=root_id,
-        target_run_id=child.run_id,
-        timeout=1,
-    )
-    lifecycle = await gateway.receive(run_id=root_id, limit=1, timeout=0)
+    lifecycle = await gateway.receive(run_id=root_id, limit=1, timeout=1)
 
     assert lifecycle[0].type == "completed"
     assert lifecycle[0].payload["run_id"] == child.run_id
     assert lifecycle[0].payload["result"]["mode"] == "review"
     assert lifecycle[0].payload["result"]["status"] == "completed"
     assert lifecycle[0].payload["result"]["output"] == "verdict: PASS"
+
+    waited = await gateway.wait(
+        requester_run_id=root_id,
+        target_run_id=child.run_id,
+        timeout=1,
+    )
+    assert waited.status == "completed"
+    assert await gateway.receive(run_id=root_id, limit=1, timeout=0) == []
 
 
 @pytest.mark.asyncio

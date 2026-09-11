@@ -26,7 +26,7 @@ from voidx.tooling.domain.schema import model_to_json_schema
 
 
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
-_WAIT_TIMEOUT = 256.0
+_WAIT_TIMEOUT = 1024.0
 _CONTROL_ERROR_HINTS = {
     "unknown_run": "Verify the run IDs and parent-child control relationship before retrying.",
     "route_not_allowed": "Verify the run IDs and parent-child control relationship before retrying.",
@@ -62,7 +62,7 @@ class AgentControlTool:
     id = "agent_control"
     description = (
         "Wait for or cancel one or more existing child-agent runs. "
-        "Wait is finite (up to 256 seconds per call)."
+        "Wait is finite (up to 1024 seconds per call)."
     )
 
     def parameters_schema(self) -> dict:
@@ -165,14 +165,13 @@ def _success_item(
 
 def _single_result(action: str, item: dict) -> ToolResult:
     output = _render_item(item)
-    name = subagent_display_name(item["run_id"])
     if item["status"] == "error":
         metadata = dict(item)
         metadata.pop("status")
         return ToolResult(
             output=output,
-            display=f"{name} error.",
-            summary=f"{name} error",
+            display="error.",
+            summary="error",
             metadata=metadata,
             next_step_hint=_hints(action, [item]),
         )
@@ -180,7 +179,7 @@ def _single_result(action: str, item: dict) -> ToolResult:
         key: value for key, value in item.items()
         if key != "run_id" and not key.startswith("_")
     }
-    result_name = "canceled" if action == "cancel" else f"{name} {item['status']}"
+    result_name = "canceled" if action == "cancel" else item["status"]
     result_display = f"{result_name}."
     return ToolResult(
         output=output,

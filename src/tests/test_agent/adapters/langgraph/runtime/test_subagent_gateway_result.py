@@ -116,18 +116,19 @@ async def test_run_subagent_explicit_result_message_completes_gateway_run(tmp_pa
         description="Review result channel",
         runner=runner,
     )
+    messages = await gateway.receive(run_id=root_id, limit=10, timeout=1)
+    assert [(message.type, message.payload) for message in messages] == [
+        ("result", {"result": "explicit result", "verdict": "PASS"}),
+        ("completed", {"run_id": run.run_id}),
+    ]
     run = await gateway.wait(requester_run_id=root_id, target_run_id=run.run_id, timeout=1)
-    messages = await gateway.receive(run_id=root_id, limit=10, timeout=0)
 
     assert run.status == "completed"
     assert run.result == {"result": "explicit result", "verdict": "PASS"}
     assert run.current_activity is None
     assert run.active_tools == []
     assert run.last_activity_at == run.updated_at
-    assert [(message.type, message.payload) for message in messages] == [
-        ("result", {"result": "explicit result", "verdict": "PASS"}),
-        ("completed", {"run_id": run.run_id}),
-    ]
+    assert await gateway.receive(run_id=root_id, limit=10, timeout=0) == []
 
 
 @pytest.mark.asyncio
@@ -187,15 +188,16 @@ async def test_run_subagent_result_tool_call_suppresses_same_batch_followups(tmp
         description="Review result same batch",
         runner=runner,
     )
-    run = await gateway.wait(requester_run_id=root_id, target_run_id=run.run_id, timeout=1)
-    messages = await gateway.receive(run_id=root_id, limit=10, timeout=0)
-
-    assert run.status == "completed"
-    assert run.result == {"result": "done"}
+    messages = await gateway.receive(run_id=root_id, limit=10, timeout=1)
     assert [(message.type, message.payload) for message in messages] == [
         ("result", {"result": "done"}),
         ("completed", {"run_id": run.run_id}),
     ]
+    run = await gateway.wait(requester_run_id=root_id, target_run_id=run.run_id, timeout=1)
+
+    assert run.status == "completed"
+    assert run.result == {"result": "done"}
+    assert await gateway.receive(run_id=root_id, limit=10, timeout=0) == []
 
 
 @pytest.mark.asyncio
@@ -233,15 +235,16 @@ async def test_run_subagent_wraps_final_text_as_result_message(tmp_path, monkeyp
         description="Review result fallback",
         runner=runner,
     )
-    run = await gateway.wait(requester_run_id=root_id, target_run_id=run.run_id, timeout=1)
-    messages = await gateway.receive(run_id=root_id, limit=10, timeout=0)
-
-    assert run.status == "completed"
-    assert run.result == {"result": "fallback final result", "mode": "review"}
+    messages = await gateway.receive(run_id=root_id, limit=10, timeout=1)
     assert [(message.type, message.payload) for message in messages] == [
         ("result", {"result": "fallback final result", "mode": "review"}),
         ("completed", {"run_id": run.run_id}),
     ]
+    run = await gateway.wait(requester_run_id=root_id, target_run_id=run.run_id, timeout=1)
+
+    assert run.status == "completed"
+    assert run.result == {"result": "fallback final result", "mode": "review"}
+    assert await gateway.receive(run_id=root_id, limit=10, timeout=0) == []
 
 
 

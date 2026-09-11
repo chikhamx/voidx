@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, ValidationError
 
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext
+from voidx.agent.domain.subagent import result_payload_has_content
 from voidx.tooling.domain.result import ToolResult
 from voidx.tooling.domain.schema import model_to_json_schema
 
@@ -92,6 +93,15 @@ class MessageTool:
                     return ToolResult(
                         output="Message request rejected: payload must be a JSON object.",
                         metadata={"error": True, "validation_error": True},
+                    )
+                if inp.message_type == "result" and not result_payload_has_content(payload):
+                    return ToolResult(
+                        output=(
+                            "Result message rejected: the payload carries no report content. "
+                            "Put the full report in the payload (for example a non-empty "
+                            "{\"result\": \"...\"} object), or finish with a final answer instead."
+                        ),
+                        metadata={"error": True, "reason": "empty_result_payload"},
                     )
                 message = await gateway.send(
                     sender_run_id=run_id,

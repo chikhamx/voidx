@@ -54,6 +54,7 @@ from voidx.agent.domain.prompt_contracts import ContextSection
 from voidx.agent.domain.task.state import GoalResolution, GoalSpec, TaskState
 from voidx.agent.domain.task.todo import TodoRunState
 from voidx.agent.domain.automation.workflow import WorkflowRoute
+from voidx.agent.application.task_state_history import TaskStateHistory
 from voidx.agent.application.tool_messages import sanitize_tool_message_content
 from voidx.agent.adapters.tools.result_storage import (
     maybe_persist_tool_result,
@@ -186,6 +187,7 @@ async def run_subagent(
     model_factory=None,
     scoped_tools_binder=None,
     context_handoff=None,
+    task_state_strip_enabled: bool = True,
 ) -> str:
     """Run a child agent in its own message context."""
     ui_port = ui_port or NullAgentUiPort()
@@ -262,6 +264,11 @@ async def run_subagent(
     workflow_dag = workflow_context.dag
     context_cache = ContextCompilerCache()
     plan = goal_resolution.plan
+    task_state_history = (
+        TaskStateHistory()
+        if not task_state_strip_enabled
+        else None
+    )
     sub_task_state = TaskState(
         current_goal=goal_resolution.goal,
         workflow_route=WorkflowRoute(join=plan.join, leave=plan.leave) if plan is not None else None,
@@ -449,7 +456,15 @@ async def run_subagent(
             instructions=list(context_handoff.instructions) if context_handoff is not None else (),
             profile_sections=handoff_profile_sections,
         ).build_incremental(context_cache)
-        return ContextCompiler(context).compile_messages(source_messages)
+        compiled = ContextCompiler(context).compile_messages(
+            source_messages,
+            append_task_state=task_state_history is not None,
+        )
+        return (
+            task_state_history.restore(compiled)
+            if task_state_history is not None
+            else compiled
+        )
 
     def apply_state_update(update: dict) -> bool:
         nonlocal ctx, persona
@@ -586,10 +601,10 @@ async def run_subagent(
     async def report_result(text: str, *, finish_reason: str | None = None) -> None:
         if agent_gateway is None or not run_identity:
             return
+        if not text.strip():
+            return
         current = agent_gateway.lookup_run(run_identity)
         if current is None:
-            return
-        if current.status in {"completed", "failed", "cancelled"}:
             return
         parent_run_id = current.parent_run_id
         if not parent_run_id:
@@ -601,6 +616,9 @@ async def run_subagent(
                 payload["verdict"] = verdict
         if finish_reason and finish_reason != "final_answer":
             payload["finish_reason"] = finish_reason
+        if current.status in {"completed", "failed", "cancelled"}:
+            await agent_gateway.backfill_result(run_id=run_identity, result=payload)
+            return
         await agent_gateway.send(
             sender_run_id=run_identity,
             target_run_id=parent_run_id,
@@ -701,6 +719,8 @@ async def run_subagent(
 
         try:
             assistant_msg = await stream_child_llm_with_retry(stream_final_attempt)
+            if task_state_history is not None:
+                task_state_history.remember(final_messages)
             text = extract_text(assistant_msg).strip()
             final_context_tokens = estimate_context_tokens_with_tools(
                 final_messages,
@@ -864,6 +884,8 @@ async def run_subagent(
                     mark_finished("error_recovered")
                     return partial
                 raise
+            if task_state_history is not None:
+                task_state_history.remember(llm_messages)
             post_llm_decision = hard_wall_clock_decision()
             if (
                 post_llm_decision is not None

@@ -1145,7 +1145,7 @@ async def test_subagent_passes_approved_risk_to_bash_execution(tmp_path, monkeyp
     assert result == "status: PASS\nfiles_changed: none"
     assert len(tool_results) == 1
     assert tool_results[0].status == "success"
-    assert json.loads(tool_results[0].content)["ok"] is True
+    assert "exit code: 0" in tool_results[0].content
     assert calls == 2
 
 

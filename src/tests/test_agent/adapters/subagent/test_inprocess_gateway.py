@@ -1,4 +1,5 @@
 import asyncio
+import time
 from typing import get_args
 
 import pytest
@@ -142,9 +143,9 @@ async def test_root_spawn_send_receive_and_wait_result():
     assert waited.status == "completed"
     assert waited.result == {"result": "child complete"}
     terminal_messages = await gateway.receive(run_id=root_id, limit=10, timeout=0)
-    assert [(message.type, message.payload) for message in terminal_messages] == [
-        ("completed", {"run_id": run.run_id}),
-    ]
+    assert terminal_messages == []
+
+
 @pytest.mark.asyncio
 async def test_wait_timeout_zero_waits_indefinitely_until_terminal():
     gateway = InProcessSubagentGateway()
@@ -231,10 +232,7 @@ async def test_result_message_completes_run_and_blocks_later_messages(monkeypatc
     assert waited.updated_at == 120.0
     assert gateway._runs[run.run_id].active_activities == {}
     messages = await gateway.receive(run_id=root_id, limit=10, timeout=0)
-    assert [(message.type, message.payload) for message in messages] == [
-        ("result", {"result": "first"}),
-        ("completed", {"run_id": run.run_id}),
-    ]
+    assert messages == []
 
 
 @pytest.mark.asyncio
@@ -347,16 +345,17 @@ async def test_wait_timeout_failure_cancellation_and_close_session_cleanup():
         runner=failing_runner,
     )
     assert failed.status == "running"
+    failed_messages = await gateway.receive(run_id=root_id, limit=10, timeout=1)
+    assert [(message.type, message.payload) for message in failed_messages] == [
+        ("failed", {"run_id": failed.run_id, "error": "boom"}),
+    ]
     failed = await gateway.wait(requester_run_id=root_id, target_run_id=failed.run_id, timeout=0.1)
     assert failed.status == "failed"
     assert failed.current_activity is None
     assert failed.active_tools == []
     assert failed.last_activity_at == failed.updated_at
     assert "boom" in (failed.error or "")
-    failed_messages = await gateway.receive(run_id=root_id, limit=10, timeout=0)
-    assert [(message.type, message.payload) for message in failed_messages] == [
-        ("failed", {"run_id": failed.run_id, "error": "boom"}),
-    ]
+    assert await gateway.receive(run_id=root_id, limit=10, timeout=0) == []
 
     await gateway.close_session("session-1")
     assert gateway.list_runs(session_id="session-1") == []
@@ -458,16 +457,18 @@ async def test_inbox_full_rejects_regular_message_but_keeps_lifecycle():
         )
 
     release.set()
+    await asyncio.wait_for(gateway._runs[child.run_id].done.wait(), timeout=1)
+    messages = await gateway.receive(run_id=root_id, limit=10, timeout=0)
+    assert [(message.type, message.payload) for message in messages] == [
+        ("completed", {"run_id": child.run_id}),
+    ]
     waited = await gateway.wait(
         requester_run_id=root_id,
         target_run_id=child.run_id,
         timeout=0.2,
     )
     assert waited.status == "completed"
-    messages = await gateway.receive(run_id=root_id, limit=10, timeout=0)
-    assert [(message.type, message.payload) for message in messages] == [
-        ("completed", {"run_id": child.run_id}),
-    ]
+    assert await gateway.receive(run_id=root_id, limit=10, timeout=0) == []
 
 
 
@@ -506,6 +507,11 @@ async def test_result_completes_child_when_capacity_one_inbox_is_full():
     await filled.wait()
     release.set()
 
+    await asyncio.wait_for(gateway._runs[child.run_id].done.wait(), timeout=1)
+    messages = await gateway.receive(run_id=root_id, limit=10, timeout=0)
+    assert [(message.type, message.payload) for message in messages] == [
+        ("completed", {"run_id": child.run_id}),
+    ]
     waited = await gateway.wait(
         requester_run_id=root_id,
         target_run_id=child.run_id,
@@ -514,10 +520,7 @@ async def test_result_completes_child_when_capacity_one_inbox_is_full():
 
     assert waited.status == "completed"
     assert waited.result == payload
-    messages = await gateway.receive(run_id=root_id, limit=10, timeout=0)
-    assert [(message.type, message.payload) for message in messages] == [
-        ("completed", {"run_id": child.run_id}),
-    ]
+    assert await gateway.receive(run_id=root_id, limit=10, timeout=0) == []
 
 
 @pytest.mark.asyncio
@@ -555,19 +558,21 @@ async def test_full_inbox_retains_result_and_completed_notifications_when_capaci
     await filled.wait()
     release.set()
 
+    await asyncio.wait_for(gateway._runs[child.run_id].done.wait(), timeout=1)
+    messages = await gateway.receive(run_id=root_id, limit=10, timeout=0)
+    assert [(message.type, message.payload) for message in messages] == [
+        ("result", {"result": "done"}),
+        ("completed", {"run_id": child.run_id}),
+    ]
     waited = await gateway.wait(
         requester_run_id=root_id,
         target_run_id=child.run_id,
         timeout=1,
     )
-    messages = await gateway.receive(run_id=root_id, limit=10, timeout=0)
 
     assert waited.status == "completed"
     assert waited.result == {"result": "done"}
-    assert [(message.type, message.payload) for message in messages] == [
-        ("result", {"result": "done"}),
-        ("completed", {"run_id": child.run_id}),
-    ]
+    assert await gateway.receive(run_id=root_id, limit=10, timeout=0) == []
 
 
 @pytest.mark.asyncio
@@ -652,8 +657,7 @@ async def test_128_results_remain_authoritative_while_notifications_are_evicted(
     assert [run.result for run in waited] == [
         {"result": child.run_id, "complete": True} for child in children
     ]
-    assert len(notifications) == 17
-    assert all(message.type in {"result", "completed"} for message in notifications)
+    assert notifications == []
 
 @pytest.mark.asyncio
 async def test_payload_size_limit_rejects_oversized_message():
@@ -1522,3 +1526,130 @@ async def test_model_activity_touch_updates_current_and_yields_to_newer_tool(mon
 
     release.set()
     await gateway.wait(requester_run_id=root_id, target_run_id=child.run_id, timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_backfill_result_repairs_empty_terminal_envelope():
+    gateway = InProcessSubagentGateway()
+    root_id = gateway.ensure_root("session-backfill")
+
+    async def runner(_run_id: str) -> str:
+        return ""
+
+    child = await gateway.spawn(
+        session_id="session-backfill",
+        parent_run_id=root_id,
+        agent_name="voidx",
+        description="backfill",
+        runner=runner,
+        mode="review",
+    )
+    waited = await gateway.wait(requester_run_id=root_id, target_run_id=child.run_id, timeout=1)
+    assert waited.status == "completed"
+    assert not str((waited.result or {}).get("output") or "").strip()
+
+    repaired = await gateway.backfill_result(
+        run_id=child.run_id,
+        result={"result": "verdict: PASS\nfindings: none", "mode": "review"},
+    )
+    assert repaired is True
+    terminal = gateway.lookup_run(child.run_id)
+    assert "verdict: PASS" in str((terminal.result or {}).get("output") or "")
+    assert (terminal.result or {}).get("verdict") == "PASS"
+
+    assert await gateway.backfill_result(run_id=child.run_id, result={"result": "different"}) is False
+    assert "verdict: PASS" in str(gateway.lookup_run(child.run_id).result.get("output"))
+
+
+@pytest.mark.asyncio
+async def test_backfill_result_rejects_running_run_and_contentless_payload():
+    gateway = InProcessSubagentGateway()
+    root_id = gateway.ensure_root("session-backfill-reject")
+    release = asyncio.Event()
+
+    async def runner(_run_id: str) -> str:
+        await release.wait()
+        return ""
+
+    child = await gateway.spawn(
+        session_id="session-backfill-reject",
+        parent_run_id=root_id,
+        agent_name="voidx",
+        description="reject",
+        runner=runner,
+        mode="review",
+    )
+    assert await gateway.backfill_result(run_id=child.run_id, result={"result": "early"}) is False
+
+    release.set()
+    await gateway.wait(requester_run_id=root_id, target_run_id=child.run_id, timeout=1)
+    assert await gateway.backfill_result(run_id=child.run_id, result={}) is False
+    assert await gateway.backfill_result(run_id=child.run_id, result={"result": "  "}) is False
+    assert gateway.lookup_run(child.run_id).status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_wait_drains_terminal_messages_but_keeps_user_messages():
+    gateway = InProcessSubagentGateway()
+    root_id = gateway.ensure_root("session-drain")
+
+    async def runner(run_id: str) -> str:
+        await gateway.send(
+            sender_run_id=run_id,
+            target_run_id=root_id,
+            message_type="message",
+            payload={"text": "working"},
+        )
+        return "child complete"
+
+    child = await gateway.spawn(
+        session_id="session-drain",
+        parent_run_id=root_id,
+        agent_name="voidx",
+        description="drain",
+        runner=runner,
+    )
+    waited = await gateway.wait(requester_run_id=root_id, target_run_id=child.run_id, timeout=1)
+
+    assert waited.status == "completed"
+    assert waited.result == {"result": "child complete"}
+    remaining = await gateway.receive(run_id=root_id, limit=10, timeout=0)
+    assert [(message.type, message.payload) for message in remaining] == [
+        ("message", {"text": "working"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_wait_heals_empty_result_from_drained_result_message():
+    gateway = InProcessSubagentGateway()
+    root_id = gateway.ensure_root("session-heal")
+
+    async def runner(_run_id: str) -> str:
+        return ""
+
+    child = await gateway.spawn(
+        session_id="session-heal",
+        parent_run_id=root_id,
+        agent_name="voidx",
+        description="heal",
+        runner=runner,
+        mode="review",
+    )
+    emptied = await gateway.wait(requester_run_id=root_id, target_run_id=child.run_id, timeout=1)
+    assert not str((emptied.result or {}).get("output") or "").strip()
+
+    gateway._runs[root_id].inbox.put_nowait(
+        AgentMessage(
+            message_id="msg-heal",
+            session_id="session-heal",
+            source_run_id=child.run_id,
+            target_run_id=root_id,
+            type="result",
+            payload={"result": "recovered report"},
+            created_at=time.time(),
+        )
+    )
+    healed = await gateway.wait(requester_run_id=root_id, target_run_id=child.run_id, timeout=1)
+
+    assert "recovered report" in str((healed.result or {}).get("output") or "")
+    assert await gateway.receive(run_id=root_id, limit=10, timeout=0) == []
