@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from tempfile import SpooledTemporaryFile
 from typing import Callable, Iterator, Literal, TextIO
 
+from .commit_output import scrolled_frame_payload
 from .async_utils import await_cancellation_safe
 from .helpers import (
     _BEGIN_SYNCHRONIZED_OUTPUT,
@@ -38,6 +39,9 @@ class FrameBatch:
     cursor_ansi: str
     render_ms: float = 0.0
     force_full: bool = False
+    scroll_ansi: str = ""
+    scroll_rows: int = 0
+    scroll_bottom: int = 0
 
 
 @dataclass(frozen=True)
@@ -107,6 +111,9 @@ class _CommitBatch:
     clear_start_row: int
     payload: _CommitPayload
     preserve_baseline: bool = False
+    explicit_start: bool = False
+    positioned: bool = False
+    fixed_bottom_rows: int = 0
 
 
 @dataclass(frozen=True)
@@ -161,6 +168,7 @@ class TerminalWriter:
         self._applied_start_row = 1
         self._applied_lines: tuple[str, ...] = ()
         self._baseline_valid = False
+        self._bottom_only_baseline = False
         self._sync_error: BaseException | None = None
         self._sync_recovery_error: BaseException | None = None
         self._sync_recovery_attempted = False
@@ -441,6 +449,9 @@ class TerminalWriter:
             cursor_ansi=batch.cursor_ansi,
             render_ms=batch.render_ms,
             force_full=batch.force_full,
+            scroll_ansi=batch.scroll_ansi,
+            scroll_rows=batch.scroll_rows,
+            scroll_bottom=batch.scroll_bottom,
         )
         with self._condition:
             self._check_submit_locked()
@@ -493,6 +504,9 @@ class TerminalWriter:
         clear_start_row: int,
         payload: _CommitPayload,
         preserve_baseline: bool = False,
+        explicit_start: bool = False,
+        positioned: bool = False,
+        fixed_bottom_rows: int = 0,
     ) -> BatchToken:
         self._drop_pending_frame_locked()
         entry = self._new_entry_locked(
@@ -500,6 +514,9 @@ class TerminalWriter:
                 clear_start_row=clear_start_row,
                 payload=payload,
                 preserve_baseline=preserve_baseline,
+                explicit_start=explicit_start,
+                positioned=positioned,
+                fixed_bottom_rows=fixed_bottom_rows,
             )
         )
         self._queue.append(entry)
@@ -539,12 +556,19 @@ class TerminalWriter:
         *,
         clear_start_row: int,
         ansi: str,
+        lines_written: int | None = None,
         preserve_baseline: bool = False,
+        explicit_start: bool = False,
+        positioned: bool = False,
+        fixed_bottom_rows: int = 0,
     ) -> BatchToken:
         if clear_start_row < 0:
             raise ValueError("commit clear_start_row cannot be negative")
+        if lines_written is None:
+            lines_written = max(1, len(ansi.splitlines()))
+        if lines_written < 1:
+            raise ValueError("commit lines_written must be positive")
         byte_length = len(ansi.encode("utf-8"))
-        lines_written = ansi.count("\n") or 1
         with self._condition:
             self._check_submit_locked()
             if self._pending_commit_bytes + byte_length <= self.commit_memory_soft_limit:
@@ -560,6 +584,9 @@ class TerminalWriter:
                         clear_start_row=clear_start_row,
                         payload=payload,
                         preserve_baseline=preserve_baseline,
+                        explicit_start=explicit_start,
+                        positioned=positioned,
+                        fixed_bottom_rows=fixed_bottom_rows,
                     )
                 except Exception:
                     self._pending_commit_bytes -= byte_length
@@ -580,6 +607,9 @@ class TerminalWriter:
                     clear_start_row=clear_start_row,
                     payload=payload,
                     preserve_baseline=preserve_baseline,
+                    explicit_start=explicit_start,
+                    positioned=positioned,
+                    fixed_bottom_rows=fixed_bottom_rows,
                 )
         except Exception:
             payload.close()
@@ -673,14 +703,14 @@ class TerminalWriter:
         try:
             clear_start_row = (
                 self._applied_start_row
-                if self._baseline_valid and self._applied_start_row > 0
+                if not batch.explicit_start and self._baseline_valid and self._applied_start_row > 0
                 else batch.clear_start_row
             )
-            if clear_start_row > 0:
+            if clear_start_row > 0 and not batch.positioned:
                 self._worker_write(f"\x1b[{clear_start_row};1H")
                 if not batch.preserve_baseline:
                     self._worker_write("\x1b[J")
-            erase_tail = batch.preserve_baseline and clear_start_row > 0
+            erase_tail = batch.preserve_baseline and clear_start_row > 0 and not batch.positioned
             wrote_newline = True
             for value in batch.payload.parts(max(1, self.byte_budget)):
                 if erase_tail and value:
@@ -690,7 +720,12 @@ class TerminalWriter:
             if erase_tail and not wrote_newline:
                 self._worker_write("\x1b[K")
             self._worker_flush()
-            if clear_start_row > 0:
+            if batch.positioned and batch.fixed_bottom_rows and self._baseline_valid:
+                keep = min(batch.fixed_bottom_rows, len(self._applied_lines))
+                self._applied_start_row += len(self._applied_lines) - keep
+                self._applied_lines = self._applied_lines[-keep:]
+                self._bottom_only_baseline = True
+            elif clear_start_row > 0:
                 lines_written = batch.payload.lines_written
                 if (
                     batch.preserve_baseline
@@ -746,7 +781,25 @@ class TerminalWriter:
         frame_error: Exception | None = None
         try:
             try:
-                if (
+                if batch.scroll_ansi:
+                    self._worker_write(batch.scroll_ansi)
+                if batch.scroll_ansi and self._baseline_valid and not batch.force_full:
+                    payload, changed_lines = scrolled_frame_payload(
+                        previous=self._applied_lines, previous_start=self._applied_start_row,
+                        current=batch.target_lines, start=batch.start_row,
+                        scroll_rows=batch.scroll_rows, scroll_bottom=batch.scroll_bottom,
+                    )
+                    self._worker_write(payload)
+                    strategy = "diff-scroll"
+                elif self._baseline_valid and self._bottom_only_baseline and not batch.force_full and self._applied_start_row != batch.start_row:
+                    payload, changed_lines = scrolled_frame_payload(
+                        previous=self._applied_lines, previous_start=self._applied_start_row,
+                        current=batch.target_lines, start=batch.start_row,
+                        scroll_rows=0, scroll_bottom=0,
+                    )
+                    self._worker_write(payload)
+                    strategy = "diff"
+                elif (
                     self._baseline_valid
                     and not batch.force_full
                     and self._applied_start_row == batch.start_row
@@ -777,6 +830,7 @@ class TerminalWriter:
             raise frame_error
         self._worker_flush()
 
+        self._bottom_only_baseline = False
         self._applied_generation = batch.generation
         self._applied_start_row = batch.start_row
         self._applied_lines = batch.target_lines

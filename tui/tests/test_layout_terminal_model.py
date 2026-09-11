@@ -40,6 +40,8 @@ class _VTScreen:
         self.synchronized = False
         self.sync_events = []
         self._displayed_cells = self.cells
+        self._top_margin = 0
+        self._bottom_margin = height - 1
 
     @property
     def cells(self):
@@ -99,10 +101,30 @@ class _VTScreen:
                 self.synchronized = False
             self.sync_events.append(self.synchronized)
             return
-        if not re.fullmatch(r"\x1b\[[0-9;]*[HJKm]", sequence):
+        if not re.fullmatch(r"\x1b\[[0-9;]*[HJKmrS]", sequence):
             raise ValueError(f"unsupported CSI: {sequence!r}")
         params = [int(value or "0") for value in sequence[2:-1].split(";")]
         final = sequence[-1]
+        if final == "S":
+            top = getattr(self, "_top_margin", 0)
+            bottom = getattr(self, "_bottom_margin", self.height - 1)
+            for _ in range(min(params[0] or 1, bottom - top + 1)):
+                removed = self._cells.pop(top)
+                if top == 0:
+                    self.scrollback.append(tuple(removed))
+                self._cells.insert(bottom, [" "] * self.width)
+            self._wrap_pending = False
+            return
+        if final == "r":
+            raw_params = [int(value) for value in sequence[2:-1].split(";") if value]
+            if len(raw_params) == 2:
+                self._top_margin = max(0, raw_params[0] - 1)
+                self._bottom_margin = min(self.height - 1, raw_params[1] - 1)
+            else:
+                self._top_margin = 0
+                self._bottom_margin = self.height - 1
+            self._row, self._col = self._top_margin, 0
+            return
         if final == "m":
             self._validate_sgr(params)
             return
@@ -153,11 +175,16 @@ class _VTScreen:
 
     def _linefeed(self):
         self._wrap_pending = False
-        if self._row == self.height - 1:
-            self.scrollback.append(tuple(self._cells.pop(0)))
-            self._cells.append([" "] * self.width)
+        top_margin = getattr(self, "_top_margin", 0)
+        bottom_margin = getattr(self, "_bottom_margin", self.height - 1)
+        if self._row == bottom_margin:
+            if top_margin == 0:
+                self.scrollback.append(tuple(self._cells.pop(0)))
+            else:
+                self._cells.pop(top_margin)
+            self._cells.insert(bottom_margin, [" "] * self.width)
         else:
-            self._row += 1
+            self._row = min(self.height - 1, self._row + 1)
 
     def _erase(self, row: int, first: int, last: int):
         cells = self._cells[row]
@@ -360,7 +387,7 @@ def test_vt_synchronized_output_defers_presentation_until_end():
 @pytest.mark.parametrize(
     "sequence",
     [
-        "\x1b[1A", "\x1b[2S", "\x1b[?1049h", "\x1b[3J", "\x1b[3K",
+        "\x1b[1A", "\x1b[2T", "\x1b[?1049h", "\x1b[3J", "\x1b[3K",
         "\x1b[999m", "\x1b[38;2;255;0m", "\x1b[48;5;256m",
         "\x1b]8;;https://example.com\x1b\\", "\x1b7", "\t", "\b", "\x07",
         "\u200d", "\ufe0f", "\u0301", "\U0001f3fb",
@@ -985,3 +1012,190 @@ async def test_terminal_model_commit_without_frame_result_never_leaks_status_or_
         assert update_rows, f"Update missing from visible rows: {screen.rows}"
         assert read_rows, f"Read missing from visible rows: {screen.rows}"
         assert search_rows[0] < update_rows[0] < read_rows[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("worker", [False, True], ids=["sync", "worker"])
+@pytest.mark.parametrize("input_count", [6, 9], ids=["safe-region", "no-region"])
+async def test_terminal_model_commit_then_frame_growth_keeps_live_overlay_out_of_scrollback(
+    tmp_path, monkeypatch, worker, input_count
+):
+    async with _terminal_tui(tmp_path, monkeypatch, worker=worker, height=12) as (
+        tui, screen, stream, drain
+    ):
+        for index in range(6):
+            dock.tree.new_node(
+                parent=dock.tree.root,
+                node_type="message",
+                header=f"HISTORY-{index}",
+            )
+        tui._flush_committed(force=True)
+        await drain()
+
+        dock.begin_capture()
+        dock.start_turn("commit-growth question")
+        tui._busy = True
+        tui._was_busy = True
+        tui._busy_started_at = 0.0
+        tui._busy_activity_verb = "Ruminating"
+        monkeypatch.setattr(
+            tui,
+            "_render_busy_activity_elements",
+            lambda width: [Text("LIVE-ACTIVITY")],
+        )
+        dock.set_stream("LIVE-THINKING-0\nLIVE-THINKING-1", phase="thinking")
+        tui._input_lines = ["LIVE-INPUT-0", "LIVE-INPUT-1"]
+        tui._cursor_row, tui._cursor_col = 1, 4
+        tui._render_frame()
+        await drain()
+        _assert_applied_screen(tui, screen)
+        assert "LIVE-THINKING-0" in "\n".join(screen.rows)
+        assert "LIVE-ACTIVITY" in "\n".join(screen.rows)
+
+        dock.commit_stream()
+        tui._busy = False
+        tui._flush_committed()
+        await drain()
+        tui._render_frame()
+        await drain()
+
+        before_growth = len(stream.text)
+        tui._input_lines = [f"UNCOMMITTED-INPUT-{index}" for index in range(input_count)]
+        tui._cursor_row, tui._cursor_col = input_count - 1, 5
+        tui._render_frame()
+        await drain()
+        _assert_applied_screen(tui, screen)
+
+        history = "\n".join(screen.history)
+        assert "LIVE-ACTIVITY" not in history
+        assert "LIVE-THINKING-0" not in history
+        assert "LIVE-THINKING-1" not in history
+        assert "UNCOMMITTED-INPUT" not in history
+        assert "HISTORY-" in history
+        visible = "\n".join(screen.rows)
+        assert "UNCOMMITTED-INPUT" in visible
+
+        growth_output = stream.text[before_growth:]
+        if input_count == 6:
+            assert "\x1b[1;3r" in growth_output
+            assert "\x1b[r" in growth_output
+        else:
+            assert not re.search(r"\x1b\[[0-9;]*r", growth_output)
+        assert "\x1b[12;1H\n" not in growth_output
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("worker", [False, True], ids=["sync", "worker"])
+async def test_terminal_model_multiline_commit_preserves_exact_baseline(tmp_path, monkeypatch, worker):
+    async with _terminal_tui(tmp_path, monkeypatch, worker=worker, height=12) as (
+        tui, screen, stream, drain
+    ):
+        tui._render_frame()
+        await drain()
+        for batch in range(3):
+            for index in range(3):
+                dock.tree.new_node(parent=dock.tree.root, node_type="message",
+                                   header=f"COMMIT-{batch}-{index}")
+            tui._flush_committed(force=True)
+            await drain()
+            if worker and tui._terminal_writer._baseline_valid:
+                start = tui._terminal_writer._applied_start_row - 1
+                expected = tuple(Text.from_ansi(line).plain.rstrip()
+                                 for line in tui._terminal_writer._applied_lines)
+                assert screen.rows[start:start + len(expected)] == expected
+        tui._render_frame()
+        await drain()
+        _assert_applied_screen(tui, screen)
+        text = "\n".join((*screen.history, *screen.rows))
+        for batch in range(3):
+            for index in range(3):
+                assert text.count(f"COMMIT-{batch}-{index}") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("worker", [False, True], ids=["sync", "worker"])
+@pytest.mark.parametrize("count", [12, 29])
+async def test_terminal_model_commit_at_viewport_edge_has_no_trailing_scroll(
+    tmp_path, monkeypatch, worker, count
+):
+    async with _terminal_tui(tmp_path, monkeypatch, worker=worker, height=12) as (
+        tui, screen, stream, drain
+    ):
+        # Establish the actual pinned dock before exercising continuous commits.
+        tui._visible_committed_rows = 12
+        tui._render_frame()
+        await drain()
+        bottom_start = tui._last_bottom_start_row
+        bottom = screen.rows[bottom_start - 1:]
+        for batch in range(2):
+            for index in range(count):
+                dock.tree.new_node(parent=dock.tree.root, node_type="message",
+                                   header=f"EDGE-{batch}-{index:02d}")
+            before = len(stream.text)
+            tui._flush_committed(force=True)
+            await drain()
+            assert screen.rows[bottom_start - 2] == f"EDGE-{batch}-{count - 1:02d}"
+            assert screen.rows[bottom_start - 1:] == bottom
+            assert "\n" not in stream.text[before:]
+            assert f"\x1b[1;{bottom_start - 1}r" in stream.text[before:]
+            assert "\x1b[r" in stream.text[before:]
+        tui._render_frame()
+        await drain()
+        _assert_applied_screen(tui, screen)
+        text = "\n".join((*screen.history, *screen.rows))
+        for batch in range(2):
+            for index in range(count):
+                assert text.count(f"EDGE-{batch}-{index:02d}") == 1
+        assert "status" not in "\n".join(screen.history)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("worker", [False, True], ids=["sync", "worker"])
+async def test_input_cursor_target_matches_projected_physical_cursor(tmp_path, monkeypatch, worker):
+    async with _terminal_tui(tmp_path, monkeypatch, worker=worker, height=6) as (
+        tui, screen, stream, drain
+    ):
+        tui._input_lines = [f"input {index}" for index in range(15)]
+        tui._cursor_row, tui._cursor_col = 13, 3
+        tui._render_frame()
+        await drain()
+        snapshot = tui._applied_layout_snapshot
+        sequence, _ = tui._input_cursor_target()
+        assert sequence == f"\x1b[{snapshot.cursor_row};{snapshot.cursor_col}H"
+
+
+def test_vt_scroll_up_is_bounded_and_does_not_move_cursor():
+    screen = _VTScreen(width=8, height=4)
+    screen.feed("one\r\ntwo\r\nthree\r\nbottom")
+    screen.feed("\x1b[1;3r\x1b[2;2H\x1b[1S\x1b[r")
+    assert screen.rows == ("two", "three", "", "bottom")
+    assert screen.history == ("one",)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("worker", [False, True], ids=["sync", "worker"])
+async def test_continuous_overflow_commit_then_frame_does_not_repaint_bottom(tmp_path, monkeypatch, worker):
+    async with _terminal_tui(tmp_path, monkeypatch, worker=worker, height=12) as (tui, screen, stream, drain):
+        tui._visible_committed_rows = 12
+        tui._render_frame()
+        await drain()
+        bottom_start = tui._last_bottom_start_row
+        bottom = screen.rows[bottom_start - 1:]
+        for batch in range(2):
+            for index in range(15):
+                dock.tree.new_node(parent=dock.tree.root, node_type="message", header=f"BATCH-{batch}-{index:02d}")
+            before = len(stream.text)
+            tui._flush_committed(force=True)
+            await drain()
+            assert "\n" not in stream.text[before:]
+            assert screen.rows[bottom_start - 1:] == bottom
+            before = len(stream.text)
+            tui._render_frame()
+            await drain()
+            _assert_applied_screen(tui, screen)
+            assert "status" not in stream.text[before:]
+            assert "\x1b[J" not in stream.text[before:]
+        all_rows = "\n".join((*screen.history, *screen.rows))
+        for batch in range(2):
+            for index in range(15):
+                assert all_rows.count(f"BATCH-{batch}-{index:02d}") == 1

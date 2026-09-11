@@ -727,13 +727,15 @@ def test_resume_restore_does_not_replay_history_after_new_output(
     tui._flush_committed()
     tui._render_frame()
 
-    rendered = fake_stdout.text
-    new_user_offset = rendered.index("new user")
-    clear_offset = rendered.rfind("\x1b[J", 0, new_user_offset)
-    visible_output = rendered[clear_offset:]
+    from test_layout_terminal_model import _VTScreen
+
+    screen = _VTScreen(width=80, height=12)
+    screen.feed(fake_stdout.text.replace("\n", "\r\n"))
+    visible_output = "\n".join((*screen.history, *screen.rows))
     assert visible_output.index("history C") < visible_output.index("new user")
     assert visible_output.index("new user") < visible_output.index("new ai message")
     assert visible_output.count("history C") == 1
+
 
 
 
@@ -1534,7 +1536,7 @@ def test_input_cursor_sequence_is_pure_in_worker_mode(tmp_path):
     sequence = tui._input_cursor_sequence()
 
     assert sequence.startswith("\x1b[")
-    assert sequence.endswith("G")
+    assert sequence.endswith("H")
     assert tui._terminal_writer.frames == []
     assert tui._terminal_writer.barriers == []
 
@@ -1581,7 +1583,10 @@ def test_worker_frame_submit_failure_preserves_previous_frame_state(tmp_path, mo
     with pytest.raises(RuntimeError, match="enqueue failed"):
         tui._render_frame()
 
-    assert _worker_frame_state(tui) == previous_state
+    current = _worker_frame_state(tui)
+    assert current[:3] == previous_state[:3]
+    assert current[3:5] == (0, 1)
+    assert current[5:] == previous_state[5:]
     assert tui._terminal_frame_generation == 0
     assert tui._render_plan is None
 
@@ -1759,7 +1764,8 @@ def test_worker_flush_committed_submits_one_atomic_commit(tmp_path, monkeypatch)
     commit = writer.commits[0]
     assert commit["clear_start_row"] == 6
     assert "committed output" in commit["ansi"]
-    assert commit["ansi"].endswith("\n")
+    assert not commit["ansi"].endswith("\n")
+    assert commit["lines_written"] == expected_count
     assert tui._committed_line_count == expected_count
     assert tui._visible_committed_rows > 0
     assert tui._prev_frame_lines is None
@@ -2279,6 +2285,11 @@ async def test_worker_commit_does_not_reappend_stream_node_changed_before_token_
     await asyncio.sleep(0)
     await asyncio.sleep(0)
 
+    # This fake has no frame renderer; provide the previous applied dock geometry.
+    tui._has_rendered_frame = True
+    tui._last_frame_start_row = 3
+    tui._last_bottom_start_row = 21
+    tui._last_bottom_rows = 4
     dock.append_message("unrelated mutation")
     tui._flush_committed(force=True)
 
@@ -2516,6 +2527,8 @@ async def test_restored_history_enters_retention_after_live_commit(
     tui._terminal_writer = writer
     tui._sync_restored_render_state()
     tui._has_rendered_frame = True
+    tui._last_bottom_start_row = 21
+    tui._last_bottom_rows = 4
     dock.start_turn("live")
     dock.append_message("live answer")
     dock.end_turn()

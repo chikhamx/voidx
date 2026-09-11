@@ -777,9 +777,12 @@ class PureTui(
             )
             clear_start = update.get("clear_start_row", 0)
             if self._has_rendered_frame and clear_start > 0:
-                self._last_frame_start_row = max(
-                    self._last_frame_start_row,
-                    clear_start + update["flush_rows"],
+                self._last_frame_start_row = min(
+                    term_height + 1,
+                    max(
+                        self._last_frame_start_row,
+                        clear_start + update["flush_rows"],
+                    ),
                 )
             if not update.get("preserve_baseline", False):
                 self._invalidate_frame_cache()
@@ -1140,8 +1143,14 @@ class PureTui(
             previous, following, _occurrence = key
             if (
                 projection.unowned_signatures.get(key) != lines[index]
-                or previous in changed_nodes
-                or following in changed_nodes
+                or (
+                    previous in changed_nodes
+                    and previous in projection.node_signatures
+                )
+                or (
+                    following in changed_nodes
+                    and following in projection.node_signatures
+                )
             ):
                 result.append(index)
         return result
@@ -1546,26 +1555,39 @@ class PureTui(
                     rendered_lines.append(Text(line))
 
             flush_ansi = self._capture_renderable(Group(*rendered_lines), width)
-            commit_ansi = flush_ansi + "\n"
-            flush_rows = max(
-                _rendered_row_count(flush_ansi),
-                len(echo_lines) + len(flush_lines),
-            )
-            if self._has_rendered_frame and self._last_frame_start_row > 0:
-                clear_start_row = self._last_frame_start_row
-            elif self._has_rendered_frame:
-                clear_start_row = max(self._visible_committed_rows + 1, 1)
-            else:
-                clear_start_row = 0
+            from .commit_output import plan_commit
 
-            if self._has_rendered_frame and clear_start_row > 0:
-                self._last_frame_start_row = clear_start_row + flush_rows
+            term_height = shutil.get_terminal_size().lines
+            clear_start_row = (
+                self._last_frame_start_row
+                if self._has_rendered_frame and self._last_frame_start_row > 0
+                else self._visible_committed_rows + 1
+            )
+            fixed_bottom_rows = (
+                self._last_bottom_rows if self._bottom_dock_is_anchored(term_height) else 0
+            )
+            output = plan_commit(
+                flush_ansi,
+                start_row=clear_start_row,
+                height=term_height,
+                fixed_bottom_rows=fixed_bottom_rows,
+            )
+            if output is None:
+                dock.request_force_flush()
+                dock.restore_guidance_echoes(raw_echoes)
+                return None
+            commit_ansi = output.ansi
+            flush_rows = output.lines_written
+            overflow = output.scrolled_rows > 0
+            if self._has_rendered_frame:
+                self._last_frame_start_row = output.next_row
 
             preserve_baseline = bool(
                 worker_mode
                 and callable(getattr(self._terminal_writer, "wait", None))
                 and self._has_rendered_frame
                 and clear_start_row > 0
+                and (not overflow or fixed_bottom_rows > 0)
             )
             if worker_mode:
                 if preserve_baseline:
@@ -1575,6 +1597,10 @@ class PureTui(
                 token = self._terminal_writer.submit_commit(
                     clear_start_row=clear_start_row,
                     ansi=commit_ansi,
+                    positioned=True,
+                    fixed_bottom_rows=fixed_bottom_rows,
+                    lines_written=flush_rows,
+                    explicit_start=True,
                     preserve_baseline=preserve_baseline,
                 )
                 if callable(getattr(self._terminal_writer, "wait", None)):
@@ -1585,7 +1611,7 @@ class PureTui(
                         flush_rows=flush_rows,
                         force_requested=force_requested,
                         raw_echoes=raw_echoes,
-                        clear_start_row=clear_start_row,
+                        clear_start_row=output.next_row - flush_rows,
                         preserve_baseline=preserve_baseline,
                     )
                 else:
@@ -1600,11 +1626,6 @@ class PureTui(
                         self._invalidate_frame_cache()
                 return token
 
-            if clear_start_row > 0:
-                self._terminal_writer.write(f"\x1b[{clear_start_row};1H")
-                if not preserve_baseline:
-                    self._terminal_writer.write("\x1b[J")
-                self._terminal_writer.flush()
             self._terminal_writer.write(commit_ansi)
             self._terminal_writer.flush()
             settle_batch()
@@ -1614,7 +1635,11 @@ class PureTui(
                 term_height,
                 self._visible_committed_rows + flush_rows,
             )
-            if not preserve_baseline:
+            if fixed_bottom_rows and self._prev_frame_lines is not None:
+                self._prev_frame_lines = self._prev_frame_lines[-fixed_bottom_rows:]
+                self._prev_frame_start_row = self._last_bottom_start_row
+                self._applied_layout_snapshot = None
+            elif not preserve_baseline:
                 self._invalidate_frame_cache()
             return None
         except Exception:

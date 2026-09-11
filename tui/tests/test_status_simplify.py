@@ -228,3 +228,23 @@ def test_pinned_usage_status_keeps_segment_styles(tmp_path):
 
     assert "#56D4DD" in _styles_covering(text, "46.3k/200k 21% 1.9m")
     assert "#C698F0" in _styles_covering(text, "…")
+
+
+def test_pinned_usage_truncated_goal_body_keeps_goal_style(tmp_path):
+    goal = "将某个文件/模块重命名并移动到 file 目录下，需确认具体对象并同步更新 import 路径"
+    status = _make_status(
+        tmp_path,
+        active_workflows=lambda: ["重命名"],
+        goal_label=lambda: goal,
+        usage_stats=_usage_stats(),
+    )
+    tui = PureTui(status, COMMANDS)
+
+    text = tui._status_summary_text(120)
+
+    plain = text.plain
+    start = plain.index("将某个文件")
+    end = plain.index("…", start)
+    truncated_body = plain[start:end]
+    assert truncated_body
+    assert "#C698F0" in _styles_covering(text, truncated_body)

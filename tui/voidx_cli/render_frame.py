@@ -16,6 +16,7 @@ from rich.text import Text
 
 from voidx.presentation.output.dock import dock
 from voidx.presentation.output.dock.formatting import text_from_line
+from .commit_output import scrolled_frame_payload
 from .helpers import (
     _BEGIN_SYNCHRONIZED_OUTPUT,
     _END_SYNCHRONIZED_OUTPUT,
@@ -167,7 +168,8 @@ class _FrameRendererMixin:
         advances_scroll_epoch: bool = True,
     ) -> None:
         """Invalidate physical layout snapshots at an absolute terminal boundary."""
-        del reason
+        if reason in {"clear", "resize", "terminal_submission_failure", "overflow"}:
+            self._invalidate_bottom_anchor()
         self._applied_layout_snapshot = None
         self._pending_layout_snapshots.clear()
         self._pending_layout_force_full.clear()
@@ -207,6 +209,7 @@ class _FrameRendererMixin:
             self._running = False
             return
         self._terminal_submission_failed = True
+        self._invalidate_bottom_anchor()
         if layout_already_invalidated:
             self._applied_layout_snapshot = None
             self._pending_layout_snapshots.clear()
@@ -521,6 +524,9 @@ class _FrameRendererMixin:
             if worker_mode:
                 physical: PhysicalViewportPlan | None = None
                 target_lines = lines
+                fixed_bottom_rows = 0
+                bottom_dock_anchored = self._bottom_dock_is_anchored(term_height)
+                scroll_bottom: int | None = None
                 if (
                     not render_failed
                     and render_plan is not None
@@ -531,17 +537,26 @@ class _FrameRendererMixin:
                         width=width,
                         term_height=term_height,
                         frame_start_row=1,
+                        anchor_bottom=bottom_dock_anchored,
                     )
                     scroll_frame_rows = provisional.frame_rows
+                    if bottom_dock_anchored:
+                        fixed_bottom_rows = self._last_bottom_rows
+                        scroll_bottom = provisional.bottom.region.start_row - 1
                 else:
                     scroll_frame_rows = frame_rows
+                    if bottom_dock_anchored:
+                        fixed_bottom_rows = self._last_bottom_rows
+                        scroll_bottom = term_height - fixed_bottom_rows
                 visible_before = 0 if clear_screen else self._visible_committed_rows
                 visible_after, scroll_ansi = self._frame_scroll_plan(
                     scroll_frame_rows,
                     term_height,
                     visible_rows=visible_before,
+                    fixed_bottom_rows=fixed_bottom_rows,
+                    scroll_bottom=scroll_bottom,
                 )
-                force_full = force_full or bool(scroll_ansi)
+                force_full = force_full or bool(scroll_ansi and not bottom_dock_anchored)
                 start_row = max(visible_after + 1, 1)
                 if (
                     not render_failed
@@ -553,12 +568,14 @@ class _FrameRendererMixin:
                         width=width,
                         term_height=term_height,
                         frame_start_row=start_row,
+                        anchor_bottom=bool(bottom_dock_anchored or scroll_ansi),
                     )
                     target_lines = self._physical_target_lines(physical)
                     frame_rows = physical.frame_rows
                     bottom_rows = physical.bottom.rendered.visual_rows
                     busy_activity_rows = physical.projected_regions[1].visual_rows
                     thinking_stream_rows = physical.projected_regions[3].visual_rows
+                    start_row = physical.frame_start_row
                     cursor_ansi = (
                         f"\x1b[{physical.cursor_row};{physical.cursor_col}H"
                     )
@@ -579,6 +596,9 @@ class _FrameRendererMixin:
                     cursor_ansi=cursor_ansi,
                     render_ms=render_ms,
                     force_full=force_full,
+                    scroll_ansi=scroll_ansi if bottom_dock_anchored else "",
+                    scroll_rows=visible_before - visible_after,
+                    scroll_bottom=scroll_bottom or 0,
                 )
 
                 if resize_frame:
@@ -593,7 +613,7 @@ class _FrameRendererMixin:
                         apply_state=self._apply_clear_state,
                     )
                     clear_submitted = True
-                if scroll_ansi:
+                if scroll_ansi and not bottom_dock_anchored:
                     self._submit_terminal_barrier(
                         kind="scroll",
                         ansi=scroll_ansi,
@@ -670,24 +690,35 @@ class _FrameRendererMixin:
                     if not render_failed and render_plan is not None
                     else None
                 )
+                fixed_bottom_rows = 0
+                bottom_dock_anchored = self._bottom_dock_is_anchored(term_height)
+                scroll_bottom: int | None = None
                 if logical is not None:
                     provisional = self._physical_viewport_for_frame(
                         logical,
                         width=width,
                         term_height=term_height,
                         frame_start_row=1,
+                        anchor_bottom=bottom_dock_anchored,
                     )
                     scroll_frame_rows = provisional.frame_rows
+                    if bottom_dock_anchored:
+                        fixed_bottom_rows = self._last_bottom_rows
+                        scroll_bottom = provisional.bottom.region.start_row - 1
                 else:
                     scroll_frame_rows = frame_rows
-
+                    if bottom_dock_anchored:
+                        fixed_bottom_rows = self._last_bottom_rows
+                        scroll_bottom = term_height - fixed_bottom_rows
                 visible_before = 0 if clear_screen else self._visible_committed_rows
                 visible_after, scroll_ansi = self._frame_scroll_plan(
                     scroll_frame_rows,
                     term_height,
                     visible_rows=visible_before,
+                    fixed_bottom_rows=fixed_bottom_rows,
+                    scroll_bottom=scroll_bottom,
                 )
-                force_full = force_full or bool(scroll_ansi)
+                force_full = force_full or bool(scroll_ansi and not bottom_dock_anchored)
                 start_row = max(visible_after + 1, 1)
                 try:
                     payload: list[str] = []
@@ -695,8 +726,9 @@ class _FrameRendererMixin:
                         payload.append("\x1b[2J\x1b[H")
                     if scroll_ansi:
                         payload.append(scroll_ansi)
-                        self._invalidate_frame_cache()
-                        self._invalidate_layout("scroll")
+                        if not bottom_dock_anchored:
+                            self._invalidate_frame_cache()
+                            self._invalidate_layout("scroll")
 
                     if logical is not None:
                         physical = self._physical_viewport_for_frame(
@@ -704,12 +736,14 @@ class _FrameRendererMixin:
                             width=width,
                             term_height=term_height,
                             frame_start_row=start_row,
+                            anchor_bottom=bool(bottom_dock_anchored or scroll_ansi),
                         )
                         target_lines = self._physical_target_lines(physical)
                         frame_rows = physical.frame_rows
                         bottom_rows = physical.bottom.rendered.visual_rows
                         busy_activity_rows = physical.projected_regions[1].visual_rows
                         thinking_stream_rows = physical.projected_regions[3].visual_rows
+                        start_row = physical.frame_start_row
                         cursor_ansi = f"\x1b[{physical.cursor_row};{physical.cursor_col}H"
                         lines_up = max(
                             frame_rows - (physical.cursor_row - start_row) - 1,
@@ -752,6 +786,19 @@ class _FrameRendererMixin:
                         snapshot=snapshot,
                         force_full=force_full,
                     )
+                    if scroll_ansi and bottom_dock_anchored and not force_full and self._prev_frame_lines is not None:
+                        frame_ansi, changed_lines = scrolled_frame_payload(
+                            previous=self._prev_frame_lines, previous_start=self._prev_frame_start_row,
+                            current=target_lines, start=start_row,
+                            scroll_rows=visible_before - visible_after, scroll_bottom=scroll_bottom or 0,
+                        )
+                        strategy = "diff-scroll"
+                    if not scroll_ansi and not force_full and self._prev_frame_lines is not None and self._applied_layout_snapshot is None:
+                        frame_ansi, changed_lines = scrolled_frame_payload(
+                            previous=self._prev_frame_lines, previous_start=self._prev_frame_start_row,
+                            current=target_lines, start=start_row, scroll_rows=0, scroll_bottom=0,
+                        )
+                        strategy = "diff"
                     payload.append(frame_ansi)
                     if physical is not None or not render_failed:
                         payload.append(cursor_ansi)
@@ -925,6 +972,10 @@ class _FrameRendererMixin:
             "diff-suffix" if not tail_rows else "diff-tail-clear",
         )
 
+    def _invalidate_bottom_anchor(self) -> None:
+        self._last_bottom_rows = 0
+        self._last_bottom_start_row = 1
+
     def _invalidate_frame_cache(self) -> None:
         self._last_render_plan = None
         self._prev_frame_lines = None
@@ -932,6 +983,14 @@ class _FrameRendererMixin:
         self._prev_frame_width = 0
         self._prev_frame_term_height = None
         self._invalidate_busy_activity_layout()
+
+    def _bottom_dock_is_anchored(self, term_height: int | None) -> bool:
+        return bool(
+            self._has_rendered_frame
+            and self._last_bottom_rows > 0
+            and term_height is not None
+            and self._last_bottom_start_row + self._last_bottom_rows - 1 == term_height
+        )
 
     def _record_busy_activity_layout(
         self,
@@ -992,6 +1051,8 @@ class _FrameRendererMixin:
         term_height: int,
         *,
         visible_rows: int | None = None,
+        fixed_bottom_rows: int = 0,
+        scroll_bottom: int | None = None,
     ) -> tuple[int, str]:
         visible = self._visible_committed_rows if visible_rows is None else visible_rows
         visible = max(0, min(visible, term_height))
@@ -1001,13 +1062,38 @@ class _FrameRendererMixin:
         scroll_rows = min(overlap, visible)
         if scroll_rows <= 0:
             return 0, ""
+        effective_scroll_bottom = (
+            scroll_bottom
+            if scroll_bottom is not None
+            else term_height - fixed_bottom_rows
+        )
+        if fixed_bottom_rows > 0 or scroll_bottom is not None:
+            scroll_bottom = effective_scroll_bottom
+            if scroll_bottom >= 2:
+                return (
+                    visible - scroll_rows,
+                    f"\x1b[1;{scroll_bottom}r\x1b[{scroll_bottom};1H"
+                    + ("\n" * scroll_rows)
+                    + "\x1b[r",
+                )
+            return 0, ""
         return (
             visible - scroll_rows,
             f"\x1b[{term_height};1H" + "\n" * scroll_rows,
         )
 
-    def _make_room_for_frame(self, frame_rows: int, term_height: int) -> bool:
-        visible_after, scroll_ansi = self._frame_scroll_plan(frame_rows, term_height)
+    def _make_room_for_frame(
+        self,
+        frame_rows: int,
+        term_height: int,
+        *,
+        fixed_bottom_rows: int = 0,
+    ) -> bool:
+        visible_after, scroll_ansi = self._frame_scroll_plan(
+            frame_rows,
+            term_height,
+            fixed_bottom_rows=fixed_bottom_rows,
+        )
         if scroll_ansi:
             if self._terminal_writer_worker_mode():
                 self._submit_terminal_barrier(
@@ -1782,6 +1868,21 @@ class _FrameRendererMixin:
             status_lines = plan.status_lines
             panel_rows = plan.panel_rows
             input_rows = plan.input_rows
+        snapshot = self._applied_layout_snapshot
+        if snapshot is not None:
+            source_row, source_col = self._input_source_cursor(width, tuple(input_rows))
+            for source_slice in snapshot.source_slices:
+                if (
+                    source_slice.key == "bottom.input"
+                    and source_slice.source_start <= source_row < source_slice.source_end
+                ):
+                    row = (
+                        snapshot.bottom.region.start_row
+                        + source_slice.projected_start
+                        + source_row - source_slice.source_start
+                    )
+                    lines_up = snapshot.frame_start_row + snapshot.frame_rows - row
+                    return f"\x1b[{row};{source_col}H", lines_up
         cursor_row = min(self._cursor_row, max(len(input_rows) - 1, 0))
         current_line = self._current_line()
         display_line = self._input_display_text(current_line)
@@ -1807,7 +1908,11 @@ class _FrameRendererMixin:
             + len(status_lines)
         )
         col = cursor_cells % render_width
-        return f"\x1b[{lines_up}A\x1b[{col + 1}G", lines_up
+        frame_end = self._last_frame_start_row + self._last_frame_rows
+        if self._last_frame_rows <= 0:
+            frame_end = self._console.height or 24
+        row = max(1, min(frame_end - lines_up, self._console.height or 24))
+        return f"\x1b[{row};{col + 1}H", lines_up
 
     def _input_cursor_sequence(
         self,
@@ -2010,13 +2115,14 @@ class _FrameRendererMixin:
         generation: int,
         width: int,
         term_height: int,
-        frame_start_row: int,
+        frame_start_row: int | None = None,
         scroll_epoch: int,
         restore_epoch: int,
     ) -> LayoutSnapshot:
+        effective_start = physical.frame_start_row if frame_start_row is None else frame_start_row
         region_keys = ("transcript", "vibe", "thinking", "todo")
         regions: list[RegionGeometry] = []
-        next_row = frame_start_row
+        next_row = effective_start
         for key, rendered in zip(region_keys, physical.projected_regions):
             regions.append(
                 RegionGeometry(
@@ -2033,7 +2139,7 @@ class _FrameRendererMixin:
         return LayoutSnapshot(
             terminal_width=width,
             terminal_height=term_height,
-            frame_start_row=frame_start_row,
+            frame_start_row=effective_start,
             frame_rows=physical.frame_rows,
             regions=tuple(regions),
             source_slices=physical.source_slices,
@@ -2052,12 +2158,14 @@ class _FrameRendererMixin:
         width: int,
         term_height: int,
         frame_start_row: int,
+        anchor_bottom: bool = False,
     ) -> PhysicalViewportPlan:
         return project_physical_viewport(
             logical,
             terminal_width=width,
             terminal_height=term_height,
             frame_start_row=frame_start_row,
+            anchor_bottom=anchor_bottom,
         )
 
 

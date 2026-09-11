@@ -1537,7 +1537,52 @@ async def test_worker_failure_result_callback_delay_does_not_change_private_base
         stream.release.set()
         await asyncio.wait_for(writer.shutdown_async(), timeout=1)
 
+
 @pytest.mark.asyncio
+async def test_commit_uses_explicit_lines_written_for_baseline_without_payload_newline():
+    stream = _ThreadRecordingStream()
+    writer = TerminalWriter(stream)
+    writer.start(
+        loop=asyncio.get_running_loop(),
+        on_frame_result=lambda result: None,
+        on_error=lambda exc: pytest.fail(f"unexpected writer error: {exc}"),
+    )
+    frame_type = terminal_writer_module.FrameBatch
+    try:
+        writer.submit_frame(
+            frame_type(
+                generation=1,
+                start_row=2,
+                target_lines=("history", "input", "status"),
+                cursor_ansi="",
+            )
+        )
+        await asyncio.wait_for(writer.drain_async(), timeout=1)
+
+        commit = writer.submit_commit(
+            clear_start_row=2,
+            ansi="committed",
+            lines_written=1,
+            preserve_baseline=True,
+        )
+        await asyncio.wait_for(writer.wait(commit), timeout=1)
+
+        assert "committed" in stream.value
+        assert "committed\n" not in stream.value
+        assert writer._baseline_valid is True
+        assert writer._applied_start_row == 3
+        assert writer._applied_lines == ("input", "status")
+    finally:
+        await asyncio.wait_for(writer.shutdown_async(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_commit_rejects_nonpositive_explicit_lines_written():
+    writer = TerminalWriter(_ThreadRecordingStream())
+    with pytest.raises(ValueError):
+        writer.submit_commit(clear_start_row=0, ansi="commit", lines_written=0)
+
+
 async def test_commit_preserves_remaining_baseline_without_full_screen_clear():
     stream = _ThreadRecordingStream()
     results: list[object] = []
@@ -1563,6 +1608,7 @@ async def test_commit_preserves_remaining_baseline_without_full_screen_clear():
         commit = writer.submit_commit(
             clear_start_row=2,
             ansi="commit-1\ncommit-2\n",
+            lines_written=2,
             preserve_baseline=True,
         )
         await asyncio.wait_for(writer.wait(commit), timeout=1)
@@ -1740,3 +1786,39 @@ async def test_preserved_baseline_commit_erases_tail_without_trailing_newline():
         assert writer._applied_lines == ("thinking", "input", "status")
     finally:
         await asyncio.wait_for(writer.shutdown_async(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_scoped_scroll_preserves_unchanged_physical_bottom():
+    stream = _ThreadRecordingStream()
+    writer = TerminalWriter(stream)
+    writer.start(loop=asyncio.get_running_loop(), on_frame_result=lambda result: None, on_error=lambda exc: None)
+    frame = terminal_writer_module.FrameBatch
+    try:
+        writer.submit_frame(frame(generation=1, start_row=3, target_lines=("old", "feed", "separator", "input", "status"), cursor_ansi=""))
+        await writer.drain_async()
+        stream.value = ""
+        writer.submit_frame(frame(generation=2, start_row=2, target_lines=("old", "feed", "new", "separator", "input", "status"), cursor_ansi="", scroll_ansi="\x1b[1;4r\x1b[4;1H\x1b[1S\x1b[r", scroll_rows=1, scroll_bottom=4))
+        await writer.drain_async()
+        assert "new" in stream.value
+        assert "input" not in stream.value
+        assert "status" not in stream.value
+        assert "separator" not in stream.value
+        assert "\x1b[J" not in stream.value
+    finally:
+        await writer.shutdown_async()
+
+
+@pytest.mark.asyncio
+async def test_legacy_multiline_commit_infers_baseline_row_count():
+    stream = _ThreadRecordingStream()
+    writer = TerminalWriter(stream)
+    writer.start(loop=asyncio.get_running_loop(), on_frame_result=lambda result: None, on_error=lambda exc: None)
+    try:
+        writer.submit_frame(terminal_writer_module.FrameBatch(generation=1, start_row=2, target_lines=("a", "b", "input", "status"), cursor_ansi=""))
+        await writer.drain_async()
+        await writer.wait(writer.submit_commit(clear_start_row=2, ansi="one\ntwo\n", preserve_baseline=True))
+        assert writer._applied_start_row == 4
+        assert writer._applied_lines == ("input", "status")
+    finally:
+        await writer.shutdown_async()

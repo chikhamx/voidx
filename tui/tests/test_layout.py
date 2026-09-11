@@ -382,3 +382,53 @@ def test_physical_viewport_rejects_frame_start_outside_terminal():
             terminal_height=6,
             frame_start_row=7,
         )
+
+
+def test_physical_viewport_anchor_bottom_pins_bottom_to_terminal_bottom():
+    logical = _logical_plan_for_viewport(bottom_terminal_height=12)
+    physical = project_physical_viewport(
+        logical,
+        terminal_width=20,
+        terminal_height=10,
+        frame_start_row=1,
+        anchor_bottom=True,
+    )
+
+    assert physical.frame_start_row == 1
+    assert physical.bottom.region.start_row == 8
+    assert physical.bottom.rendered.visual_rows == 3
+
+
+def test_physical_viewport_anchor_bottom_unfilled_terminal_aligns_frame_start():
+    bottom = project_bottom_viewport(
+        (
+            ("input", _rendered("input 0", "input 1")),
+            ("status", _rendered("status")),
+        ),
+        terminal_height=10,
+        source_cursor_key="input",
+        source_cursor_row=1,
+        start_row=1,
+        width=20,
+    )
+    logical = LogicalRenderPlan(
+        source_regions=(
+            _rendered("transcript 0", "transcript 1"),
+            _rendered(),
+            _rendered(),
+            _rendered(),
+        ),
+        bottom_source=bottom,
+        source_cursor=("input", 1),
+        source_signature=(("state", 1),),
+    )
+    physical = project_physical_viewport(
+        logical,
+        terminal_width=20,
+        terminal_height=10,
+        frame_start_row=1,
+        anchor_bottom=True,
+    )
+    assert physical.frame_start_row == 6
+    assert physical.bottom.region.start_row == 8
+    assert physical.cursor_row == 9

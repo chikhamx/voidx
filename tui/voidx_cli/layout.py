@@ -113,6 +113,7 @@ class PhysicalViewportPlan:
     cursor_row: int
     cursor_col: int
     source_signature: tuple[Any, ...]
+    frame_start_row: int = 1
 
     def __post_init__(self) -> None:
         if self.frame_rows < 0:
@@ -524,6 +525,7 @@ def project_physical_viewport(
     terminal_width: int,
     terminal_height: int,
     frame_start_row: int = 1,
+    anchor_bottom: bool = False,
 ) -> PhysicalViewportPlan:
     """Project a complete logical frame into a bounded physical viewport."""
     if terminal_width < 1:
@@ -585,7 +587,13 @@ def project_physical_viewport(
         )
         top_rows += count
 
-    bottom_start_row = frame_start_row + top_rows
+    effective_start_row = frame_start_row
+    if anchor_bottom:
+        total_rows = top_rows + bottom_rows
+        if total_rows <= terminal_height:
+            effective_start_row = max(frame_start_row, terminal_height - total_rows + 1)
+
+    bottom_start_row = effective_start_row + top_rows
     bottom = _relocate_bottom_geometry(
         bottom_source.projected,
         start_row=bottom_start_row,
@@ -593,9 +601,9 @@ def project_physical_viewport(
     frame_rows = top_rows + bottom.rendered.visual_rows
     if frame_rows < 1:
         raise ValueError("physical viewport must contain rows")
-    if frame_start_row + frame_rows - 1 > terminal_height:
+    if effective_start_row + frame_rows - 1 > terminal_height:
         raise ValueError("physical viewport exceeds terminal height")
-    if not frame_start_row <= bottom.cursor_row <= terminal_height:
+    if not effective_start_row <= bottom.cursor_row <= terminal_height:
         raise ValueError("projected cursor is outside terminal viewport")
 
     source_slices.extend(bottom_source.projected_slices)
@@ -607,6 +615,7 @@ def project_physical_viewport(
         cursor_row=bottom.cursor_row,
         cursor_col=bottom.cursor_col,
         source_signature=logical.source_signature,
+        frame_start_row=effective_start_row,
     )
 
 

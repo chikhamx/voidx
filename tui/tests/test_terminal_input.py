@@ -73,7 +73,7 @@ def test_input_cursor_position_accounts_for_status_line(tmp_path, monkeypatch):
 
     tui._position_input_cursor()
 
-    assert fake_stdout.text == "\x1b[2A\x1b[7G"
+    assert fake_stdout.text == "\x1b[22;7H"
 
 
 def test_input_cursor_position_accounts_for_wrapped_long_line(tmp_path, monkeypatch):
@@ -95,9 +95,9 @@ def test_input_cursor_position_accounts_for_wrapped_long_line(tmp_path, monkeypa
 
     tui._position_input_cursor()
 
-    match = re.search(r"\x1b\[(\d+)A", fake_stdout.text)
+    match = re.search(r"\x1b\[(\d+);3H", fake_stdout.text)
     assert match is not None
-    assert int(match.group(1)) == 3
+    assert int(match.group(1)) == 21
 
 
 def test_skill_panel_reuses_injected_candidate_service_between_queries(tmp_path, monkeypatch):

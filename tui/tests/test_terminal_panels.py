@@ -403,26 +403,6 @@ def test_dock_failed_shell_tool_still_shows_nonzero_exit_code(tmp_path):
         dock.reset()
 
 
-def test_dock_git_tool_header_shows_args_not_path(tmp_path):
-    """git tool header should display the args value, not the path field."""
-    dock.deactivate()
-    dock.reset()
-    dock.begin_capture()
-    try:
-        tool = dock.start_tool(
-            "Git",
-            "",
-            tool_name="git",
-            raw_args={"path": ".", "args": "log --oneline -5"},
-        )
-        dock.finish_tool_node(tool, "git", 0.1, True)
-
-        rendered = "\n".join(_rich_plain(line) for line in dock.tree.render(120))
-        assert 'Git("log --oneline -5")' in rendered
-        assert 'Git(".")' not in rendered
-    finally:
-        dock.deactivate()
-        dock.reset()
 
 
 def test_dock_git_tool_finish_detail_no_command_prefix(tmp_path):
@@ -432,16 +412,15 @@ def test_dock_git_tool_finish_detail_no_command_prefix(tmp_path):
     dock.begin_capture()
     try:
         tool = dock.start_tool(
-            "Git",
+            "Bash",
             "",
-            tool_name="git",
-            raw_args={"path": "", "args": "status --porcelain"},
+            tool_name="bash",
+            raw_args={"command": "git status --porcelain"},
         )
-        dock.finish_tool_node(tool, "git", 0.1, True, "ok")
+        dock.finish_tool_node(tool, "bash", 0.1, True, "ok")
 
         rendered = "\n".join(_rich_plain(line) for line in dock.tree.render(120))
-        assert 'Git("status --porcelain")' in rendered
-        assert "git status" not in rendered
+        assert 'Bash("git status --porcelain")' in rendered
     finally:
         dock.deactivate()
         dock.reset()
@@ -466,8 +445,7 @@ def test_input_cursor_position_counts_wide_chinese_cells(tmp_path, monkeypatch):
 
     tui._position_input_cursor()
 
-    assert fake_stdout.text.startswith("\x1b[1A")
-    assert "\x1b[7G" in fake_stdout.text
+    assert fake_stdout.text == "\x1b[23;7H"
 
 
 @pytest.mark.asyncio

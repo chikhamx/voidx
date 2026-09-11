@@ -302,29 +302,38 @@ class _StatusRendererMixin:
         for segment in segments:
             if segment.kind == "usage":
                 continue
-            start = summary.find(segment.text, cursor)
-            if start < 0:
+            match = _locate_segment_text(summary, segment.text, cursor)
+            if match is None:
                 continue
+            start, display = match
             if start > cursor:
                 text.append(summary[cursor:start], style=_STATUS_STYLES["separator"])
             if segment.kind == "workflow":
-                _append_rainbow(text, segment.text)
+                _append_rainbow(text, display)
             else:
-                text.append(segment.text, style=_STATUS_STYLES.get(segment.kind, "#8F9BA8"))
-            cursor = start + len(segment.text)
+                text.append(display, style=_STATUS_STYLES.get(segment.kind, "#8F9BA8"))
+            cursor = start + len(display)
 
         usage_start = len(summary) - len(usage.text)
         if usage_start > cursor:
-            middle = summary[cursor:usage_start]
-            goal = next((segment for segment in segments if segment.kind == "goal"), None)
-            if goal is not None and "…" in middle:
-                ellipsis_index = middle.index("…")
-                text.append(middle[:ellipsis_index], style=_STATUS_STYLES["separator"])
-                text.append(middle[ellipsis_index:], style=_STATUS_STYLES["goal"])
-            else:
-                text.append(middle, style=_STATUS_STYLES["separator"])
+            text.append(summary[cursor:usage_start], style=_STATUS_STYLES["separator"])
         text.append(usage.text, style=_STATUS_STYLES["usage"])
         return text
+
+
+def _locate_segment_text(summary: str, segment_text: str, cursor: int) -> tuple[int, str] | None:
+    start = summary.find(segment_text, cursor)
+    if start >= 0:
+        return start, segment_text
+    ellipsis = summary.rfind("…", cursor)
+    if ellipsis < 0:
+        return None
+    head = summary[cursor:ellipsis]
+    for length in range(len(head), 0, -1):
+        candidate = head[-length:]
+        if segment_text.startswith(candidate):
+            return ellipsis - length, candidate + "…"
+    return None
 
 
 def _append_rainbow(text: Text, value: str) -> None:

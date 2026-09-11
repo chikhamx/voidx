@@ -250,6 +250,30 @@ def test_flush_committed_counts_trailing_blank_separator_row(tmp_path, monkeypat
     assert tui._visible_committed_rows == 2
 
 
+
+
+def test_committed_user_separator_is_not_repeated_before_active_assistant(
+    tmp_path, monkeypatch
+):
+    tui = _tui(tmp_path)
+    tui._tty = False
+    tui._console = Console(file=None, force_terminal=False, width=80, height=24, _environ={})
+    dock.begin_capture()
+    try:
+        dock.start_turn("user message")
+        dock.set_stream("assistant message")
+        tui._flush_committed()
+        tui._render_impl(height=24, capture_plan=True)
+
+        logical = tui._render_plan.logical_plan
+        assert logical is not None
+        transcript = logical.source_regions[0]
+        assert transcript.visual_rows == 1
+        assert all(row.strip() for row in transcript.rows)
+    finally:
+        dock.deactivate()
+        dock.reset()
+
 def test_pending_assistant_block_does_not_flush_internal_separator(tmp_path, monkeypatch):
     fake_stdout = _FakeStdout()
     monkeypatch.setattr(sys, "stdout", fake_stdout)
@@ -346,7 +370,7 @@ def test_render_after_final_flush_does_not_redraw_flushed_final_answer(tmp_path,
     assert "改好了，17 个测试全过" not in fake_stdout.text
 
 
-def test_final_flush_clears_existing_frame_before_printing_answer(tmp_path, monkeypatch):
+def test_final_flush_erases_written_row_tails_without_clearing_bottom(tmp_path, monkeypatch):
     fake_stdout = _FakeStdout()
     monkeypatch.setattr(sys, "stdout", fake_stdout)
     monkeypatch.setattr(
@@ -370,11 +394,11 @@ def test_final_flush_clears_existing_frame_before_printing_answer(tmp_path, monk
 
     tui._flush_committed()
 
-    clear_index = fake_stdout.text.find("\x1b[J")
     answer_index = fake_stdout.text.find("改好了")
-    assert clear_index != -1
     assert answer_index != -1
-    assert clear_index < answer_index
+    assert fake_stdout.text.find("\x1b[K", answer_index) > answer_index
+    assert "\x1b[J" not in fake_stdout.text
+    assert "\n" not in fake_stdout.text
 
 
 def test_final_flush_invalidates_previous_frame_cache(tmp_path, monkeypatch):
@@ -650,7 +674,7 @@ def test_flushed_root_message_is_not_replayed_when_later_tools_are_added(tmp_pat
     tui._flush_committed()
 
     assert fake_stdout.text.count("相比上次 review") == 1
-    assert "让我看完所有变更。\n   ● Giting(\"git diff\")" in fake_stdout.text
+    assert "让我看完所有变更。\n   ● Giting(\"diff\")" in fake_stdout.text
     assert "让我看完所有变更。\n\n" not in fake_stdout.text
 
 
@@ -1079,3 +1103,191 @@ def test_thinking_stream_renders_below_vibe_and_above_todo(tmp_path, monkeypatch
     todo_pos = rendered.index("Todo:")
 
     assert vibe_pos < thinking_pos < todo_pos
+
+
+def test_bottom_dock_and_todo_locked_at_terminal_bottom_during_middle_scroll(
+    tmp_path, monkeypatch
+):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 20)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=fake_stdout, force_terminal=True, width=80, height=20, _environ={})
+
+    dock.begin_capture()
+    dock.start_turn("test scroll isolation")
+    for i in range(13):
+        dock.append_message(f"committed line {i}")
+    tui._committed_line_count = 13
+    tui._visible_committed_rows = 13
+
+    dock.set_todo_state(
+        "1 task",
+        [{"content": "pinned todo item", "status": "active"}],
+    )
+
+    tui._render_frame()
+    initial_bottom_start = tui._last_bottom_start_row
+    initial_bottom_rows = tui._last_bottom_rows
+    assert initial_bottom_start + initial_bottom_rows - 1 == 20
+
+    fake_stdout.text = ""
+
+    for i in range(5):
+        dock.tree.new_node(
+            parent=dock.tree.root,
+            node_type="message",
+            header=f"active line {i}",
+            collapsed=False,
+        )
+
+    tui._render_frame()
+
+    assert tui._last_bottom_start_row == initial_bottom_start
+    assert tui._last_bottom_rows == initial_bottom_rows
+    assert "\x1b[20;1H\n" not in fake_stdout.text
+    scroll_bottom = 20 - initial_bottom_rows
+    assert f"\x1b[1;{scroll_bottom}r" in fake_stdout.text
+    writes = re.findall(r"\x1b\[(\d+);1H([^\x1b]*)", fake_stdout.text)
+    assert not [(row, text) for row, text in writes if int(row) >= initial_bottom_start and text]
+    assert "\x1b[J" not in fake_stdout.text
+
+
+def test_flush_committed_overflow_without_anchor_defers_and_retains_transcript(
+    tmp_path, monkeypatch
+):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 10)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(
+        file=fake_stdout, force_terminal=True, width=80, height=10, _environ={}
+    )
+    tui._has_rendered_frame = True
+    tui._last_frame_start_row = 8
+
+    dock.begin_capture()
+    dock.start_turn("overflow commit")
+    for i in range(5):
+        dock.append_message(f"overflow line {i}")
+
+    tui._flush_committed(force=True)
+
+    assert tui._last_frame_start_row == 8
+    assert tui._last_bottom_rows == 0
+    assert fake_stdout.text == ""
+    assert tui._committed_line_count == 0
+    assert dock.consume_force_flush_request() is True
+    assert "overflow line 4" in "\n".join(dock.tree.render(80))
+
+
+def test_frame_scroll_plan_tiny_terminal_with_anchored_bottom_does_not_scroll_feed(tmp_path):
+    tui = _tui(tmp_path)
+    # term_height=5, fixed_bottom_rows=4 -> scroll_bottom = 1 < 2
+    # Should not emit terminal-height hardware scroll feed!
+    visible_after, scroll_ansi = tui._frame_scroll_plan(
+        frame_rows=5,
+        term_height=5,
+        visible_rows=3,
+        fixed_bottom_rows=4,
+    )
+    assert scroll_ansi == ""
+    assert visible_after == 0
+
+
+
+def test_commit_cache_invalidation_preserves_anchored_bottom_geometry(
+    tmp_path, monkeypatch
+):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 12)),
+    )
+
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(
+        file=fake_stdout, force_terminal=True, width=80, height=12, _environ={}
+    )
+    tui._has_rendered_frame = True
+    tui._last_bottom_start_row = 8
+    tui._last_bottom_rows = 5
+
+    tui._invalidate_frame_cache()
+
+    assert tui._last_bottom_start_row == 8
+    assert tui._last_bottom_rows == 5
+    assert tui._bottom_dock_is_anchored(12) is True
+
+
+@pytest.mark.parametrize("reason", ["clear", "resize", "terminal_submission_failure", "overflow"])
+def test_physical_boundary_invalidates_bottom_anchor(tmp_path, reason):
+    tui = _tui(tmp_path)
+    tui._has_rendered_frame = True
+    tui._last_bottom_start_row = 9
+    tui._last_bottom_rows = 4
+    tui._invalidate_layout(reason)
+    assert not tui._bottom_dock_is_anchored(12)
+
+
+@pytest.mark.parametrize("start, count", [(10, 1), (11, 1), (8, 15), (0, 1)])
+def test_commit_payload_never_uses_lf_for_physical_positioning(tmp_path, monkeypatch, start, count):
+    output = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", output)
+    monkeypatch.setattr(shutil, "get_terminal_size", lambda fallback=None: os.terminal_size((80, 10)))
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=output, force_terminal=True, width=80, height=10, _environ={})
+    tui._has_rendered_frame = start > 0
+    tui._last_frame_start_row = start
+    tui._last_bottom_start_row = 8 if start else 0
+    tui._last_bottom_rows = 3 if start else 0
+    dock.begin_capture()
+    for batch in range(2):
+        dock.start_turn(f"batch-{batch}")
+        for row in range(count):
+            dock.append_message(f"payload-{batch}-{row}")
+        output.text = ""
+        tui._flush_committed(force=True)
+        assert "\n" not in output.text
+        assert f"payload-{batch}-0" in Text.from_ansi(output.text).plain
+        if start:
+            assert "\x1b[1;7r" in output.text
+            assert "\x1b[r" in output.text
+        assert not re.search(r"\x1b\[(?:11|12);", output.text)
+
+
+def test_commit_without_safe_region_is_deferred_without_settling(tmp_path, monkeypatch):
+    output = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", output)
+    monkeypatch.setattr(shutil, "get_terminal_size", lambda fallback=None: os.terminal_size((80, 3)))
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=output, force_terminal=True, width=80, height=3, _environ={})
+    tui._has_rendered_frame = True
+    tui._last_frame_start_row = 4
+    tui._last_bottom_start_row = 1
+    tui._last_bottom_rows = 3
+    dock.begin_capture()
+    dock.start_turn("retained transcript")
+    dock.append_message("must not disappear")
+    before = tui._committed_line_count
+    tui._flush_committed(force=True)
+    assert output.text == ""
+    assert tui._committed_line_count == before
+    assert dock.consume_force_flush_request() is True
