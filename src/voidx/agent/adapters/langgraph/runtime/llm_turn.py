@@ -111,6 +111,11 @@ class LlmTurn:
     async def call(self, state: AgentState) -> dict:
         host = self.host
         host._last_stop_signal = ""
+        task_state_history = (
+            host.task_state_history
+            if not getattr(host, "task_state_strip_enabled", True)
+            else None
+        )
         step = state.get("step_count", 0)
 
         if host.model is None:
@@ -296,13 +301,15 @@ class LlmTurn:
             )
 
         def _rerender_task_context(messages: list[BaseMessage], new_turn_state: str, task_state: TaskState | None = None) -> list[BaseMessage]:
-            return rerender_task_context(
+            rendered = rerender_task_context(
                 getattr(host, "_last_context_builder", None),
                 messages,
                 new_turn_state,
                 task_state,
                 persona=persona,
+                append_task_state=task_state_history is not None,
             )
+            return task_state_history.restore(rendered) if task_state_history is not None else rendered
 
         def refresh_child_runs() -> None:
             builder = getattr(host, "_last_context_builder", None)
@@ -547,7 +554,10 @@ class LlmTurn:
                         )
                     rebuilt = rerender_task_context(
                         builder, rebuilt, turn_state, runtime_task_state, persona=persona,
+                        append_task_state=task_state_history is not None,
                     )
+                    if task_state_history is not None:
+                        rebuilt = task_state_history.restore(rebuilt)
                     if final_response_prompt:
                         rebuilt.append(HumanMessage(
                             content=final_response_prompt,
@@ -612,6 +622,8 @@ class LlmTurn:
                     model_protocol,
                     ui_port=host._ui,
                 )
+                if task_state_history is not None:
+                    task_state_history.remember(request_llm_messages)
                 log_llm_exchange(
                     request_llm_messages,
                     assistant_msg,

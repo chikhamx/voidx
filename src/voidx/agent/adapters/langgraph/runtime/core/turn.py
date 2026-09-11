@@ -206,6 +206,35 @@ def _is_invalid_prompt_response(
     return loop.turn_prompt_active and has_text and classification != TurnClassification.PLAIN_TEXT
 
 
+def apply_turn_goal(
+    *,
+    graph: Any,
+    runtime_task_state: TaskState,
+    goal_text: str,
+    workflow_dag: WorkflowDAG | None = None,
+) -> None:
+    resolution = GoalResolution(
+        goal=GoalSpec(desc=goal_text),
+        plan=None,
+    )
+    runtime_task_state.update_after_turn(resolution)
+    if workflow_dag is not None:
+        reconciled_workflow_runs = reconcile_workflow_runs_for_turn(
+            goal_resolution=resolution,
+            after_state=runtime_task_state,
+            dag=workflow_dag,
+        )
+        runtime_task_state.workflow_runs = {
+            run.name: run for run in reconciled_workflow_runs
+        }
+    if hasattr(graph, "_task_state"):
+        graph._task_state = runtime_task_state.model_copy(deep=True)
+    if hasattr(graph, "_invalidate_tui_for_turn"):
+        graph._invalidate_tui_for_turn()
+    elif hasattr(graph, "_ui") and hasattr(graph._ui, "invalidate"):
+        graph._ui.invalidate()
+
+
 async def _handle_turn_init(
     *,
     graph: Any,
@@ -251,22 +280,12 @@ async def _handle_turn_init(
 
     init_args = (init_call or {}).get("args") or {}
     goal_text = _extract_goal_from_args(init_args) or str(init_args.get("goal") or "").strip()
-    resolution = GoalResolution(
-        goal=GoalSpec(desc=goal_text),
-        plan=None,
+    apply_turn_goal(
+        graph=graph,
+        runtime_task_state=runtime_task_state,
+        goal_text=goal_text,
+        workflow_dag=workflow_dag,
     )
-    runtime_task_state.update_after_turn(resolution)
-    if workflow_dag is not None:
-        reconciled_workflow_runs = reconcile_workflow_runs_for_turn(
-            goal_resolution=resolution,
-            after_state=runtime_task_state,
-            dag=workflow_dag,
-        )
-        runtime_task_state.workflow_runs = {
-            run.name: run for run in reconciled_workflow_runs
-        }
-    graph._task_state = runtime_task_state.model_copy(deep=True)
-    graph._invalidate_tui_for_turn()
     turn_state = "running"
     loop.turn_prompt_active = False
     llm_messages = rerender_task_context(llm_messages, "running", runtime_task_state)

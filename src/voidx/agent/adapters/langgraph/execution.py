@@ -1224,6 +1224,7 @@ class LangGraphExecution:
                 "model_factory": self._model_factory,
                 "scoped_tools_binder": self._scoped_tools_binder,
                 "context_handoff": context_handoff,
+                "task_state_strip_enabled": self.task_state_strip_enabled,
             }
             if self._current_tree and self._turn_node:
                 kwargs.update({
@@ -1286,6 +1287,27 @@ class LangGraphExecution:
 
     def set_image_strip(self, value: bool) -> None:
         self._image_strip = bool(value)
+
+    @property
+    def task_state_strip_enabled(self) -> bool:
+        return getattr(self, "_task_state_strip", True)
+
+    def set_task_state_strip(self, value: bool) -> None:
+        self._task_state_strip = bool(value)
+        if value:
+            self._retained_task_state_history = None
+
+    @property
+    def task_state_history(self):
+        from voidx.agent.application.task_state_history import TaskStateHistory
+
+        session_id = getattr(getattr(self, "_session", None), "id", None)
+        history = getattr(self, "_retained_task_state_history", None)
+        if history is None or getattr(self, "_task_state_history_session", None) != session_id:
+            history = TaskStateHistory()
+            self._retained_task_state_history = history
+            self._task_state_history_session = session_id
+        return history
 
     def _build(self) -> None:
         self.graph = build_graph(self)
@@ -1519,7 +1541,7 @@ class LangGraphExecution:
 
     def _record_successful_tool_call(self: Any, tool_call: dict[str, Any]) -> None:
         risk = (tool_call.get("metadata") or {}).get("approved_risk") or {}
-        if risk.get("risk_level") != RiskLevel.DANGEROUS.value:
+        if risk.get("risk_level") not in {RiskLevel.DANGEROUS.value, RiskLevel.EXTREME.value}:
             return
         key = _tool_call_key(tool_call)
         if key is not None:

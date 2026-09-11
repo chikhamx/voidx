@@ -205,6 +205,12 @@
   },
   {
     "arg": "args",
+    "desc": "Configure task-state history (strip on/off)",
+    "method": "_taskstate",
+    "name": "/taskstate"
+  },
+  {
+    "arg": "args",
     "desc": "Configure Tavily API key for web search",
     "method": "_tavily",
     "name": "/tavily"

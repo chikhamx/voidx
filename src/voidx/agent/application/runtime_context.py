@@ -133,7 +133,7 @@ class ContextCompiler:
     def __init__(self, context: RuntimeContext) -> None:
         self.context = context
 
-    def compile_messages(self, messages: list[BaseMessage]) -> list[BaseMessage]:
+    def compile_messages(self, messages: list[BaseMessage], *, append_task_state: bool = False) -> list[BaseMessage]:
         semantic_messages = raw_semantic_messages(messages)
         skill_context_cutoff = _tool_skill_context_cutoff(semantic_messages)
         semantic_messages = _strip_historical_tool_context(
@@ -151,7 +151,11 @@ class ContextCompiler:
         )
         task_context = self.context.render_task_context()
         if task_context:
-            if not semantic_messages:
+            if append_task_state:
+                from voidx.agent.application.task_state_history import task_state_snapshot
+
+                semantic_messages.append(task_state_snapshot(task_context))
+            elif not semantic_messages:
                 semantic_messages.append(HumanMessage(content=task_context))
             elif isinstance(semantic_messages[-1], ToolMessage):
                 semantic_messages.append(HumanMessage(content=task_context))

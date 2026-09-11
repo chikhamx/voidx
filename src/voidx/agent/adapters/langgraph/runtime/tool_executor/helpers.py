@@ -580,9 +580,15 @@ def _apply_state_update(
         state_update["todo_state"] = update.get("todo_state")
         state_update["task_state"] = runtime_task_state[0].model_dump(mode="json")
     if "current_goal" in update:
+        from voidx.agent.adapters.langgraph.runtime.core.turn import apply_turn_goal
         raw_goal = update.get("current_goal")
-        runtime_task_state[1] = _goal_for_state(raw_goal)
-        runtime_task_state[0].current_goal = runtime_task_state[1]
+        goal_obj = _goal_for_state(raw_goal)
+        apply_turn_goal(
+            graph=host,
+            runtime_task_state=runtime_task_state[0],
+            goal_text=goal_obj.desc if goal_obj else "",
+        )
+        runtime_task_state[1] = runtime_task_state[0].current_goal
         state_update["task_state"] = runtime_task_state[0].model_dump(mode="json")
     if "workflow_route" in update:
         raw_route = update.get("workflow_route")

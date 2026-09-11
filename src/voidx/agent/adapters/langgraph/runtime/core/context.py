@@ -102,6 +102,7 @@ def rerender_task_context(
     task_state: TaskState | None = None,
     *,
     persona: str | None = None,
+    append_task_state: bool = False,
 ) -> list[BaseMessage]:
     if builder is None:
         return messages
@@ -125,7 +126,7 @@ def rerender_task_context(
             if getattr(run.status, "value", run.status) == "active"
         ]
     context = builder.build()
-    return ContextCompiler(context).compile_messages(messages)
+    return ContextCompiler(context).compile_messages(messages, append_task_state=append_task_state)
 
 
 def replacement_messages(
