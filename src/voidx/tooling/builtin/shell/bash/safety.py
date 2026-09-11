@@ -19,4 +19,5 @@ def sandbox_denial(command: str, ctx: ShellToolContext) -> str | None:
         sandbox_mode=ctx.sandbox_mode,
         workspace=ctx.workspace,
         write_paths=[*authorization.write_files, *authorization.write_dirs],
+        permission_mode=ctx.permission_mode,
     )

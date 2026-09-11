@@ -6,7 +6,7 @@ import shlex
 from pathlib import Path
 
 from voidx.tooling.policy.filesystem.constants import FS_WRITE_COMMANDS, REDIR_PATTERNS
-from voidx.tooling.policy.git.constants import GIT_GLOBAL_OPTIONS_WITH_VALUE
+from voidx.tooling.policy.shell.policy import parse_git_command
 
 
 def _allowed(
@@ -240,32 +240,11 @@ def _is_git_push_outside(
     In workspace-write mode, git push to any remote can write outside the
     local filesystem. Extra local write paths do not authorize remote writes.
     """
-    if prog != "git" or len(words) < 2:
-        return False
-    subcommand = git_subcommand(_program_args(words))
-    return subcommand == "push"
+    return parse_git_command(words).subcommand == "push"
 
 
 
 
-def git_subcommand(args: list[str]) -> str:
-    index = 0
-    while index < len(args):
-        word = args[index]
-        if word in GIT_GLOBAL_OPTIONS_WITH_VALUE:
-            index += 2
-            continue
-        if any(word.startswith(f"{option}=") for option in GIT_GLOBAL_OPTIONS_WITH_VALUE if option.startswith("--")):
-            index += 1
-            continue
-        if word == "--":
-            index += 1
-            continue
-        if word.startswith("-"):
-            index += 1
-            continue
-        return word
-    return ""
 
 
 # ── export ───────────────────────────────────────────────────────────

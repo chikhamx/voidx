@@ -15,6 +15,7 @@ from voidx.tooling.builtin.shell.bash.edit_router import maybe_route_sed_edit
 from voidx.tooling.builtin.shell.bash.router import try_hint
 from voidx.tooling.domain.authorization import PermissionContext
 from voidx.tooling.domain.grants import AccessGrants
+from voidx.tooling.domain.process_sandbox import ProcessSandboxCapability
 from voidx.tooling.policy.shell.policy import shell_sandbox_precheck
 from voidx.tooling.builtin.shell.bash.safety import check_command, sandbox_denial
 from voidx.tooling.builtin.shell.common import (
@@ -66,34 +67,37 @@ class BashTool:
             return sed_routed
 
         hint = try_hint(inp.command)
-        git_fallback = False
         if hint is not None:
             routed = await maybe_route_hint(inp.command, hint, ctx, "bash")
             if routed is not None:
                 return routed
-            if hint.tool_id != "git":
-                return build_hint_result(inp.command, hint, "Bash")
-            git_fallback = True
+            return build_hint_result(inp.command, hint, "Bash")
         access_grants = ctx.authorization_service.access_grants() if ctx.authorization_service.access_grants is not None else AccessGrants.from_parts(
             readable_files=ctx.authorization_service.read_files,
             readable_dirs=ctx.authorization_service.read_dirs,
             writable_files=ctx.authorization_service.write_files,
             writable_dirs=ctx.authorization_service.write_dirs,
         )
-        shell_blocked = None
-        if not approved_shell_risk and not git_fallback:
-            _, shell_blocked = shell_sandbox_precheck(
-                {"command": inp.command},
-                PermissionContext(
-                    workspace=workspace,
-                    permission_mode=ctx.permission_mode,
-                    access_grants=access_grants,
-                    process_sandbox=ctx.process_sandbox,
-                ),
-                shell="bash",
-            )
-        if shell_blocked:
-            return build_blocked_result(inp.command, shell_blocked)
+        perm_context = PermissionContext(
+            workspace=workspace,
+            permission_mode=ctx.permission_mode,
+            access_grants=access_grants,
+            process_sandbox=ctx.process_sandbox or ProcessSandboxCapability(),
+        )
+        shell_action, shell_reason = shell_sandbox_precheck(
+            {"command": inp.command},
+            perm_context,
+            shell="bash",
+        )
+        if shell_action == "deny":
+            return build_blocked_result(inp.command, shell_reason or "Shell command denied")
+
+        if "external path requires" in (shell_reason or ""):
+            return build_blocked_result(inp.command, shell_reason)
+
+        process_sandbox = ctx.process_sandbox or ProcessSandboxCapability()
+        if process_sandbox.usable_for("bash") and not approved_shell_risk and shell_action != "allow":
+            return build_blocked_result(inp.command, shell_reason or "Shell command deferred")
 
         proc = await create_owned_subprocess_shell(
             inp.command,

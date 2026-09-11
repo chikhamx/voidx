@@ -62,21 +62,18 @@ class TestPowerShellGitAutoRoute:
         assert "workspace is not set" in result.output
 
     @pytest.mark.asyncio
-    async def test_powershell_auto_routes_git_when_registry_available(self, tmp_path):
+    async def test_powershell_runs_git_without_routing(self, tmp_path):
         from voidx.tooling.builtin.shell.powershell.tool import PowerShellTool
 
         ctx = ToolContext(workspace=str(tmp_path), tool_invoker=build_registry())
         result = await PowerShellTool().execute({"command": "git status --porcelain"}, ctx)
 
         assert result.metadata.get("route_hint") is None
-        assert result.metadata["tool"] == "git"
-        assert result.metadata["routed_command"] == "git status --porcelain"
-        assert result.metadata["routed_tool_args"] == {"args": "status --porcelain"}
-        assert result.metadata["routed_from"] == "powershell"
-
+        assert result.metadata.get("tool") is None
+        assert result.metadata.get("routed_from") is None
 
     @pytest.mark.asyncio
-    async def test_powershell_auto_route_git_reset_hard_still_denied_by_git_tool(self, tmp_path):
+    async def test_powershell_git_reset_hard_blocked_by_shell_policy(self, tmp_path):
         from voidx.tooling.builtin.shell.powershell.tool import PowerShellTool
 
         repo = tmp_path / "repo"
@@ -94,16 +91,11 @@ class TestPowerShellGitAutoRoute:
             workspace=str(repo),
             tool_invoker=build_registry(),
             permission_mode="full_access",
-            approved_tool_risks=[{"tool_name": "powershell", "pattern": command, "risk_level": "dangerous"}],
         )
         result = await PowerShellTool().execute({"command": command}, ctx)
-        payload = json.loads(result.output)
 
-        assert result.metadata.get("route_hint") is None
-        assert result.metadata["tool"] == "git"
-        assert result.metadata["routed_from"] == "powershell"
-        assert payload["ok"] is False
-        assert payload["error"].startswith("command_denied")
+        assert result.metadata.get("blocked") is True
+        assert "is blocked" in result.output
         assert (repo / "f.txt").read_text(encoding="utf-8") == "changed\n"
 
 @skip_if_not_windows
@@ -406,13 +398,6 @@ class TestPowerShellSandbox:
 class TestPowerShellRouteHints:
     """Route hints suggest specialized tools over raw PowerShell."""
 
-    @pytest.mark.asyncio
-    async def test_powershell_route_hint_git(self, tmp_path):
-        ctx = ToolContext(workspace=str(tmp_path))
-        r = build_registry()
-        result = await r.execute_tool("powershell", {"command": "git status"}, ctx)
-        assert result.metadata["skipped"] is True
-        assert result.metadata["route_hint"]["tool_id"] == "git"
 
     @pytest.mark.asyncio
     async def test_powershell_route_hint_get_content(self, tmp_path):

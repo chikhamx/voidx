@@ -8,9 +8,8 @@ from enum import Enum
 
 from voidx.tooling.domain.permission import Rule, Ruleset
 from voidx.tooling.domain.tool_names import canonical_tool_name
-from voidx.tooling.policy.git.policy import git_policy_for_args
 from voidx.tooling.policy.filesystem.constants import FILE_PATTERN_TOOLS
-from voidx.tooling.policy.git.constants import GIT_GLOBAL_OPTIONS_WITH_VALUE, GITREF_WRITE_FLAGS
+from voidx.tooling.policy.shell.policy import shell_policy_for_command
 
 
 class PermissionCapability(str, Enum):
@@ -19,8 +18,6 @@ class PermissionCapability(str, Enum):
     FILE_FORMAT = "file_format"
     BASH_READ = "bash_read"
     BASH_WRITE = "bash_write"
-    GIT_READ = "git_read"
-    GIT_WRITE = "git_write"
     AGENT_READONLY = "agent_readonly"
     AGENT_IMPLEMENT = "agent_implement"
     MCP_TOOLS = "mcp_tools"
@@ -52,7 +49,6 @@ BASIC_RULES: Ruleset = [
     Rule(permission="mcp", pattern="*", action="allow"),
     Rule(permission="skill", pattern="*", action="allow"),
     Rule(permission="edit", pattern="*", action="ask"),
-    Rule(permission="git", pattern="write", action="ask"),
     Rule(permission="bash", pattern="*", action="ask"),
     Rule(permission="powershell", pattern="*", action="ask"),
 ]
@@ -112,8 +108,6 @@ def build_pattern(tool: str, args: dict) -> str:
         return paths[0] if len(paths) == 1 else " | ".join(paths)
     if tool == "agent":
         return "implement" if args.get("invocation_class") == "implement" else "voidx"
-    if tool == "git":
-        return "read" if _is_read_only_git_tool_command(args) else "write"
     if tool == "skill":
         return "create" if args.get("op") == "create" else "*"
     if tool == "mcp":
@@ -133,27 +127,15 @@ def _mcp_gateway_pattern(args: dict) -> str:
 
 
 def is_safe_bash(command: str) -> bool:
-    stripped = command.strip()
-    if not stripped or stripped.startswith("#"):
-        return True
-    if "$(" in stripped or "`" in stripped:
-        return False
-
-    words = shell_words(stripped)
-    if words is None:
-        return False
-    if _has_write_redirection(words):
-        return False
-
-    segments = _bash_segments(words)
-    return bool(segments) and all(_is_safe_bash_segment(segment) for segment in segments)
+    decision = shell_policy_for_command(command, shell="bash")
+    return decision.allowed and decision.read_only
 
 
 def shell_words(command: str) -> list[str] | None:
     try:
         lexer = shlex.shlex(command, posix=False, punctuation_chars=True)
         lexer.whitespace_split = True
-        return [_strip_quotes(w) for w in lexer]
+        return [_strip_quotes(word) for word in lexer]
     except ValueError:
         return None
 
@@ -163,192 +145,6 @@ def _strip_quotes(word: str) -> str:
     if len(word) >= 2 and word[0] == word[-1] and word[0] in ("'", '"'):
         return word[1:-1]
     return word
-
-
-def _has_write_redirection(words: list[str]) -> bool:
-    write_redirections = {">", ">>", ">|", "&>", "&>>"}
-    for index, word in enumerate(words):
-        if word in write_redirections:
-            if index + 1 < len(words) and words[index + 1].startswith("&"):
-                continue
-            return True
-    return False
-
-
-def _bash_segments(words: list[str]) -> list[list[str]]:
-    segments: list[list[str]] = []
-    segment: list[str] = []
-    for word in words:
-        if word in {";", "&&", "||", "|", "|&"}:
-            if segment:
-                segments.append(segment)
-            segment = []
-            continue
-        segment.append(word)
-    if segment:
-        segments.append(segment)
-    return segments
-
-
-def _is_safe_bash_segment(words: list[str]) -> bool:
-    prog, args = _program_and_args(words)
-    if not prog:
-        return True
-    prog = prog.lower()
-
-    if prog in {"command", "builtin"}:
-        return bool(args) and _is_safe_bash_segment(args)
-    if prog == "env":
-        return _is_safe_env(args)
-
-    if prog == "git" and len(words) > 1:
-        sub, sub_args = git_subcommand(args)
-        if not sub:
-            return True
-        read_only_git = {
-            "status", "log", "diff", "show", "blame", "rev-parse", "rev-list",
-            "ls-files", "ls-tree", "describe", "shortlog", "reflog", "cherry",
-            "whatchanged", "notes", "grep", "cat-file", "name-rev", "for-each-ref",
-        }
-        if sub in read_only_git:
-            return True
-        if sub == "config":
-            return _is_read_only_git_config(sub_args)
-        if sub == "stash":
-            return bool(sub_args) and sub_args[0] in ("list", "show")
-        if sub == "bisect":
-            return bool(sub_args) and sub_args[0] in ("log", "view", "visualize")
-        if sub in ("branch", "tag"):
-            return _is_read_only_git_ref_command(sub, sub_args)
-        if sub == "remote":
-            return not sub_args or "-v" in sub_args or "--verbose" in sub_args
-        if sub == "worktree":
-            return bool(sub_args) and sub_args[0] == "list"
-        return False
-
-    if prog == "gh" and args:
-        sub = args[0]
-        if sub == "pr":
-            return len(args) > 1 and args[1] in ("view", "list", "status", "checks", "diff")
-        if sub == "issue":
-            return len(args) > 1 and args[1] in ("view", "list", "status")
-        if sub == "api":
-            cmd_upper = " ".join(args).upper()
-            if "-X" in cmd_upper or "--METHOD" in cmd_upper:
-                return "GET" in cmd_upper
-            return True
-        if sub in ("auth", "config", "completion", "secret"):
-            return len(args) == 1 or (len(args) > 1 and args[1] in ("list", "status", "view"))
-        return False
-
-    if prog == "find":
-        return not any(arg in {"-delete", "-exec", "-execdir", "-ok", "-okdir"} for arg in args)
-    if prog == "sort":
-        return "-o" not in args and not any(arg.startswith("--output") for arg in args)
-
-    read_only = {
-        "ls", "dir", "cat", "head", "tail", "wc", "which", "where", "whereis",
-        "echo", "printf", "pwd", "date", "whoami", "uname", "printenv",
-        "df", "du", "sort", "uniq", "cut", "tr", "column", "less", "more",
-        "grep", "egrep", "fgrep", "rg", "file", "stat", "od",
-        "true", "false", "test", "[", "type", "basename", "dirname",
-        "realpath", "readlink", "hostname", "id", "groups", "logname",
-        "uptime", "free", "swapon", "lscpu", "lsblk", "lspci", "lsusb",
-    }
-    if prog in read_only:
-        return True
-
-    if prog in ("pip", "pip3") and args:
-        return args[0] in ("list", "show", "freeze", "config", "cache")
-    if prog in ("npm", "npx") and args:
-        return args[0] in ("list", "ls", "view", "info", "outdated", "test", "run", "run-script", "exec")
-    if prog == "cargo" and args:
-        return args[0] in ("search", "doc", "readme", "test", "build", "check", "clippy", "fmt")
-    if prog == "go" and args:
-        return args[0] in ("list", "doc", "version", "env", "test", "build", "vet")
-    if prog in ("python", "python3") and len(args) >= 2 and args[0] == "-m":
-        safe_modules = {
-            "pytest", "unittest", "mypy", "ruff", "flake8", "pyright",
-            "pylint", "black", "isort", "coverage",
-        }
-        return args[1] in safe_modules
-    if prog == "make":
-        return True
-    if prog in {"ruff", "mypy", "flake8", "pylint", "pyright", "eslint", "tsc", "prettier"}:
-        return True
-
-    return False
-
-
-def _program_and_args(words: list[str]) -> tuple[str, list[str]]:
-    for index, word in enumerate(words):
-        if _is_assignment(word):
-            continue
-        return word, words[index + 1:]
-    return "", []
-
-
-def _is_assignment(word: str) -> bool:
-    if "=" not in word or word.startswith("="):
-        return False
-    return word.split("=", 1)[0].isidentifier()
-
-
-def _is_safe_env(args: list[str]) -> bool:
-    index = 0
-    while index < len(args):
-        word = args[index]
-        if _is_assignment(word) or word in {"-i", "--ignore-environment", "-0", "--null"}:
-            index += 1
-            continue
-        if word in {"-u", "--unset"}:
-            index += 2
-            continue
-        if word.startswith("-u") and len(word) > 2:
-            index += 1
-            continue
-        return _is_safe_bash_segment(args[index:])
-    return True
-
-
-
-
-def git_subcommand(args: list[str]) -> tuple[str, list[str]]:
-    index = 0
-    while index < len(args):
-        word = args[index]
-        if word in GIT_GLOBAL_OPTIONS_WITH_VALUE:
-            index += 2
-            continue
-        if any(word.startswith(f"{option}=") for option in GIT_GLOBAL_OPTIONS_WITH_VALUE if option.startswith("--")):
-            index += 1
-            continue
-        if word == "--":
-            index += 1
-            continue
-        if word.startswith("-"):
-            index += 1
-            continue
-        return word, args[index + 1:]
-    return "", []
-
-
-def _is_read_only_git_config(args: list[str]) -> bool:
-    read_flags = {
-        "--get", "--get-all", "--get-regexp", "--get-urlmatch",
-        "--list", "-l", "--show-origin", "--show-scope",
-    }
-    if any(arg in read_flags for arg in args):
-        return True
-    return len(args) == 1 and not args[0].startswith("-")
-
-
-def _is_read_only_git_ref_command(subcommand: str, args: list[str]) -> bool:
-    if any(arg in GITREF_WRITE_FLAGS for arg in args):
-        return False
-    if subcommand == "tag" and any(arg in {"-l", "--list"} for arg in args):
-        return True
-    return not any(not arg.startswith("-") for arg in args)
 
 
 def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
@@ -372,8 +168,6 @@ def capability_for_tool(tool: str, args: dict) -> PermissionCapability:
     if tool == "powershell":
         from voidx.tooling.policy.shell.powershell_sandbox import is_safe_powershell_command
         return PermissionCapability.BASH_READ if is_safe_powershell_command(str(args.get("command", ""))) else PermissionCapability.BASH_WRITE
-    if tool == "git":
-        return PermissionCapability.GIT_READ if _is_read_only_git_tool_command(args) else PermissionCapability.GIT_WRITE
     if tool == "agent":
         return (
             PermissionCapability.AGENT_IMPLEMENT
@@ -413,11 +207,3 @@ def file_paths_for_tool(tool: str, args: dict) -> list[str]:
                         paths.append(str(value))
         return paths
     return []
-
-
-
-
-def _is_read_only_git_tool_command(args: dict) -> bool:
-    """Classify a registered git tool call as read-only or write."""
-    decision = git_policy_for_args(args)
-    return decision.allowed and decision.read_only

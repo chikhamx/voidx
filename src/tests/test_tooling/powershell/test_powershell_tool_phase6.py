@@ -27,7 +27,7 @@ def _payload(result):
 
 
 @pytest.mark.asyncio
-async def test_powershell_external_read_requires_write(tmp_path: Path):
+async def test_powershell_external_read_uses_readable_grant(tmp_path: Path):
     from voidx.tooling.domain.authorization import PermissionContext
     from voidx.tooling.policy.shell.policy import shell_sandbox_precheck
 
@@ -36,9 +36,10 @@ async def test_powershell_external_read_requires_write(tmp_path: Path):
     workspace.mkdir()
     external.mkdir()
     (external / "data.txt").write_text("secret", encoding="utf-8")
+    command = f"Get-Content '{external / 'data.txt'}'"
 
-    action, reason = shell_sandbox_precheck(
-        {"command": f"Get-Content '{external / 'data.txt'}'"},
+    readable_grant = shell_sandbox_precheck(
+        {"command": command},
         PermissionContext(
             workspace=str(workspace),
             permission_mode="safe",
@@ -47,9 +48,19 @@ async def test_powershell_external_read_requires_write(tmp_path: Path):
         ),
         shell="powershell",
     )
+    no_grant = shell_sandbox_precheck(
+        {"command": command},
+        PermissionContext(
+            workspace=str(workspace),
+            permission_mode="safe",
+            process_sandbox=ProcessSandboxCapability(backend=ProcessSandboxBackend.TEST, supported=True),
+        ),
+        shell="powershell",
+    )
 
-    assert action == "defer"
-    assert "writable grant" in reason
+    assert readable_grant == ("allow", None)
+    assert no_grant[0] == "defer"
+    assert "access grant" in (no_grant[1] or "")
 
 
 @pytest.mark.asyncio

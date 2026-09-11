@@ -13,6 +13,7 @@ from voidx.tooling.domain.result import ToolResult
 from voidx.tooling.domain.schema import model_to_json_schema
 from voidx.tooling.domain.authorization import PermissionContext
 from voidx.tooling.domain.grants import AccessGrants
+from voidx.tooling.domain.process_sandbox import ProcessSandboxCapability
 from voidx.tooling.policy.shell.policy import shell_sandbox_precheck
 from voidx.tooling.policy.shell.powershell_blocked import check_command
 from voidx.tooling.policy.shell.powershell_sandbox import sandbox_denial
@@ -73,20 +74,26 @@ class PowerShellTool:
             writable_files=ctx.authorization_service.write_files,
             writable_dirs=ctx.authorization_service.write_dirs,
         )
-        shell_blocked = None
-        if not approved_shell_risk:
-            _, shell_blocked = shell_sandbox_precheck(
-                {"command": inp.command},
-                PermissionContext(
-                    workspace=workspace,
-                    permission_mode=ctx.permission_mode,
-                    access_grants=access_grants,
-                    process_sandbox=ctx.process_sandbox,
-                ),
-                shell="powershell",
-            )
-        if shell_blocked:
-            return build_blocked_result(inp.command, shell_blocked)
+        perm_context = PermissionContext(
+            workspace=workspace,
+            permission_mode=ctx.permission_mode,
+            access_grants=access_grants,
+            process_sandbox=ctx.process_sandbox or ProcessSandboxCapability(),
+        )
+        shell_action, shell_reason = shell_sandbox_precheck(
+            {"command": inp.command},
+            perm_context,
+            shell="powershell",
+        )
+        if shell_action == "deny":
+            return build_blocked_result(inp.command, shell_reason or "PowerShell command denied")
+
+        if "external path requires" in (shell_reason or ""):
+            return build_blocked_result(inp.command, shell_reason)
+
+        process_sandbox = ctx.process_sandbox or ProcessSandboxCapability()
+        if process_sandbox.usable_for("powershell") and not approved_shell_risk and shell_action != "allow":
+            return build_blocked_result(inp.command, shell_reason or "PowerShell command deferred")
 
         try:
             proc = await create_owned_subprocess_exec(

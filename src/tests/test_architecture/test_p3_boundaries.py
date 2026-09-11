@@ -225,14 +225,6 @@ def test_registry_rejects_duplicate_ids_on_every_registration_path() -> None:
         )
 
 
-def test_policy_git_does_not_import_builtin_or_private_implementation() -> None:
-    violations = [
-        edge
-        for edge in import_edges()
-        if is_under(edge.source, "voidx.tooling.policy.git")
-        and is_under(edge.target, "voidx.tooling.builtin")
-    ]
-    assert violations == [], "policy/git imports builtin:\n" + format_edges(violations)
 
 
 def test_p3_debt_is_fully_removed() -> None:
@@ -283,6 +275,28 @@ def _manifest_targets(disposition: str) -> set[str]:
     return targets
 
 
+_REMOVED_POST_P3_TARGETS = frozenset({
+    # Post-P3 deprecations: GitTool and git hints removed in favor of direct shell execution
+    "src/voidx/tooling/builtin/git/__init__.py",
+    "src/voidx/tooling/builtin/git/access.py",
+    "src/voidx/tooling/builtin/git/constants.py",
+    "src/voidx/tooling/builtin/git/handlers.py",
+    "src/voidx/tooling/builtin/git/models.py",
+    "src/voidx/tooling/builtin/git/parsers.py",
+    "src/voidx/tooling/builtin/git/process.py",
+    "src/voidx/tooling/builtin/git/results.py",
+    "src/voidx/tooling/builtin/git/routing.py",
+    "src/voidx/tooling/builtin/git/tool.py",
+    "src/voidx/tooling/builtin/shell/bash/hint/git.py",
+    "src/voidx/tooling/builtin/shell/hint/__init__.py",
+    "src/voidx/tooling/builtin/shell/hint/git.py",
+    "src/voidx/tooling/policy/git/access.py",
+    "src/voidx/tooling/policy/git/constants.py",
+    "src/voidx/tooling/policy/git/policy.py",
+    "src/voidx/tooling/policy/git/routing.py",
+})
+
+
 def test_p3_authoritative_manifests_are_complete_and_landed() -> None:
     spec = (ROOT / "docs/archive/src-voidx-modular-architecture-refactor-2026-08-05.md").read_text(encoding="utf-8")
     fixture = json.loads(
@@ -306,7 +320,10 @@ def test_p3_authoritative_manifests_are_complete_and_landed() -> None:
             targets = _manifest_targets(disposition)
             if not targets:
                 assert "删除" in disposition, f"no target or delete disposition for {source}"
-            missing_targets.update(target for target in targets if not (ROOT / target).exists())
+            missing_targets.update(
+                target for target in targets
+                if target not in _REMOVED_POST_P3_TARGETS and not (ROOT / target).exists()
+            )
 
         assert not (ROOT / legacy_root).exists(), f"legacy package remains: {legacy_root}"
 

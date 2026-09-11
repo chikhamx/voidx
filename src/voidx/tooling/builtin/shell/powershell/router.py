@@ -10,7 +10,6 @@ from voidx.tooling.builtin.shell.powershell.core import (
 from voidx.tooling.builtin.shell.powershell.hint.file import hint_get_content, hint_out_file
 from voidx.tooling.builtin.shell.powershell.hint.search import hint_get_child_item, hint_select_string
 from voidx.tooling.builtin.shell.common import RouteHint
-from voidx.tooling.builtin.shell.hint.git import hint_git
 
 
 def try_hint(command: str) -> RouteHint | None:
@@ -73,9 +72,6 @@ def _try_hint_impl(command: str) -> RouteHint | None:
                 return hint_out_file(words[pipe_idx + 1:])
         return None
 
-    # git — reuse shell.hint.git
-    if prog == "git" and len(words) >= 2:
-        return hint_git(stripped, words)
 
     # Get-Content / cat / type → read
     if prog_resolved == "get-content":

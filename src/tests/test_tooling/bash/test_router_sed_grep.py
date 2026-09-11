@@ -200,46 +200,18 @@ class TestBasicPositive:
         assert h.tool_id == "read"
         assert "file.py" in h.llm_hint
 
-    def test_git_status(self):
-        h = try_hint("git status")
-        assert h is not None
-        assert h.tool_id == "git"
-        assert "status" in h.llm_hint
-
-    def test_git_diff(self):
-        h = try_hint("git diff")
-        assert h is not None
-        assert "diff" in h.llm_hint
-
-    def test_git_log(self):
-        h = try_hint("git log")
-        assert h is not None
-        assert "log" in h.llm_hint
-
-    def test_git_blame(self):
-        h = try_hint("git blame file.py")
-        assert h is not None
-        assert "blame" in h.llm_hint
-
-    def test_git_remote_v(self):
-        h = try_hint("git remote -v")
-        assert h is not None
-        assert "remote" in h.llm_hint
-
-    def test_git_add(self):
-        h = try_hint("git add file.py")
-        assert h is not None
-        assert "add" in h.llm_hint
-
-    def test_git_restore(self):
-        h = try_hint("git restore file.py")
-        assert h is not None
-        assert "restore" in h.llm_hint
-
-    def test_git_restore_staged(self):
-        h = try_hint("git restore --staged file.py")
-        assert h is not None
-        assert "staged" in h.llm_hint
+    def test_git_commands_not_hinted(self):
+        for cmd in [
+            "git status",
+            "git diff",
+            "git log",
+            "git blame file.py",
+            "git remote -v",
+            "git add file.py",
+            "git restore file.py",
+            "git restore --staged file.py",
+        ]:
+            assert try_hint(cmd) is None
 
     def test_find_name(self):
         h = try_hint("find . -type f -name '*.py'")
@@ -344,20 +316,13 @@ class TestEchoRedirectInContent:
 # ---------------------------------------------------------------------------
 
 class TestGitLogShortLimit:
-    """git log -5 is shorthand for git log -n 5."""
+    """git log -5 is shorthand for git log -n 5; not hinted because git runs directly."""
 
     def test_git_log_dash_n(self):
-        h = try_hint("git log -5")
-        assert h is not None
-        assert h.tool_id == "git"
-        assert "log" in h.llm_hint
-        assert "-5" in h.llm_hint
+        assert try_hint("git log -5") is None
 
     def test_git_log_dash_n_with_author(self):
-        h = try_hint("git log -10 --author=x")
-        assert h is not None
-        assert "log" in h.llm_hint
-        assert "--author=x" in h.llm_hint
+        assert try_hint("git log -10 --author=x") is None
 
 
 # ---------------------------------------------------------------------------

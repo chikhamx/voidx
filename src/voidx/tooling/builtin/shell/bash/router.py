@@ -17,7 +17,6 @@ from voidx.tooling.builtin.shell.bash.hint.file import (
     hint_write_echo,
     hint_write_heredoc,
 )
-from voidx.tooling.builtin.shell.bash.hint.git import hint_git
 from voidx.tooling.builtin.shell.bash.hint.search import hint_grep, hint_sed
 
 
@@ -61,8 +60,6 @@ def _try_hint_impl(command: str) -> RouteHint | None:
     if _has_shell_redirection(words):
         return None
 
-    if prog == "git" and len(words) >= 2:
-        return hint_git(stripped, words)
     if prog in ("cat", "head", "tail"):
         return hint_read(words)
     if prog == "find":

@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from voidx.tooling.domain.result import ToolResult, tool_timeout_metadata
 
-_HintableTool = Literal["read", "git", "manage", "write", "replace", "find", "search"]
+_HintableTool = Literal["read", "manage", "write", "replace", "find", "search"]
 
 
 @dataclass
@@ -27,13 +26,49 @@ _STATIC_POLICY_HINT = (
 )
 
 
+def _format_shell_output(
+    *,
+    exit_code: int,
+    stdout: str = "",
+    stderr: str = "",
+    status_label: str | None = None,
+    extra_message: str | None = None,
+) -> str:
+    lines: list[str] = []
+    if status_label:
+        lines.append(f"[{status_label}] (exit code: {exit_code})")
+    else:
+        lines.append(f"exit code: {exit_code}")
+
+    if extra_message:
+        lines.append(extra_message.strip())
+
+    if stdout:
+        if lines:
+            lines.append("")
+        lines.append("[stdout]")
+        lines.append(stdout.rstrip("\n"))
+
+    if stderr:
+        if lines:
+            lines.append("")
+        lines.append("[stderr]")
+        lines.append(stderr.rstrip("\n"))
+
+    return "\n".join(lines)
+
+
 def build_blocked_result(command: str, reason: str) -> ToolResult:
     stderr = f"{reason}\n{_STATIC_POLICY_HINT}"
-    payload = {"ok": False, "exit_code": -1, "stdout": "", "stderr": stderr, "blocked": True}
+    output = _format_shell_output(
+        exit_code=-1,
+        stderr=stderr,
+        status_label="blocked",
+    )
     return ToolResult(
-        output=json.dumps(payload, ensure_ascii=False, indent=2),
+        output=output,
         display=reason,
-        metadata={"command": command, "blocked": True, "error": True},
+        metadata={"command": command, "blocked": True, "error": True, "exit_code": -1, "stdout": "", "stderr": stderr},
     )
 
 
@@ -80,9 +115,13 @@ def build_hint_result(command: str, hint: RouteHint, tool_label: str) -> ToolRes
 
 
 def build_timeout_result(command: str, timeout: int) -> ToolResult:
-    payload = {"ok": False, "exit_code": -1, "stdout": "", "stderr": "", "timeout": True}
+    output = _format_shell_output(
+        exit_code=-1,
+        status_label="timeout",
+        extra_message=f"Command timed out after {timeout}s: {command}",
+    )
     return ToolResult(
-        output=json.dumps(payload, ensure_ascii=False, indent=2),
+        output=output,
         display=f"Command timed out after {timeout}s: {command}",
         metadata=tool_timeout_metadata("shell", command=command, exit_code=-1),
     )
@@ -110,10 +149,15 @@ def build_success_result(command: str, stdout: str, stderr: str, exit_code: int,
         if stderr:
             display_parts.append(f"[stderr]\n{stderr}")
         display = "\n".join(display_parts) or "(no output)"
-    payload = {"ok": exit_code == 0, "exit_code": exit_code, "stdout": stdout, "stderr": stderr}
+
+    output = _format_shell_output(
+        exit_code=exit_code,
+        stdout=stdout,
+        stderr=stderr,
+    )
     return ToolResult(
         title=f"{tool_label}: {command}",
-        output=json.dumps(payload, ensure_ascii=False, indent=2),
+        output=output,
         display=display,
         summary="ok" if exit_code == 0 else f"exit {exit_code}",
         metadata={"command": command, "exit_code": exit_code, "ok": exit_code == 0, **({"error": True} if exit_code != 0 else {})},

@@ -292,8 +292,7 @@ def test_permission_engine_classifies_basic_capabilities():
     assert classify_tool_call({"name": "bash", "args": {"command": "grep foo a.txt | xargs rm"}}).capability == PermissionCapability.BASH_WRITE
     assert classify_tool_call({"name": "bash", "args": {"command": "find . -delete"}}).capability == PermissionCapability.BASH_WRITE
     assert classify_tool_call({"name": "bash", "args": {"command": "git branch new-feature"}}).capability == PermissionCapability.BASH_WRITE
-    assert classify_tool_call({"name": "git", "args": {"args": "status"}}).capability == PermissionCapability.GIT_READ
-    assert classify_tool_call({"name": "git", "args": {"args": "commit"}}).capability == PermissionCapability.GIT_WRITE
+    assert classify_tool_call({"name": "bash", "args": {"command": "git status"}}).capability == PermissionCapability.BASH_READ
     from voidx.agent.adapters.tools.permission_projection import project_agent_tool_call
 
     readonly_agent = classify_tool_call(project_agent_tool_call({"name": "agent", "args": {"agent": "explore"}}))
@@ -383,8 +382,8 @@ def test_permission_engine_default_strategy_and_plan_overlay(tmp_path):
     script_decision = authorize_tool_call({"name": "bash", "args": {"command": "./test.py"}}, context)
     assert script_decision.action == "ask"
     assert script_decision.source == "sandbox"
-    assert authorize_tool_call({"name": "git", "args": {"args": "status"}}, context).action == "allow"
-    assert authorize_tool_call({"name": "git", "args": {"args": "commit"}}, context).action == "ask"
+    assert authorize_tool_call({"name": "bash", "args": {"command": "git status"}}, context).action == "allow"
+    assert authorize_tool_call({"name": "bash", "args": {"command": "git commit"}}, context).action == "ask"
     assert authorize_tool_call({"name": "manage", "args": {"op": "create", "paths": "x.py"}}, context).action == "ask"
     assert authorize_tool_call({"name": "agent", "args": {"agent": "implement"}}, context).action == "allow"
     assert authorize_tool_call({"name": "agent", "args": {"name": "voidx", "mode": "implement"}}, context).action == "allow"
@@ -392,8 +391,8 @@ def test_permission_engine_default_strategy_and_plan_overlay(tmp_path):
     plan = PermissionContext(workspace=str(tmp_path), interaction_mode="plan")
     safe_bash = authorize_tool_call({"name": "bash", "args": {"command": "ls"}}, plan)
     unsafe_bash = authorize_tool_call({"name": "bash", "args": {"command": "pip install requests"}}, plan)
-    git_read = authorize_tool_call({"name": "git", "args": {"args": "diff"}}, plan)
-    git_write = authorize_tool_call({"name": "git", "args": {"args": "restore"}}, plan)
+    git_read = authorize_tool_call({"name": "bash", "args": {"command": "git diff"}}, plan)
+    git_write = authorize_tool_call({"name": "bash", "args": {"command": "git restore"}}, plan)
     edit = authorize_tool_call({"name": "write", "args": {"file_path": "x.py"}}, plan)
     replace = authorize_tool_call({"name": "replace", "args": {"file_path": "x.py"}}, plan)
     implement = authorize_tool_call({"name": "agent", "args": {"agent": "implement"}}, plan)
@@ -413,7 +412,7 @@ def test_permission_engine_plan_mode_uses_sandbox_source(tmp_path):
     """plan 模式复用 read-only 沙箱逻辑，deny 的 source 应为 'sandbox' 而非 'mode'。"""
     plan = PermissionContext(workspace=str(tmp_path), interaction_mode="plan")
     unsafe_bash = authorize_tool_call({"name": "bash", "args": {"command": "pip install requests"}}, plan)
-    git_write = authorize_tool_call({"name": "git", "args": {"args": "restore"}}, plan)
+    git_write = authorize_tool_call({"name": "bash", "args": {"command": "git restore"}}, plan)
     edit = authorize_tool_call({"name": "write", "args": {"file_path": "x.py"}}, plan)
     implement = authorize_tool_call({"name": "agent", "args": {"agent": "implement"}}, plan)
 
@@ -459,7 +458,7 @@ def test_trusted_modes_ask_for_external_paths_and_git_push(tmp_path, permission_
         context,
     )
     git_push = authorize_tool_call(
-        {"name": "git", "args": {"args": "push origin main"}},
+        {"name": "bash", "args": {"command": "git push origin main"}},
         context,
     )
 
@@ -475,8 +474,8 @@ def test_permission_engine_read_only_sandbox_allows_read_bash_but_asks_for_write
     context = PermissionContext(workspace=str(tmp_path), permission_mode="read_only")
 
     assert authorize_tool_call({"name": "bash", "args": {"command": "ls"}}, context).action == "allow"
-    assert authorize_tool_call({"name": "git", "args": {"args": "status"}}, context).action == "allow"
-    assert authorize_tool_call({"name": "git", "args": {"args": "commit"}}, context).action == "ask"
+    assert authorize_tool_call({"name": "bash", "args": {"command": "git status"}}, context).action == "allow"
+    assert authorize_tool_call({"name": "bash", "args": {"command": "git commit -m 'x'"}}, context).action == "ask"
     bash = authorize_tool_call({"name": "bash", "args": {"command": "pip install requests"}}, context)
     assert bash.action == "ask"
     assert bash.allowed_scopes == ("once",)

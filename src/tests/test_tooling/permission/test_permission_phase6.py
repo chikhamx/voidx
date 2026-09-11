@@ -209,7 +209,7 @@ def test_project_trusted_preset_allows_workspace_edit_even_with_untrusted_policy
     assert decision.source == "preset"
 
 
-def test_shell_policy_static_plan_requires_writable_grant_for_external_paths(tmp_path: Path):
+def test_shell_policy_static_plan_uses_readable_grant_for_external_paths(tmp_path: Path):
     workspace = tmp_path / "workspace"
     external = tmp_path / "external"
     workspace.mkdir()
@@ -224,6 +224,13 @@ def test_shell_policy_static_plan_requires_writable_grant_for_external_paths(tmp
             process_sandbox=ProcessSandboxCapability(backend=ProcessSandboxBackend.TEST, supported=True),
         ),
     )
+    no_grant = shell_sandbox_precheck(
+        {"command": command},
+        PermissionContext(
+            workspace=str(workspace),
+            process_sandbox=ProcessSandboxCapability(backend=ProcessSandboxBackend.TEST, supported=True),
+        ),
+    )
     writable_grant = shell_sandbox_precheck(
         {"command": command},
         PermissionContext(
@@ -233,8 +240,9 @@ def test_shell_policy_static_plan_requires_writable_grant_for_external_paths(tmp
         ),
     )
 
-    assert read_only_grant[0] == "defer"
-    assert "writable grant" in (read_only_grant[1] or "")
+    assert read_only_grant == ("allow", None)
+    assert no_grant[0] == "defer"
+    assert "access grant" in (no_grant[1] or "")
     assert writable_grant == ("allow", None)
 
 

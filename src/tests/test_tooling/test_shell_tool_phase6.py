@@ -90,7 +90,7 @@ async def test_shell_allows_static_read_without_process_sandbox_backend(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_shell_external_read_requires_writable_grant(tmp_path: Path):
+async def test_shell_external_read_uses_readable_grant(tmp_path: Path):
     workspace = tmp_path / "workspace"
     external = tmp_path / "external"
     workspace.mkdir()
@@ -109,9 +109,32 @@ async def test_shell_external_read_requires_writable_grant(tmp_path: Path):
     )
 
     payload = _payload(result)
+    assert payload["ok"] is True
+    assert payload["blocked"] is False
+    assert "data.txt" in payload["stdout"]
+
+
+@pytest.mark.asyncio
+async def test_shell_external_read_without_grant_is_blocked(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    external = tmp_path / "external"
+    workspace.mkdir()
+    external.mkdir()
+    target = external / "data.txt"
+    target.write_text("secret", encoding="utf-8")
+
+    result = await BashTool().execute(
+        {"command": f"ls {target}"},
+        ToolContext(
+            workspace=str(workspace),
+            process_sandbox=ProcessSandboxCapability(backend=ProcessSandboxBackend.TEST, supported=True),
+        ),
+    )
+
+    payload = _payload(result)
     assert payload["ok"] is False
     assert payload["blocked"] is True
-    assert "writable grant" in payload["stderr"]
+    assert "access grant" in payload["stderr"]
 
 
 @pytest.mark.asyncio
@@ -185,6 +208,99 @@ async def test_shell_tool_rejects_non_matching_approved_shell_risk_token(tmp_pat
     assert payload["ok"] is False
     assert payload["blocked"] is True
     assert not (tmp_path / "out.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_shell_tool_approved_risk_does_not_bypass_external_write_grant(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    external = tmp_path / "external"
+    workspace.mkdir()
+    external.mkdir()
+    target = external / "out.txt"
+    command = f"printf approved > '{target}'"
+
+    result = await BashTool().execute(
+        {"command": command},
+        ToolContext(
+            workspace=str(workspace),
+            permission_mode="read_only",
+            approved_tool_risks=[{"tool_name": "bash", "pattern": command, "risk_level": "dangerous"}],
+            process_sandbox=ProcessSandboxCapability(backend=ProcessSandboxBackend.TEST, supported=True),
+        ),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert payload["blocked"] is True
+    assert not target.exists()
+
+
+@pytest.mark.asyncio
+async def test_shell_tool_hard_block_wins_over_full_access_and_approval(tmp_path: Path):
+    command = "sudo true"
+
+    result = await BashTool().execute(
+        {"command": command},
+        ToolContext(
+            workspace=str(tmp_path),
+            permission_mode="full_access",
+            approved_tool_risks=[{"tool_name": "bash", "pattern": command, "risk_level": "dangerous"}],
+        ),
+    )
+
+    assert result.metadata["blocked"] is True
+    assert result.metadata["error"] is True
+    assert result.metadata["exit_code"] == -1
+
+
+@pytest.mark.asyncio
+async def test_shell_tool_defer_does_not_start_subprocess(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    called = False
+
+    async def fail_if_started(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("deferred shell command must not start a subprocess")
+
+    monkeypatch.setattr("voidx.tooling.builtin.shell.bash.tool.create_owned_subprocess_shell", fail_if_started)
+    result = await BashTool().execute(
+        {"command": "python -c 'print(1)'"},
+        ToolContext(
+            workspace=str(tmp_path),
+            process_sandbox=ProcessSandboxCapability(backend=ProcessSandboxBackend.TEST, supported=True),
+        ),
+    )
+
+    assert called is False
+    assert result.metadata["blocked"] is True
+
+
+@pytest.mark.asyncio
+async def test_shell_tool_approved_risk_still_requires_external_read_grant(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    external = tmp_path / "external"
+    workspace.mkdir()
+    external.mkdir()
+    target = external / "data.txt"
+    target.write_text("secret", encoding="utf-8")
+    command = f"ls '{target}'"
+
+    result = await BashTool().execute(
+        {"command": command},
+        ToolContext(
+            workspace=str(workspace),
+            approved_tool_risks=[{"tool_name": "bash", "pattern": command, "risk_level": "dangerous"}],
+            process_sandbox=ProcessSandboxCapability(backend=ProcessSandboxBackend.TEST, supported=True),
+        ),
+    )
+
+    payload = _payload(result)
+    assert payload["ok"] is False
+    assert payload["blocked"] is True
+    assert "access grant" in payload["stderr"]
+
+
+@pytest.mark.asyncio
 
 
 @pytest.mark.asyncio

@@ -13,7 +13,6 @@ from voidx.tooling.domain.result import ToolResult
 from voidx.tooling.domain.permission import PermissionMode
 from voidx.tooling.domain.authorization import PermissionContext, PermissionDecision
 from voidx.tooling.policy.permission.evaluate import evaluate
-from voidx.tooling.policy.git.policy import git_policy_for_args, git_sandbox_precheck
 from voidx.tooling.policy.shell.policy import classify_shell_risk, shell_sandbox_precheck
 from voidx.tooling.domain.grants import AccessGrant, AccessGrants, AccessIntent, ApprovalPrecondition, GrantPersistence, ObjectType
 from voidx.tooling.policy.filesystem.grants import grant_for_intent, resolve_access
@@ -112,7 +111,6 @@ def sandbox_precheck_action(classified: ClassifiedToolCall, context: PermissionC
             PermissionCapability.FILE_WRITE,
             PermissionCapability.FILE_FORMAT,
             PermissionCapability.BASH_WRITE,
-            PermissionCapability.GIT_WRITE,
         }:
             return "deny", f"SANDBOX READ-ONLY: '{classified.name}' is not allowed.", ()
         return "allow", None, ()
@@ -126,7 +124,6 @@ def sandbox_precheck_action(classified: ClassifiedToolCall, context: PermissionC
             PermissionCapability.FILE_WRITE,
             PermissionCapability.FILE_FORMAT,
             PermissionCapability.BASH_WRITE,
-            PermissionCapability.GIT_WRITE,
         }:
             return "defer", f"READ ONLY requires approval for '{classified.name}'.", ()
         return "allow", None, ()
@@ -136,8 +133,6 @@ def sandbox_precheck_action(classified: ClassifiedToolCall, context: PermissionC
             *context.sandbox_writable_files,
             *context.sandbox_writable_dirs,
         ]
-        if classified.name == "git":
-            return git_sandbox_precheck(classified.args, context)
         path_tool_names = {"read", "write", "replace", "manage", "lsp_format", "lsp"}
         if classified.name in path_tool_names or classified.capability in {PermissionCapability.FILE_WRITE, PermissionCapability.FILE_FORMAT}:
             intents = _collect_external_access_intents(classified, context)
@@ -192,7 +187,7 @@ def session_action_for_tool(classified: ClassifiedToolCall, context: PermissionC
 
 
 def strategy_action_for_tool(classified: ClassifiedToolCall, context: PermissionContext) -> Action:
-    if classified.capability in {PermissionCapability.BASH_READ, PermissionCapability.GIT_READ}:
+    if classified.capability == PermissionCapability.BASH_READ:
         return "allow"
     permission = "edit" if classified.name in {"manage", "write", "replace"} else classified.name
     return evaluate(permission, classified.pattern, BASIC_RULES).action
@@ -275,12 +270,6 @@ def _risk_for(
         tags.append(RiskTag.WORKSPACE_EDIT)
     if any(not intent.is_workspace_path and not intent.grant_matched for intent in access_intents):
         tags.append(RiskTag.EXTERNAL_PATH)
-    if classified.name == "git":
-        subcommand = git_policy_for_args(classified.args).subcommand
-        if subcommand == "push":
-            tags.append(RiskTag.GIT_PUSH)
-        elif subcommand in {"fetch", "pull"}:
-            tags.append(RiskTag.NETWORK)
     return RiskAssessment.dangerous(
         tool_name=classified.name,
         pattern=classified.pattern,

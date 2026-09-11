@@ -77,39 +77,11 @@ _RE_REDIRECT_NAMED = re.compile(r">>?\s*\$null", re.IGNORECASE)
 
 
 def is_safe_powershell_command(command: str) -> bool:
-    """Return True if the command is read-only (no write targets, no side effects)."""
-    stripped = command.strip()
-    if not stripped or stripped.startswith("#"):
-        return True
+    """Return whether the shared shell policy classifies PowerShell as read-only."""
+    from voidx.tooling.policy.shell.policy import shell_policy_for_command
 
-    # Any redirection means write
-    if _RE_REDIRECT.search(stripped):
-        return False
-
-    # Subexpressions ($(...)) and array splats (@(...)) can execute arbitrary
-    # code — never treat as read-only.
-    if re.search(r"[\$@]\(", stripped):
-        return False
-
-    # Check for pipeline — if piped, only check the first segment
-    # (simplified: if any pipe, check all segments for write commands)
-    segments = re.split(r"\s*\|\s*", stripped)
-    for segment in segments:
-        words = _segment_words(segment)
-        if not words:
-            continue
-        prog = words[0].lower()
-        if prog in _FILEPATH_CMDS:
-            return False
-        if prog in _PATH_CMDS:
-            return False
-        if prog in ("set-location", "cd", "chdir", "push-location", "pop-location"):
-            continue  # cd is safe
-        if prog == "git":
-            continue  # git read-only commands are safe (write ones blocked elsewhere)
-        if prog not in _READ_ONLY_PROGRAMS:
-            return False
-    return True
+    policy = shell_policy_for_command(command, shell="powershell")
+    return policy.allowed and policy.read_only
 
 
 def check_sandbox_powershell(
@@ -181,9 +153,9 @@ def check_sandbox_powershell(
 
 def sandbox_denial(command: str, ctx: ToolContext) -> str | None:
     """Entry point for tool.py — routes by sandbox_mode."""
-    if ctx.sandbox_mode == "danger-full-access":
+    if ctx.sandbox_mode == "danger-full-access" or ctx.permission_mode in {"full_access", "danger-full-access"}:
         return None
-    if ctx.sandbox_mode == "read-only":
+    if ctx.sandbox_mode == "read-only" or ctx.permission_mode in {"read_only", "plan"}:
         if is_safe_powershell_command(command):
             return None
         return f"SANDBOX READ-ONLY: 'powershell' is not allowed.\n  command: {command.strip()[:120]}"

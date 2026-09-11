@@ -10,10 +10,11 @@ def sandbox_denial_reason(
     sandbox_mode: str,
     workspace: str,
     write_paths: list[str],
+    permission_mode: str = "",
 ) -> str | None:
-    if sandbox_mode == "danger-full-access":
+    if sandbox_mode == "danger-full-access" or permission_mode in {"full_access", "danger-full-access"}:
         return None
-    if sandbox_mode == "read-only":
+    if sandbox_mode == "read-only" or permission_mode in {"read_only", "plan"}:
         if is_safe_bash(command):
             return None
         return f"SANDBOX READ-ONLY: 'bash' is not allowed.\n  command: {command.strip()[:120]}"

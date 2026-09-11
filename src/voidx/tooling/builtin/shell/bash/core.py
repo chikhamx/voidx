@@ -6,7 +6,6 @@ import re
 import shlex
 
 from voidx.tooling.builtin.shell.common import RouteHint
-from voidx.tooling.builtin.shell.hint.git import GIT_GLOBAL_OPTIONS_WITH_VALUE, git_subcommand
 
 HEREDOC_MAX_CONTENT = 200
 

@@ -54,10 +54,8 @@ class TestBash:
         ctx = ToolContext(workspace=str(tmp_path))
         r = build_registry()
         result = await r.execute_tool("bash", {"command": "echo hello"}, ctx)
-        data = json.loads(result.output)
-        assert data["ok"] is True
-        assert data["exit_code"] == 0
-        assert "hello" in data["stdout"]
+        assert "hello" in result.output
+        assert "exit code: 0" in result.output
         assert "hello" in result.display
         assert result.summary == "ok"
         assert result.metadata["exit_code"] == 0
@@ -125,15 +123,14 @@ class TestBash:
         assert "routed_from" not in result.metadata
 
     @pytest.mark.asyncio
-    async def test_bash_auto_routes_git_when_registry_available(self, tmp_path):
+    async def test_bash_runs_git_directly_without_routing(self, tmp_path):
         ctx = ToolContext(workspace=str(tmp_path), tool_invoker=build_registry())
         result = await ctx.tool_invoker.execute_tool("bash", {"command": "git status --porcelain"}, ctx)
 
         assert result.metadata.get("route_hint") is None
-        assert result.metadata["tool"] == "git"
-        assert result.metadata["routed_command"] == "git status --porcelain"
-        assert result.metadata["routed_tool_args"] == {"args": "status --porcelain"}
-        assert result.metadata["routed_from"] == "bash"
+        assert result.metadata.get("tool") is None
+        assert result.metadata.get("routed_from") is None
+        assert "not a git repository" in result.output.lower()
 
     @pytest.mark.asyncio
     async def test_bash_git_filtered_registry_runs_as_bash(self, tmp_path):
@@ -159,7 +156,7 @@ class TestBash:
         assert "route_hint" not in result.metadata
 
     @pytest.mark.asyncio
-    async def test_bash_auto_route_git_reset_hard_still_denied_by_git_tool(self, tmp_path):
+    async def test_bash_git_reset_hard_blocked_by_shell_policy(self, tmp_path):
         repo = tmp_path / "repo"
         repo.mkdir()
         subprocess.run(["git", "init"], cwd=repo, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -176,20 +173,15 @@ class TestBash:
             workspace=str(repo),
             tool_invoker=registry,
             authorization=AuthorizationContext(permission_mode="full_access"),
-            approved_tool_risks=[{"tool_name": "bash", "pattern": command, "risk_level": "dangerous"}],
         )
         result = await registry.execute_tool("bash", {"command": command}, ctx)
-        payload = json.loads(result.output)
 
-        assert result.metadata.get("route_hint") is None
-        assert result.metadata["tool"] == "git"
-        assert result.metadata["routed_from"] == "bash"
-        assert payload["ok"] is False
-        assert payload["error"].startswith("command_denied")
+        assert result.metadata.get("blocked") is True
+        assert "is blocked" in result.output
         assert (repo / "f.txt").read_text(encoding="utf-8") == "changed\n"
 
     @pytest.mark.asyncio
-    async def test_bash_auto_route_git_push_still_uses_git_tool(self, tmp_path):
+    async def test_bash_git_push_runs_as_bash(self, tmp_path):
         repo = tmp_path / "repo"
         repo.mkdir()
         subprocess.run(["git", "init"], cwd=repo, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -208,15 +200,10 @@ class TestBash:
             approved_tool_risks=[{"tool_name": "bash", "pattern": command, "risk_level": "dangerous"}],
         )
         result = await registry.execute_tool("bash", {"command": command}, ctx)
-        payload = json.loads(result.output)
 
-        assert result.metadata.get("route_hint") is None
-        assert result.metadata["tool"] == "git"
-        assert result.metadata["routed_tool_args"] == {"args": "push origin HEAD"}
-        assert payload["command"] == "push"
-        assert payload["ok"] is False
-        assert "git_policy_denied" not in payload["error"]
-        assert "origin" in payload["error"]
+        assert result.metadata.get("routed_from") is None
+        assert result.metadata["exit_code"] != 0
+        assert "origin" in result.output.lower()
 
     @pytest.mark.asyncio
     async def test_bash_route_hint_skips_execution(self, tmp_path):
