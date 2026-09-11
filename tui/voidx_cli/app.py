@@ -1566,11 +1566,13 @@ class PureTui(
             fixed_bottom_rows = (
                 self._last_bottom_rows if self._bottom_dock_is_anchored(term_height) else 0
             )
+            previous_frame_rows = self._last_frame_rows if self._has_rendered_frame else 0
             output = plan_commit(
                 flush_ansi,
                 start_row=clear_start_row,
                 height=term_height,
                 fixed_bottom_rows=fixed_bottom_rows,
+                previous_frame_rows=previous_frame_rows,
             )
             if output is None:
                 dock.request_force_flush()
@@ -1580,6 +1582,10 @@ class PureTui(
             flush_rows = output.lines_written
             overflow = output.scrolled_rows > 0
             if self._has_rendered_frame:
+                previous_end = clear_start_row + self._last_frame_rows - 1
+                if previous_end <= term_height - fixed_bottom_rows:
+                    previous_end -= output.scrolled_rows
+                self._last_frame_rows = max(0, previous_end - output.next_row + 1)
                 self._last_frame_start_row = output.next_row
 
             preserve_baseline = bool(
@@ -1598,6 +1604,7 @@ class PureTui(
                     clear_start_row=clear_start_row,
                     ansi=commit_ansi,
                     positioned=True,
+                    previous_frame_rows=previous_frame_rows,
                     fixed_bottom_rows=fixed_bottom_rows,
                     lines_written=flush_rows,
                     explicit_start=True,

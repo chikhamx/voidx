@@ -1822,3 +1822,49 @@ async def test_legacy_multiline_commit_infers_baseline_row_count():
         assert writer._applied_lines == ("input", "status")
     finally:
         await writer.shutdown_async()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("force_full", [False, True])
+@pytest.mark.parametrize("scroll_rows", [0, 1])
+async def test_writer_start_move_clears_old_physical_rows(force_full, scroll_rows):
+    from test_layout_terminal_model import _VTScreen, _ModelStream
+    screen = _VTScreen(width=20, height=6)
+    screen.feed("HISTORY")
+    writer = TerminalWriter(_ModelStream(screen))
+    writer.start(loop=asyncio.get_running_loop(), on_frame_result=lambda result: None, on_error=lambda exc: None)
+    frame = terminal_writer_module.FrameBatch
+    try:
+        writer.submit_frame(frame(generation=1, start_row=2, target_lines=("OLD-A", "OLD-B", "KEEP"), cursor_ansi=""))
+        await writer.drain_async()
+        writer.submit_frame(frame(generation=2, start_row=4, target_lines=("KEEP",), cursor_ansi="", force_full=force_full, scroll_ansi="\x1b[1;4r\x1b[4;1H\x1b[1S\x1b[r" if scroll_rows else "", scroll_rows=scroll_rows, scroll_bottom=4 if scroll_rows else 0))
+        await writer.drain_async()
+        assert screen.rows == (("" if scroll_rows else "HISTORY"), "", "", "KEEP", "", "")
+        assert screen.history == (("HISTORY",) if scroll_rows else ())
+    finally:
+        await writer.shutdown_async()
+
+
+@pytest.mark.asyncio
+async def test_positioned_commit_cleared_baseline_repaints_identical_remaining_lines():
+    from test_layout_terminal_model import _VTScreen, _ModelStream
+    from voidx_cli.commit_output import plan_commit
+    screen = _VTScreen(width=20, height=6)
+    screen.feed("HISTORY")
+    writer = TerminalWriter(_ModelStream(screen))
+    writer.start(loop=asyncio.get_running_loop(), on_frame_result=lambda result: None, on_error=lambda exc: None)
+    frame = terminal_writer_module.FrameBatch
+    try:
+        writer.submit_frame(frame(generation=1, start_row=2, target_lines=("OLD", "SAME", "INPUT"), cursor_ansi=""))
+        await writer.drain_async()
+        output = plan_commit("COMMIT", start_row=2, height=6, fixed_bottom_rows=0, previous_frame_rows=3)
+        token = writer.submit_commit(clear_start_row=2, ansi=output.ansi, lines_written=1, positioned=True, preserve_baseline=True)
+        await writer.wait(token)
+        assert screen.rows == ("HISTORY", "COMMIT", "", "", "", "")
+        assert not writer._baseline_valid
+        writer.submit_frame(frame(generation=2, start_row=3, target_lines=("SAME", "INPUT"), cursor_ansi=""))
+        await writer.drain_async()
+        assert screen.rows == ("HISTORY", "COMMIT", "SAME", "INPUT", "", "")
+        assert screen.history == ()
+    finally:
+        await writer.shutdown_async()

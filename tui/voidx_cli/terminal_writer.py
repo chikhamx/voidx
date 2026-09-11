@@ -114,6 +114,7 @@ class _CommitBatch:
     explicit_start: bool = False
     positioned: bool = False
     fixed_bottom_rows: int = 0
+    previous_frame_rows: int = 0
 
 
 @dataclass(frozen=True)
@@ -507,6 +508,7 @@ class TerminalWriter:
         explicit_start: bool = False,
         positioned: bool = False,
         fixed_bottom_rows: int = 0,
+        previous_frame_rows: int = 0,
     ) -> BatchToken:
         self._drop_pending_frame_locked()
         entry = self._new_entry_locked(
@@ -517,6 +519,7 @@ class TerminalWriter:
                 explicit_start=explicit_start,
                 positioned=positioned,
                 fixed_bottom_rows=fixed_bottom_rows,
+                previous_frame_rows=previous_frame_rows,
             )
         )
         self._queue.append(entry)
@@ -561,6 +564,7 @@ class TerminalWriter:
         explicit_start: bool = False,
         positioned: bool = False,
         fixed_bottom_rows: int = 0,
+        previous_frame_rows: int = 0,
     ) -> BatchToken:
         if clear_start_row < 0:
             raise ValueError("commit clear_start_row cannot be negative")
@@ -587,6 +591,7 @@ class TerminalWriter:
                         explicit_start=explicit_start,
                         positioned=positioned,
                         fixed_bottom_rows=fixed_bottom_rows,
+                        previous_frame_rows=previous_frame_rows,
                     )
                 except Exception:
                     self._pending_commit_bytes -= byte_length
@@ -610,6 +615,7 @@ class TerminalWriter:
                     explicit_start=explicit_start,
                     positioned=positioned,
                     fixed_bottom_rows=fixed_bottom_rows,
+                    previous_frame_rows=previous_frame_rows,
                 )
         except Exception:
             payload.close()
@@ -729,11 +735,16 @@ class TerminalWriter:
                 lines_written = batch.payload.lines_written
                 if (
                     batch.preserve_baseline
+                    and (not batch.positioned or batch.previous_frame_rows >= len(self._applied_lines))
                     and self._baseline_valid
                     and clear_start_row == self._applied_start_row
                 ):
                     if lines_written <= len(self._applied_lines):
-                        self._applied_lines = self._applied_lines[lines_written:]
+                        self._applied_lines = (
+                            tuple("" for _ in self._applied_lines[lines_written:])
+                            if batch.positioned
+                            else self._applied_lines[lines_written:]
+                        )
                         self._applied_start_row = clear_start_row + lines_written
                         self._baseline_valid = True
                     else:
@@ -810,6 +821,13 @@ class TerminalWriter:
                         batch.target_lines,
                     )
                 else:
+                    if self._baseline_valid:
+                        for index in range(len(self._applied_lines)):
+                            row = self._applied_start_row + index
+                            if batch.scroll_ansi and row <= batch.scroll_bottom:
+                                row -= batch.scroll_rows
+                            if 1 <= row < batch.start_row:
+                                self._worker_write(f"\x1b[{row};1H\x1b[K")
                     changed_lines, strategy = self._write_frame_full(
                         batch.start_row,
                         batch.target_lines,

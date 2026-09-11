@@ -129,6 +129,7 @@ class RenderState:
     layout_generation: int = 0
     submitted_generation: int = 0
     applied_layout_snapshot: Any | None = None
+    applied_temporary_panel: bool = False
     pending_layout_snapshots: dict[int, Any] = field(default_factory=dict)
     pending_layout_force_full: dict[int, bool] = field(default_factory=dict)
     pending_terminal_operations: dict[int, Any] = field(default_factory=dict)

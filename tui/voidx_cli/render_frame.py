@@ -170,6 +170,7 @@ class _FrameRendererMixin:
         """Invalidate physical layout snapshots at an absolute terminal boundary."""
         if reason in {"clear", "resize", "terminal_submission_failure", "overflow"}:
             self._invalidate_bottom_anchor()
+            self._render_state.applied_temporary_panel = False
         self._applied_layout_snapshot = None
         self._pending_layout_snapshots.clear()
         self._pending_layout_force_full.clear()
@@ -209,6 +210,7 @@ class _FrameRendererMixin:
             self._running = False
             return
         self._terminal_submission_failed = True
+        self._render_state.applied_temporary_panel = False
         self._invalidate_bottom_anchor()
         if layout_already_invalidated:
             self._applied_layout_snapshot = None
@@ -381,6 +383,9 @@ class _FrameRendererMixin:
             kind="barrier",
             apply_state=apply_state,
         )
+        operation = self._pending_terminal_operations.get(id(token))
+        if operation is not None:
+            operation["barrier_kind"] = kind
         return token
 
     def _handle_terminal_frame_result(self, result: FrameResult) -> None:
@@ -403,7 +408,7 @@ class _FrameRendererMixin:
         frame_state = frame_states.get(result.generation)
         if frame_state is not None:
             self._apply_worker_frame_state(frame_state)
-        self._applied_layout_snapshot = snapshot
+        self._record_applied_layout(snapshot)
         for generation in tuple(self._pending_layout_snapshots):
             if generation <= result.generation:
                 self._pending_layout_snapshots.pop(generation, None)
@@ -428,6 +433,12 @@ class _FrameRendererMixin:
         render_failed = False
         worker_mode = self._tty and self._terminal_writer_worker_mode()
         if worker_mode and self._render_state.pending_commit_tokens:
+            return
+        if worker_mode and any(
+            operation.get("barrier_kind") == "scroll"
+            for operation in self._pending_terminal_operations.values()
+        ):
+            self.invalidate()
             return
         resize_frame = False
         clear_screen = False
@@ -525,7 +536,7 @@ class _FrameRendererMixin:
                 physical: PhysicalViewportPlan | None = None
                 target_lines = lines
                 fixed_bottom_rows = 0
-                bottom_dock_anchored = self._bottom_dock_is_anchored(term_height)
+                bottom_dock_anchored = self._frame_bottom_is_anchored(term_height, render_plan)
                 scroll_bottom: int | None = None
                 if (
                     not render_failed
@@ -691,7 +702,7 @@ class _FrameRendererMixin:
                     else None
                 )
                 fixed_bottom_rows = 0
-                bottom_dock_anchored = self._bottom_dock_is_anchored(term_height)
+                bottom_dock_anchored = self._frame_bottom_is_anchored(term_height, render_plan)
                 scroll_bottom: int | None = None
                 if logical is not None:
                     provisional = self._physical_viewport_for_frame(
@@ -781,6 +792,9 @@ class _FrameRendererMixin:
                     frame_ansi, changed_lines, strategy = self._sync_layout_payload(
                         start_row=start_row,
                         previous_lines=self._prev_frame_lines,
+                        previous_start_row=self._prev_frame_start_row,
+                        scroll_rows=visible_before - visible_after if scroll_ansi else 0,
+                        scroll_bottom=scroll_bottom or 0,
                         new_lines=target_lines,
                         previous_snapshot=self._applied_layout_snapshot,
                         snapshot=snapshot,
@@ -847,7 +861,7 @@ class _FrameRendererMixin:
                 self._terminal_frame_generation = generation
                 self._layout_generation = generation
                 if snapshot is not None:
-                    self._applied_layout_snapshot = snapshot
+                    self._record_applied_layout(snapshot)
                     self._full_layout_invalidated = False
                 self._render_stats = RenderStats(
                     total_lines=len(target_lines),
@@ -914,9 +928,23 @@ class _FrameRendererMixin:
         previous_snapshot: LayoutSnapshot | None,
         snapshot: LayoutSnapshot | None,
         force_full: bool,
+        previous_start_row: int | None = None,
+        scroll_rows: int = 0,
+        scroll_bottom: int = 0,
     ) -> tuple[str, int, str]:
         def full() -> tuple[str, int, str]:
-            ansi = f"\x1b[{start_row};1H\x1b[J" + "\n".join(new_lines)
+            old_start = previous_start_row
+            if old_start is None and previous_snapshot is not None:
+                old_start = previous_snapshot.frame_start_row
+            prefix = []
+            if old_start is not None and previous_lines is not None:
+                for index in range(len(previous_lines)):
+                    row = old_start + index
+                    if row <= scroll_bottom:
+                        row -= scroll_rows
+                    if 1 <= row < start_row:
+                        prefix.append(f"\x1b[{row};1H\x1b[K")
+            ansi = "".join(prefix) + f"\x1b[{start_row};1H\x1b[J" + "\n".join(new_lines)
             return ansi, len(new_lines), "full"
 
         if snapshot is None or force_full or previous_lines is None:
@@ -983,6 +1011,28 @@ class _FrameRendererMixin:
         self._prev_frame_width = 0
         self._prev_frame_term_height = None
         self._invalidate_busy_activity_layout()
+
+    def _record_applied_layout(self, snapshot: LayoutSnapshot) -> None:
+        self._applied_layout_snapshot = snapshot
+        # Identity survives commits; absolute geometry must not.
+        self._render_state.applied_temporary_panel = snapshot.bottom.panel.visual_rows > 0
+
+    def _frame_bottom_is_anchored(
+        self, term_height: int | None, render_plan: _RenderPlan | None,
+    ) -> bool:
+        if not self._bottom_dock_is_anchored(term_height):
+            return False
+        logical = render_plan.logical_plan if render_plan is not None else None
+        has_panel = logical is not None and any(
+            key == "panel" and rows.visual_rows > 0
+            for key, rows in logical.bottom_source.source_children
+        )
+        # Temporary panels borrow trailing space; touching the bottom is not a
+        # persistent anchor. Commit output still uses the physical dock anchor.
+        return not (
+            has_panel
+            or self._render_state.applied_temporary_panel
+        )
 
     def _bottom_dock_is_anchored(self, term_height: int | None) -> bool:
         return bool(
@@ -1376,7 +1426,7 @@ class _FrameRendererMixin:
             self._handle_sync_terminal_failure(exc)
             raise
 
-        self._applied_layout_snapshot = snapshot
+        self._record_applied_layout(snapshot)
         self._prev_frame_lines = list(new_lines)
         self._prev_frame_start_row = snapshot.frame_start_row
         self._prev_frame_width = snapshot.terminal_width

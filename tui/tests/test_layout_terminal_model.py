@@ -1199,3 +1199,345 @@ async def test_continuous_overflow_commit_then_frame_does_not_repaint_bottom(tmp
         for batch in range(2):
             for index in range(15):
                 assert all_rows.count(f"BATCH-{batch}-{index:02d}") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("worker", [False, True], ids=["sync", "worker"])
+@pytest.mark.parametrize("anchored", [False, True])
+async def test_commit_clears_live_tail_before_next_frame(tmp_path, monkeypatch, worker, anchored):
+    async with _terminal_tui(tmp_path, monkeypatch, worker=worker, height=12) as (tui, screen, stream, drain):
+        if anchored:
+            tui._visible_committed_rows = 12
+        tui._busy = tui._was_busy = True
+        monkeypatch.setattr(tui, "_render_busy_activity_elements", lambda width: [Text("OLD-VIBE-A"), Text("OLD-VIBE-B"), Text("OLD-VIBE-C")])
+        tui._render_frame()
+        await drain()
+        assert "OLD-VIBE-C" in "\n".join(screen.rows)
+        bottom_start = tui._last_bottom_start_row
+        bottom = screen.rows[bottom_start - 1:]
+        for label in ("COMMITTED-A", "COMMITTED-B"):
+            dock.tree.new_node(parent=dock.tree.root, node_type="message", header=label)
+            tui._flush_committed(force=True)
+            await drain()
+            assert "OLD-VIBE" not in "\n".join((*screen.history, *screen.rows))
+            if anchored:
+                assert screen.rows[bottom_start - 1:] == bottom
+        tui._render_frame()
+        await drain()
+        _assert_applied_screen(tui, screen)
+        text = "\n".join((*screen.history, *screen.rows))
+        assert text.count("COMMITTED-A") == text.count("COMMITTED-B") == 1
+
+
+@pytest.mark.parametrize("scroll_rows", [0, 1])
+def test_scrolled_payload_erases_old_rows_above_new_start(scroll_rows):
+    from voidx_cli.commit_output import scrolled_frame_payload
+    screen = _VTScreen(width=20, height=6)
+    screen.feed("HISTORY\r\nOLD-A\r\nOLD-B\r\nKEEP\r\nBOTTOM")
+    if scroll_rows:
+        screen.feed("\x1b[1;4r\x1b[4;1H\x1b[1S\x1b[r")
+    payload, _ = scrolled_frame_payload(previous=("OLD-A", "OLD-B", "KEEP", "BOTTOM"), previous_start=2, current=("KEEP", "BOTTOM"), start=4, scroll_rows=scroll_rows, scroll_bottom=4 if scroll_rows else 0)
+    screen.feed(payload)
+    assert screen.rows == (("", "", "", "KEEP", "BOTTOM", "") if scroll_rows else ("HISTORY", "", "", "KEEP", "BOTTOM", ""))
+    assert screen.history == (("HISTORY",) if scroll_rows else ())
+
+
+@pytest.mark.parametrize("scroll_rows", [0, 1])
+def test_sync_full_move_clears_old_physical_rows(scroll_rows):
+    from types import SimpleNamespace
+    from voidx_cli.render_frame import _FrameRendererMixin
+    screen = _VTScreen(width=20, height=6)
+    screen.feed("HISTORY\r\nOLD-A\r\nOLD-B\r\nKEEP")
+    if scroll_rows:
+        screen.feed("\x1b[1;4r\x1b[4;1H\x1b[1S\x1b[r")
+    payload, _, _ = _FrameRendererMixin._sync_layout_payload(scroll_rows=scroll_rows, scroll_bottom=4 if scroll_rows else 0, start_row=4, previous_lines=["OLD-A", "OLD-B", "KEEP"], new_lines=["KEEP"], previous_snapshot=SimpleNamespace(frame_start_row=2), snapshot=None, force_full=True)
+    _ModelStream(screen).write(payload)
+    assert screen.rows == (("" if scroll_rows else "HISTORY"), "", "", "KEEP", "", "")
+    assert screen.history == (("HISTORY",) if scroll_rows else ())
+
+
+@pytest.mark.parametrize("owned_rows", [None, 0, 2, 99])
+def test_commit_respects_explicit_applied_ownership(owned_rows):
+    from voidx_cli.commit_output import plan_commit
+    screen = _VTScreen(width=60, height=16)
+    screen.feed("\x1b[10;1HOLD-FRAME\x1b[11;1HOLD-VIBE\x1b[14;1HUNOWNED-SENTINEL\x1b[16;1HBOTTOM")
+    kwargs = {} if owned_rows is None else {"previous_frame_rows": owned_rows}
+    output = plan_commit("COMMITTED", start_row=10, height=16, fixed_bottom_rows=1, **kwargs)
+    assert output is not None
+    screen.feed(output.ansi)
+    assert screen.rows[9] == "COMMITTED"
+    assert screen.rows[10] == ("" if owned_rows else "OLD-VIBE")
+    assert screen.rows[13] == ("" if owned_rows == 99 else "UNOWNED-SENTINEL")
+    assert screen.rows[15] == "BOTTOM"
+
+
+def test_commit_owned_envelope_maps_through_scroll():
+    from voidx_cli.commit_output import plan_commit
+    screen = _VTScreen(width=20, height=6)
+    screen.feed("HISTORY\x1b[2;1HUNOWNED\x1b[4;1HOLD\x1b[5;1HTAIL\x1b[6;1HBOTTOM")
+    output = plan_commit("A\nB\nC", start_row=4, height=6, fixed_bottom_rows=1, previous_frame_rows=2)
+    assert output is not None
+    screen.feed(output.ansi)
+    assert output.scrolled_rows == 1
+    assert screen.rows == ("UNOWNED", "", "A", "B", "C", "BOTTOM")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("worker", [False, True], ids=["sync", "worker"])
+async def test_continuous_commits_do_not_expand_old_envelope(tmp_path, monkeypatch, worker):
+    async with _terminal_tui(tmp_path, monkeypatch, worker=worker, height=20) as (tui, screen, stream, drain):
+        tui._render_frame()
+        await drain()
+        end = tui._last_frame_start_row + tui._last_frame_rows - 1
+        assert end + 1 < 20
+        stream.write(f"\x1b[{end + 1};1HUNOWNED-SENTINEL")
+        for label in ("COMMITTED-A", "COMMITTED-B"):
+            dock.tree.new_node(parent=dock.tree.root, node_type="message", header=label)
+            tui._flush_committed(force=True)
+            await drain()
+            assert screen.rows[end] == "UNOWNED-SENTINEL"
+            assert tui._last_frame_start_row + tui._last_frame_rows - 1 == end
+
+
+@pytest.mark.asyncio
+async def test_positioned_worker_does_not_assume_unknown_tail_is_blank():
+    from voidx_cli.terminal_writer import FrameBatch
+    screen = _VTScreen(width=20, height=6)
+    writer = TerminalWriter(_ModelStream(screen))
+    writer.start(loop=asyncio.get_running_loop(), on_frame_result=lambda result: None, on_error=lambda exc: None)
+    try:
+        writer.submit_frame(FrameBatch(generation=1, start_row=2, target_lines=("OLD", "TAIL"), cursor_ansi=""))
+        await writer.drain_async()
+        await writer.wait(writer.submit_commit(clear_start_row=2, ansi="\x1b[2;1HCOMMIT\x1b[K", lines_written=1, positioned=True, preserve_baseline=True))
+        assert screen.rows[2] == "TAIL"
+        assert not writer._baseline_valid or writer._applied_lines == ("TAIL",)
+        writer.submit_frame(FrameBatch(generation=2, start_row=3, target_lines=("",), cursor_ansi=""))
+        await writer.drain_async()
+        assert screen.rows[2] == ""
+    finally:
+        await writer.shutdown_async()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("worker", [False, True], ids=["sync", "worker"])
+@pytest.mark.parametrize("committed", [False, True], ids=["transcript", "committed"])
+@pytest.mark.parametrize("busy", [False, True], ids=["idle", "busy"])
+async def test_slash_del_keeps_scrolled_origin_and_trailing_space(
+    tmp_path, monkeypatch, worker, committed, busy
+):
+    async with _terminal_tui(tmp_path, monkeypatch, worker=worker) as (
+        tui, screen, stream, drain
+    ):
+        tui._running = True
+        for i in range(4):
+            dock.tree.new_node(
+                parent=dock.tree.root, node_type="message",
+                header=f"HISTORY-SENTINEL-{i}", status="done",
+            )
+        tui._render_frame()
+        await drain()
+        if committed:
+            tui._flush_committed(force=True)
+            await drain()
+        tui._busy = tui._was_busy = busy
+        tui._render_frame()
+        await drain()
+        visible = tui._visible_committed_rows
+        history = screen.history
+        for cycle in range(3):
+            assert tui._process_input(b"/")
+            tui._render_after_input()
+            await drain()
+            opened = _assert_applied_screen(tui, screen)
+            assert tui._command_panel_active
+            if cycle == 0:
+                missing = max(0, visible + opened.frame_rows - screen.height)
+                assert len(screen.history) - len(history) == missing
+            else:
+                assert screen.history == history
+            history = screen.history
+            assert tui._process_input(b"\x7f")
+            tui._render_after_input()
+            await drain()
+            closed = _assert_applied_screen(tui, screen)
+            assert not tui._command_panel_active
+            assert closed.frame_start_row == opened.frame_start_row
+            assert closed.frame_rows < opened.frame_rows
+            assert closed.cursor_row < screen.height - 1
+            assert screen.history == history
+            for _ in range(2):
+                tui._render_frame()
+                await drain()
+                current = _assert_applied_screen(tui, screen)
+                assert current.frame_start_row == closed.frame_start_row
+                assert screen.history == history
+        all_rows = screen.history + screen.rows
+        for i in range(4):
+            assert sum(f"HISTORY-SENTINEL-{i}" in row for row in all_rows) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("worker", [False, True], ids=["sync", "worker"])
+@pytest.mark.parametrize("committed", [False, True], ids=["transcript", "committed"])
+async def test_slash_del_with_output_resize_and_busy_tick(
+    tmp_path, monkeypatch, worker, committed
+):
+    from test_tui_cleanup_acceptance import _resize
+
+    async with _terminal_tui(tmp_path, monkeypatch, worker=worker) as (
+        tui, screen, stream, drain
+    ):
+        tui._running = True
+        for i in range(4):
+            dock.tree.new_node(
+                parent=dock.tree.root, node_type="message",
+                header=f"RESIZE-HISTORY-{i}", status="done",
+            )
+        tui._render_frame()
+        await drain()
+        if committed:
+            tui._flush_committed(force=True)
+            await drain()
+        tui._busy = tui._was_busy = True
+        tui._render_frame()
+        await drain()
+        assert tui._process_input(b"/")
+        tui._render_after_input()
+        await drain()
+        history = screen.history
+        dock.tree.new_node(
+            parent=dock.tree.root, node_type="message",
+            header="DURING-MENU", status="done",
+        )
+        tui._flush_committed(force=True)
+        await drain()
+        tui._render_frame()
+        await drain()
+        _assert_applied_screen(tui, screen)
+        assert screen.history[:len(history)] == history
+        for width, height in [(65, 16), (80, 12)]:
+            _resize(screen, tui, monkeypatch, width, height)
+            tui._render_frame()
+            await drain()
+            _assert_applied_screen(tui, screen)
+        opened = tui._applied_layout_snapshot
+        history = screen.history
+        assert tui._process_input(b"\x7f")
+        tui._render_after_input()
+        await drain()
+        closed = _assert_applied_screen(tui, screen)
+        assert closed.frame_start_row == opened.frame_start_row
+        assert closed.frame_rows < opened.frame_rows
+        # Frames are driven explicitly here, not by the throttled commit timer.
+        tui._cancel_scheduled_render()
+        if not tui._render_busy_activity_tick():
+            tui._render_frame()
+        await drain()
+        _assert_applied_screen(tui, screen)
+        tui._render_frame()
+        await drain()
+        assert _assert_applied_screen(tui, screen).frame_start_row == closed.frame_start_row
+        assert screen.history == history
+        for marker in [*(f"RESIZE-HISTORY-{i}" for i in range(4)), "DURING-MENU"]:
+            assert sum(marker in row for row in screen.history + screen.rows) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("worker", [False, True], ids=["sync", "worker"])
+@pytest.mark.parametrize("rapid", [False, True], ids=["direct-del", "rapid-toggle"])
+async def test_slash_del_after_commit_keeps_advanced_origin(tmp_path, monkeypatch, worker, rapid):
+    async with _terminal_tui(tmp_path, monkeypatch, worker=worker) as (
+        tui, screen, stream, drain
+    ):
+        tui._running = True
+        for i in range(4):
+            dock.tree.new_node(
+                parent=dock.tree.root, node_type="message",
+                header=f"COMMIT-HISTORY-{i}", status="done",
+            )
+        tui._render_frame()
+        await drain()
+        tui._flush_committed(force=True)
+        await drain()
+        tui._busy = tui._was_busy = True
+        tui._render_frame()
+        await drain()
+        tui._process_input(b'/')
+        tui._render_after_input()
+        await drain()
+        opened = _assert_applied_screen(tui, screen)
+        dock.tree.new_node(
+            parent=dock.tree.root, node_type="message",
+            header="SLASH-COMMIT", status="done",
+        )
+        tui._flush_committed(force=True)
+        await drain()
+        assert tui._applied_layout_snapshot is None
+        assert tui._bottom_dock_is_anchored(screen.height)
+        origin = tui._last_frame_start_row
+        assert origin >= opened.frame_start_row
+        history = screen.history
+        # No menu repaint between the real commit and DEL.
+        tui._process_input(b'\x7f')
+        tui._render_after_input()
+        if rapid:
+            for data in (b'/', b'\x7f', b'/', b'\x7f'):
+                tui._process_input(data)
+                tui._render_frame()
+        await drain()
+        if not rapid:
+            closed = _assert_applied_screen(tui, screen)
+            assert closed.frame_start_row == origin
+            assert closed.frame_start_row - 1 + closed.frame_rows < screen.height
+        tui._run_scheduled_render()
+        await drain()
+        closed = _assert_applied_screen(tui, screen)
+        scrolled = len(screen.history) - len(history)
+        assert scrolled == (max(0, origin - 1 + opened.frame_rows - screen.height) if rapid else 0)
+        origin -= scrolled
+        assert closed.frame_start_row == origin
+        assert closed.frame_start_row - 1 + closed.frame_rows < screen.height
+        history = screen.history
+        for _ in range(2):
+            if not tui._render_busy_activity_tick():
+                tui._render_frame()
+            await drain()
+            tui._render_frame()
+            await drain()
+            assert _assert_applied_screen(tui, screen).frame_start_row == origin
+            assert screen.history == history
+        for marker in [*(f"COMMIT-HISTORY-{i}" for i in range(4)), "SLASH-COMMIT"]:
+            assert sum(marker in row for row in screen.history + screen.rows) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", ["commit", "clear", "resize", "terminal_submission_failure"])
+async def test_slash_panel_identity_uses_applied_state_across_invalidation(
+    tmp_path, monkeypatch, reason
+):
+    from voidx_cli.terminal_writer import FrameResult
+
+    async with _terminal_tui(tmp_path, monkeypatch, worker=True) as (
+        tui, screen, stream, drain
+    ):
+        tui._render_frame()
+        await drain()
+        tui._process_input(b'/')
+        tui._render_frame()
+        assert not tui._render_state.applied_temporary_panel
+        await drain()
+        assert tui._render_state.applied_temporary_panel
+        tui._process_input(b'\x7f')
+        tui._render_frame()
+        generation = tui._terminal_frame_generation
+        assert tui._render_state.applied_temporary_panel
+        tui._invalidate_layout(reason)
+        tui._handle_terminal_frame_result(FrameResult(generation, 1, 1, 0.1, "full", True))
+        await drain()
+        assert tui._applied_layout_snapshot is None
+        assert not tui._pending_layout_snapshots
+        assert tui._render_state.applied_temporary_panel is (reason == "commit")
+        tui._render_frame()
+        await drain()
+        assert not tui._render_state.applied_temporary_panel
+        _assert_applied_screen(tui, screen)
