@@ -690,3 +690,57 @@ async def test_resume_lists_workspace_matches_first_then_by_recency(monkeypatch,
     assert len(captured) == 3
     ids_in_order = [item[0].split(" | ")[0] for item in captured]
     assert ids_in_order == [s_cur_new.id[:8], s_cur_old.id[:8], s_other_new.id[:8]]
+
+
+@pytest.mark.asyncio
+async def test_continue_command_runs_turn_without_persisting_user_input(monkeypatch):
+    from voidx.agent.adapters.persistence.session_repository import SessionInfo
+    from voidx.llm.message_markers import DEFAULT_CONTINUATION_TEXT
+
+    calls: list[dict] = []
+
+    async def fake_run_coding_turn(text: str, *, display_text: str | None = None, persist_user_input: bool = True) -> None:
+        calls.append({
+            "text": text,
+            "display_text": display_text,
+            "persist_user_input": persist_user_input,
+        })
+
+    session = SessionInfo(id="sess-1", workspace=".", message_count=3)
+    graph = command_context(
+        session=session,
+        run_coding_turn=fake_run_coding_turn,
+    )
+
+    dispatched = await SlashHandler(graph).dispatch("/continue")
+    assert dispatched is True
+    assert len(calls) == 1
+    assert calls[0]["text"] == DEFAULT_CONTINUATION_TEXT
+    assert calls[0]["display_text"] == "/continue"
+    assert calls[0]["persist_user_input"] is False
+
+
+@pytest.mark.asyncio
+async def test_continue_command_when_empty_session_prints_notice(monkeypatch):
+    from voidx.agent.adapters.persistence.session_repository import SessionInfo
+
+    output = _capture_output(monkeypatch)
+    calls: list[dict] = []
+
+    async def fake_run_coding_turn(*args, **kwargs) -> None:
+        calls.append(kwargs)
+
+    session = SessionInfo(id="sess-empty", workspace=".", message_count=0)
+    graph = command_context(
+        session=session,
+        run_coding_turn=fake_run_coding_turn,
+    )
+
+    dispatched = await SlashHandler(graph).dispatch("/continue")
+    assert dispatched is True
+    assert calls == []
+    assert output == ["[dim]No conversation to continue.[/dim]"]
+
+
+def test_continue_command_is_in_palette():
+    assert ("/continue", "Continue conversation without adding a user message") in COMMANDS

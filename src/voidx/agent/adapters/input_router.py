@@ -52,6 +52,7 @@ class LangGraphAutonomousInputRouter:
         thread_id: str = "",
         context: Any = None,
         display_text: str | None = None,
+        persist_user_input: bool = True,
     ) -> None:
         if self._coding_service is None:
             raise RuntimeError("coding service is not configured")
@@ -69,6 +70,7 @@ class LangGraphAutonomousInputRouter:
             context=context,
             display_text=display_text,
             workspace=workspace,
+            persist_user_input=persist_user_input,
         )
 
     async def route_chat_turn(self, text: str, *, thread_id: str = "", context: Any = None) -> bool:

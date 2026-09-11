@@ -178,7 +178,11 @@ class AutomationSlashAdapter:
     def can_submit_guidance(self): return self._execution.can_submit_guidance()
     def submit_guidance(self, text, **kwargs): return self._execution.submit_guidance(text, **kwargs)
     def interaction_mode_value(self): return self._execution.interaction_mode_value()
-    async def run_coding_turn(self, text, *, display_text=None): return await self._execution.run_coding_turn(text, display_text=display_text)
+    async def run_coding_turn(self, text, *, display_text=None, persist_user_input=True):
+        try:
+            return await self._execution.run_coding_turn(text, display_text=display_text, persist_user_input=persist_user_input)
+        except TypeError:
+            return await self._execution.run_coding_turn(text, display_text=display_text)
 
 
 class ModeSlashAdapter:

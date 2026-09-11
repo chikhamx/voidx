@@ -959,10 +959,15 @@ class LangGraphExecution:
         text: str,
         *,
         display_text: str | None = None,
+        persist_user_input: bool = True,
     ) -> None:
         if self._coding_turn_runner is None:
             raise RuntimeError("coding turn runner is not bound")
-        await self._coding_turn_runner(text, display_text=display_text)
+        await self._coding_turn_runner(
+            text,
+            display_text=display_text,
+            persist_user_input=persist_user_input,
+        )
 
     async def show_startup(
         self,

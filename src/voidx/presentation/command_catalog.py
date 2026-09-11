@@ -37,7 +37,7 @@ class CommandCatalogItem:
 
 
 CATEGORY_PREFIXES: tuple[tuple[tuple[str, ...], CommandCategory], ...] = (
-    (("/session", "/clear", "/list", "/resume", "/title"), "session"),
+    (("/session", "/clear", "/continue", "/list", "/resume", "/title"), "session"),
     (("/model",), "model"),
     (("/permission", "/allow", "/deny", "/permissions", "/goal", "/plan", "/unplan"), "permission"),
     (("/mcp", "/tavily", "/skills"), "integrations"),
@@ -75,6 +75,7 @@ DIRECT_RUN_COMMANDS = {
     "/skills list",
     "/code-ide status",
     "/session list",
+    "/continue",
     "/list",
 }
 

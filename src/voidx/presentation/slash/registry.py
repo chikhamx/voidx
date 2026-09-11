@@ -24,6 +24,7 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand("/chat", "Start a new chat session", "_chat_shortcut", "args"),
     SlashCommand("/coding", "Start a new coding session", "_coding_shortcut", "args"),
     SlashCommand("/clear", "Start a new session with empty context", "_clear", "none"),
+    SlashCommand("/continue", "Continue conversation without adding a user message", "_continue", "none"),
     SlashCommand("/code-ide", "Choose app for opening changed files", "_code_ide", "args"),
     SlashCommand("/compact", "Manually trigger context compaction", "_cmd_compact", "none"),
     SlashCommand("/compact-model", "Configure the compaction summary model", "_compact_model", "args"),

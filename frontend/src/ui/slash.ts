@@ -4,6 +4,7 @@ export const COMMAND_CATALOG: SlashCommand[] = [
   { command: "/allow", description: "Allow a tool for this session", category: "permission", execution: "fill", dangerous: false, requiresArgs: true },
   { command: "/chat", description: "Switch to chat mode", category: "session", execution: "fill", dangerous: false, requiresArgs: false },
   { command: "/clear", description: "Start a new session with empty context", category: "session", execution: "run", dangerous: true, requiresArgs: false },
+    { command: "/continue", description: "Continue conversation without adding a user message", category: "session", execution: "run", dangerous: false, requiresArgs: false },
   { command: "/coding", description: "Switch to coding mode", category: "session", execution: "fill", dangerous: false, requiresArgs: false },
   { command: "/code-ide", description: "Choose app for opening changed files", category: "code", execution: "open-ui", dangerous: false, requiresArgs: false, uiTarget: "settings:code" },
   { command: "/compact", description: "Manually trigger context compaction", category: "maintenance", execution: "fill", dangerous: false, requiresArgs: false },

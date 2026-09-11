@@ -2803,21 +2803,31 @@ composerEl.addEventListener("submit", (event: SubmitEvent) => {
 
   const threadId = uiState.sessionId;
   const sendContextGeneration = threadContextGeneration;
-  const isGuidance = uiState.isRunning;
-  const style = isGuidance ? "guidance" : "text";
-  const itemId = createLocalItemId(isGuidance ? "guidance" : "user");
-  if (!isGuidance) {
-    rememberPendingLocalMessage(threadId, itemId, text, style);
-    appendMessageItem(itemId, { style, text });
-    syncEmptyState();
-    inputEl.value = "";
-  }
-  hideSlashMenu();
-  hideRefMenu();
-  pushHistory(text);
+    const isContinueCommand = text.trim() === "/continue";
+    if (uiState.isRunning && isContinueCommand) {
+        inputEl.value = "";
+        hideSlashMenu();
+        hideRefMenu();
+        return;
+    }
 
-  if (isGuidance) {
-    btnSendEl.classList.add("guidance-pending");
+    const isGuidance = uiState.isRunning;
+    const style = isGuidance ? "guidance" : "text";
+    const itemId = createLocalItemId(isGuidance ? "guidance" : "user");
+    if (!isGuidance) {
+        if (!isContinueCommand) {
+            rememberPendingLocalMessage(threadId, itemId, text, style);
+            appendMessageItem(itemId, { style, text });
+            syncEmptyState();
+        }
+        inputEl.value = "";
+    }
+    hideSlashMenu();
+    hideRefMenu();
+    pushHistory(text);
+
+    if (isGuidance) {
+        btnSendEl.classList.add("guidance-pending");
     rpcCall("session.submit", { text, thread_id: threadId })
       .then((result: unknown) => {
         if ((result as { ok?: boolean } | null)?.ok === false) {
@@ -2849,9 +2859,11 @@ composerEl.addEventListener("submit", (event: SubmitEvent) => {
     .catch((error: Error) => {
       if (!isCurrentSendContext(threadId, sendContextGeneration)) return;
       setRunning(false);
-      removePendingLocalMessage(itemId);
-      if (!inputEl.value) inputEl.value = text;
-      showSessionError("发送", error);
+        if (!isContinueCommand) {
+            removePendingLocalMessage(itemId);
+        }
+        if (!inputEl.value) inputEl.value = text;
+        showSessionError("发送", error);
     });
 });
 

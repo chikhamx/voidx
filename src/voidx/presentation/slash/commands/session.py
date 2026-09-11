@@ -338,3 +338,28 @@ class SessionCommandsMixin:
     async def _show_startup(self, **kwargs) -> None:
         await self.session_port.show_startup(**kwargs)
 
+    async def _continue(self) -> None:
+        from voidx.llm.message_markers import DEFAULT_CONTINUATION_TEXT
+
+        session = getattr(self.session_port, "session", None)
+        has_conversation = False
+        if session is not None:
+            message_count = getattr(session, "message_count", 0)
+            if message_count > 0:
+                has_conversation = True
+            elif self.session_repository is not None:
+                get_msgs = getattr(self.session_repository, "get_session_messages", None)
+                if callable(get_msgs):
+                    msgs = await get_msgs(session.id)
+                    has_conversation = bool(msgs)
+
+        if not has_conversation:
+            self.session_port.ui.print("[dim]No conversation to continue.[/dim]")
+            return
+
+        await self.automation_port.run_coding_turn(
+            DEFAULT_CONTINUATION_TEXT,
+            display_text="/continue",
+            persist_user_input=False,
+        )
+

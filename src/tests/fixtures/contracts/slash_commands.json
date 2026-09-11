@@ -36,6 +36,12 @@
     "name": "/clear"
   },
   {
+    "arg": "none",
+    "desc": "Continue conversation without adding a user message",
+    "method": "_continue",
+    "name": "/continue"
+  },
+  {
     "arg": "args",
     "desc": "Choose app for opening changed files",
     "method": "_code_ide",

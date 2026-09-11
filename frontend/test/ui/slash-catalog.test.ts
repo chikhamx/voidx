@@ -34,6 +34,16 @@ describe("setCommandCatalog", () => {
     expect(matched.map((c) => c.command)).toEqual(["/mcp new", "/mcp del"]);
   });
 
+    it("includes /continue as a direct run command in builtin catalog", () => {
+        _resetCommandCatalogForTest();
+        const entry = matchSlashCommands("/continue").find((item) => item.command === "/continue");
+        expect(entry).toBeDefined();
+        expect(entry?.execution).toBe("run");
+        expect(entry?.category).toBe("session");
+        expect(entry?.dangerous).toBe(false);
+        expect(entry?.requiresArgs).toBe(false);
+  });
+
   it("exposes all runtime profiles as no-argument mode switches", () => {
     _resetCommandCatalogForTest();
     for (const command of ["/chat", "/coding", "/goal", "/loop"]) {

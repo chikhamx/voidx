@@ -36,7 +36,11 @@ export function updateSlashMenu(): void {
 }
 
 export function runSlashCommand(command: SlashCommand): void {
-  if (!command) return;
+    if (!command) return;
+    if (command.command === "/continue" && uiState.isRunning) {
+        inputEl.value = "";
+        return;
+    }
   if (command.execution === "open-ui") {
     inputEl.value = "";
     window.dispatchEvent(

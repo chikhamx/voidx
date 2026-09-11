@@ -18,7 +18,7 @@ class RunLoopStartupError(RuntimeError):
 
 # Commands that render their own turn bubble (via display_text) when they run a
 # turn; the generic pre-dispatch echo would duplicate that bubble.
-_SELF_DISPLAYING_COMMANDS = frozenset({"/loop", "/init"})
+_SELF_DISPLAYING_COMMANDS = frozenset({"/loop", "/init", "/continue"})
 
 
 class AgentService:
@@ -50,12 +50,14 @@ class AgentService:
         thread_id: str = "",
         context: TurnExecutionContext | None = None,
         display_text: str | None = None,
+        persist_user_input: bool = True,
     ) -> None:
         await self._autonomous_router.run_coding_turn(
             user_text,
             thread_id=thread_id,
             context=context,
             display_text=display_text,
+            persist_user_input=persist_user_input,
         )
 
 
