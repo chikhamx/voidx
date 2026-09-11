@@ -722,3 +722,56 @@ async def test_ai_approval_service_falls_back_to_json_mode_on_unparseable_respon
     assert result.allowed_ids == frozenset({"call_1"})
     assert len(call_log) >= 2
     assert call_log[1].get("method") == "json_mode"
+
+
+def test_ai_approval_model_config_timeout_compatibility():
+    from voidx.tooling.domain.ai_approval import AiApprovalModelConfig
+    from voidx.llm.adapters.langchain_model_factory import create_chat_model
+
+    config = AiApprovalModelConfig(provider="openai", model="gpt-4o")
+    assert hasattr(config, "timeout")
+    assert config.timeout is None
+
+    # create_chat_model should not raise AttributeError when inspecting timeout
+    model = create_chat_model("dummy-key", config)
+    assert model is not None
+    assert model.request_timeout == 120.0
+
+    config_with_timeout = AiApprovalModelConfig(provider="openai", model="gpt-4o", timeout=15.0)
+    model_custom = create_chat_model("dummy-key", config_with_timeout)
+    assert model_custom.request_timeout == 15.0
+
+
+@pytest.mark.asyncio
+async def test_ai_approval_service_with_real_model_factory_does_not_crash():
+    from types import SimpleNamespace
+    from voidx.config import Profile
+    from voidx.llm.adapters.langchain_model_factory import create_chat_model, create_resolver_model
+    from voidx.tooling.application.ai_approval import AiApprovalService
+
+    profile = Profile(name="openai/reviewer", provider="openai", model="gpt-4o", api_key="dummy-key")
+
+    class FakeSettings:
+        def get_ai_approval_config(self):
+            return SimpleNamespace(profile_name=profile.name, timeout_seconds=5.0)
+
+        async def list_profiles(self):
+            return [profile]
+
+    async def fake_ainvoke_structured(*, model, schema, messages, **kwargs):
+        return {"decisions": [{"id": "call_1", "decision": "allow"}]}
+
+    decision = SimpleNamespace(
+        action="ask",
+        risk=RiskAssessment.dangerous(tool_name="bash", pattern="git status"),
+        tool_call={"name": "bash", "args": {"command": "git status"}, "id": "call_1"},
+    )
+
+    service = AiApprovalService(
+        model_factory=create_chat_model,
+        resolver_model_factory=create_resolver_model,
+        structured_invoker=fake_ainvoke_structured,
+    )
+    result = await service.review([decision], FakeSettings())
+    assert result.reason == "reviewed"
+    assert result.allowed_ids == frozenset({"call_1"})

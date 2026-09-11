@@ -179,7 +179,8 @@ def create_chat_model(api_key: str, config: ModelConfig) -> BaseChatModel:
     else:
         temp = config.temperature
 
-    request_timeout = config.timeout if config.timeout is not None else _DEFAULT_REQUEST_TIMEOUT
+    cfg_timeout = getattr(config, "timeout", None)
+    request_timeout = cfg_timeout if cfg_timeout is not None else _DEFAULT_REQUEST_TIMEOUT
     if protocol == "anthropic":
         kwargs = dict(
             api_key=api_key,

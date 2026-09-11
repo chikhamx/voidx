@@ -16,6 +16,7 @@ class AiApprovalModelConfig(BaseModel):
     max_tokens: int = 8192
     reasoning_effort: str = "xhigh"
     context_window: int | None = None
+    timeout: float | None = None
 
 
 class AiApprovalRequestItem(BaseModel):

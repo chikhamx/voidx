@@ -140,6 +140,7 @@ class AiApprovalService:
                 model=profile.model,
                 base_url=profile.base_url,
                 protocol=profile.protocol,
+                timeout=config.timeout_seconds,
             )
             model = self._model_factory(profile.api_key, model_config)
             resolver = self._resolver_model_factory(model, model_config)
