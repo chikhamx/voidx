@@ -494,6 +494,36 @@ def test_safe_flush_limit_does_not_flush_separator_before_running_assistant_mess
         test_dock.reset()
 
 
+def test_safe_flush_limit_allows_separator_between_turn_and_running_assistant():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("hello")
+        test_dock.tree.new_node(test_dock.tree.root, node_type="assistant", header="● message 1")
+        lines = test_dock.tree.render(80)
+        assert len(lines) == 3
+        limit = test_dock.safe_flush_line_count(80, 0)
+        assert limit == 2
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
+def test_safe_flush_limit_does_not_flush_separator_between_turn_and_running_tool():
+    test_dock = dock
+    test_dock.begin_capture()
+    try:
+        test_dock.start_turn("hello")
+        test_dock.tree.new_node(test_dock.tree.root, node_type="tool_call", header="● tool 1")
+        lines = test_dock.tree.render(80)
+        assert len(lines) == 3
+        limit = test_dock.safe_flush_line_count(80, 0)
+        assert limit == 1
+    finally:
+        test_dock.deactivate()
+        test_dock.reset()
+
+
 def test_safe_flush_limit_does_not_flush_trailing_blank_lines():
     test_dock = dock
     test_dock.begin_capture()
