@@ -11,7 +11,10 @@ class CommitOutput:
     scrolled_rows: int
 
 
-def plan_commit(ansi: str, *, start_row: int, height: int, fixed_bottom_rows: int, previous_frame_rows: int = 0) -> CommitOutput | None:
+def plan_commit(
+    ansi: str, *, start_row: int, height: int, fixed_bottom_rows: int,
+    previous_frame_rows: int = 0, previous_frame_start_row: int | None = None,
+) -> CommitOutput | None:
     lines = ansi.split("\n")
     bottom = height - fixed_bottom_rows
     row = max(start_row, 1)
@@ -29,9 +32,12 @@ def plan_commit(ansi: str, *, start_row: int, height: int, fixed_bottom_rows: in
             scrolled += 1
         payload.append(f"\x1b[{row};1H{line}\x1b[K")
         row += 1
-    owned_end = min(max(start_row, 1) + max(previous_frame_rows, 0) - 1, bottom)
-    for tail_row in range(row, owned_end - scrolled + 1):
-        payload.append(f"\x1b[{tail_row};1H\x1b[K")
+    owned_start = max(start_row, 1) if previous_frame_start_row is None else previous_frame_start_row
+    owned_end = min(owned_start + max(previous_frame_rows, 0) - 1, height)
+    for old_row in range(max(1, owned_start), owned_end + 1):
+        mapped_row = old_row - scrolled if old_row <= bottom else old_row
+        if row <= mapped_row <= bottom:
+            payload.append(f"\x1b[{mapped_row};1H\x1b[K")
     return CommitOutput("".join(payload), row, len(lines), scrolled)
 
 

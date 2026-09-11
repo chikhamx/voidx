@@ -588,10 +588,6 @@ def project_physical_viewport(
         top_rows += count
 
     effective_start_row = frame_start_row
-    if anchor_bottom:
-        total_rows = top_rows + bottom_rows
-        if total_rows <= terminal_height:
-            effective_start_row = max(frame_start_row, terminal_height - total_rows + 1)
 
     bottom_start_row = effective_start_row + top_rows
     bottom = _relocate_bottom_geometry(

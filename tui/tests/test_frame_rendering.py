@@ -1177,6 +1177,7 @@ def test_flush_committed_overflow_without_anchor_defers_and_retains_transcript(
     )
     tui._has_rendered_frame = True
     tui._last_frame_start_row = 8
+    tui._visible_committed_rows = 7
 
     dock.begin_capture()
     dock.start_turn("overflow commit")
@@ -1255,6 +1256,7 @@ def test_commit_payload_never_uses_lf_for_physical_positioning(tmp_path, monkeyp
     tui._console = Console(file=output, force_terminal=True, width=80, height=10, _environ={})
     tui._has_rendered_frame = start > 0
     tui._last_frame_start_row = start
+    tui._visible_committed_rows = max(0, start - 1)
     tui._last_bottom_start_row = 8 if start else 0
     tui._last_bottom_rows = 3 if start else 0
     dock.begin_capture()
@@ -1291,3 +1293,96 @@ def test_commit_without_safe_region_is_deferred_without_settling(tmp_path, monke
     assert output.text == ""
     assert tui._committed_line_count == before
     assert dock.consume_force_flush_request() is True
+
+
+@pytest.mark.parametrize("worker_mode", [False, True])
+@pytest.mark.parametrize("visible_rows", [0, 3, 16])
+def test_anchored_frame_uses_old_scroll_boundary_and_contiguous_start(
+    tmp_path, monkeypatch, worker_mode, visible_rows
+):
+    output = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", output)
+    monkeypatch.setattr(
+        shutil, "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 20)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=output, force_terminal=True, width=80, height=20, _environ={})
+    tui._render_frame()
+    old_bottom_rows = tui._last_bottom_rows
+    tui._last_bottom_start_row = 20 - old_bottom_rows + 1
+    tui._last_frame_start_row = 4
+    tui._last_frame_rows = 17
+    tui._visible_committed_rows = visible_rows
+    assert tui._bottom_dock_is_anchored(20)
+
+    class Worker:
+        worker_mode = True
+
+        def __init__(self):
+            self.frames = []
+
+        def submit_frame(self, batch):
+            self.frames.append(batch)
+
+    writer = Worker()
+    if worker_mode:
+        tui._terminal_writer = writer
+    calls = []
+    original = tui._frame_scroll_plan
+
+    def record_scroll(frame_rows, term_height, **kwargs):
+        result = original(frame_rows, term_height, **kwargs)
+        calls.append((kwargs, result))
+        return result
+
+    monkeypatch.setattr(tui, "_frame_scroll_plan", record_scroll)
+    output.text = ""
+    tui._render_frame()
+
+    assert len(calls) == 1
+    kwargs, (visible_after, scroll_ansi) = calls[0]
+    assert kwargs["visible_rows"] == visible_rows
+    assert kwargs["fixed_bottom_rows"] == old_bottom_rows
+    assert kwargs["scroll_bottom"] == 20 - old_bottom_rows
+    assert tui._last_frame_start_row == visible_after + 1
+    if worker_mode:
+        batch = writer.frames[-1]
+        assert batch.start_row == visible_after + 1
+        assert batch.scroll_bottom == 20 - old_bottom_rows
+        assert batch.scroll_ansi == scroll_ansi
+    else:
+        assert tui._visible_committed_rows == visible_after
+        if not scroll_ansi:
+            assert not tui._bottom_dock_is_anchored(20)
+
+
+def test_frame_shrink_lifts_bottom_and_clears_old_tail(tmp_path, monkeypatch):
+    output = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", output)
+    monkeypatch.setattr(shutil, "get_terminal_size", lambda fallback=None: os.terminal_size((80, 20)))
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=output, force_terminal=True, width=80, height=20, _environ={})
+    dock.begin_capture()
+    dock.start_turn("question")
+    nodes = [dock.tree.new_node(
+        parent=dock.tree.root, node_type="message",
+        header=f"active {i}", collapsed=False,
+    ) for i in range(30)]
+    tui._render_frame()
+    assert tui._bottom_dock_is_anchored(20)
+    start_row = tui._last_frame_start_row
+    visible_rows = tui._visible_committed_rows
+
+    for node in nodes:
+        dock.tree.remove_node(node)
+    output.text = ""
+    tui._render_frame()
+
+    assert tui._last_frame_start_row == start_row == visible_rows + 1
+    assert tui._visible_committed_rows == visible_rows
+    assert not tui._bottom_dock_is_anchored(20)
+    assert "\x1b[20;1H\x1b[K" in output.text
+    assert "\x1b[1;17r" not in output.text

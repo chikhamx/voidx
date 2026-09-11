@@ -753,6 +753,12 @@ class PureTui(
         await self._terminal_writer.drain_async()
 
 
+    def _apply_commit_geometry(self, geometry) -> None:
+        self._visible_committed_rows = geometry.visible_rows
+        if self._has_rendered_frame:
+            self._last_frame_start_row = geometry.next_row
+            self._last_frame_rows = geometry.remaining_frame_rows
+
     async def _wait_for_pending_commit(self, token: BatchToken) -> None:
         token_key = id(token)
         update = self._render_state.pending_commit_updates[token_key]
@@ -770,20 +776,7 @@ class PureTui(
                 return
             update["settle"]()
             update["apply_state"]()
-            term_height = shutil.get_terminal_size().lines
-            self._visible_committed_rows = min(
-                term_height,
-                self._visible_committed_rows + update["flush_rows"],
-            )
-            clear_start = update.get("clear_start_row", 0)
-            if self._has_rendered_frame and clear_start > 0:
-                self._last_frame_start_row = min(
-                    term_height + 1,
-                    max(
-                        self._last_frame_start_row,
-                        clear_start + update["flush_rows"],
-                    ),
-                )
+            self._apply_commit_geometry(update["geometry"])
             if not update.get("preserve_baseline", False):
                 self._invalidate_frame_cache()
         finally:
@@ -803,10 +796,9 @@ class PureTui(
         *,
         apply_state,
         settle,
-        flush_rows: int,
+        geometry,
         force_requested: bool,
         raw_echoes: list[str],
-        clear_start_row: int = 0,
         preserve_baseline: bool = False,
     ) -> None:
         token_key = id(token)
@@ -821,10 +813,9 @@ class PureTui(
         self._render_state.pending_commit_updates[token_key] = {
             "apply_state": apply_state,
             "settle": settle,
-            "flush_rows": flush_rows,
+            "geometry": geometry,
             "force_requested": force_requested,
             "raw_echoes": raw_echoes,
-            "clear_start_row": clear_start_row,
             "preserve_baseline": preserve_baseline,
             "restore_epoch": self._restore_epoch,
         }
@@ -1558,11 +1549,9 @@ class PureTui(
             from .commit_output import plan_commit
 
             term_height = shutil.get_terminal_size().lines
-            clear_start_row = (
-                self._last_frame_start_row
-                if self._has_rendered_frame and self._last_frame_start_row > 0
-                else self._visible_committed_rows + 1
-            )
+            visible_before = self._visible_committed_rows
+            clear_start_row = visible_before + 1
+            previous_frame_start_row = self._last_frame_start_row
             fixed_bottom_rows = (
                 self._last_bottom_rows if self._bottom_dock_is_anchored(term_height) else 0
             )
@@ -1573,6 +1562,7 @@ class PureTui(
                 height=term_height,
                 fixed_bottom_rows=fixed_bottom_rows,
                 previous_frame_rows=previous_frame_rows,
+                previous_frame_start_row=previous_frame_start_row,
             )
             if output is None:
                 dock.request_force_flush()
@@ -1581,12 +1571,16 @@ class PureTui(
             commit_ansi = output.ansi
             flush_rows = output.lines_written
             overflow = output.scrolled_rows > 0
-            if self._has_rendered_frame:
-                previous_end = clear_start_row + self._last_frame_rows - 1
-                if previous_end <= term_height - fixed_bottom_rows:
-                    previous_end -= output.scrolled_rows
-                self._last_frame_rows = max(0, previous_end - output.next_row + 1)
-                self._last_frame_start_row = output.next_row
+            from .commit_geometry import plan_commit_geometry
+
+            geometry = plan_commit_geometry(
+                output,
+                visible_before=visible_before,
+                height=term_height,
+                fixed_bottom_rows=fixed_bottom_rows,
+                previous_frame_start_row=previous_frame_start_row,
+                previous_frame_rows=previous_frame_rows,
+            )
 
             preserve_baseline = bool(
                 worker_mode
@@ -1615,20 +1609,15 @@ class PureTui(
                         token,
                         apply_state=apply_state,
                         settle=settle_batch,
-                        flush_rows=flush_rows,
+                        geometry=geometry,
                         force_requested=force_requested,
                         raw_echoes=raw_echoes,
-                        clear_start_row=output.next_row - flush_rows,
                         preserve_baseline=preserve_baseline,
                     )
                 else:
                     settle_batch()
                     apply_state()
-                    term_height = shutil.get_terminal_size().lines
-                    self._visible_committed_rows = min(
-                        term_height,
-                        self._visible_committed_rows + flush_rows,
-                    )
+                    self._apply_commit_geometry(geometry)
                     if not preserve_baseline:
                         self._invalidate_frame_cache()
                 return token
@@ -1637,11 +1626,7 @@ class PureTui(
             self._terminal_writer.flush()
             settle_batch()
             apply_state()
-            term_height = shutil.get_terminal_size().lines
-            self._visible_committed_rows = min(
-                term_height,
-                self._visible_committed_rows + flush_rows,
-            )
+            self._apply_commit_geometry(geometry)
             if fixed_bottom_rows and self._prev_frame_lines is not None:
                 self._prev_frame_lines = self._prev_frame_lines[-fixed_bottom_rows:]
                 self._prev_frame_start_row = self._last_bottom_start_row

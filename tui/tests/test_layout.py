@@ -399,7 +399,8 @@ def test_physical_viewport_anchor_bottom_pins_bottom_to_terminal_bottom():
     assert physical.bottom.rendered.visual_rows == 3
 
 
-def test_physical_viewport_anchor_bottom_unfilled_terminal_aligns_frame_start():
+@pytest.mark.parametrize("frame_start_row", [1, 4])
+def test_physical_viewport_anchor_bottom_unfilled_terminal_aligns_frame_start(frame_start_row):
     bottom = project_bottom_viewport(
         (
             ("input", _rendered("input 0", "input 1")),
@@ -426,9 +427,13 @@ def test_physical_viewport_anchor_bottom_unfilled_terminal_aligns_frame_start():
         logical,
         terminal_width=20,
         terminal_height=10,
-        frame_start_row=1,
+        frame_start_row=frame_start_row,
         anchor_bottom=True,
     )
-    assert physical.frame_start_row == 6
-    assert physical.bottom.region.start_row == 8
-    assert physical.cursor_row == 9
+    assert physical.frame_start_row == frame_start_row
+    assert physical.bottom.region.start_row == frame_start_row + 2
+    assert physical.cursor_row == frame_start_row + 3
+    assert physical == project_physical_viewport(
+        logical, terminal_width=20, terminal_height=10,
+        frame_start_row=frame_start_row, anchor_bottom=False,
+    )

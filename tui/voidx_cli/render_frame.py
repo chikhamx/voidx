@@ -553,7 +553,7 @@ class _FrameRendererMixin:
                     scroll_frame_rows = provisional.frame_rows
                     if bottom_dock_anchored:
                         fixed_bottom_rows = self._last_bottom_rows
-                        scroll_bottom = provisional.bottom.region.start_row - 1
+                        scroll_bottom = term_height - fixed_bottom_rows
                 else:
                     scroll_frame_rows = frame_rows
                     if bottom_dock_anchored:
@@ -715,7 +715,7 @@ class _FrameRendererMixin:
                     scroll_frame_rows = provisional.frame_rows
                     if bottom_dock_anchored:
                         fixed_bottom_rows = self._last_bottom_rows
-                        scroll_bottom = provisional.bottom.region.start_row - 1
+                        scroll_bottom = term_height - fixed_bottom_rows
                 else:
                     scroll_frame_rows = frame_rows
                     if bottom_dock_anchored:

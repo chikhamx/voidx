@@ -1762,7 +1762,7 @@ def test_worker_flush_committed_submits_one_atomic_commit(tmp_path, monkeypatch)
 
     assert len(writer.commits) == 1
     commit = writer.commits[0]
-    assert commit["clear_start_row"] == 6
+    assert commit["clear_start_row"] == 1
     assert "committed output" in commit["ansi"]
     assert not commit["ansi"].endswith("\n")
     assert commit["lines_written"] == expected_count
@@ -4426,3 +4426,142 @@ async def test_worker_commit_snapshot_invalidation_preserves_baseline_state(
 
     await _resolve_deferred_commit(pending_commit)
     tui._running = False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["sync", "worker", "wait"])
+@pytest.mark.parametrize("outcome", ["success", "failure", "cancel", "stale"])
+async def test_commit_geometry_applies_only_after_success(
+    tmp_path, monkeypatch, mode, outcome
+):
+    from voidx_cli import commit_output
+
+    if mode != "wait" and outcome in {"cancel", "stale"}:
+        pytest.skip("only waiting workers have deferred confirmation")
+    monkeypatch.setattr(shutil, "get_terminal_size", lambda fallback=None: os.terminal_size((80, 16)))
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=16, _environ={})
+    tui._visible_committed_rows = 3
+    tui._has_rendered_frame = True
+    tui._last_frame_start_row = 7
+    tui._last_frame_rows = 10
+    tui._last_bottom_rows = 3
+    tui._last_bottom_start_row = 14
+    tui._prev_frame_lines = ["old"] * 7 + ["bottom"] * 3
+    monkeypatch.setattr(tui, "_bottom_dock_is_anchored", lambda height: True)
+    planned = []
+
+    def plan(ansi, **kwargs):
+        planned.append(kwargs)
+        return commit_output.CommitOutput("payload", 14, 12 if len(planned) == 1 else 2, 2)
+
+    monkeypatch.setattr(commit_output, "plan_commit", plan)
+
+    class SyncWriter:
+        worker_mode = False
+
+        def write(self, value):
+            return len(value)
+
+        def flush(self):
+            if outcome == "failure":
+                raise RuntimeError("flush failed")
+
+    writer = SyncWriter() if mode == "sync" else (_DeferredCommitWriter() if mode == "wait" else _WorkerCommitWriter())
+    if mode == "worker" and outcome == "failure":
+        writer.commit_error = RuntimeError("submit failed")
+    tui._terminal_writer = writer
+    dock.begin_capture()
+    dock.append_message("new committed content")
+    before = (3, 7, 10)
+
+    def geometry():
+        return (tui._visible_committed_rows, tui._last_frame_start_row, tui._last_frame_rows)
+
+    if outcome == "failure" and mode != "wait":
+        with pytest.raises(RuntimeError):
+            tui._flush_committed(force=True)
+        assert geometry() == before
+        return
+    token = tui._flush_committed(force=True)
+    if mode == "wait":
+        task = tui._render_state.pending_commit_tasks[id(token)]
+        pending_geometry = geometry()
+        # Resolve before assertions so a RED never leaves a background task behind.
+        if outcome == "stale":
+            tui._restore_epoch += 1
+        if outcome == "cancel":
+            token.future.cancel()
+        elif outcome == "failure":
+            token.future.set_exception(RuntimeError("write failed"))
+        else:
+            token.future.set_result(None)
+        await task
+        assert pending_geometry == before
+    if outcome != "success":
+        assert geometry() == before
+        return
+    assert planned[0]["start_row"] == 4
+    assert planned[0]["previous_frame_start_row"] == 7
+    assert planned[0]["previous_frame_rows"] == 10
+    assert geometry() == (min(13, max(0, 3 + 12 - 2)), 14, 3)
+    assert tui._visible_committed_rows == 14 - 1
+    if mode == "sync":
+        assert tui._prev_frame_lines == ["bottom"] * 3
+        assert tui._prev_frame_start_row == 14
+    dock.append_message("second commit")
+    next_token = tui._flush_committed(force=True)
+    if mode == "wait" and next_token is not None:
+        next_token.future.set_result(None)
+        await tui._render_state.pending_commit_tasks[id(next_token)]
+    assert planned[1]["start_row"] == 14
+
+
+@pytest.mark.parametrize("protected,visible", [(3, 3), (3, 13), (0, 16)])
+def test_commit_geometry_real_planner_boundaries(tmp_path, monkeypatch, protected, visible):
+    from voidx_cli import commit_output
+
+    monkeypatch.setattr(shutil, "get_terminal_size", lambda fallback=None: os.terminal_size((80, 16)))
+    tui, writer = _worker_commit_tui(tmp_path)
+    tui._visible_committed_rows = visible
+    tui._has_rendered_frame = True
+    tui._last_frame_start_row = 7
+    tui._last_frame_rows = 10
+    tui._last_bottom_rows = protected
+    monkeypatch.setattr(tui, "_bottom_dock_is_anchored", lambda height: bool(protected))
+    real_plan = commit_output.plan_commit
+    outputs = []
+
+    def record(ansi, **kwargs):
+        output = real_plan(ansi, **kwargs)
+        outputs.append((kwargs, output))
+        return output
+
+    monkeypatch.setattr(commit_output, "plan_commit", record)
+    dock.begin_capture()
+    dock.append_message("first")
+    tui._flush_committed(force=True)
+    kwargs, output = outputs[-1]
+    assert kwargs["start_row"] == visible + 1
+    assert kwargs["previous_frame_start_row"] == 7
+    if not protected:
+        assert output is None
+        assert not writer.commits
+        assert (tui._visible_committed_rows, tui._last_frame_start_row, tui._last_frame_rows) == (visible, 7, 10)
+        assert tui._committed_line_count == 0
+        return
+    assert output is not None
+    assert tui._visible_committed_rows == min(13, max(0, visible + output.lines_written - output.scrolled_rows))
+    assert tui._visible_committed_rows == output.next_row - 1
+    assert tui._last_frame_start_row == output.next_row
+    assert tui._last_frame_rows == 17 - output.next_row
+    if visible == 3:
+        assert tui._last_frame_start_row < 7
+    confirmed = tui._visible_committed_rows
+    dock.append_message("second")
+    tui._flush_committed(force=True)
+    kwargs, output = outputs[-1]
+    assert kwargs["start_row"] == confirmed + 1
+    assert tui._visible_committed_rows == output.next_row - 1
+    assert tui._visible_committed_rows == min(13, max(0, confirmed + output.lines_written - output.scrolled_rows))

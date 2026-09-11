@@ -1059,6 +1059,7 @@ async def test_terminal_model_commit_then_frame_growth_keeps_live_overlay_out_of
         tui._render_frame()
         await drain()
 
+        assert not tui._bottom_dock_is_anchored(12)
         before_growth = len(stream.text)
         tui._input_lines = [f"UNCOMMITTED-INPUT-{index}" for index in range(input_count)]
         tui._cursor_row, tui._cursor_col = input_count - 1, 5
@@ -1076,12 +1077,8 @@ async def test_terminal_model_commit_then_frame_growth_keeps_live_overlay_out_of
         assert "UNCOMMITTED-INPUT" in visible
 
         growth_output = stream.text[before_growth:]
-        if input_count == 6:
-            assert "\x1b[1;3r" in growth_output
-            assert "\x1b[r" in growth_output
-        else:
-            assert not re.search(r"\x1b\[[0-9;]*r", growth_output)
-        assert "\x1b[12;1H\n" not in growth_output
+        assert not re.search(r"\x1b\[[0-9;]*r", growth_output)
+        assert "\x1b[12;1H\n" in growth_output
 
 
 @pytest.mark.asyncio
@@ -1281,6 +1278,50 @@ def test_commit_owned_envelope_maps_through_scroll():
     assert output.scrolled_rows == 1
     assert screen.rows == ("UNOWNED", "", "A", "B", "C", "BOTTOM")
 
+
+
+@pytest.mark.parametrize("previous_start, owned_rows", [(7, 10), (7, 99), (7, 0), (-2, 10), (18, 4)])
+def test_commit_separate_previous_start_preserves_unowned_rows(previous_start, owned_rows):
+    from voidx_cli.commit_output import plan_commit
+
+    screen = _VTScreen(width=30, height=16)
+    before = tuple(f"SENTINEL-{row}" for row in range(1, 17))
+    screen.feed("".join(f"\x1b[{row};1H{text}" for row, text in enumerate(before, 1)))
+    output = plan_commit(
+        "COMMITTED", start_row=4, height=16, fixed_bottom_rows=3,
+        previous_frame_start_row=previous_start, previous_frame_rows=owned_rows,
+    )
+    assert output is not None
+    screen.feed(output.ansi)
+    screen.finish()
+    expected = list(before)
+    expected[3] = "COMMITTED"
+    for row in range(max(5, previous_start), min(13, previous_start + owned_rows - 1) + 1):
+        expected[row - 1] = ""
+    assert screen.rows == tuple(expected)
+    assert screen.rows[:3] == before[:3]
+    assert screen.rows[13:] == before[13:]
+    assert screen.history == ()
+    assert (output.next_row, output.scrolled_rows) == (5, 0)
+
+
+@pytest.mark.parametrize("previous_start, owned_rows", [(2, 5), (5, 2), (-3, 5), (7, 3), (2, 0)])
+def test_commit_separate_previous_start_maps_only_scroll_region(previous_start, owned_rows):
+    from voidx_cli.commit_output import plan_commit
+
+    screen = _VTScreen(width=20, height=6)
+    screen.feed("H1\r\nH2\r\nH3\r\nOLD\r\nTAIL\r\nBOTTOM")
+    output = plan_commit(
+        "A\nB\nC", start_row=4, height=6, fixed_bottom_rows=1,
+        previous_frame_start_row=previous_start, previous_frame_rows=owned_rows,
+    )
+    assert output is not None
+    screen.feed(output.ansi)
+    screen.finish()
+    assert screen.history == ("H1",)
+    assert screen.rows == ("H2", "H3", "A", "B", "C", "BOTTOM")
+    assert (output.lines_written, output.scrolled_rows, output.next_row) == (3, 1, 6)
+    assert min(5, max(0, 3 + output.lines_written - output.scrolled_rows)) == output.next_row - 1
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("worker", [False, True], ids=["sync", "worker"])
@@ -1541,3 +1582,120 @@ async def test_slash_panel_identity_uses_applied_state_across_invalidation(
         await drain()
         assert not tui._render_state.applied_temporary_panel
         _assert_applied_screen(tui, screen)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("worker", [False, True], ids=["sync", "worker"])
+async def test_terminal_model_anchored_16_row_shrink_keeps_history_origin(
+    tmp_path, monkeypatch, worker,
+):
+    async with _terminal_tui(tmp_path, monkeypatch, worker=worker, height=16) as (
+        tui, screen, stream, drain,
+    ):
+        for index in range(3):
+            dock.tree.new_node(parent=dock.tree.root, node_type="message",
+                               header=f"HISTORY-{index}", status="done")
+        tui._render_frame()
+        await drain()
+        tui._flush_committed(force=True)
+        await drain()
+        assert tui._visible_committed_rows == 3
+        history = screen.rows[:3]
+        tui._input_lines = [f"input-{index}" for index in range(10)]
+        tui._cursor_row = 9
+        tui._cursor_col = 0
+        tui._render_frame()
+        await drain()
+        original = _assert_applied_screen(tui, screen)
+        assert (original.frame_start_row, original.frame_rows) == (4, 13)
+        assert tui._bottom_dock_is_anchored
+
+        tui._input_lines = [f"input-{index}" for index in range(3)]
+        tui._cursor_row = 2
+        tui._render_frame()
+        await drain()
+        current = _assert_applied_screen(tui, screen)
+        assert (current.frame_start_row, current.frame_rows) == (4, 6)
+        assert screen.rows[:3] == history
+        assert screen.rows[9:] == ("",) * 7
+        assert current.cursor_row < original.cursor_row
+        assert not tui._bottom_dock_is_anchored(16)
+        assert screen.history == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("worker", [False, True], ids=["sync", "worker"])
+async def test_terminal_model_read_read_bash_preserves_source_rows_in_scrollback(
+    tmp_path, monkeypatch, worker,
+):
+    from voidx_cli import commit_output
+
+    async with _terminal_tui(tmp_path, monkeypatch, worker=worker, height=16) as (
+        tui, screen, stream, drain,
+    ):
+        records = []
+        original_plan = commit_output.plan_commit
+
+        def record_plan(ansi, **kwargs):
+            output = original_plan(ansi, **kwargs)
+            if output is not None:
+                records.append((ansi, kwargs, output, tui._visible_committed_rows))
+            return output
+
+        monkeypatch.setattr(commit_output, "plan_commit", record_plan)
+        for index in range(20):
+            dock.tree.new_node(parent=dock.tree.root, node_type="message",
+                               header=f"PREHISTORY-{index}", status="done")
+        tui._render_frame()
+        await drain()
+        tui._flush_committed(force=True)
+        await drain()
+        tui._render_frame()
+        await drain()
+        expected = []
+        first = None
+        for index, (name, args) in enumerate((
+            ("read", {"file_path": "FIRST-READ.py"}),
+            ("read", {"file_path": "SECOND-READ.py"}),
+            ("bash", {"command": "echo FINAL-BASH"}),
+        )):
+            tool = dock.start_tool(name.title(), str(args), tool_name=name,
+                                   tool_call_id=f"sequence-{index}", raw_args=args,
+                                   display_mode="show")
+            dock.finish_tool_node(tool, name.title(), 0.1, True, f"RESULT-{index}")
+            dock.tree.new_node(
+                parent=dock.tree.root, node_type="message", status="done",
+                header=f"RESULT-BODY-{index}", body_lines=["", f"RESULT-TAIL-{index}"],
+            )
+            count = len(records)
+            before_history = len(screen.history)
+            tui._flush_committed(force=True)
+            await drain()
+            assert len(records) == count + 1
+            ansi, kwargs, output, visible = records[-1]
+            assert kwargs["start_row"] == visible + 1
+            start = before_history + visible
+            if first is None:
+                first = start
+            assert start == first + len(expected)
+            expected.extend(Text.from_ansi(line).plain.rstrip() for line in ansi.split("\n"))
+            bottom = 16 - kwargs["fixed_bottom_rows"]
+            assert tui._visible_committed_rows == min(
+                bottom, max(0, visible + output.lines_written - output.scrolled_rows),
+            ) == output.next_row - 1
+            tui._render_frame()
+            await drain()
+
+        for index in range(24):
+            dock.tree.new_node(parent=dock.tree.root, node_type="message",
+                               header=f"AFTER-{index}", status="done")
+        tui._flush_committed(force=True)
+        await drain()
+        tui._render_frame()
+        await drain()
+        assert screen.history
+        assert any("FIRST-READ.py" in row for row in screen.history)
+        assert any("FINAL-BASH" in row for row in screen.history)
+        assert any("RESULT-" in row for row in expected)
+        assert "" in expected
+        assert (screen.history + screen.rows)[first:first + len(expected)] == tuple(expected)
