@@ -61,4 +61,5 @@ def _available_idle_tool_ids() -> set[str]:
         "document",
         "clarify",
         "loop",
+        "loop_init",
     }

@@ -23,8 +23,9 @@ def test_goal_init_schema_contains_only_intake_fields() -> None:
     definition = GoalProtocol(phase="intake").tool_definitions()[0]["function"]
     parameters = definition["parameters"]
 
-    assert parameters["required"] == ["objective", "acceptance_condition"]
+    assert parameters["required"] == ["goal", "acceptance_condition"]
     assert set(parameters["properties"]) == {
+        "goal",
         "objective",
         "acceptance_condition",
         "achievement_method",

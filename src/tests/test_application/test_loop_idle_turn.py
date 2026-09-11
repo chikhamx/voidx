@@ -71,6 +71,7 @@ async def test_idle_turn_binds_readonly_tools_plus_loop_and_clarify() -> None:
 
     policy = runtime.requests[0].context.tool_policy
     assert policy.allows("loop")
+    assert policy.allows("loop_init")
     assert policy.allows("clarify")
     assert policy.allows("read")
     assert not policy.allows("bash")

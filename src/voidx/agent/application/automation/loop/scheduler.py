@@ -226,6 +226,8 @@ def _loop_resolved_profile(workspace: str, spec: LoopSpec) -> ResolvedAgentProfi
 def _available_loop_tool_ids() -> set[str]:
     return {
         "loop",
+        "loop_start",
+        "loop_commit",
         "read",
         "find",
         "search",

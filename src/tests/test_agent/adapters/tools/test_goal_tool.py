@@ -83,9 +83,9 @@ async def test_goal_phase_tool_schemas_are_disjoint_and_typed() -> None:
     checkpoint_schema = GoalCheckpointTool().parameters_schema()
     decision_schema = GoalDecisionTool().parameters_schema()
 
-    assert init_schema["required"] == ["objective", "acceptance_condition"]
+    assert init_schema["required"] == ["goal", "acceptance_condition"]
     assert set(init_schema["properties"]) == {
-        "objective", "acceptance_condition", "achievement_method", "max_attempts",
+        "goal", "objective", "acceptance_condition", "achievement_method", "max_attempts",
     }
     assert set(checkpoint_schema["properties"]) == {
         "summary", "evidence", "changed_files", "verification", "next_hint", "progress",
@@ -316,3 +316,28 @@ def test_legacy_goal_tool_is_not_exported() -> None:
 
     assert not hasattr(goal_tools, "GoalTool")
     assert "GoalTool" not in getattr(goal_tools, "__all__", ())
+
+
+@pytest.mark.asyncio
+async def test_goal_init_accepts_goal_field_and_returns_state_patch() -> None:
+    store = RecordingGoalStore()
+    controller = IntakeController()
+    runtime = _runtime(store, phase="intake", intake=controller)
+
+    # 1. Calling with "goal" works and yields state_patch
+    result = await GoalInitTool().execute(
+        {
+            "goal": "ship unified goal feature",
+            "acceptance_condition": "tests pass",
+        },
+        _context(runtime, session_id="main-session"),
+    )
+
+    assert result.metadata["goal_init_submitted"] is True
+    assert "state_patch" in result.metadata
+    assert result.metadata["state_patch"]["goal"]["desc"] == "ship unified goal feature"
+    assert controller.final_spec().objective == "ship unified goal feature"
+
+    # 2. Schema contains "goal" in properties
+    schema = GoalInitTool().parameters_schema()
+    assert "goal" in schema["properties"]

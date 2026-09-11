@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from voidx.agent.domain.task.state import GoalSpec as TaskGoalSpec, ToolStatePatch
 
 from voidx.agent.domain.automation.goal import GoalSpec as AutonomousGoalSpec
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext
@@ -111,14 +113,32 @@ def _emit_goal_spec_decision(
 
 
 class GoalInitInput(BaseModel):
-    objective: str = Field(description="Objective sentence for the autonomous Goal.")
+    goal: str = Field(default="", description="Objective sentence or goal for the autonomous Goal.")
+    objective: str = Field(default="", description="Objective sentence for the autonomous Goal.")
     acceptance_condition: str = Field(description="Verifiable condition that defines completion.")
     achievement_method: str = Field(default="", description="Optional execution guidance.")
     max_attempts: int = Field(default=20, ge=1, le=200, description="Attempt budget.")
 
-    @field_validator("objective", "acceptance_condition", "achievement_method")
+    @model_validator(mode="before")
+    @classmethod
+    def sync_goal_and_objective(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            text = str(data.get("goal") or data.get("objective") or "").strip()
+            if text:
+                data["goal"] = text
+                data["objective"] = text
+        return data
+
+    @field_validator("goal", "objective", "acceptance_condition", "achievement_method")
     @classmethod
     def normalize_text(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("goal")
+    @classmethod
+    def require_goal(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("goal must not be empty")
         return value.strip()
 
 
@@ -240,7 +260,7 @@ class GoalInitTool:
 
     def parameters_schema(self) -> dict:
         schema = model_to_json_schema(GoalInitInput)
-        schema["required"] = ["objective", "acceptance_condition"]
+        schema["required"] = ["goal", "acceptance_condition"]
         return schema
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
@@ -324,6 +344,9 @@ class GoalInitTool:
                 "goal_init_decision": "auto_approved" if approval == "auto_approved" else "approved",
                 "goal_spec": accepted.model_dump(mode="json"),
                 "protocol_id": submitted.protocol_id,
+                "state_patch": ToolStatePatch(
+                    goal=TaskGoalSpec(desc=inp.goal)
+                ).model_dump(mode="json", exclude_unset=True),
             },
         )
 

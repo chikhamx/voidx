@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext
 from voidx.agent.domain.automation.loop import LoopSpec
@@ -38,7 +38,12 @@ def _validate_positive_int(field_name: str, value: Any) -> int | None:
 
 
 class LoopInitInput(BaseModel):
+    goal: str = Field(
+        default="",
+        description="The loop goal/task instructions describing what the autonomous loop should do.",
+    )
     prompt: str = Field(
+        default="",
         description="The loop prompt/goal describing what the autonomous loop should do.",
     )
     interval_seconds: int | None = Field(
@@ -47,13 +52,23 @@ class LoopInitInput(BaseModel):
         description="Fixed interval in whole seconds (integer only, >= 1). Omit for dynamic mode.",
     )
 
-    @field_validator("prompt")
+    @model_validator(mode="before")
     @classmethod
-    def require_prompt(cls, value: str) -> str:
-        prompt = value.strip()
-        if not prompt:
-            raise ValueError("prompt must not be empty")
-        return prompt
+    def sync_goal_and_prompt(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            text = str(data.get("goal") or data.get("prompt") or "").strip()
+            if text:
+                data["goal"] = text
+                data["prompt"] = text
+        return data
+
+    @field_validator("goal", "prompt")
+    @classmethod
+    def require_goal(cls, value: str) -> str:
+        val = value.strip()
+        if not val:
+            raise ValueError("goal must not be empty")
+        return val
 
     @field_validator("interval_seconds")
     @classmethod
@@ -208,14 +223,16 @@ class LoopInitTool:
     )
 
     def parameters_schema(self) -> dict:
-        return model_to_json_schema(LoopInitInput)
+        schema = model_to_json_schema(LoopInitInput)
+        schema["required"] = ["goal"]
+        return schema
 
     async def execute(self, args: dict, ctx: ToolContext) -> ToolResult:
         try:
             inp = LoopInitInput.model_validate(args)
         except Exception as exc:
             return ToolResult(output=f"Invalid arguments: {exc}", metadata={"error": True})
-        return await _submit_init(inp.prompt, inp.interval_seconds, ctx)
+        return await _submit_init(inp.goal, inp.interval_seconds, ctx)
 
 
 class LoopStartTool:
@@ -406,6 +423,9 @@ async def _submit_init(prompt: str, interval_seconds: int | None, ctx: ToolConte
             "loop_init_submitted": True,
             "loop_init_decision": "auto_approved" if auto else "approved",
             "loop_spec": submitted.model_dump(mode="json"),
+            "state_patch": ToolStatePatch(
+                goal=GoalSpec(desc=prompt.strip())
+            ).model_dump(mode="json", exclude_unset=True),
         },
     )
 

@@ -85,6 +85,8 @@ async def test_loop_runtime_scheduler_binds_loop_only_tool_policy(tmp_path) -> N
     policy = runtime.requests[0].context.tool_policy
     assert policy is not None
     assert policy.allows("loop") is True
+    assert policy.allows("loop_start") is True
+    assert policy.allows("loop_commit") is True
     assert policy.allows("read") is True
     assert policy.allows("schedule_wakeup") is False
     assert policy.allows("clarify") is False

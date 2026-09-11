@@ -213,3 +213,32 @@ async def test_loop_start_state_patch_goal_syncs_task_state() -> None:
     patch = result.metadata.get("state_patch")
     assert patch is not None
     assert patch["goal"]["desc"] == "ship retry"
+
+
+@pytest.mark.asyncio
+async def test_loop_init_accepts_goal_field_and_returns_state_patch() -> None:
+    from voidx.agent.adapters.tools.automation.loop import LoopInitTool
+    from voidx.agent.application.automation.loop.intake_controller import LoopIntakeController
+
+    class FakeInteraction:
+        async def __call__(self, interaction):
+            from voidx.tooling.domain.interaction import UserResponse
+            return UserResponse(value="approved")
+
+    tool = LoopInitTool()
+    controller = LoopIntakeController()
+    ctx = ToolContext(
+        workspace="/tmp/workspace",
+        runtime=AgentToolRuntime(loop_intake=controller, interaction=FakeInteraction(), loop_phase="idle"),
+    )
+
+    result = await tool.execute({"goal": "monitor unified loop", "interval_seconds": 60}, ctx)
+    assert result.metadata["loop_init_submitted"] is True
+    assert "state_patch" in result.metadata
+    assert result.metadata["state_patch"]["goal"]["desc"] == "monitor unified loop"
+    spec = controller.final_spec()
+    assert spec is not None
+    assert spec.prompt == "monitor unified loop"
+
+    schema = tool.parameters_schema()
+    assert "goal" in schema["properties"]
