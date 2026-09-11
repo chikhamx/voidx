@@ -15,8 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from voidx.agent.application.prompts import BaseSystemPrompt, WorkflowRuntimePrompt
 from voidx.agent.domain.prompt_contracts import ContextSection
 from voidx.agent.domain.task.state import GoalSpec, TaskState
-from voidx.agent.domain.subagent import AgentRun
-from voidx.agent.application.subagent_status import render_child_run_lines
+from voidx.agent.domain.subagent import AgentRun, TERMINAL_STATUSES
 from voidx.agent.domain.task.todo import TodoRunState
 from voidx.agent.domain.user_profile import UserProfile
 from voidx.agent.domain.task.intent import InteractionMode
@@ -120,8 +119,18 @@ class RuntimeContext(BaseModel):
             return self.system_content
         return _render_sections(self.sections)
 
+    @property
+    def snapshot_data(self) -> list[dict[str, str]]:
+        return [
+            {"name": section.name, "content": section.content.strip()}
+            for section in self.task_sections if section.content.strip()
+        ]
+
     def render_task_context(self) -> str:
-        return _render_sections(self.task_sections)
+        data = self.snapshot_data
+        if not data:
+            return ""
+        return _render_sections([ContextSection(**section) for section in data])
 
     def apply_to_messages(self, messages: list[BaseMessage]) -> None:
         ContextCompiler(self).apply_to_messages(messages)
@@ -133,7 +142,7 @@ class ContextCompiler:
     def __init__(self, context: RuntimeContext) -> None:
         self.context = context
 
-    def compile_messages(self, messages: list[BaseMessage], *, append_task_state: bool = False) -> list[BaseMessage]:
+    def compile_messages(self, messages: list[BaseMessage], *, append_task_state: bool = False, inject_task_state: bool = True) -> list[BaseMessage]:
         semantic_messages = raw_semantic_messages(messages)
         skill_context_cutoff = _tool_skill_context_cutoff(semantic_messages)
         semantic_messages = _strip_historical_tool_context(
@@ -149,7 +158,7 @@ class ContextCompiler:
             if cached_system is not None and cached_system.content == system_content
             else SystemMessage(content=system_content)
         )
-        task_context = self.context.render_task_context()
+        task_context = self.context.render_task_context() if inject_task_state else ""
         if task_context:
             if append_task_state:
                 from voidx.agent.application.task_state_history import task_state_snapshot
@@ -344,10 +353,25 @@ class RuntimeContextBuilder:
         if todo_lines:
             lines.extend(todo_lines)
         if self.child_runs:
-            sampled_at = self.child_runs_sampled_at
-            if sampled_at is None:
-                sampled_at = datetime.now().timestamp()
-            lines.extend(render_child_run_lines(self.child_runs, sampled_at=sampled_at))
+            running = sorted(
+                (run for run in self.child_runs if run.status not in TERMINAL_STATUSES),
+                key=lambda run: (run.created_at, run.run_id),
+            )
+            terminal = sorted(
+                (run for run in self.child_runs if run.status in TERMINAL_STATUSES),
+                key=lambda run: (run.created_at, run.run_id),
+                reverse=True,
+            )[:3]
+            visible = [*running, *terminal]
+            running_count, terminal_count = len(running), len(terminal)
+            lines.append(f"- Child agents: {running_count} running · {terminal_count} recent terminal")
+            for run in visible:
+                lines.append(f"  - {run.run_id} [{run.status}] {run.description}")
+                blockers = (run.result or {}).get("blockers")
+                if blockers:
+                    lines.append(f"    Blockers: {json.dumps(blockers, ensure_ascii=False)}")
+                if run.error:
+                    lines.append(f"    Error: {run.error}")
         if self.interaction_mode == InteractionMode.PLAN:
             lines.append("- Constraint: plan mode blocks write/insert/replace/edit and write-capable bash.")
         return "\n".join(lines)
@@ -376,24 +400,13 @@ def _render_task_state_todo_lines(todo_state_value: object | None) -> list[str]:
         return []
 
     lines = [f"- Todo: {todo_state.summary}"]
-    visible_limit = 3
-    for item in visible[:visible_limit]:
-        content = _truncate_todo_content(item.content)
+    for item in visible:
+        content = item.content
         item_id = f" {item.id}" if item.id else ""
         alias = f" ({item.status.value}: {content})" if item.id else ""
         lines.append(f"  - {item.status.value}{item_id}: {content}{alias}")
 
-    omitted = len(visible) - visible_limit
-    if omitted > 0:
-        lines.append(f"  - … {omitted} more active/pending todos")
     return lines
-
-
-def _truncate_todo_content(content: str, limit: int = 80) -> str:
-    if len(content) <= limit:
-        return content
-    return content[:limit] + "…"
-
 
 
 def _render_sections(sections: list[ContextSection]) -> str:

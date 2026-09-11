@@ -12,7 +12,7 @@ from voidx.agent.application.agent_profile_loader import (
 KNOWN_TOOLS = frozenset({
     "read", "search", "find", "write", "bash", "clarify", "checkpoint",
     "todo", "workflow", "skill", "mcp", "agent", "ls", "lsp", "document",
-    "websearch", "webfetch", "git", "compact",
+    "websearch", "webfetch", "compact",
 })
 
 

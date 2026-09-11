@@ -167,7 +167,7 @@ class TestDefaultDisplayRules:
     def test_summary_tools(self):
         summary_tools = [
             "search", "find", "websearch", "lsp",
-            "bash", "powershell", "read", "webfetch", "manage", "git",
+            "bash", "powershell", "read", "webfetch", "manage",
         ]
         for name in summary_tools:
             assert DEFAULT_DISPLAY_RULES[name].mode == ToolDisplayMode.SUMMARY, f"{name} should be summary"

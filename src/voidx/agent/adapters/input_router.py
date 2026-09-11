@@ -63,14 +63,18 @@ class LangGraphAutonomousInputRouter:
             else (getattr(self._execution, "session_id", "") or None)
         )
         workspace = getattr(self._execution, "workspace", "")
+        coding_kwargs = {
+            "user_text": text,
+            "thread_id": thread_id,
+            "session_id": session_id,
+            "context": context,
+            "display_text": display_text,
+            "workspace": workspace,
+        }
+        if not persist_user_input:
+            coding_kwargs["persist_user_input"] = False
         await self._coding_service.run_coding_turn(
-            user_text=text,
-            thread_id=thread_id,
-            session_id=session_id,
-            context=context,
-            display_text=display_text,
-            workspace=workspace,
-            persist_user_input=persist_user_input,
+            **coding_kwargs,
         )
 
     async def route_chat_turn(self, text: str, *, thread_id: str = "", context: Any = None) -> bool:

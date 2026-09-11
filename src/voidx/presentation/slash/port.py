@@ -130,11 +130,6 @@ class ModeSlashPort(Protocol):
     def set_interaction_mode(self, mode: object) -> None: ...
 
 
-class TaskStateSlashPort(Protocol):
-    def strip_enabled(self) -> bool: ...
-    def set_strip(self, value: bool) -> None: ...
-
-
 class SessionSlashPort(Protocol):
     ui: object
     ui_state: UiState

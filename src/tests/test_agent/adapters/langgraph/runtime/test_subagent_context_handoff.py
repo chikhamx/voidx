@@ -158,6 +158,7 @@ async def test_child_receives_only_own_task_not_parent_transcript(tmp_path, monk
 
     messages = await _run_and_capture(tmp_path, monkeypatch, context_handoff=handoff)
 
-    human_messages = [m for m in messages if isinstance(m, HumanMessage)]
+    human_messages = [m for m in messages if isinstance(m, HumanMessage)
+                      and not m.additional_kwargs.get("_voidx_task_state_snapshot")]
     assert len(human_messages) == 1
     assert "Probe the handoff context" in human_messages[0].content

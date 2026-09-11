@@ -47,7 +47,7 @@ def _coding_profile() -> RuntimeProfile:
 
 
 def test_coding_main_exposes_turn_init_but_hides_goal_loop_and_execution_only() -> None:
-    registry = _registry("read", "bash", "agent", "goal", "loop", "git", "lsp_format", "compact")
+    registry = _registry("read", "bash", "agent", "goal", "loop", "lsp_format", "compact")
 
     surface = resolve_tool_surface(
         registry,
@@ -58,9 +58,8 @@ def test_coding_main_exposes_turn_init_but_hides_goal_loop_and_execution_only() 
     assert "turn_init" in names
     assert "turn" not in names
     assert "read" in names and "bash" in names and "agent" in names
-    for hidden in ("goal", "loop", "git", "lsp_format", "compact"):
+    for hidden in ("goal", "loop", "lsp_format", "compact"):
         assert hidden not in names
-    assert surface.dropped["git"] == "execution_only"
     assert surface.dropped["lsp_format"] == "execution_only"
     assert surface.dropped["compact"] == "execution_only"
 
@@ -138,7 +137,7 @@ def test_goal_profile_exposes_phase_specific_tool_by_phase() -> None:
     profile = RuntimeProfile(profile_id="goal", revision=1, name="Goal", protocol="goal")
     registry = _registry(
         "read", "write", "agent", "goal", "goal_init", "goal_checkpoint", "goal_decision",
-        "loop", "git", "lsp_format",
+        "loop", "lsp_format",
     )
 
     policy = _Deny({"agent"})
@@ -191,7 +190,7 @@ def test_goal_work_matches_coding_tools_except_clarify_and_checkpoint() -> None:
     work_names = _names(work)
     assert "goal_checkpoint" in work_names
     assert "read" in work_names and "write" in work_names
-    assert "git" not in work_names and "lsp_format" not in work_names
+    assert "lsp_format" not in work_names
 
 
 def test_unknown_or_missing_phase_uses_minimal_visibility() -> None:

@@ -52,12 +52,16 @@ class AgentService:
         display_text: str | None = None,
         persist_user_input: bool = True,
     ) -> None:
+        kwargs: dict = {
+            "thread_id": thread_id,
+            "context": context,
+            "display_text": display_text,
+        }
+        if not persist_user_input:
+            kwargs["persist_user_input"] = False
         await self._autonomous_router.run_coding_turn(
             user_text,
-            thread_id=thread_id,
-            context=context,
-            display_text=display_text,
-            persist_user_input=persist_user_input,
+            **kwargs,
         )
 
 

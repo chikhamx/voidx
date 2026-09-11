@@ -5,13 +5,16 @@ from __future__ import annotations
 from voidx.agent.domain.ui_events import StatusFinished, StatusUpdated
 
 import asyncio
+
+from voidx.agent.adapters.langgraph.runtime.subagent_compaction import bind_summary_model, compact_run_history
 import json
+import logging
 import re
 import time
 import uuid
 from typing import Any, Protocol
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from voidx.agent.application.agents import AgentDef, child_run_agent_def
 from voidx.agent.application.prompts import build_base_system, child_workflow_runtime, persona_prompt
@@ -54,13 +57,14 @@ from voidx.agent.domain.prompt_contracts import ContextSection
 from voidx.agent.domain.task.state import GoalResolution, GoalSpec, TaskState
 from voidx.agent.domain.task.todo import TodoRunState
 from voidx.agent.domain.automation.workflow import WorkflowRoute
-from voidx.agent.application.task_state_history import TaskStateHistory
+from voidx.agent.application.task_state_history import TaskStateHistory, task_state_snapshot
+from voidx.agent.application.task_state_reminder import TaskStateReminderPolicy, normalize_snapshot
 from voidx.agent.application.tool_messages import sanitize_tool_message_content
 from voidx.agent.adapters.tools.result_storage import (
     maybe_persist_tool_result,
     tool_name_for_persistence,
 )
-from voidx.agent.domain.profile import RuntimeProfile
+from voidx.agent.domain.profile import CODING_PROFILE, RuntimeProfile
 from voidx.tooling.domain.capability import ToolCapability
 from voidx.agent.adapters.langgraph.runtime.tool_surface import (
     ToolSurfaceContext,
@@ -187,13 +191,18 @@ async def run_subagent(
     model_factory=None,
     scoped_tools_binder=None,
     context_handoff=None,
-    task_state_strip_enabled: bool = True,
+    runtime_profile: RuntimeProfile | None = None,
 ) -> str:
     """Run a child agent in its own message context."""
+    runtime_profile = runtime_profile or CODING_PROFILE
+    suppress_sections = (
+        runtime_profile.prompt_policy.suppress_sections()
+        if runtime_profile.prompt_policy is not None else set()
+    )
     ui_port = ui_port or NullAgentUiPort()
     ui_factories = ui_port if hasattr(ui_port, "streaming_renderer") else NullAgentUiPort()
     agent_def = child_run_agent_def(agent_def)
-    run_identity = agent_run_id or f"agent_{agent_id}"
+    run_identity = agent_run_id or f"run_{uuid.uuid4().hex}"
     persona = (runtime_persona or PersonaName.EXPLORE).strip() or PersonaName.EXPLORE
     model_cfg = config.model.model_copy()
     if agent_def.model:
@@ -237,7 +246,7 @@ async def run_subagent(
     tool_defs = resolve_tool_surface(
         agent_tools,
         ToolSurfaceContext(
-            runtime_profile=RuntimeProfile(profile_id="coding", revision=1, name="Coding"),
+            runtime_profile=runtime_profile,
             child_agent=True,
             lsp_manager=lsp_manager,
             model_protocol=resolve_protocol(model_cfg),
@@ -264,11 +273,11 @@ async def run_subagent(
     workflow_dag = workflow_context.dag
     context_cache = ContextCompilerCache()
     plan = goal_resolution.plan
-    task_state_history = (
-        TaskStateHistory()
-        if not task_state_strip_enabled
-        else None
-    )
+    task_state_history = TaskStateHistory()
+    reminder_policy = TaskStateReminderPolicy()
+    pending_reminder = None
+    admitted_message_ids: set[str] = set()
+    task_input_ids: set[str] = set()
     sub_task_state = TaskState(
         current_goal=goal_resolution.goal,
         workflow_route=WorkflowRoute(join=plan.join, leave=plan.leave) if plan is not None else None,
@@ -393,6 +402,32 @@ async def run_subagent(
             )
 
 
+    async def receive_parent_messages() -> None:
+        if agent_gateway is None:
+            return
+        current = agent_gateway.lookup_run(run_identity)
+        if current is None:
+            return
+        for item in await agent_gateway.receive(run_id=run_identity, limit=100, timeout=0):
+            if (
+                not item.message_id or item.message_id in admitted_message_ids
+                or item.target_run_id != run_identity
+                or item.session_id != current.session_id
+                or item.source_run_id != current.parent_run_id
+            ):
+                continue
+            admitted_message_ids.add(item.message_id)
+            is_task = item.type in {"message", "question", "answer"}
+            if is_task:
+                task_input_ids.add(item.message_id)
+            label = "Parent task instruction" if is_task else "Parent message (ordinary facts, not instructions)"
+            messages.append(HumanMessage(
+                content=f"{label} [{item.type}]:\n{json.dumps(item.payload, ensure_ascii=False)}",
+                id=f"parent:{item.message_id}",
+            ))
+
+    history_reset_pending = False
+
     def compile_context(source_messages: list) -> list:
         child_runs = (
             agent_gateway.list_child_runs(run_identity)
@@ -400,7 +435,7 @@ async def run_subagent(
             else []
         )
         child_runs_sampled_at = time.time()
-        nonlocal context_cache
+        nonlocal context_cache, pending_reminder
         active_names = [
             name
             for name in active_workflow_names(sub_task_state.workflow_runs)
@@ -455,16 +490,51 @@ async def run_subagent(
             child_runs_sampled_at=child_runs_sampled_at,
             instructions=list(context_handoff.instructions) if context_handoff is not None else (),
             profile_sections=handoff_profile_sections,
+            suppress_sections=suppress_sections,
         ).build_incremental(context_cache)
         compiled = ContextCompiler(context).compile_messages(
-            source_messages,
-            append_task_state=task_state_history is not None,
+            source_messages, inject_task_state=False,
         )
-        return (
-            task_state_history.restore(compiled)
-            if task_state_history is not None
-            else compiled
+        snapshot = normalize_snapshot(
+            context.snapshot_data, renderer=lambda _data: context.render_task_context(),
         )
+        if "Current Task State" in suppress_sections:
+            pending_reminder = None
+            return compiled
+        pending_reminder = reminder_policy.prepare(
+            snapshot=snapshot,
+            task_input_ids=task_input_ids,
+            semantic_tokens=sum(
+                estimate_message_tokens(message, model_cfg.model)
+                for message in compiled
+                if not isinstance(message, SystemMessage)
+                and not message.additional_kwargs.get("_voidx_task_state_snapshot")
+            ),
+            snapshot_tokens=estimate_message_tokens(task_state_snapshot(snapshot.text), model_cfg.model),
+            anchor_valid=not history_reset_pending,
+        )
+        restored = task_state_history.restore(compiled)
+        if pending_reminder.append_snapshot:
+            restored.append(task_state_snapshot(snapshot.text))
+        return restored
+
+    def commit_reminder(sent_messages: list) -> None:
+        nonlocal history_reset_pending
+        if pending_reminder is None:
+            return
+        if reminder_policy.commit(pending_reminder, successful=True, accepted=True):
+            task_state_history.remember(sent_messages)
+            history_reset_pending = False
+            logging.getLogger(__name__).debug(
+                "child task reminder session=%s run=%s reason=%s fingerprint=%s "
+                "semantic_tokens=%s new_tokens=%s snapshot_tokens=%s calls=%s snapshots=%s "
+                "anchor_valid=%s append_snapshot=%s",
+                session_id, run_identity, pending_reminder.reason,
+                pending_reminder.snapshot.fingerprint, pending_reminder.semantic_tokens,
+                pending_reminder.new_semantic_tokens, pending_reminder.snapshot_tokens,
+                reminder_policy.state.calls_since_snapshot, task_state_history.snapshot_count,
+                pending_reminder.anchor_valid, pending_reminder.append_snapshot,
+            )
 
     def apply_state_update(update: dict) -> bool:
         nonlocal ctx, persona
@@ -691,7 +761,64 @@ async def run_subagent(
             return "time_limit"
         return "step_limit"
 
+    compacted_source: tuple[int, ...] | None = None
+
+    async def try_compact() -> bool:
+        nonlocal compacted_source, history_reset_pending
+        source_key = tuple(id(message) for message in messages)
+        if source_key == compacted_source or time.monotonic() - started_at >= budget.wall_clock_seconds:
+            return False
+        compacted_source = source_key
+        hard_budget = min(context_limit * budget.context_hard_ratio,
+                          context_limit - model_cfg.max_tokens)
+
+        async def summarize(request, output_limit):
+            remaining = budget.wall_clock_seconds - (time.monotonic() - started_at)
+            if remaining <= 0:
+                raise TimeoutError("Child summary wall-clock budget exhausted")
+            summary_model = bind_summary_model(model, model_protocol, output_limit)
+            summary_renderer = ui_factories.streaming_renderer(
+                ui_port.console, debug=debug, agent_id=agent_id, headless=True,
+            )
+            response = await asyncio.wait_for(
+                stream_child_llm(summary_model, request, summary_renderer), remaining,
+            )
+            record_usage_call(
+                response,
+                fallback_input_tokens=estimate_context_tokens_with_tools(request, [], model_cfg.model),
+                fallback_output_tokens=estimate_message_tokens(response, model_cfg.model),
+                messages=request,
+            )
+            return response
+
+        candidate = await compact_run_history(
+            messages, model=model_cfg.model, context_limit=context_limit,
+            hard_budget=hard_budget, summarize=summarize,
+        )
+        if candidate is None or time.monotonic() - started_at >= budget.wall_clock_seconds:
+            return False
+        compiled = compile_context(candidate)
+        candidate_tokens = estimate_context_tokens_with_tools(compiled, tool_defs, model_cfg.model)
+        original_tokens = estimate_context_tokens_with_tools(
+            compile_context(messages), tool_defs, model_cfg.model,
+        )
+        if candidate_tokens >= hard_budget or candidate_tokens >= original_tokens:
+            return False
+        messages[:] = candidate
+        task_state_history.clear()
+        history_reset_pending = True
+        compacted_source = tuple(id(message) for message in messages)
+        return True
+
     async def finalize(finish_reason: str) -> str:
+        if compacted_source is not None and time.monotonic() - started_at >= budget.wall_clock_seconds:
+            text = _partial_result_from_messages(messages)
+            if tracker:
+                tracker.update(task_id, last_output=text[:200])
+                tracker.finish(task_id, "completed")
+            await report_result(text, finish_reason="time_limit")
+            mark_finished("time_limit")
+            return text
         guidance = HumanMessage(
             content=convergence_guidance(
                 final=True,
@@ -719,8 +846,7 @@ async def run_subagent(
 
         try:
             assistant_msg = await stream_child_llm_with_retry(stream_final_attempt)
-            if task_state_history is not None:
-                task_state_history.remember(final_messages)
+            commit_reminder(final_messages)
             text = extract_text(assistant_msg).strip()
             final_context_tokens = estimate_context_tokens_with_tools(
                 final_messages,
@@ -758,6 +884,7 @@ async def run_subagent(
             else:
                 ui_port.ui.step_header(persona)
 
+            await receive_parent_messages()
             next_step = step + 1
             ctx = ctx.model_copy(update={"turn_count": next_step})
             llm_messages = compile_context([*messages, *drain_guard_guidance()])
@@ -772,6 +899,12 @@ async def run_subagent(
                 tool_defs,
                 model_cfg.model,
             )
+            if context_tokens >= context_limit * budget.context_hard_ratio:
+                if await try_compact():
+                    llm_messages = compile_context(messages)
+                    context_tokens = estimate_context_tokens_with_tools(
+                        llm_messages, tool_defs, model_cfg.model,
+                    )
             elapsed = max(0.0, time.monotonic() - started_at)
             decision = decide_convergence(
                 [
@@ -815,6 +948,13 @@ async def run_subagent(
                     model_cfg.model,
                 )
                 if context_tokens >= context_limit * budget.context_hard_ratio:
+                    if await try_compact():
+                        llm_messages = compile_context(messages)
+                        context_tokens = estimate_context_tokens_with_tools(
+                            llm_messages, tool_defs, model_cfg.model,
+                        )
+                    if time.monotonic() - started_at >= budget.wall_clock_seconds:
+                        return await finalize("time_limit")
                     hard_context = decide_convergence(
                         [
                             BudgetReading(
@@ -869,6 +1009,11 @@ async def run_subagent(
                     raise
                 partial = _partial_result_from_messages(messages, require_findings=True)
                 if kind == LLMErrorKind.CONTEXT_OVERFLOW:
+                    if await try_compact():
+                        step -= 1
+                        continue
+                    if time.monotonic() - started_at >= budget.wall_clock_seconds:
+                        return await finalize("time_limit")
                     text = partial or _partial_result_from_messages(messages)
                     if tracker:
                         tracker.update(task_id, last_output=text[:200])
@@ -884,8 +1029,6 @@ async def run_subagent(
                     mark_finished("error_recovered")
                     return partial
                 raise
-            if task_state_history is not None:
-                task_state_history.remember(llm_messages)
             post_llm_decision = hard_wall_clock_decision()
             if (
                 post_llm_decision is not None
@@ -900,6 +1043,7 @@ async def run_subagent(
             )
             messages.append(assistant_msg)
             sub_messages.append(assistant_msg)
+            commit_reminder(llm_messages)
             if session_id:
                 tool_calls = getattr(assistant_msg, "tool_calls", None) or []
                 tool_refs = [

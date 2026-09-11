@@ -137,7 +137,7 @@ async def test_review_child_surface_is_read_only(tmp_path, monkeypatch):
     assert "message" in names
     for forbidden in (
         _PARENT_ONLY_IDS
-        | {"write", "replace", "manage", "todo", "skill", "mcp", "bash", "powershell", "git"}
+        | {"write", "replace", "manage", "todo", "skill", "mcp", "bash", "powershell"}
     ):
         assert forbidden not in names, f"{forbidden} must not be visible to review child"
 

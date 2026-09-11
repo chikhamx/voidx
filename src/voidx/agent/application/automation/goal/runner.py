@@ -403,7 +403,6 @@ def _available_goal_tool_ids() -> set[str]:
         "manage",
         "write",
         "replace",
-        "git",
         "find",
         "search",
         "lsp",

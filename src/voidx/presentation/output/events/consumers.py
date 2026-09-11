@@ -816,7 +816,6 @@ def _subagent_tool_action(tool_name: str, label: str, raw_args: dict[str, Any] |
         "edit": "Editing",
         "bash": "Running",
         "powershell": "Running",
-        "git": "Git",
         "search": "Searching",
         "find": "Searching",
         "lsp": "Inspecting",

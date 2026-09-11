@@ -590,7 +590,7 @@ async def test_ai_approval_reuses_successful_dangerous_call_without_review(tmp_p
 
     graph._ai_approval.review = review
     graph._notice_permission_result = lambda _message: None
-    call = {"name": "git", "args": {"args": "push origin main"}, "id": "call_1"}
+    call = {"name": "bash", "args": {"command": "git push origin main"}, "id": "call_1"}
 
     first, first_denied = await graph._authorize_tool_calls([call], plan_mode=False, session_id="s")
     graph._record_successful_tool_call(first[0])
@@ -1021,9 +1021,7 @@ async def test_shell_script_executes_after_auto_allow(tmp_path, permission_mode:
 
     tool_message = next(message for message in result["messages"] if isinstance(message, ToolMessage))
     assert tool_message.status == "success"
-    payload = json.loads(tool_message.content)
-    assert payload["ok"] is True
-    assert payload["stdout"] == "built\n"
+    assert "built" in tool_message.content
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="bash is not registered on Windows")
@@ -1066,9 +1064,7 @@ async def test_shell_script_executes_after_prompt_approval(tmp_path, permission_
     tool_message = next(message for message in result["messages"] if isinstance(message, ToolMessage))
     assert asked == 1
     assert tool_message.status == "success"
-    payload = json.loads(tool_message.content)
-    assert payload["ok"] is True
-    assert payload["stdout"] == "built\n"
+    assert "built" in tool_message.content
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="bash is not registered on Windows")

@@ -431,7 +431,7 @@ class GoalToolView(BoundToolView):
         }
         if self.phase == "work":
             allowed = readonly | {
-                "bash", "powershell", "write", "replace", "manage", "git",
+                "bash", "powershell", "write", "replace", "manage",
                 "agent", "agent_control", "workflow", "todo", "goal_checkpoint",
             }
         elif self.phase == "intake":

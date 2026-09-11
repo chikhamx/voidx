@@ -97,10 +97,18 @@ def _fmt_args_short(tool_name: str, args: dict[str, object]) -> str:
         value = str(args.get("command", ""))
         shortened = value[:77] + "..." if len(value) > 80 else value
         return _escape_rich(shortened)
-    if tool_name == "agent":
+    if tool_name in {"agent", "agent_control"}:
         action = str(args.get("action") or "spawn").strip().lower()
         if action in {"wait", "cancel"}:
-            run_id = str(args.get("target_run_id") or "").strip()
+            value = args.get("run_id") or args.get("target_run_id") or ""
+            if isinstance(value, list):
+                names = [
+                    subagent_display_name(str(item).strip())
+                    for item in value
+                    if str(item).strip()
+                ]
+                return _escape_rich(", ".join(names))
+            run_id = str(value).strip()
             if run_id:
                 return _escape_rich(subagent_display_name(run_id))
             return action.title()

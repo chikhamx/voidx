@@ -5,6 +5,10 @@ from __future__ import annotations
 from copy import deepcopy
 
 import time
+import logging
+
+from voidx.agent.application.task_state_history import task_state_snapshot
+from voidx.agent.application.task_state_reminder import normalize_snapshot
 
 StreamingRenderer = None
 
@@ -111,11 +115,8 @@ class LlmTurn:
     async def call(self, state: AgentState) -> dict:
         host = self.host
         host._last_stop_signal = ""
-        task_state_history = (
-            host.task_state_history
-            if not getattr(host, "task_state_strip_enabled", True)
-            else None
-        )
+        task_state_history = host.task_state_history
+        reminder_policy = host.task_state_reminder_policy
         step = state.get("step_count", 0)
 
         if host.model is None:
@@ -307,9 +308,41 @@ class LlmTurn:
                 new_turn_state,
                 task_state,
                 persona=persona,
-                append_task_state=task_state_history is not None,
+                inject_task_state=False,
             )
-            return task_state_history.restore(rendered) if task_state_history is not None else rendered
+            builder = getattr(host, "_last_context_builder", None)
+            if builder is not None and not builder.build().snapshot_data:
+                reminder_policy.reset()
+            return rendered
+
+        def prepare_reminder(messages, builder):
+            semantic = raw_semantic_messages(messages)
+            if builder is None:
+                return messages, None
+            context = builder.build()
+            if not context.snapshot_data:
+                return messages, None
+            snapshot = normalize_snapshot(
+                context.snapshot_data,
+                renderer=lambda _data: context.render_task_context(),
+            )
+            decision = reminder_policy.prepare(
+                snapshot=snapshot,
+                semantic_tokens=sum(estimate_message_tokens(message, host.config.model.model) for message in semantic),
+                snapshot_tokens=estimate_message_tokens(task_state_snapshot(snapshot.text), host.config.model.model),
+                user_input_ids=(
+                    [f"message:{state['user_message_id']}"]
+                    if state.get("user_message_id") is not None else []
+                ) + [
+                    f"guidance:{message.additional_kwargs['_voidx_guidance_event_id']}"
+                    for message, _, source in guidance_pairs
+                    if source == "user" and message.additional_kwargs.get("_voidx_guidance_event_id")
+                ],
+                anchor_valid=not getattr(host, "_task_state_history_reset_pending", False),
+            )
+            if decision.append_snapshot:
+                messages = [*messages, task_state_snapshot(snapshot.text)]
+            return task_state_history.restore(messages), decision
 
         def refresh_child_runs() -> None:
             builder = getattr(host, "_last_context_builder", None)
@@ -355,6 +388,8 @@ class LlmTurn:
         async def apply_compaction_result(result: CompactionResult) -> tuple[list[BaseMessage], list[HumanMessage], bool, int]:
             nonlocal compaction_happened, state_messages, runtime_task_state, persona
             nonlocal request_pressure_hint, rollover_continuation
+            if not getattr(host, "_task_state_history_reset_pending", False):
+                host._mark_task_state_compaction_applied()
             compaction_happened = True
             request_pressure_hint = None
             state_messages = [
@@ -503,7 +538,9 @@ class LlmTurn:
                     turn_state,
                     runtime_task_state,
                 )
-                request_llm_messages = request_messages()
+                request_llm_messages, reminder_decision = prepare_reminder(
+                    request_messages(), getattr(host, "_last_context_builder", None),
+                )
                 loop.context_tokens = estimate_llm_context_tokens(request_llm_messages)
                 await save_context_frame(
                     request_llm_messages,
@@ -554,15 +591,14 @@ class LlmTurn:
                         )
                     rebuilt = rerender_task_context(
                         builder, rebuilt, turn_state, runtime_task_state, persona=persona,
-                        append_task_state=task_state_history is not None,
+                        inject_task_state=False,
                     )
-                    if task_state_history is not None:
-                        rebuilt = task_state_history.restore(rebuilt)
                     if final_response_prompt:
                         rebuilt.append(HumanMessage(
                             content=final_response_prompt,
                             additional_kwargs={GUIDANCE_MARKER: True},
                         ))
+                    rebuilt, _ = prepare_reminder(rebuilt, builder)
                     return prepare_main_request(
                         rebuilt, active_tool_defs,
                         model_name=host.config.model.model,
@@ -622,8 +658,6 @@ class LlmTurn:
                     model_protocol,
                     ui_port=host._ui,
                 )
-                if task_state_history is not None:
-                    task_state_history.remember(request_llm_messages)
                 log_llm_exchange(
                     request_llm_messages,
                     assistant_msg,
@@ -755,6 +789,28 @@ class LlmTurn:
                         "should_continue": False,
                         "stop_signal": turn_result.stop_signal,
                     }
+                if reminder_decision is not None and reminder_policy.commit(
+                    reminder_decision, successful=True, accepted=True,
+                ):
+                    task_state_history.remember(request_llm_messages)
+                    host._task_state_history_reset_pending = False
+                    session = getattr(host, "_session", None)
+                    agent_gateway = getattr(host, "agent_gateway", None)
+                    agent_run_id = (
+                        agent_gateway.ensure_root(session.id)
+                        if session is not None and agent_gateway is not None else None
+                    )
+                    logging.getLogger(__name__).debug(
+                        "task-state reminder reason=%s fingerprint=%s calls=%s delta_tokens=%s "
+                        "snapshot_tokens=%s anchor_valid=%s session_id=%s agent_run_id=%s "
+                        "append=%s snapshot_count=%s anchor_reset=%s",
+                        reminder_decision.reason, reminder_decision.snapshot.fingerprint,
+                        reminder_policy.state.calls_since_snapshot, reminder_decision.new_semantic_tokens,
+                        reminder_decision.snapshot_tokens, reminder_decision.anchor_valid,
+                        getattr(session, "id", None), agent_run_id,
+                        reminder_decision.append_snapshot, task_state_history.snapshot_count,
+                        not reminder_decision.anchor_valid or reminder_decision.reason == "history_reset",
+                    )
                 if turn_result.action == "break":
                     break
 

@@ -31,6 +31,7 @@ def test_coding_profile_spec_assembles_full_base_system_without_capability_filte
     ]
     assert [rule.name for rule in prompt.global_rules] == [
         "workflow_gates",
+        "task_state_snapshots",
         "workspace_facts",
         "read_before_edit",
         "smallest_change",

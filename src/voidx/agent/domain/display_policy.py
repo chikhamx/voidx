@@ -132,7 +132,6 @@ DEFAULT_DISPLAY_RULES: dict[str, ToolDisplayRule] = {
     "read": ToolDisplayRule(tool_name="read", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
     "webfetch": ToolDisplayRule(tool_name="webfetch", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
     "manage": ToolDisplayRule(tool_name="manage", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
-    "git": ToolDisplayRule(tool_name="git", mode=ToolDisplayMode.SUMMARY, summary_max_lines=5),
     # ── Show：文本编辑类工具（有 diff 时显示 diff） ──
     "write": ToolDisplayRule(tool_name="write", mode=ToolDisplayMode.SHOW),
     "replace": ToolDisplayRule(tool_name="replace", mode=ToolDisplayMode.SHOW),

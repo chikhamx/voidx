@@ -150,6 +150,8 @@ async def test_compaction_uses_previous_summary_and_replaces_persisted_history(t
         await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
 
         graph = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session)
+        from voidx.agent.application.task_state_history import task_state_snapshot
+        graph.task_state_history.remember([task_state_snapshot("obsolete snapshot")])
         graph._compaction.is_overflow = lambda _tokens: True
         graph._compaction.select_details = lambda messages: CompactionSelection(
             head=messages[:2],
@@ -210,6 +212,8 @@ async def test_compaction_uses_previous_summary_and_replaces_persisted_history(t
         assert rows[0].content == "updated summary"
         assert rows[0].additional_kwargs["compaction_depth"] == 2
         assert "updated summary" in initial_contents
+        assert graph.task_state_history.snapshot_count == 0
+        assert graph._task_state_history_reset_pending
 
         resumed = make_langgraph_execution(Config(workspace=str(tmp_path)), api_key=None, session=session)
         await resumed.restore_runtime_state()
@@ -371,24 +375,206 @@ async def test_slash_compact_runs_manual_session_compaction(tmp_path):
         await save_message(MessageRow(session_id=session.id, role="user", content="tail question"))
 
         graph = make_langgraph_execution(Config(workspace=str(tmp_path), ask_compact=True), api_key=None, session=session)
-        graph._compaction.select_details = lambda messages: CompactionSelection(
-            head=messages[:2],
-            tail_id=getattr(messages[2], "id", None),
-            keep_from=2,
-            mode="normal",
-        )
-
         async def summarize(_head_messages, _previous_summary):
             return "manual summary"
 
         graph._run_compaction_agent = summarize
 
+        from voidx.agent.application.task_state_history import task_state_snapshot
+        graph.task_state_history.remember([task_state_snapshot("obsolete snapshot")])
         handled = await build_slash_handler(graph).dispatch("/compact")
+
+        from voidx.agent.adapters.persistence.message_rows import is_compaction_row
 
         rows = await load_messages(session.id)
         assert handled is True
-        assert [row.content for row in rows] == ["tail question"]
-        assert graph._compaction_summary == "manual summary"
+        assert graph.task_state_history.snapshot_count == 0
+        assert graph._task_state_history_reset_pending
+        assert len(rows) == 1
+        assert is_compaction_row(rows[0])
+        assert rows[0].content == "manual summary"
+        assert graph._usage_stats.context_tokens > 0
+    finally:
+        await delete_session(session.id)
+
+@pytest.mark.asyncio
+async def test_slash_compact_single_turn_with_tool_batches(tmp_path):
+    from voidx.bootstrap.slash import build_slash_handler
+    from voidx.agent.adapters.persistence.session_models import MessageRow
+    from voidx.agent.adapters.persistence.message_rows import is_compaction_row
+
+    session = await create_session(workspace=str(tmp_path))
+    try:
+        await save_message(MessageRow(session_id=session.id, role="user", content="fix the complex bug"))
+        await save_message(MessageRow(
+            session_id=session.id,
+            role="assistant",
+            content="",
+            tool_calls=[{"id": "call_1", "name": "bash", "args": {}}],
+        ))
+        await save_message(MessageRow(
+            session_id=session.id,
+            role="tool",
+            content="output of tool 1 " * 200,
+            tool_call_id="call_1",
+        ))
+        await save_message(MessageRow(
+            session_id=session.id,
+            role="assistant",
+            content="",
+            tool_calls=[{"id": "call_2", "name": "bash", "args": {}}],
+        ))
+        await save_message(MessageRow(
+            session_id=session.id,
+            role="tool",
+            content="output of tool 2 " * 200,
+            tool_call_id="call_2",
+        ))
+        await save_message(MessageRow(
+            session_id=session.id,
+            role="assistant",
+            content="Bug fixed successfully.",
+        ))
+
+        graph = make_langgraph_execution(
+            Config(workspace=str(tmp_path), ask_compact=True),
+            api_key="test",
+            session=session,
+        )
+
+        async def summarize(_head_messages, _previous_summary):
+            return "summarized tool history"
+
+        graph._run_compaction_agent = summarize
+
+        handler = build_slash_handler(graph)
+        handled = await handler.dispatch("/compact")
+        assert handled is True
+
+        rows = await load_messages(session.id)
+        assert len(rows) == 2
+        assert is_compaction_row(rows[0])
+        assert rows[0].content == "summarized tool history"
+        assert rows[1].content == "Bug fixed successfully."
+
+        # Second /compact without new messages should report nothing to compact
+        prints = []
+        graph._ui.ui.print = lambda msg: prints.append(msg)
+        handled_second = await handler.dispatch("/compact")
+        assert handled_second is True
+        assert any("Nothing to compact" in p for p in prints)
+    finally:
+        await delete_session(session.id)
+
+@pytest.mark.asyncio
+async def test_slash_compact_empty_session_reports_nothing_to_compact(tmp_path):
+    from voidx.bootstrap.slash import build_slash_handler
+
+    session = await create_session(workspace=str(tmp_path))
+    try:
+        graph = make_langgraph_execution(
+            Config(workspace=str(tmp_path)),
+            api_key="test",
+            session=session,
+        )
+        prints = []
+        graph._ui.ui.print = lambda msg: prints.append(msg)
+        handled = await build_slash_handler(graph).dispatch("/compact")
+        assert handled is True
+        assert any("Nothing to compact" in p for p in prints)
+    finally:
+        await delete_session(session.id)
+
+@pytest.mark.asyncio
+async def test_slash_compact_unclosed_tool_batch_graceful_nothing_to_compact(tmp_path):
+    from voidx.bootstrap.slash import build_slash_handler
+    from voidx.agent.adapters.persistence.session_models import MessageRow
+
+    session = await create_session(workspace=str(tmp_path))
+    try:
+        await save_message(MessageRow(session_id=session.id, role="user", content="start task"))
+        # Unclosed tool call: tool_calls declared in assistant message without a matching ToolMessage
+        await save_message(MessageRow(
+            session_id=session.id,
+            role="assistant",
+            content="",
+            tool_calls=[{"id": "call_orphan", "name": "bash", "args": {}}],
+        ))
+
+        graph = make_langgraph_execution(
+            Config(workspace=str(tmp_path)),
+            api_key="test",
+            session=session,
+        )
+        prints = []
+        graph._ui.ui.print = lambda msg: prints.append(msg)
+        handled = await build_slash_handler(graph).dispatch("/compact")
+        assert handled is True
+        assert any("Nothing to compact" in p for p in prints)
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_slash_compact_resumes_next_turn_successfully(tmp_path):
+    from voidx.bootstrap.slash import build_slash_handler
+    from voidx.agent.adapters.persistence.session_models import MessageRow
+    from voidx.agent.adapters.persistence.message_rows import is_compaction_row
+
+    session = await create_session(workspace=str(tmp_path))
+    try:
+        await save_message(MessageRow(session_id=session.id, role="user", content="step 1: inspect"))
+        await save_message(MessageRow(
+            session_id=session.id,
+            role="assistant",
+            content="",
+            tool_calls=[{"id": "call_inspect", "name": "bash", "args": {}}],
+        ))
+        await save_message(MessageRow(
+            session_id=session.id,
+            role="tool",
+            content="file content " * 100,
+            tool_call_id="call_inspect",
+        ))
+        await save_message(MessageRow(
+            session_id=session.id,
+            role="assistant",
+            content="Found the issue.",
+        ))
+
+        graph = make_langgraph_execution(
+            Config(workspace=str(tmp_path)),
+            api_key="test",
+            session=session,
+        )
+
+        async def summarize(_head_messages, _previous_summary):
+            return "Inspected files and found issue"
+
+        graph._run_compaction_agent = summarize
+
+        handler = build_slash_handler(graph)
+        handled = await handler.dispatch("/compact")
+        assert handled is True
+
+        class FakeGraph:
+            async def astream(self, initial, _config, *, stream_mode="values"):
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="Step 2 done")]}
+
+        graph.graph = FakeGraph()
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        try:
+            await graph.run_turn("step 2: apply fix", context=TurnExecutionContext(thread_id="coding", session_id=session.id))
+        finally:
+            test_dock.deactivate()
+            test_dock.reset()
+            set_dock(None)
+
+        rows = await load_messages(session.id)
+        assert any(is_compaction_row(r) for r in rows)
+        assert rows[-1].content == "Step 2 done"
     finally:
         await delete_session(session.id)
 

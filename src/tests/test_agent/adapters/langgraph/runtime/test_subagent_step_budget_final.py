@@ -191,6 +191,7 @@ async def test_subagent_starts_from_isolated_task_context(tmp_path, monkeypatch)
         message for message in human_messages
         if not str(message.content).startswith(WORKFLOW_CONTEXT_MARKER)
         and not is_step_hint_message(message)
+        and not message.additional_kwargs.get("_voidx_task_state_snapshot")
     ]
     assert workflow_context_messages == []
     assert "## Workflow Runtime" in system_prompt
@@ -198,7 +199,8 @@ async def test_subagent_starts_from_isolated_task_context(tmp_path, monkeypatch)
     assert len(semantic_human_messages) == 1
     assert "Parent request" not in semantic_human_messages[0].content
     assert "Inspect the workspace" in semantic_human_messages[0].content
-    assert "Current Task State" in semantic_human_messages[0].content
+    assert "Current Task State" not in semantic_human_messages[0].content
+    assert any(m.additional_kwargs.get("_voidx_task_state_snapshot") for m in human_messages)
 
 
 @pytest.mark.asyncio
@@ -763,7 +765,7 @@ async def test_soft_guidance_that_crosses_context_hard_limit_uses_tool_free_fina
     assert output == "status: partial\nfindings: context finding"
     assert len(calls) == 1
     assert calls[0][0] is model
-    assert FINAL_CONVERGENCE_GUIDANCE in calls[0][1][-1].content
+    assert any(FINAL_CONVERGENCE_GUIDANCE in str(m.content) for m in calls[0][1])
     assert run_metadata["finish_reason"] == "context_limit"
 
 @pytest.mark.asyncio

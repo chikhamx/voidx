@@ -46,7 +46,6 @@ class VoidConsole:
         "todo": "updating",
         "lsp": "using",
         "checkpoint": "checking",
-        "git": "git",
     }
 
     _AGENT_GERUND: dict[str, str] = {

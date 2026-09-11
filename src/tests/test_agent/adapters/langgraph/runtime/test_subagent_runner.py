@@ -865,7 +865,8 @@ async def test_subagent_removes_completed_workflow_from_active_summaries(tmp_pat
         ),
     )
 
-    second_messages = observed[1]
+    second_messages = [m for m in observed[1]
+                       if not m.additional_kwargs.get("_voidx_task_state_retained")]
     assert not any(
         "Active workflow nodes: tdd (implement persona)" in str(message.content)
         for message in second_messages

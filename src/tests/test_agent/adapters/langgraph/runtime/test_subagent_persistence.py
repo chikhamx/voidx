@@ -159,6 +159,7 @@ async def test_run_subagent_persists_assistant_messages_to_subagent_jsonl(tmp_pa
             **_subagent_contract_kwargs(desc="Inspect child path"),
             session_id=session.id,
             agent_id=3,
+            agent_run_id="agent_3",
             debug=False,
         )
 
@@ -229,6 +230,7 @@ async def test_run_subagent_persists_tool_results_to_subagent_jsonl(tmp_path, mo
             **_subagent_contract_kwargs(desc="Inspect child path"),
             session_id=session.id,
             agent_id=5,
+            agent_run_id="agent_5",
             debug=False,
         )
 

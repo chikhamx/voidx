@@ -846,7 +846,7 @@ class LangGraphExecution:
             messages.append((
                 HumanMessage(
                     content=entry.text,
-                    additional_kwargs={GUIDANCE_MARKER: True},
+                    additional_kwargs={GUIDANCE_MARKER: True, "_voidx_guidance_event_id": entry.guidance_id},
                 ),
                 entry.truncated,
                 entry.source,
@@ -1229,7 +1229,6 @@ class LangGraphExecution:
                 "model_factory": self._model_factory,
                 "scoped_tools_binder": self._scoped_tools_binder,
                 "context_handoff": context_handoff,
-                "task_state_strip_enabled": self.task_state_strip_enabled,
             }
             if self._current_tree and self._turn_node:
                 kwargs.update({
@@ -1293,26 +1292,36 @@ class LangGraphExecution:
     def set_image_strip(self, value: bool) -> None:
         self._image_strip = bool(value)
 
-    @property
-    def task_state_strip_enabled(self) -> bool:
-        return getattr(self, "_task_state_strip", True)
+    def _ensure_task_state_reminder_scope(self) -> None:
+        from voidx.agent.application.task_state_history import TaskStateHistory
+        from voidx.agent.application.task_state_reminder import TaskStateReminderPolicy
 
-    def set_task_state_strip(self, value: bool) -> None:
-        self._task_state_strip = bool(value)
-        if value:
-            self._retained_task_state_history = None
+        scope = (
+            getattr(getattr(self, "_session", None), "id", None),
+            self.config.model.provider,
+            self.config.model.model,
+        )
+        previous = getattr(self, "_task_state_reminder_scope", None)
+        if previous != scope:
+            if previous is None or previous[0] != scope[0]:
+                self._retained_task_state_history = TaskStateHistory()
+                self._task_state_history_reset_pending = False
+            self._task_state_reminder_policy = TaskStateReminderPolicy()
+            self._task_state_reminder_scope = scope
+
+    def _mark_task_state_compaction_applied(self) -> None:
+        self.task_state_history.clear()
+        self._task_state_history_reset_pending = True
 
     @property
     def task_state_history(self):
-        from voidx.agent.application.task_state_history import TaskStateHistory
+        self._ensure_task_state_reminder_scope()
+        return self._retained_task_state_history
 
-        session_id = getattr(getattr(self, "_session", None), "id", None)
-        history = getattr(self, "_retained_task_state_history", None)
-        if history is None or getattr(self, "_task_state_history_session", None) != session_id:
-            history = TaskStateHistory()
-            self._retained_task_state_history = history
-            self._task_state_history_session = session_id
-        return history
+    @property
+    def task_state_reminder_policy(self):
+        self._ensure_task_state_reminder_scope()
+        return self._task_state_reminder_policy
 
     def _build(self) -> None:
         self.graph = build_graph(self)
@@ -1460,13 +1469,16 @@ class LangGraphExecution:
                 persist_compaction=self._persist_compaction,
             )
         )
-        return await service.compact_live_messages(
+        result = await service.compact_live_messages(
             messages,
             session_msgs,
             force=force,
             ask=ask,
             preflight=preflight,
         )
+        if result[0] is not None and hasattr(self, "_mark_task_state_compaction_applied"):
+            self._mark_task_state_compaction_applied()
+        return result
 
     async def _preflight_compact_if_needed(
         self: Any,
@@ -1487,6 +1499,7 @@ class LangGraphExecution:
             persist_compaction=self._persist_compaction,
         )
         if result is not None:
+            self._mark_task_state_compaction_applied()
             self._file_read_coverage.clear()
             self._file_mtimes.clear()
         return result, preflight_result
@@ -1504,6 +1517,7 @@ class LangGraphExecution:
             persist_compaction=self._persist_compaction,
         )
         if result:
+            self._mark_task_state_compaction_applied()
             self._file_read_coverage.clear()
             self._file_mtimes.clear()
         return result

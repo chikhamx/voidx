@@ -314,7 +314,7 @@ def _agent_result_preview(text: object) -> str:
 
 
 _WORKSPACE_WRITE_LOCK_TOOLS = {"manage", "write", "replace", "checkpoint"}
-_WORKSPACE_WRITE_LOCK_CAPABILITIES = {"file_write", "bash_write", "git_write", "agent_implement"}
+_WORKSPACE_WRITE_LOCK_CAPABILITIES = {"file_write", "bash_write", "agent_implement"}
 
 
 def _workspace_write_lock_manager(host: object):
@@ -334,7 +334,7 @@ def _requires_workspace_write_lock(tool_call: dict) -> bool:
 
         classified = classify_tool_call(project_agent_tool_call({**tool_call, "name": name, "args": args}))
     except Exception:
-        return name in {"bash", "powershell", "git", "agent"}
+        return name in {"bash", "powershell", "agent"}
     return str(classified.capability.value) in _WORKSPACE_WRITE_LOCK_CAPABILITIES
 def _is_barrier_tool(tool_call: dict) -> bool:
     # Lifecycle submissions interact with the user or end the current phase.

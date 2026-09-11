@@ -120,22 +120,25 @@ def test_agent_tool_header_for_wait_and_cancel_is_clean():
 
 
 
-def test_agent_control_display_value_uses_stable_name_for_single_id_and_count_for_batch():
+def test_agent_control_display_value_uses_stable_names_for_batch():
     from voidx.presentation.output.agent_display import subagent_display_name
 
     run_ids = [
         "run_8bf0d23519a843dd9213989e25427944",
         "run_a6e54320b6514def9f62cf02012db408",
     ]
+    name_0 = subagent_display_name(run_ids[0])
+    name_1 = subagent_display_name(run_ids[1])
     assert extract_tool_display_value(
         "agent_control", {"action": "wait", "run_id": run_ids[0]}, ""
-    ) == subagent_display_name(run_ids[0])
+    ) == name_0
     assert extract_tool_display_value(
         "agent_control", {"action": "wait", "run_id": run_ids}, ""
-    ) == "2 agents"
+    ) == f"{name_0}, {name_1}"
 
 
 def test_agent_control_batch_headers_distinguish_action_without_exposing_ids():
+    from voidx.presentation.output.agent_display import subagent_display_name
     from voidx.presentation.output.console.formatting import _fmt_args
     from voidx.presentation.output.dock.nodes import _tool_header
 
@@ -143,6 +146,8 @@ def test_agent_control_batch_headers_distinguish_action_without_exposing_ids():
         "run_8bf0d23519a843dd9213989e25427944",
         "run_a6e54320b6514def9f62cf02012db408",
     ]
+    name_0 = subagent_display_name(run_ids[0])
+    name_1 = subagent_display_name(run_ids[1])
     wait_args = {"action": "wait", "run_id": run_ids}
     cancel_args = {"action": "cancel", "run_id": run_ids}
 
@@ -151,8 +156,8 @@ def test_agent_control_batch_headers_distinguish_action_without_exposing_ids():
 
     assert "Wait" in wait_header
     assert "Cancel" in cancel_header
-    assert "2 agents" in wait_header
-    assert "2 agents" in cancel_header
+    assert f"{name_0}, {name_1}" in wait_header
+    assert f"{name_0}, {name_1}" in cancel_header
     for run_id in run_ids:
         assert run_id not in wait_header
         assert run_id not in cancel_header

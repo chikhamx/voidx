@@ -330,7 +330,7 @@ class CompactionCoordinator:
             source_rows = effective_rows[:len(effective_rows) - tail_len] if tail_len > 0 else list(effective_rows)
             non_compaction_rows = [r for r in source_rows if not is_compaction_row(r)]
             if not non_compaction_rows:
-                if tail_len > 0:
+                if tail_len > 0 and (prepared_request is not None and prepared_request.should_rollover):
                     retained_tail = []
                     source_rows = list(effective_rows)
                     non_compaction_rows = [r for r in source_rows if not is_compaction_row(r)]
@@ -428,9 +428,13 @@ class CompactionCoordinator:
             if prepared_request is not None
             else token_counter(messages, model_name)
         )
-        reclaim_floor = max(1024, ceil(context_limit * 0.01), minimum_net_reclaim or 0)
-        if pre_tokens - candidate_prepared.total_input_tokens < reclaim_floor:
-            return None
+        if not force:
+            reclaim_floor = max(1024, ceil(context_limit * 0.01), minimum_net_reclaim or 0)
+            if pre_tokens - candidate_prepared.total_input_tokens < reclaim_floor:
+                return None
+        elif minimum_net_reclaim is not None:
+            if pre_tokens - candidate_prepared.total_input_tokens < minimum_net_reclaim:
+                return None
 
         # 7. Commit replacement in persistence
         if session_id:
@@ -870,16 +874,29 @@ class CompactionCoordinator:
             from voidx.agent.adapters.persistence.session_repository import load_messages
             rows = await load_messages(host._session.id)
 
+        if not rows:
+            return False
+
         messages = messages_from_rows(rows)
-        head, _tail_id = await self.maybe_compact(
-            messages,
-            rows,
-            force=force,
-            ask=False,
-            run_compaction_agent=run_compaction_agent,
-            persist_compaction=persist_compaction,
-        )
-        return bool(head)
+        try:
+            result = await self.rollover_for_live_state(
+                messages,
+                force=force,
+                run_compaction_agent=run_compaction_agent,
+            )
+        except ContextBudgetExhausted:
+            return False
+
+        if result is None:
+            return False
+
+        effective_messages = [
+            m for m in result.live_messages if not isinstance(m, RemoveMessage)
+        ]
+        if hasattr(host, "_usage_stats") and host._usage_stats is not None:
+            new_tokens = estimate_context_tokens(effective_messages, host.config.model.model)
+            host._usage_stats.update_context(new_tokens)
+        return True
 
     async def _run_compaction_attempt(
         self,

@@ -59,8 +59,6 @@ def extract_tool_display_value(
         value = raw_args.get("pattern") or raw_args.get("query")
     elif tool_name in ("bash", "powershell"):
         value = str(raw_args.get("command") or "").replace("\n", "; ")
-    elif tool_name == "git":
-        value = raw_args.get("args")
     elif tool_name in {"agent", "agent_control"}:
         value = _agent_display_value(raw_args)
     elif tool_name == "checkpoint":
@@ -86,7 +84,12 @@ def _agent_display_value(raw_args: dict[str, Any]) -> object:
     if action in {"wait", "cancel"}:
         value = raw_args.get("run_id") or raw_args.get("target_run_id") or ""
         if isinstance(value, list):
-            return f"{len(value)} agents" if value else ""
+            names = [
+                subagent_display_name(str(item).strip())
+                for item in value
+                if str(item).strip()
+            ]
+            return ", ".join(names)
         run_id = str(value).strip()
         return subagent_display_name(run_id) if run_id else ""
     return raw_args.get("name") or raw_args.get("description") or ""

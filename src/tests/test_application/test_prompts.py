@@ -58,6 +58,7 @@ def test_base_system_prompt_has_canonical_rules():
     }
     assert [rule.name for rule in BASE_SYSTEM.global_rules] == [
         "workflow_gates",
+        "task_state_snapshots",
         "workspace_facts",
         "read_before_edit",
         "smallest_change",

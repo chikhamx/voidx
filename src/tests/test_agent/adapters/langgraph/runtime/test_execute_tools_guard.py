@@ -473,7 +473,7 @@ async def test_subagent_full_output_reaches_orchestrator(tmp_path, monkeypatch):
 
         spawn_tool_messages = [message for message in spawn_result["messages"] if isinstance(message, ToolMessage)]
         assert spawn_tool_messages[0].tool_call_id == "call_agent"
-        assert "[running]" in spawn_tool_messages[0].content
+        assert "status: running" in spawn_tool_messages[0].content
         assert "run_id:" in spawn_tool_messages[0].content
         child_run = next(run for run in graph.agent_gateway.list_runs() if run.agent_type == "sub")
 

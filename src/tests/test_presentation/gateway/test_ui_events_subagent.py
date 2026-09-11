@@ -268,7 +268,7 @@ async def test_subagent_title_ignores_mode_when_using_fallback_summary(isolated_
 
 
 @pytest.mark.asyncio
-async def test_subagent_git_tool_uses_git_status_action(isolated_dock):
+async def test_subagent_bash_tool_uses_git_status_action(isolated_dock):
     isolated_dock.begin_capture()
     bus = UiEventBus()
     bus.start(DockEventConsumer(isolated_dock))
@@ -282,10 +282,10 @@ async def test_subagent_git_tool_uses_git_status_action(isolated_dock):
         ))
         await bus.emit(ToolStarted(
             agent_id=0,
-            tool_call_id="sub_git",
-            tool_name="git",
+            tool_call_id="sub_bash",
+            tool_name="bash",
             label="Running",
-            raw_args={"args": "status --short"},
+            raw_args={"command": "git status --short"},
         ))
         await bus.drain()
 
@@ -293,7 +293,7 @@ async def test_subagent_git_tool_uses_git_status_action(isolated_dock):
         subagent = next(node for node in assistant.children if node.node_type == "subagent")
         status = next(node for node in subagent.children if node.node_type == "status")
 
-        assert _rich_plain(status.header) == "● Git status --short"
+        assert _rich_plain(status.header) == "● Running git status --short"
     finally:
         await bus.stop()
 

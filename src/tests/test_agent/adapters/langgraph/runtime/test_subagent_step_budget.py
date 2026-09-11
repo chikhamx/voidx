@@ -223,7 +223,11 @@ async def test_run_subagent_wall_clock_guard_terminates_at_boundary(tmp_path, mo
     assert len(calls) == 2
     assert isinstance(calls[0][0], BoundModel)
     assert calls[1][0] is model
-    assert FINAL_CONVERGENCE_GUIDANCE in calls[1][1][-1].content
+    assert any(
+        message.additional_kwargs.get(subagent_module.GUIDANCE_MARKER)
+        and FINAL_CONVERGENCE_GUIDANCE in message.content
+        for message in calls[1][1]
+    )
     assert output == "status: partial\nfindings: finding before timeout"
     assert run_metadata["finish_reason"] == "time_limit"
 

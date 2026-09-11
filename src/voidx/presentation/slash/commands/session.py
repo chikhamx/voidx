@@ -339,8 +339,6 @@ class SessionCommandsMixin:
         await self.session_port.show_startup(**kwargs)
 
     async def _continue(self) -> None:
-        from voidx.llm.message_markers import DEFAULT_CONTINUATION_TEXT
-
         session = getattr(self.session_port, "session", None)
         has_conversation = False
         if session is not None:
@@ -358,7 +356,7 @@ class SessionCommandsMixin:
             return
 
         await self.automation_port.run_coding_turn(
-            DEFAULT_CONTINUATION_TEXT,
+            "Continue if you have next steps.",
             display_text="/continue",
             persist_user_input=False,
         )

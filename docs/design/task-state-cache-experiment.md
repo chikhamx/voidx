@@ -1,19 +1,27 @@
-# Task-state history cache experiment
+# Task-state history cache experiment (superseded)
 
-Use `/taskstate strip off` to retain previously sent task-state messages while testing prompt-cache reuse. `/taskstate strip on` restores the default behavior: remove old runtime state and render only the latest state. `/taskstate` opens the selector when an interactive frontend is available, or prints the status and usage. `/taskstate status` prints the current setting.
+## Status and purpose
 
-The experiment changes task-state history handling without changing the provider protocol or cache key. Retention mode sends the current task state as a separate user message. After a successful model response, the runtime remembers the sent state snapshots and their positions in the semantic history. Subsequent requests restore them before newly appended tool exchanges and user messages, then append the current state. Rebuilding or retrying a failed request does not commit another snapshot.
+The experimental switch design is superseded by the approved [Task State on-demand update and periodic reminder policy](../specs/task-state-reminder-policy-2026-09-10.md). That specification is the source of truth for triggers, thresholds, lifecycle handling, and acceptance criteria. This document preserves the experiment's rationale and explains how to compare the old behavior with the new policy; it does not certify that runtime integration or cache improvements have been verified.
 
-Snapshots are runtime-only and are not written into the user's conversation transcript. Restarting defaults to strip on. Switching sessions discards the retained snapshots; enabling strip also clears them. If earlier semantic history changes, such as after compaction or tool-result trimming, snapshots beyond the unchanged prefix are discarded rather than restored into unrelated context. Other sources of prefix changes, such as tool definitions and system instructions, are outside this switch.
+Task State is a runtime snapshot of an agent's goal and execution state, distinct from a real user instruction. The earlier retention experiment kept previously sent snapshots and appended a complete snapshot on every model call. It explored whether avoiding deletion of old state messages could improve prompt-prefix reuse, but repeated unchanged snapshots increased context usage.
 
-Retaining snapshots consumes additional context and exposes earlier, potentially outdated task states to the model. The switch is a diagnostic experiment, not a guarantee of cache hits or a confirmed fix for upstream cache behavior.
+## Replacement policy
+
+The approved policy retains sent snapshots and appends a new one only when needed: initially, after a history reset, for new real user input, for a substantive state change, or for a periodic reminder. It replaces the experimental switches with built-in behavior for agents whose own prompt policy enables Current Task State. Chat profiles that suppress that section remain exempt; each main agent and subagent is evaluated independently.
+
+Historical Task State entries describe their state at the time; the last snapshot is the latest known state. Newer real user instructions and tool facts remain valid. A snapshot cannot elevate its instruction priority or override newer user requests. This interpretation belongs once in the shared stable prompt, not in every snapshot.
+
+Under the approved lifecycle, preparing or retrying a request does not commit a snapshot or consume a reminder interval. Only an accepted successful logical model request commits its state. Compaction or invalid history anchors establish a new baseline rather than restoring obsolete snapshots. Main agents and individual subagent runs keep separate snapshot histories and reminder baselines. See the specification for the complete rules and required integration tests.
 
 ## Comparing behavior
 
-1. Use a fresh conversation with the same provider, model, and reasoning effort.
-2. Run `/taskstate strip off` before the first task.
-3. Ask for a task requiring several tool calls. Compare cache reads across those calls, rather than only across user messages.
-4. Compare against a separate fresh conversation with the default `/taskstate strip on`.
-5. Record input tokens, cached tokens, request times, and any history compaction. Switching modes during a conversation can itself change the prefix.
+Use test fixtures or two recorded code versions to compare the earlier **append on every call** behavior with the approved **on-demand updates and periodic reminders** policy. Do not add or rely on production command switches for this comparison.
 
-Focused tests cover tool-loop and new-user-message prefix retention, failed retries, repeated context reconstruction, session isolation, re-enabling stripping, history replacement, and command dispatch.
+1. Record the exact fixture or version for each side, plus the provider, model, reasoning effort, and task inputs. Use independent fresh sessions with matching settings.
+2. Exercise the same multi-tool task in each version, separately for the main agent and subagents. Include unchanged-state tool loops, substantive state changes, and new real user input. In fixtures, also exercise retries and history resets.
+3. Record snapshot counts and tokens, total input tokens, cache-read tokens within tool loops, request times, and any compaction. Note differences in system instructions, tool definitions, or other request-prefix content that could confound the comparison.
+4. Check task outcomes for omissions, repeated work, and actions based on stale state. Reduced snapshot repetition alone does not establish task quality.
+5. Report the tested versions, commands, environment, and results. Distinguish deterministic fixture assertions from observed provider cache behavior, and identify any main-agent or subagent integration paths not tested.
+
+Fewer redundant snapshots is a deterministic acceptance target. Cache reuse still depends on provider routing, protocol behavior, and other prefix changes; neither retention nor the new policy guarantees cache hits. Cache improvement and task quality require measurement. Passing prompt or contract tests validates prompt content, not runtime lifecycle integration or upstream caching.

@@ -93,3 +93,23 @@ class TestManageDisplay:
         assert "\n" not in value
         assert cell_len(value) <= 42
         assert "…" in value
+
+
+class TestAgentControlFmtArgsShort:
+    def test_single_agent_wait_displays_stable_name(self):
+        from voidx.presentation.output.agent_display import subagent_display_name
+
+        run_id = "run_8bf0d23519a843dd9213989e25427944"
+        name = subagent_display_name(run_id)
+        assert _fmt_args_short("agent_control", {"action": "wait", "run_id": run_id}) == name
+
+    def test_batch_agents_wait_displays_all_names(self):
+        from voidx.presentation.output.agent_display import subagent_display_name
+
+        run_ids = [
+            "run_8bf0d23519a843dd9213989e25427944",
+            "run_a6e54320b6514def9f62cf02012db408",
+        ]
+        name_0 = subagent_display_name(run_ids[0])
+        name_1 = subagent_display_name(run_ids[1])
+        assert _fmt_args_short("agent_control", {"action": "wait", "run_id": run_ids}) == f"{name_0}, {name_1}"

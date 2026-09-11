@@ -245,7 +245,7 @@ def test_current_task_state_todo_omits_active_when_all_pending(tmp_path):
     assert "active:" not in messages[-1].content
 
 
-def test_current_task_state_todo_truncates_long_active_content(tmp_path):
+def test_current_task_state_todo_keeps_long_active_content(tmp_path):
     long_content = "x" * 100
     task_state = TaskState(
         todo_state=TodoRunState.model_validate({
@@ -268,11 +268,10 @@ def test_current_task_state_todo_truncates_long_active_content(tmp_path):
         task_state=task_state,
     ).build()
     context.apply_to_messages(messages)
-    assert "  - active a1: " + "x" * 80 + "…" in messages[-1].content
-    assert "x" * 100 not in messages[-1].content
+    assert "  - active a1: " + long_content in messages[-1].content
 
 
-def test_current_task_state_todo_limits_visible_items(tmp_path):
+def test_current_task_state_todo_keeps_all_active_pending_items(tmp_path):
     task_state = TaskState(
         todo_state=TodoRunState.model_validate({
             "summary": "0/5 done · 2 active · 3 pending",
@@ -305,8 +304,8 @@ def test_current_task_state_todo_limits_visible_items(tmp_path):
     assert "  - active a1: active one" in messages[-1].content
     assert "  - active a2: active two" in messages[-1].content
     assert "  - pending p1: pending one" in messages[-1].content
-    assert "pending p2" not in messages[-1].content
-    assert "  - … 2 more active/pending todos" in messages[-1].content
+    assert "pending p2: pending two" in messages[-1].content
+    assert "pending p3: pending three" in messages[-1].content
 
 
 
@@ -761,13 +760,15 @@ def test_current_task_state_renders_running_and_three_recent_terminal_child_agen
 
     rendered = context.render_task_context()
     assert "Child agents: 1 running · 3 recent terminal" in rendered
-    assert "run_active [running] Goal: inspect cache · elapsed 1m40s · current: searching · activity 10s ago" in rendered
+    assert "run_active [running] Goal: inspect cache" in rendered
     assert "active: search" not in rendered
-    assert "run_done_3 [completed] Goal: run_done_3 · elapsed 50s" in rendered
+    assert "run_done_3 [completed] Goal: run_done_3" in rendered
     assert "run_done_2 [completed]" in rendered
     assert "run_done_1 [completed]" in rendered
     assert "run_done_0" not in rendered
-    assert "long detail omitted" not in rendered
+    assert "long detail omitted" in rendered
+    assert "elapsed" not in rendered
+    assert "activity" not in rendered
     assert "call-search" not in rendered
 
 
@@ -804,5 +805,25 @@ def test_current_task_state_renders_last_tool_when_no_tool_is_active(tmp_path):
     ).build()
 
     rendered = context.render_task_context()
-    assert "recent: reading failed · 20s ago" in rendered
+    assert "recent:" not in rendered
+    assert "20s ago" not in rendered
     assert "secret_read_tool" not in rendered
+
+
+def test_child_snapshot_ignores_sampling_activity_and_keeps_goal_and_blockers(tmp_path):
+    child = _child_run("stable", status="running", created_at=1, updated_at=2, description="goal " + "x" * 200)
+    child.result = {"blockers": ["need approval"], "goal": "full result goal"}
+    def build(run, sampled):
+        return RuntimeContextBuilder(config=Config(workspace=str(tmp_path)), workspace=str(tmp_path), persona="coordinate", interaction_mode=InteractionMode.AUTO, child_runs=[run], child_runs_sampled_at=sampled).build()
+    first = build(child, 10)
+    changed = child.model_copy(update={"updated_at": 1000, "last_activity_at": 999})
+    assert first.snapshot_data == build(changed, 2000).snapshot_data
+    assert child.description in first.render_task_context()
+    assert "need approval" in first.render_task_context()
+
+
+def test_terminal_child_snapshot_order_ignores_activity_updates(tmp_path):
+    children = [_child_run(f"done-{i}", status="completed", created_at=i, updated_at=i) for i in range(4)]
+    def build(runs):
+        return RuntimeContextBuilder(config=Config(workspace=str(tmp_path)), workspace=str(tmp_path), persona="coordinate", interaction_mode=InteractionMode.AUTO, child_runs=runs).build().snapshot_data
+    assert build(children) == build([run.model_copy(update={"updated_at": 100 - i}) for i, run in enumerate(children)])
