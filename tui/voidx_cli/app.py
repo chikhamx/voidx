@@ -57,6 +57,7 @@ from .state import (
 )
 from .terminal_mixin import _TerminalLifecycleMixin
 from .terminal_writer import BatchToken, TerminalWriter
+from .terminal_trace import TerminalTraceMixin
 from .text_prompt_mixin import _TextPromptMixin
 
 
@@ -152,6 +153,7 @@ class _SubmitQueueItem(str):
 
 
 class PureTui(
+    TerminalTraceMixin,
     _InputParserMixin,
     _InputEditorMixin,
     _PanelManagerMixin,
@@ -412,6 +414,7 @@ class PureTui(
                         restore_external_logging()
                     except BaseException as exc:
                         log_internal_error(exc, context="external_log_restore")
+                await self._finish_terminal_trace()
                 self._terminal_writer_required = False
 
             _, cleanup_cancellation = await await_cancellation_safe(cleanup())
@@ -761,6 +764,7 @@ class PureTui(
         if self._has_rendered_frame:
             self._last_frame_start_row = geometry.next_row
             self._last_frame_rows = geometry.remaining_frame_rows
+        self._trace_geometry("commit_applied", next_row=geometry.next_row, remaining_rows=geometry.remaining_frame_rows)
 
     async def _wait_for_pending_commit(self, token: BatchToken) -> None:
         token_key = id(token)
@@ -813,6 +817,7 @@ class PureTui(
             "apply_state": apply_state,
         }
         self._render_state.pending_commit_tokens.append(token)
+        self._trace_geometry("commit_pending", order=getattr(token, "order", None), next_row=geometry.next_row)
         self._render_state.pending_commit_updates[token_key] = {
             "apply_state": apply_state,
             "settle": settle,
@@ -1648,6 +1653,10 @@ class PureTui(
                 previous_frame_rows=previous_frame_rows,
             )
 
+            self._trace_geometry("commit_plan", height=term_height, next_row=geometry.next_row,
+                                 remaining_rows=geometry.remaining_frame_rows,
+                                 scroll_rows=output.scrolled_rows, lines_written=output.lines_written,
+                                 fixed_bottom_rows=fixed_bottom_rows)
             preserve_baseline = bool(
                 worker_mode
                 and callable(getattr(self._terminal_writer, "wait", None))

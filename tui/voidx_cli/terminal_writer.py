@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from tempfile import SpooledTemporaryFile
 from typing import Callable, Iterator, Literal, TextIO
 
+from .terminal_trace import TerminalTrace
 from .commit_output import scrolled_frame_payload
 from .async_utils import await_cancellation_safe
 from .helpers import (
@@ -143,6 +144,8 @@ class TerminalWriter:
             raise ValueError("byte_budget must be at least 1")
         if commit_memory_soft_limit < 1:
             raise ValueError("commit_memory_soft_limit must be at least 1")
+        self.trace = TerminalTrace()
+        self._trace_context: dict = {}
         self._stream = stream
         self.byte_budget = byte_budget
         self.max_pending_bytes = max(byte_budget, self.MAX_UTF8_CHAR_BYTES)
@@ -304,6 +307,7 @@ class TerminalWriter:
             written = len(value)
         if written < 0 or written > len(value):
             raise ValueError("terminal stream returned an invalid write count")
+        self.trace.record("write", text=value[:written], **self._trace_context)
         self.chunks_written += 1
         next_zero_progress = zero_progress + 1 if written == 0 else 0
         if next_zero_progress >= self.MAX_ZERO_PROGRESS_WRITES:
@@ -335,9 +339,7 @@ class TerminalWriter:
         self._require_sync_mode()
         while self._pending:
             self.drain()
-        flush = getattr(self._target(), "flush", None)
-        if callable(flush):
-            flush()
+        self._flush_target(self._target())
 
     def _recover_sync_failure(self, error: BaseException) -> None:
         """Abort a failed synchronous terminal transaction once."""
@@ -365,9 +367,7 @@ class TerminalWriter:
                     )
                     chunk = chunk[written:]
                 remaining = suffix
-            flush = getattr(self._target(), "flush", None)
-            if callable(flush):
-                flush()
+            self._flush_target(self._target())
         except BaseException as recovery_error:
             self._sync_recovery_error = recovery_error
 
@@ -433,7 +433,9 @@ class TerminalWriter:
             _writer_id=id(self),
             _future=loop.create_future(),
         )
-        return _QueueEntry(order=order, batch=batch, token=token)
+        entry = _QueueEntry(order=order, batch=batch, token=token)
+        self._trace_entry("enqueue", entry)
+        return entry
 
     def submit_frame(self, batch: FrameBatch) -> None:
         if batch.generation < 1:
@@ -461,7 +463,9 @@ class TerminalWriter:
                 batch=snapshot,
                 token=None,
             )
+            self._trace_entry("enqueue", entry)
             if self._queue and isinstance(self._queue[-1].batch, FrameBatch):
+                self._trace_entry("drop", self._queue[-1])
                 self._queue[-1] = entry
             else:
                 self._queue.append(entry)
@@ -469,7 +473,7 @@ class TerminalWriter:
 
     def _drop_pending_frame_locked(self) -> None:
         if self._queue and isinstance(self._queue[-1].batch, FrameBatch):
-            self._queue.pop()
+            self._trace_entry("drop", self._queue.pop())
 
     def submit_barrier(
         self,
@@ -679,13 +683,17 @@ class TerminalWriter:
                 while not self._queue:
                     self._condition.wait()
                 entry = self._queue.popleft()
+            self._trace_context = {"order": entry.order, "generation": getattr(entry.batch, "generation", None)}
+            self._trace_entry("execute", entry)
             try:
                 should_stop = self._process_entry(entry)
             except Exception as exc:
                 self._complete_token(entry.token, exc)
                 self._handle_worker_error(exc)
                 return
+            self._trace_entry("complete", entry)
             self._complete_token(entry.token)
+            self._trace_context = {}
             if should_stop:
                 return
 
@@ -924,9 +932,28 @@ class TerminalWriter:
             remaining = suffix
 
     def _worker_flush(self) -> None:
-        flush = getattr(self._worker_stream(), "flush", None)
-        if callable(flush):
-            flush()
+        self._flush_target(self._worker_stream())
+
+    def _flush_target(self, target: TextIO) -> None:
+        flush = getattr(target, "flush", None)
+        try:
+            if callable(flush):
+                flush()
+        except Exception as exc:
+            self.trace.record("flush", ok=False, error=repr(exc), **self._trace_context)
+            raise
+        self.trace.record("flush", ok=True, supported=callable(flush), **self._trace_context)
+
+    def _trace_entry(self, kind: str, entry: _QueueEntry) -> None:
+        batch = entry.batch
+        self.trace.record(
+            kind, order=entry.order, generation=getattr(batch, "generation", None),
+            batch=type(batch).__name__, barrier=getattr(batch, "kind", None),
+            start=getattr(batch, "start_row", getattr(batch, "clear_start_row", None)),
+            rows=len(batch.target_lines) if isinstance(batch, FrameBatch) else None,
+            scroll=getattr(batch, "scroll_rows", None),
+            bottom=getattr(batch, "scroll_bottom", None),
+        )
 
     def _call_soon_threadsafe(self, callback: Callable, *args) -> None:
         loop = self._loop
@@ -953,9 +980,11 @@ class TerminalWriter:
     ) -> None:
         if token is None:
             return
+        self.trace.record("ack", order=token.order, ok=error is None)
         self._call_soon_threadsafe(self._finish_token, token, error)
 
     def _publish_frame_result(self, result: FrameResult) -> None:
+        self.trace.record("frame_result", generation=result.generation, applied=result.applied, strategy=result.strategy, **{k: v for k, v in self._trace_context.items() if k != "generation"})
         callback = self._on_frame_result
         if callback is not None:
             self._call_soon_threadsafe(callback, result)
@@ -979,6 +1008,7 @@ class TerminalWriter:
             self._queue.clear()
         self._recover_after_worker_error()
         for entry in entries:
+            self._trace_entry("drop", entry)
             if isinstance(entry.batch, _CommitBatch):
                 try:
                     self._release_commit_payload(entry.batch.payload)

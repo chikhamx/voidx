@@ -213,6 +213,8 @@ class _InputParserMixin:
                 self._paste_clipboard_quiet()
                 needs_render = True
                 input_region_only = False
+            elif action == "terminal_trace":
+                self._request_terminal_trace()
             elif action == "noop":
                 pass
             else:
@@ -492,6 +494,9 @@ class _InputParserMixin:
         params = param_str.split(";") if param_str else [""]
         consumed = end_idx + 1
 
+        if final == 0x7E and params == ["24", "5"]:
+            return (consumed, "terminal_trace")
+
         # PageUp / PageDown — handled natively by terminal scrollback
         if final == 0x7E and params[0] in ("5", "6"):
             return (consumed, "noop")
@@ -587,6 +592,9 @@ class _InputParserMixin:
             return (consumed, None)
         mod = _parse_csi_modifier(params)
         shift = _csi_modifier_has_shift(mod)
+
+        if codepoint == 57387 and mod == 5:
+            return (consumed, "terminal_trace")
 
         # Shift+Enter
         if codepoint == 13 and shift:

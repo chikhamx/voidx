@@ -425,6 +425,22 @@ class _FrameRendererMixin:
             strategy=result.strategy,
         )
 
+    def _worker_geometry_pending(self) -> bool:
+        if not self._tty or not self._terminal_writer_worker_mode():
+            return False
+        return bool(
+            self._render_state.pending_commit_tokens
+            or getattr(self, "_deferred_commit_token", None) is not None
+            or any(
+                state["visible_rows"] != self._visible_committed_rows
+                for state in self._pending_worker_frame_states().values()
+            )
+            or any(
+                operation.get("barrier_kind") == "scroll"
+                for operation in self._pending_terminal_operations.values()
+            )
+        )
+
     def _render_frame(self) -> None:
         """Render to terminal: capture Rich output, write with cursor control."""
         started_at = time.perf_counter()
@@ -432,21 +448,7 @@ class _FrameRendererMixin:
         term_height = shutil.get_terminal_size().lines if self._tty else None
         render_failed = False
         worker_mode = self._tty and self._terminal_writer_worker_mode()
-        if worker_mode and (
-            self._render_state.pending_commit_tokens
-            or getattr(self, "_deferred_commit_token", None) is not None
-        ):
-            return
-        if worker_mode and any(
-            state["visible_rows"] != self._visible_committed_rows
-            for state in self._pending_worker_frame_states().values()
-        ):
-            self.invalidate()
-            return
-        if worker_mode and any(
-            operation.get("barrier_kind") == "scroll"
-            for operation in self._pending_terminal_operations.values()
-        ):
+        if self._worker_geometry_pending():
             self.invalidate()
             return
         resize_frame = False
@@ -667,6 +669,9 @@ class _FrameRendererMixin:
                     self._pending_layout_snapshots[generation] = snapshot
                     self._pending_layout_force_full[generation] = force_full
                 try:
+                    self._trace_geometry("frame_plan", generation=batch.generation,
+                                         frame_start=batch.start_row, frame_rows=len(batch.target_lines),
+                                         scroll_rows=batch.scroll_rows, scroll_bottom=batch.scroll_bottom)
                     self._terminal_writer.submit_frame(batch)
                 except Exception as exc:
                     self._pending_layout_snapshots.pop(generation, None)
@@ -1022,6 +1027,9 @@ class _FrameRendererMixin:
         self._invalidate_busy_activity_layout()
 
     def _record_applied_layout(self, snapshot: LayoutSnapshot) -> None:
+        self._trace_geometry("layout_applied", generation=snapshot.generation,
+                             frame_start=snapshot.frame_start_row, frame_rows=snapshot.frame_rows,
+                             width=snapshot.terminal_width, height=snapshot.terminal_height)
         self._applied_layout_snapshot = snapshot
         # Identity survives commits; absolute geometry must not.
         self._render_state.applied_temporary_panel = snapshot.bottom.panel.visual_rows > 0
@@ -1185,6 +1193,9 @@ class _FrameRendererMixin:
         width: int,
         term_height: int,
     ) -> bool:
+        if self._worker_geometry_pending():
+            self.invalidate()
+            return False
         previous_lines = self._prev_frame_lines
         return bool(
             isinstance(snapshot, LayoutSnapshot)
@@ -1378,6 +1389,9 @@ class _FrameRendererMixin:
             self._pending_layout_snapshots[generation] = snapshot
             self._pending_layout_force_full[generation] = False
             try:
+                self._trace_geometry("frame_plan", generation=batch.generation,
+                                     frame_start=batch.start_row, frame_rows=len(batch.target_lines),
+                                     scroll_rows=batch.scroll_rows, scroll_bottom=batch.scroll_bottom)
                 self._terminal_writer.submit_frame(batch)
             except Exception as exc:
                 self._pending_layout_snapshots.pop(generation, None)

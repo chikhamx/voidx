@@ -1772,3 +1772,120 @@ async def test_worker_unconfirmed_frames_commit_reads_without_history_gaps(tmp_p
         assert reads == list(range(reads[0], reads[0] + 30))
         for index, row in enumerate(rows[reads[0]:reads[0] + 30]):
             assert f"f{index}.py" in row
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('worker', [False, True])
+async def test_trace_does_not_change_terminal_output(tmp_path, monkeypatch, worker):
+    results = []
+    for enabled in ('0', '1'):
+        monkeypatch.setenv('VOIDX_TUI_TRACE', enabled)
+        async with _terminal_tui(tmp_path, monkeypatch, worker=worker, height=8) as (tui, screen, stream, drain):
+            tui._input_lines = ['first', 'second', 'third']
+            tui._render_frame()
+            await drain()
+            tui._input_lines = ['short']
+            tui._render_frame()
+            await drain()
+            results.append((stream.text, screen.cells, screen.cursor, tuple(screen.scrollback)))
+            if enabled == '1':
+                events = tui._terminal_writer.trace.snapshot()['events']
+                assert any(e['kind'] == 'layout_applied' and 'visible_rows' in e for e in events)
+                if worker:
+                    assert any(e['kind'] == 'frame_plan' and 'pending_tokens' in e for e in events)
+    assert results[0] == results[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('worker', [False, True])
+async def test_trace_scroll_commit_output_equivalence(tmp_path, monkeypatch, worker):
+    from voidx.presentation.output.dock import BottomInputDock, set_dock
+
+    results = []
+    for enabled in ('0', '1'):
+        set_dock(BottomInputDock())
+        monkeypatch.setenv('VOIDX_TUI_TRACE', enabled)
+        async with _terminal_tui(tmp_path, monkeypatch, worker=worker, height=8) as (tui, screen, stream, drain):
+            tui._render_frame()
+            await drain()
+            for index in range(20):
+                dock.tree.new_node(parent=dock.tree.root, node_type='message', header=f'line-{index}')
+                tui._flush_committed(force=True)
+                await drain()
+                tui._render_frame()
+                await drain()
+            assert screen.scrollback
+            results.append((stream.text, screen.cells, screen.cursor, tuple(screen.scrollback)))
+            if enabled == '1':
+                events = tui._terminal_writer.trace.snapshot()['events']
+                assert any(e['kind'] == 'commit_plan' and e['scroll_rows'] > 0 for e in events)
+                assert any(e['kind'] == 'commit_applied' for e in events)
+    assert results[0] == results[1]
+
+
+@pytest.mark.asyncio
+async def test_worker_local_patch_during_unconfirmed_scroll_keeps_tools_contiguous(tmp_path, monkeypatch):
+    import threading
+
+    async with _terminal_tui(tmp_path, monkeypatch, worker=True, height=10) as (
+        tui, screen, stream, drain,
+    ):
+        dynamic_rows = [1]
+        monkeypatch.setattr(tui, '_render_busy_activity_elements',
+                            lambda width: [Text('BUSY')] * dynamic_rows[0])
+        tui._render_frame()
+        await drain()
+        for index in range(6):
+            dock.tree.new_node(parent=dock.tree.root, node_type='tool_call',
+                               header=f'TOOL-{index}', status='done', collapsed=True)
+            tui._flush_committed(force=True)
+            await drain()
+            tui._render_frame()
+            await drain()
+        visible_before = tui._visible_committed_rows
+        published = threading.Event()
+        publish = tui._terminal_writer._publish_frame_result
+
+        def notify(result):
+            publish(result)
+            published.set()
+
+        monkeypatch.setattr(tui._terminal_writer, '_publish_frame_result', notify)
+        dynamic_rows[0] = 2
+        tui._render_frame()
+        # Hold the event loop while the worker writes; its confirmation remains queued.
+        assert published.wait(3)
+        assert any(state['visible_rows'] == visible_before - 1
+                   for state in tui._pending_worker_frame_states().values())
+        accepted = tui._render_sync_local_region(
+            key='bottom.status',
+            rendered=tui._capture_region_rows(Text('changed status'), width=tui._frame_width()),
+        )
+        await drain()
+        dynamic_rows[0] = 1
+        dock.tree.new_node(parent=dock.tree.root, node_type='tool_call',
+                           header='TOOL-6', status='done', collapsed=True)
+        tui._flush_committed(force=True)
+        await drain()
+        tui._render_frame()
+        await drain()
+        rows = screen.history + screen.rows
+        positions = [index for index, row in enumerate(rows) if row.startswith('TOOL-')]
+        assert len(positions) == 7
+        assert positions == list(range(positions[0], positions[0] + 7))
+        assert not accepted
+        assert tui._render_sync_local_region(
+            key='bottom.status',
+            rendered=tui._capture_region_rows(Text('confirmed status'), width=tui._frame_width()),
+        )
+        await drain()
+        for index in range(7, 20):
+            dock.tree.new_node(parent=dock.tree.root, node_type='tool_call',
+                               header=f'TOOL-{index}', status='done', collapsed=True)
+            tui._flush_committed(force=True)
+            await drain()
+            tui._render_frame()
+            await drain()
+        rows = screen.history + screen.rows
+        assert 'TOOL-6' in screen.history
+        assert rows[:20] == tuple(f'TOOL-{index}' for index in range(20))
