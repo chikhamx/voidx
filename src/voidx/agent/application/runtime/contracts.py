@@ -18,6 +18,7 @@ class TurnRequest(BaseModel):
     context: TurnExecutionContext
     display_text: str | None = None
     persist_user_input: bool = True
+    continuation: bool = False
     runtime: SessionRuntimeState | None = None
     guidance: tuple[dict[str, Any], ...] | None = None
 

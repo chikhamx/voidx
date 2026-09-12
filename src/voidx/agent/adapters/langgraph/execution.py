@@ -960,14 +960,23 @@ class LangGraphExecution:
         *,
         display_text: str | None = None,
         persist_user_input: bool = True,
+        continuation: bool = False,
     ) -> None:
         if self._coding_turn_runner is None:
             raise RuntimeError("coding turn runner is not bound")
-        await self._coding_turn_runner(
-            text,
-            display_text=display_text,
-            persist_user_input=persist_user_input,
-        )
+        try:
+            await self._coding_turn_runner(
+                text,
+                display_text=display_text,
+                persist_user_input=persist_user_input,
+                continuation=continuation,
+            )
+        except TypeError:
+            await self._coding_turn_runner(
+                text,
+                display_text=display_text,
+                persist_user_input=persist_user_input,
+            )
 
     async def show_startup(
         self,
@@ -1436,6 +1445,7 @@ class LangGraphExecution:
         context: TurnExecutionContext,
         persist_user_input: bool = True,
         guidance: tuple[dict[str, Any], ...] | None = None,
+        continuation: bool = False,
     ) -> None:
         if not isinstance(context, TurnExecutionContext):
             raise TypeError("run_turn requires TurnExecutionContext")
@@ -1445,6 +1455,7 @@ class LangGraphExecution:
             context=context,
             persist_user_input=persist_user_input,
             guidance=guidance,
+            continuation=continuation,
         )
 
 

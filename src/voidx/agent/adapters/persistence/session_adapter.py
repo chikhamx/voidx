@@ -37,6 +37,12 @@ class SessionRepositoryAdapter:
             session_id, profile, profile_snapshot=profile_snapshot
         )
 
+    async def count_messages(self, session_id: str) -> int:
+        return await session_repository.count_messages(session_id)
+
+    async def load_messages(self, session_id: str):
+        return await session_repository.load_messages(session_id)
+
     async def stage_provisional_session(self, **kwargs: object):
         return await provisional_sessions.stage_provisional_session(**kwargs)
 

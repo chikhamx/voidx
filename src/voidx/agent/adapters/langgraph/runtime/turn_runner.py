@@ -209,6 +209,7 @@ class TurnRunner:
         context: TurnExecutionContext,
         persist_user_input: bool = True,
         guidance: tuple[dict[str, Any], ...] | None = None,
+        continuation: bool = False,
     ) -> None:
         host = self.host
         context_session_id = context.session_id
@@ -295,7 +296,7 @@ class TurnRunner:
                     text_prefix=combined_prefix,
                     extra_removed_spans=combined_spans,
                 )
-                turn_display_text = display_text or payload.display_text
+                turn_display_text = display_text or ("/continue" if continuation else payload.display_text)
                 turn_metadata = turn_metadata_from_context(context)
                 host._current_tree = host._ui.dock.tree
                 if host._ui.via_events():
@@ -337,8 +338,10 @@ class TurnRunner:
                 for warning in payload.warnings:
                     host._ui.ui.warn(warning)
 
-                turn_msg = HumanMessage(content=payload.content, id=f"user_{time.time_ns()}")
-                msgs.append(turn_msg)
+                turn_msg = None
+                if not continuation:
+                    turn_msg = HumanMessage(content=payload.content, id=f"user_{time.time_ns()}")
+                    msgs.append(turn_msg)
                 if host._session is None and not context.detached:
                     host._session = await create_session(workspace=host._workspace)
 
@@ -350,12 +353,18 @@ class TurnRunner:
                 base_task_state = _load_task_state(getattr(host, "_task_state", None))
                 if not base_task_state.recent_exchanges and session_msgs:
                     base_task_state.recent_exchanges = _rebuild_exchanges_from_session_msgs(session_msgs)
-                if interaction_mode == InteractionMode.GOAL.value and base_task_state.current_goal is None:
-                    base_task_state.set_goal(payload.title_text)
-                if interaction_mode == InteractionMode.PLAN.value:
-                    goal_resolution = resolve_plan_mode(payload.title_text, base_task_state)
-                elif interaction_mode == InteractionMode.GOAL.value:
-                    goal_resolution = build_goal_resolution(payload.title_text, base_task_state)
+                if not continuation:
+                    if interaction_mode == InteractionMode.GOAL.value and base_task_state.current_goal is None:
+                        base_task_state.set_goal(payload.title_text)
+                    if interaction_mode == InteractionMode.PLAN.value:
+                        goal_resolution = resolve_plan_mode(payload.title_text, base_task_state)
+                    elif interaction_mode == InteractionMode.GOAL.value:
+                        goal_resolution = build_goal_resolution(payload.title_text, base_task_state)
+                    else:
+                        goal_resolution = GoalResolution(
+                            goal=None,
+                            plan=None,
+                        )
                 else:
                     goal_resolution = GoalResolution(
                         goal=None,
@@ -430,7 +439,7 @@ class TurnRunner:
                 )
                 prior_keys = {
                     message_journal_key(m)
-                    for m in msgs[:-1]
+                    for m in (msgs[:-1] if not continuation else msgs)
                     if not isinstance(m, HumanMessage)
                 }
                 journal = TurnJournal(active_input=active_input, committed_keys=prior_keys)
@@ -478,7 +487,7 @@ class TurnRunner:
                 final_task_state = _load_task_state(final.get("task_state"), fallback=turn_task_state)
                 exchange = (
                     _turn_exchange_from_final_messages(payload.title_text, final.get("messages", []))
-                    if persist_user_input
+                    if persist_user_input and not continuation
                     else None
                 )
                 if exchange is not None:
@@ -521,17 +530,20 @@ class TurnRunner:
                         await touch_session(host._session.id)
                     else:
                         turn_index = None
-                        for i, msg in enumerate(final["messages"]):
-                            if getattr(msg, "id", None) == turn_msg.id:
-                                turn_index = i
-                                break
-                        if turn_index is None:
-                            for i in range(len(final["messages"]) - 1, -1, -1):
-                                msg = final["messages"][i]
-                                if isinstance(msg, HumanMessage) and msg.content == payload.content:
+                        if turn_msg is not None:
+                            for i, msg in enumerate(final["messages"]):
+                                if getattr(msg, "id", None) == turn_msg.id:
                                     turn_index = i
                                     break
-                        new_messages = final["messages"][turn_index + 1:] if turn_index is not None else []
+                            if turn_index is None:
+                                for i in range(len(final["messages"]) - 1, -1, -1):
+                                    msg = final["messages"][i]
+                                    if isinstance(msg, HumanMessage) and msg.content == payload.content:
+                                        turn_index = i
+                                        break
+                            new_messages = final["messages"][turn_index + 1:] if turn_index is not None else []
+                        else:
+                            new_messages = final["messages"][len(msgs):]
                         await _persist_new_messages(host, new_messages)
 
                     host._current_turn_tool_messages = tuple(
@@ -540,12 +552,16 @@ class TurnRunner:
                         if isinstance(message, ToolMessage)
                     )
 
-                    # Update session title to match current goal after turn completes
+                    session_updates: dict[str, Any] = {}
+                    if host._session_msg_cache is not None:
+                        session_updates["message_count"] = len(host._session_msg_cache)
                     goal = final_task_state.current_goal
                     if goal is not None and goal.desc.strip():
                         title = goal.desc.strip()
                         await update_title(host._session.id, title)
-                        host._session = host._session.model_copy(update={"title": title})
+                        session_updates["title"] = title
+                    if session_updates:
+                        host._session = host._session.model_copy(update=session_updates)
                 elapsed = time.monotonic() - t_turn_start
                 stats = host._usage_stats
                 turn_calls = stats.turn_calls
@@ -776,6 +792,8 @@ async def _persist_new_messages(host: Any, new_messages: list) -> None:
                 ))
     if new_messages:
         await touch_session(host._session.id)
+        if host._session_msg_cache is not None:
+            host._session = host._session.model_copy(update={"message_count": len(host._session_msg_cache)})
 
 
 async def _persist_streamed_messages(host: Any, streamed_messages: list, payload_content: str | None) -> None:
@@ -802,6 +820,8 @@ async def _persist_streamed_messages(host: Any, streamed_messages: list, payload
         )
         if flushed > 0:
             await touch_session(host._session.id)
+            if host._session_msg_cache is not None:
+                host._session = host._session.model_copy(update={"message_count": len(host._session_msg_cache)})
         return
 
     if not payload_content:

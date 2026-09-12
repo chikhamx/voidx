@@ -51,6 +51,7 @@ class AgentService:
         context: TurnExecutionContext | None = None,
         display_text: str | None = None,
         persist_user_input: bool = True,
+        continuation: bool = False,
     ) -> None:
         kwargs: dict = {
             "thread_id": thread_id,
@@ -58,6 +59,9 @@ class AgentService:
             "display_text": display_text,
         }
         if not persist_user_input:
+            kwargs["persist_user_input"] = False
+        if continuation:
+            kwargs["continuation"] = True
             kwargs["persist_user_input"] = False
         await self._autonomous_router.run_coding_turn(
             user_text,

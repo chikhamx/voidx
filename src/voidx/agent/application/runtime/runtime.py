@@ -48,6 +48,8 @@ class AgentRuntime:
             }
             if request.guidance is not None:
                 engine_kwargs["guidance"] = request.guidance
+            if request.continuation:
+                engine_kwargs["continuation"] = True
             result = await self._resources.turn_engine.run(
                 request.user_text,
                 runtime,

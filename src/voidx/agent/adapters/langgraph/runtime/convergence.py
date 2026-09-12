@@ -54,20 +54,20 @@ def _latest_user_text(
     if active_turn_input is not None:
         if isinstance(active_turn_input, dict):
             text = active_turn_input.get("semantic_text") or active_turn_input.get("raw_text")
-            if text:
+            if text and text != "/continue":
                 return str(text)
             content = active_turn_input.get("content")
-            if content:
+            if content and str(content) != "/continue":
                 return str(content)
         else:
             text = (
                 getattr(active_turn_input, "semantic_text", None)
                 or getattr(active_turn_input, "raw_text", None)
             )
-            if text:
+            if text and text != "/continue":
                 return str(text)
             content = getattr(active_turn_input, "content", None)
-            if content:
+            if content and str(content) != "/continue":
                 return str(content)
 
     for message in reversed(messages):

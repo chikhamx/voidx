@@ -699,11 +699,12 @@ async def test_continue_command_runs_turn_without_persisting_user_input(monkeypa
 
     calls: list[dict] = []
 
-    async def fake_run_coding_turn(text: str, *, display_text: str | None = None, persist_user_input: bool = True) -> None:
+    async def fake_run_coding_turn(text: str, *, display_text: str | None = None, persist_user_input: bool = True, continuation: bool = False) -> None:
         calls.append({
             "text": text,
             "display_text": display_text,
             "persist_user_input": persist_user_input,
+            "continuation": continuation,
         })
 
     session = SessionInfo(id="sess-1", workspace=".", message_count=3)
@@ -715,7 +716,8 @@ async def test_continue_command_runs_turn_without_persisting_user_input(monkeypa
     dispatched = await SlashHandler(graph).dispatch("/continue")
     assert dispatched is True
     assert len(calls) == 1
-    assert calls[0]["text"] == DEFAULT_CONTINUATION_TEXT
+    assert calls[0]["text"] == ""
+    assert calls[0]["continuation"] is True
     assert calls[0]["display_text"] == "/continue"
     assert calls[0]["persist_user_input"] is False
 
@@ -740,6 +742,109 @@ async def test_continue_command_when_empty_session_prints_notice(monkeypatch):
     assert dispatched is True
     assert calls == []
     assert output == ["[dim]No conversation to continue.[/dim]"]
+
+
+@pytest.mark.asyncio
+async def test_continue_command_when_zero_count_in_memory_but_repo_has_messages():
+    from voidx.agent.adapters.persistence.session_repository import SessionInfo
+    from voidx.llm.message_markers import DEFAULT_CONTINUATION_TEXT
+
+    calls: list[dict] = []
+
+    async def fake_run_coding_turn(text: str, *, display_text: str | None = None, persist_user_input: bool = True, continuation: bool = False) -> None:
+        calls.append({
+            "text": text,
+            "display_text": display_text,
+            "persist_user_input": persist_user_input,
+            "continuation": continuation,
+        })
+
+    async def fake_count_messages(s_id: str) -> int:
+        return 2
+
+    session = SessionInfo(id="sess-stale", workspace=".", message_count=0)
+    fake_repo = SimpleNamespace(
+        count_messages=fake_count_messages,
+    )
+    graph = command_context(
+        session=session,
+        run_coding_turn=fake_run_coding_turn,
+    )
+
+    dispatched = await SlashHandler(graph, session_repository=fake_repo).dispatch("/continue")
+    assert dispatched is True
+    assert len(calls) == 1
+    assert calls[0]["text"] == ""
+    assert calls[0]["continuation"] is True
+    assert calls[0]["display_text"] == "/continue"
+
+
+@pytest.mark.asyncio
+async def test_continue_command_when_zero_count_in_memory_but_repo_has_persisted_session():
+    from voidx.agent.adapters.persistence.session_repository import SessionInfo
+
+    calls: list[dict] = []
+
+    async def fake_run_coding_turn(text: str, *, display_text: str | None = None, persist_user_input: bool = True, continuation: bool = False) -> None:
+        calls.append({
+            "text": text,
+            "display_text": display_text,
+            "persist_user_input": persist_user_input,
+            "continuation": continuation,
+        })
+
+    persisted_session = SessionInfo(id="sess-stale-2", workspace=".", message_count=5)
+
+    async def fake_get_session(s_id: str):
+        return persisted_session
+
+    session = SessionInfo(id="sess-stale-2", workspace=".", message_count=0)
+    fake_repo = SimpleNamespace(
+        get_session=fake_get_session,
+    )
+    graph = command_context(
+        session=session,
+        run_coding_turn=fake_run_coding_turn,
+    )
+
+    dispatched = await SlashHandler(graph, session_repository=fake_repo).dispatch("/continue")
+    assert dispatched is True
+    assert len(calls) == 1
+    assert calls[0]["text"] == ""
+    assert calls[0]["continuation"] is True
+
+
+@pytest.mark.asyncio
+async def test_continue_command_when_zero_count_in_memory_but_repo_has_load_messages():
+    from voidx.agent.adapters.persistence.session_repository import SessionInfo
+
+    calls: list[dict] = []
+
+    async def fake_run_coding_turn(text: str, *, display_text: str | None = None, persist_user_input: bool = True, continuation: bool = False) -> None:
+        calls.append({
+            "text": text,
+            "display_text": display_text,
+            "persist_user_input": persist_user_input,
+            "continuation": continuation,
+        })
+
+    async def fake_load_messages(s_id: str):
+        return ["msg1", "msg2"]
+
+    session = SessionInfo(id="sess-stale-3", workspace=".", message_count=0)
+    fake_repo = SimpleNamespace(
+        load_messages=fake_load_messages,
+    )
+    graph = command_context(
+        session=session,
+        run_coding_turn=fake_run_coding_turn,
+    )
+
+    dispatched = await SlashHandler(graph, session_repository=fake_repo).dispatch("/continue")
+    assert dispatched is True
+    assert len(calls) == 1
+    assert calls[0]["text"] == ""
+    assert calls[0]["continuation"] is True
 
 
 def test_continue_command_is_in_palette():

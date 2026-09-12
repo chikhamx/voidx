@@ -53,6 +53,7 @@ class LangGraphAutonomousInputRouter:
         context: Any = None,
         display_text: str | None = None,
         persist_user_input: bool = True,
+        continuation: bool = False,
     ) -> None:
         if self._coding_service is None:
             raise RuntimeError("coding service is not configured")
@@ -73,6 +74,8 @@ class LangGraphAutonomousInputRouter:
         }
         if not persist_user_input:
             coding_kwargs["persist_user_input"] = False
+        if continuation:
+            coding_kwargs["continuation"] = True
         await self._coding_service.run_coding_turn(
             **coding_kwargs,
         )

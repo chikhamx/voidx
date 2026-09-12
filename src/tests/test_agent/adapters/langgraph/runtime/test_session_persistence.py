@@ -292,6 +292,87 @@ async def test_run_turn_uses_execution_context_session_id_for_persistence(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_run_turn_updates_in_memory_session_message_count(tmp_path):
+    from voidx.agent.domain.turn_context import TurnExecutionContext
+
+    session = await create_session(workspace=str(tmp_path), title="Test")
+    assert session.message_count == 0
+    try:
+        graph = make_langgraph_execution(Config(workspace=str(tmp_path)), "test", session=session)
+
+        class FakeGraph:
+            async def astream(self, initial, _config, *, stream_mode="values"):
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="answer")]}
+
+        graph.graph = FakeGraph()
+
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        try:
+            await graph.run_turn(
+                "hello",
+                context=TurnExecutionContext(thread_id=session.id, session_id=session.id),
+            )
+        finally:
+            test_dock.deactivate()
+            test_dock.reset()
+            set_dock(None)
+
+        assert graph._session is not None
+        assert graph._session.message_count == 2
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_run_turn_continuation_does_not_inject_user_message(tmp_path):
+    from voidx.agent.domain.turn_context import TurnExecutionContext
+
+    session = await create_session(workspace=str(tmp_path), title="Test Continuation")
+    await save_message(MessageRow(session_id=session.id, role="user", content="hello"))
+    await save_message(MessageRow(session_id=session.id, role="assistant", content="world"))
+    try:
+        graph = make_langgraph_execution(Config(workspace=str(tmp_path)), "test", session=session)
+
+        seen_initial_messages = []
+
+        class FakeGraph:
+            async def astream(self, initial, _config, *, stream_mode="values"):
+                seen_initial_messages.extend(list(initial["messages"]))
+                yield {"messages": list(initial["messages"]) + [AIMessage(content="continued answer")]}
+
+        graph.graph = FakeGraph()
+
+        test_dock = BottomInputDock()
+        set_dock(test_dock)
+        test_dock.begin_capture()
+        try:
+            await graph.run_turn(
+                "",
+                display_text="/continue",
+                context=TurnExecutionContext(thread_id=session.id, session_id=session.id),
+                persist_user_input=False,
+                continuation=True,
+            )
+        finally:
+            test_dock.deactivate()
+            test_dock.reset()
+            set_dock(None)
+
+        human_messages = [m for m in seen_initial_messages if isinstance(m, HumanMessage)]
+        assert len(human_messages) == 1
+        assert human_messages[0].content == "hello"
+
+        rows = await load_messages(session.id)
+        assert len(rows) == 3
+        assert [r.role for r in rows] == ["user", "assistant", "assistant"]
+        assert [r.content for r in rows] == ["hello", "world", "continued answer"]
+    finally:
+        await delete_session(session.id)
+
+
+@pytest.mark.asyncio
 async def test_run_turn_loads_execution_context_runtime_state(tmp_path):
     from voidx.agent.application.runtime_context import InteractionMode
     from voidx.agent.adapters.persistence.runtime_state_repository import RuntimeStateSnapshot, save_runtime_state

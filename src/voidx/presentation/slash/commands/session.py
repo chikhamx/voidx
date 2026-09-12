@@ -339,25 +339,46 @@ class SessionCommandsMixin:
         await self.session_port.show_startup(**kwargs)
 
     async def _continue(self) -> None:
+        from inspect import isawaitable
+        from voidx.llm.message_markers import DEFAULT_CONTINUATION_TEXT
+
         session = getattr(self.session_port, "session", None)
         has_conversation = False
         if session is not None:
-            message_count = getattr(session, "message_count", 0)
+            message_count = getattr(session, "message_count", 0) or 0
             if message_count > 0:
                 has_conversation = True
             elif self.session_repository is not None:
-                get_msgs = getattr(self.session_repository, "get_session_messages", None)
-                if callable(get_msgs):
-                    msgs = await get_msgs(session.id)
-                    has_conversation = bool(msgs)
+                count_msgs = getattr(self.session_repository, "count_messages", None)
+                if callable(count_msgs):
+                    res = count_msgs(session.id)
+                    count = await res if isawaitable(res) else res
+                    has_conversation = count > 0
+                if not has_conversation:
+                    get_sess = getattr(self.session_repository, "get_session", None)
+                    if callable(get_sess):
+                        res = get_sess(session.id)
+                        persisted = await res if isawaitable(res) else res
+                        if persisted and (getattr(persisted, "message_count", 0) or 0) > 0:
+                            has_conversation = True
+                if not has_conversation:
+                    get_msgs = (
+                        getattr(self.session_repository, "load_messages", None)
+                        or getattr(self.session_repository, "get_session_messages", None)
+                    )
+                    if callable(get_msgs):
+                        res = get_msgs(session.id)
+                        msgs = await res if isawaitable(res) else res
+                        has_conversation = bool(msgs)
 
         if not has_conversation:
             self.session_port.ui.print("[dim]No conversation to continue.[/dim]")
             return
 
         await self.automation_port.run_coding_turn(
-            "Continue if you have next steps.",
+            "",
             display_text="/continue",
             persist_user_input=False,
+            continuation=True,
         )
 

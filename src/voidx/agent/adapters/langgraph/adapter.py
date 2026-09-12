@@ -21,6 +21,7 @@ class LangGraphTurnHost(LangGraphStateTarget, Protocol):
         self, user_text: str, *, display_text: str | None = None,
         context: Any | None = None, persist_user_input: bool = True,
         guidance: tuple[dict[str, Any], ...] | None = None,
+        continuation: bool = False,
     ) -> None: ...
 
 
@@ -48,15 +49,28 @@ class LangGraphTurnEngine:
         context: Any | None = None,
         persist_user_input: bool = True,
         guidance: tuple[dict[str, Any], ...] | None = None,
+        continuation: bool = False,
     ) -> SessionRuntimeState:
         self._mapper.apply_runtime(self._execution, runtime)
-        await self._execution.run_turn(
-            user_text,
-            display_text=display_text,
-            context=context,
-            persist_user_input=persist_user_input,
-            guidance=guidance,
-        )
+        turn_kwargs = {
+            "display_text": display_text,
+            "context": context,
+            "persist_user_input": persist_user_input,
+            "guidance": guidance,
+        }
+        if continuation:
+            turn_kwargs["continuation"] = True
+        try:
+            await self._execution.run_turn(
+                user_text,
+                **turn_kwargs,
+            )
+        except TypeError:
+            turn_kwargs.pop("continuation", None)
+            await self._execution.run_turn(
+                user_text,
+                **turn_kwargs,
+            )
         self.last_evidence = _evidence_from_execution(self._execution)
         self._execution._current_turn_tool_messages = ()
         # Return the post-execution state still in RUNNING phase; the runtime

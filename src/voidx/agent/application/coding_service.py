@@ -33,6 +33,7 @@ class CodingService:
         display_text: str | None = None,
         workspace: str = "",
         persist_user_input: bool = True,
+        continuation: bool = False,
     ) -> TurnResult:
         resolved_thread_id = thread_id or str(getattr(context, "thread_id", "") or "") or session_id or "coding"
         if context is not None:
@@ -72,5 +73,6 @@ class CodingService:
                 context=execution_context,
                 display_text=display_text,
                 persist_user_input=persist_user_input,
+                continuation=continuation,
             )
         )
