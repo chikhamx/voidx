@@ -477,6 +477,9 @@ class PureTui(
         context: ThreadExecutionContext | None = None,
     ) -> None:
         """Submit text from web gateway."""
+        if text.strip() == "/clear" or text.strip().startswith("/session new"):
+            self._locked_submit_context = None
+            self._locked_submit_context_explicit = False
         explicit_context = context is not None
         context = self._submit_context(
             thread_id=thread_id,
@@ -1774,6 +1777,8 @@ class PureTui(
             self._record_history(draft_text, paste_entries)
             self._clear_input()
             self._drain_queue(self._queue)
+            self._locked_submit_context = None
+            self._locked_submit_context_explicit = False
             self._queue.put_nowait(_SubmitQueueItem(
                 "/clear",
                 restore_text=draft_text,
@@ -1793,6 +1798,9 @@ class PureTui(
             self._clear_input()
             self._submit_guidance_bypass(expanded_guidance)
             return True
+        if stripped == "/clear" or stripped.startswith("/session new"):
+            self._locked_submit_context = None
+            self._locked_submit_context_explicit = False
         submit_text = self._expand_registered_tokens(draft_text)
         paste_entries = self._paste_entries_snapshot()
         self._record_history(draft_text, paste_entries)

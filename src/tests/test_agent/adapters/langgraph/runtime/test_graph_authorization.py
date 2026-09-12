@@ -1394,3 +1394,26 @@ async def test_clear_current_session_removes_workflow_todo_and_tool_results(tmp_
         assert not Path(result_path).exists()
     finally:
         await delete_session(session.id)
+
+
+@pytest.mark.asyncio
+async def test_clear_current_session_clears_anonymous_thread_execution_states(tmp_path):
+    from voidx.agent.adapters.langgraph.runtime.thread_context import bind_thread_execution_context
+    from voidx.agent.domain.turn_context import TurnExecutionContext
+
+    graph = _graph(tmp_path)
+    ctx1 = TurnExecutionContext(thread_id="coding", session_id="")
+    async with bind_thread_execution_context(graph, session_id="", thread_id="coding", turn_context=ctx1):
+        graph._task_state.set_goal("old goal")
+        sess = await create_session(workspace=str(tmp_path))
+        graph._session = sess
+
+    assert graph.task_state.current_goal is not None
+
+    await graph.clear_current_session()
+    assert graph.task_state.current_goal is None
+
+    # Next turn starts without session_id (like /clear in TUI)
+    ctx2 = TurnExecutionContext(thread_id="coding", session_id="")
+    async with bind_thread_execution_context(graph, session_id="", thread_id="coding", turn_context=ctx2):
+        assert graph.task_state.current_goal is None

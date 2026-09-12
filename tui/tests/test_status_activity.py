@@ -1630,3 +1630,36 @@ def test_ctrl_c_does_not_stop_loop_for_regular_text_that_starts_with_loop(tmp_pa
 
     assert tui._queue.empty()
     assert tui._notice == "Press Ctrl-C again to exit"
+
+
+def test_clear_command_resets_locked_submit_context(tmp_path):
+    tui = _tui(tmp_path)
+    current_sess = {"id": "session-1"}
+    tui.status.session_id = lambda: current_sess["id"]
+
+    tui._input_lines = ["hello"]
+    tui._cursor_col = len("hello")
+    assert tui._do_submit() is True
+    first = tui._queue.get_nowait()
+    assert first.context.session_id == "session-1"
+    assert tui._locked_submit_context is not None
+
+    tui._input_lines = ["/clear"]
+    tui._cursor_col = len("/clear")
+    assert tui._do_submit() is True
+    clear_item = tui._queue.get_nowait()
+    assert clear_item == "/clear"
+    assert tui._locked_submit_context is None
+
+    current_sess["id"] = ""
+    tui._input_lines = ["new message"]
+    tui._cursor_col = len("new message")
+    assert tui._do_submit() is True
+    second = tui._queue.get_nowait()
+    assert second.context.session_id == ""
+
+    tui._locked_submit_context = second.context
+    tui._locked_submit_context_explicit = True
+    tui.submit_external_input("/clear")
+    assert tui._locked_submit_context is None
+    assert tui._locked_submit_context_explicit is False

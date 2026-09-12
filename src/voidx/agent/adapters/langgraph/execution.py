@@ -61,6 +61,7 @@ from voidx.agent.adapters.langgraph.runtime.thread_context import (
     GuidanceEntry,
     clear_thread_execution_states,
     current_thread_execution_state,
+    rekey_thread_execution_state,
 )
 from voidx.agent.domain.turn_context import TurnExecutionContext
 from voidx.agent.adapters.langgraph.runtime.tool_executor import ToolExecutorAdapter
@@ -219,6 +220,8 @@ class LangGraphExecution:
         state = self._current_thread_state()
         if state is not None:
             state.session = value
+            if value is not None and getattr(value, "id", ""):
+                rekey_thread_execution_state(self, state, value.id)
         else:
             self._default_session = value
 
@@ -1002,6 +1005,7 @@ class LangGraphExecution:
         if old_session_id:
             await self.agent_gateway.close_session(old_session_id)
             clear_thread_execution_states(self, old_session_id)
+        clear_thread_execution_states(self, "")
         self._session = None
         self._session_date = session_date(None)
         self._session_msg_cache = []

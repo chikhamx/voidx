@@ -205,17 +205,39 @@ def thread_execution_states(host: Any) -> dict[str, ThreadExecutionState]:
     return states
 
 
-def clear_thread_execution_states(host: Any, session_id: str) -> None:
-    """Drop all cached execution states belonging to one session."""
-    if not session_id:
-        return
+def rekey_thread_execution_state(
+    host: Any,
+    state: ThreadExecutionState,
+    new_session_id: str,
+) -> None:
+    """Update cache keys when a session id is assigned to a thread state."""
     states = getattr(host, "_thread_execution_states", None)
     if not states:
         return
-    prefix = f"{session_id}\x1f"
+    old_keys = [k for k, v in states.items() if v is state]
+    new_key = _state_key(new_session_id, state.thread_id, state.session)
+    for old_key in old_keys:
+        if old_key != new_key:
+            del states[old_key]
+    states[new_key] = state
+
+
+def clear_thread_execution_states(host: Any, session_id: str) -> None:
+    """Drop cached execution states belonging to one session or anonymous states."""
+    states = getattr(host, "_thread_execution_states", None)
+    if not states:
+        return
+    prefix = f"{session_id}\x1f" if session_id else ""
     for key in list(states):
-        if key == session_id or key.startswith(prefix):
-            del states[key]
+        state = states[key]
+        state_session = getattr(state, "session", None)
+        state_session_id = getattr(state_session, "id", "") if state_session is not None else ""
+        if session_id:
+            if key == session_id or key.startswith(prefix) or state_session_id == session_id:
+                del states[key]
+        else:
+            if not state_session_id or key.startswith("\x1f"):
+                del states[key]
 
 
 async def _state_for_context(
