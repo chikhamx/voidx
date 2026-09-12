@@ -665,3 +665,116 @@ async def test_stream_llm_discards_partial_stream_before_done_on_failure():
         "discard",
         "done",
     ]
+
+
+class SanitizationChunkModel:
+    def __init__(self, chunks):
+        self.chunks = chunks
+
+    async def astream(self, messages):
+        for chunk in self.chunks:
+            yield chunk
+
+
+@pytest.mark.parametrize("protocol", ["gemini", "anthropic"])
+@pytest.mark.parametrize("thinking,text", [
+    ('states["coding"] is the answer', 'states["coding'),
+    ("a" * 40 + " thought", "a" * 40),
+    ("a" * 40, "a" * 40 + " answer"),
+    ("same", "same"),
+])
+@pytest.mark.asyncio
+async def test_stream_llm_preserves_native_thinking_text(protocol, thinking, text):
+    renderer = FakeRenderer()
+    model = SanitizationChunkModel([
+        AIMessageChunk(content=[
+            {"type": "thinking", "thinking": thinking},
+            {"type": "text", "text": text},
+        ]),
+        AIMessageChunk(content=[{"type": "text", "text": '"] remains'}]),
+    ])
+    msg = await _stream_llm(model, [], renderer, protocol)
+    assert "".join(renderer.text) == text + '"] remains'
+    assert msg.content == text + '"] remains'
+    assert renderer.thinking == [thinking]
+
+
+@pytest.mark.parametrize("protocol", ["openai", "deepseek", ""])
+@pytest.mark.parametrize("thinking,text", [
+    ("`thought", "`"),
+    ("a" * 40 + " thought", "a" * 40),
+    ("a" * 40, "a" * 40 + " answer"),
+    (" ", "\n"),
+])
+def test_visible_content_preserves_nonidentical_prefixes(protocol, thinking, text):
+    from voidx.agent.adapters.langgraph.runtime.streaming import _stream_visible_content
+
+    for content in (text, [text], [{"type": "text", "text": text}]):
+        assert _stream_visible_content(content, thinking, protocol=protocol) == content
+
+
+@pytest.mark.parametrize("protocol", ["openai", "deepseek", ""])
+@pytest.mark.parametrize("text", ["thought", " thought "])
+def test_visible_content_keeps_exact_reasoning_deduplication(protocol, text):
+    from voidx.agent.adapters.langgraph.runtime.streaming import _stream_visible_content
+
+    assert _stream_visible_content(text, "thought", protocol=protocol) == ""
+
+
+@pytest.mark.parametrize("text", ["", "  spaced text  ", " ", "\n", "\n    code\n"])
+def test_tool_extractors_preserve_whitespace_without_calls(text):
+    from voidx.agent.adapters.langgraph.runtime.streaming import (
+        _extract_dsml_tool_calls_from_text,
+        _extract_legacy_xml_tool_calls_from_text,
+    )
+
+    assert _extract_dsml_tool_calls_from_text(text) == (text, [])
+    assert _extract_legacy_xml_tool_calls_from_text(text) == (text, [])
+
+
+@pytest.mark.parametrize("parts", [
+    ["TaskState() ", "runs. ", "So ", "host"],
+    ["foo", " ", "bar"],
+    ["\n", "    code", "\n"],
+])
+def test_replay_sanitization_preserves_whitespace(parts):
+    from voidx.agent.adapters.langgraph.runtime.streaming import _sanitize_ai_content_for_replay
+
+    expected = "".join(parts)
+    for content in (expected, parts, [{"type": "text", "text": s} for s in parts]):
+        assert _sanitize_ai_content_for_replay(content) == expected
+
+
+@pytest.mark.asyncio
+async def test_stream_llm_preserves_chunk_boundary_whitespace():
+    renderer = FakeRenderer()
+    model = SanitizationChunkModel([
+        AIMessageChunk(content=[{"type": "text", "text": text}])
+        for text in ["TaskState() ", "runs. ", "So ", "host"]
+    ])
+    msg = await _stream_llm(model, [], renderer, "gemini")
+    assert "".join(renderer.text) == "TaskState() runs. So host"
+    assert msg.content == "TaskState() runs. So host"
+
+
+@pytest.mark.parametrize("protocol", ["deepseek", "gemini", "anthropic", "openai"])
+def test_replay_sanitization_preserves_protocol_thinking_policy(protocol):
+    from voidx.agent.adapters.langgraph.runtime.streaming import _sanitize_ai_content_for_replay
+
+    thought = {"type": "reasoning_content", "text": "thought"}
+    content = [thought, {"type": "text", "text": "answer"}]
+    expected = content if protocol == "deepseek" else "answer"
+    assert _sanitize_ai_content_for_replay(content, protocol=protocol) == expected
+
+
+@pytest.mark.asyncio
+async def test_stream_llm_keeps_invalid_dsml_protection():
+    renderer = FakeRenderer()
+    model = SanitizationChunkModel([AIMessageChunk(content=(
+        '<||DSML||tool_calls><||DSML||invoke></||DSML||invoke></||DSML||tool_calls>'
+    ))])
+    msg = await _stream_llm(model, [], renderer, "gemini")
+    assert msg.content == ""
+    assert msg.tool_calls == []
+    assert msg.response_metadata["malformed_tool_call"] is True
+    assert renderer.text == []

@@ -76,7 +76,7 @@ async def stream_llm(
             if on_activity is not None:
                 on_activity()
             thinking = extract_thinking(raw_chunk, protocol)
-            content = _stream_visible_content(raw_chunk.content, thinking)
+            content = _stream_visible_content(raw_chunk.content, thinking, protocol=protocol)
             chunk = (
                 raw_chunk
                 if content == raw_chunk.content
@@ -250,9 +250,9 @@ def _sanitize_ai_content_for_replay(content: object, *, protocol: str = "") -> o
     return blocks
 
 
-def _stream_visible_content(content: object, thinking: str) -> object:
+def _stream_visible_content(content: object, thinking: str, *, protocol: str = "") -> object:
     if isinstance(content, str):
-        return _strip_duplicate_thinking_text(content, thinking)
+        return _strip_duplicate_thinking_text(content, thinking, protocol=protocol)
     if not isinstance(content, list):
         return content
 
@@ -261,14 +261,14 @@ def _stream_visible_content(content: object, thinking: str) -> object:
         if isinstance(item, dict) and item.get("type") in _REPLAY_UNSAFE_BLOCK_TYPES:
             continue
         if isinstance(item, str):
-            visible = _strip_duplicate_thinking_text(item, thinking)
+            visible = _strip_duplicate_thinking_text(item, thinking, protocol=protocol)
             if visible:
                 blocks.append(visible)
             continue
         if isinstance(item, dict) and item.get("type") == "text":
             text = item.get("text", "")
             if isinstance(text, str):
-                visible = _strip_duplicate_thinking_text(text, thinking)
+                visible = _strip_duplicate_thinking_text(text, thinking, protocol=protocol)
                 if visible:
                     updated = dict(item)
                     updated["text"] = visible
@@ -279,16 +279,13 @@ def _stream_visible_content(content: object, thinking: str) -> object:
     return blocks if blocks else ""
 
 
-def _strip_duplicate_thinking_text(text: str, thinking: str) -> str:
-    if not text or not thinking:
+def _strip_duplicate_thinking_text(text: str, thinking: str, *, protocol: str = "") -> str:
+    if not text or not thinking or not text.strip():
         return text
-    # Exact match — provider duplicated reasoning in content field
+    if protocol in {"gemini", "anthropic"}:
+        return text
+    # Only complete echoes are safe to remove; shared prefixes may be real prose.
     if text == thinking or text.strip() == thinking.strip():
-        return ""
-    # Prefix match — streaming chunk where content is a prefix of the
-    # accumulated thinking text (or vice versa).  This happens when a
-    # provider echoes reasoning_content in the content delta incrementally.
-    if thinking.startswith(text) or text.startswith(thinking):
         return ""
     return text
 
@@ -412,6 +409,9 @@ def _extract_dsml_tool_calls_from_text(text: str) -> tuple[str, list[dict]]:
                 "id": f"call_dsml_{uuid.uuid4().hex[:12]}",
                 "type": "tool_call",
             })
+
+    if not calls:
+        return text, []
 
     cleaned = _DSML_TOOL_CALLS_RE.sub("", normalized).strip()
     if calls and _DSML_BOILERPLATE_RE.search(cleaned) and len(cleaned) <= 160:
