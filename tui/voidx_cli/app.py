@@ -589,6 +589,7 @@ class PureTui(
         self._restored_committed_line_count = 0
         self._restored_startup_flushed = False
         self._restored_history_retired = False
+        self._startup_committed = False
 
         if self._tty and hasattr(self._terminal_writer, "submit_barrier"):
             token = self._terminal_writer.submit_barrier(
@@ -732,6 +733,7 @@ class PureTui(
                 self._restored_committed_line_count = 0
                 self._restored_startup_flushed = False
                 self._restored_history_retired = False
+                self._startup_committed = False
             return None
         start, end = restored_range
         key = (id(dock.tree), start, end)
@@ -1320,6 +1322,48 @@ class PureTui(
         task.add_done_callback(completed)
         return token
 
+    def _has_uncommitted_startup(self) -> bool:
+        if not self._tty or self._startup_committed:
+            return False
+        return any(child.node_type == "startup" for child in dock.tree.root.children)
+
+    def _should_commit_startup(self) -> bool:
+        if not self._has_uncommitted_startup():
+            return True
+
+        goal_fn = getattr(self.status, "goal_label", None)
+        if callable(goal_fn) and bool(goal_fn()):
+            return True
+
+        has_turn = any(child.node_type == "turn" for child in dock.tree.root.children)
+        if has_turn:
+            session_id_fn = getattr(self.status, "session_id", None)
+            if callable(session_id_fn) and bool(session_id_fn()):
+                return True
+
+        if dock.has_active_thinking_stream():
+            return True
+        if getattr(dock, "stream_text", "") or getattr(dock, "_stream_node", None) is not None:
+            return True
+
+        for child in dock.tree.root.children:
+            if child.node_type == "startup":
+                continue
+            if child.node_type == "turn":
+                if child.children:
+                    return True
+                if not self._busy and child.payload.get("terminal"):
+                    return True
+                continue
+            if child.payload.get("spacer"):
+                continue
+            if not child.header and not child.body_lines and not child.children:
+                continue
+            if child.header.strip() or any(line.strip() for line in child.body_lines) or child.children:
+                return True
+
+        return False
+
     def _flush_committed(self, *, force: bool = False) -> BatchToken | None:
         """Flush completed content to terminal scrollback."""
         worker_mode = self._tty and self._terminal_writer_worker_mode()
@@ -1348,6 +1392,7 @@ class PureTui(
         next_restored_committed_line_count = self._restored_committed_line_count
         next_restored_startup_flushed = self._restored_startup_flushed
         next_restored_history_retired = self._restored_history_retired
+        next_startup_committed = self._startup_committed
         next_was_busy = self._was_busy
         batch_owner_ids: frozenset[str] = frozenset()
 
@@ -1360,6 +1405,7 @@ class PureTui(
             self._restored_committed_line_count = next_restored_committed_line_count
             self._restored_startup_flushed = next_restored_startup_flushed
             self._restored_history_retired = next_restored_history_retired
+            self._startup_committed = next_startup_committed
             self._was_busy = next_was_busy
             if restored_range is None:
                 self._record_committed_live_history(width)
@@ -1405,10 +1451,12 @@ class PureTui(
             next_restored_committed_line_count = self._restored_committed_line_count
             next_restored_startup_flushed = self._restored_startup_flushed
             next_restored_history_retired = self._restored_history_retired
+            next_startup_committed = self._startup_committed
             if (
                 restored_range is None
                 and not echo_lines
                 and dock.tree.revision == self._committed_tree_revision
+                and not (self._has_uncommitted_startup() and self._should_commit_startup())
             ):
                 self._apply_live_history_retention(width)
                 self._committed_tree_revision = dock.tree.revision
@@ -1539,6 +1587,19 @@ class PureTui(
                         total,
                     )
                 flush_limit = self._pending_stream_flush_limit(line_map, flush_limit)
+
+                if self._has_uncommitted_startup():
+                    if not self._should_commit_startup():
+                        startup_line_indexes = [
+                            idx
+                            for idx, node_id in line_map.items()
+                            if (node := dock.tree.get(node_id)) is not None
+                            and node.node_type == "startup"
+                        ]
+                        if startup_line_indexes:
+                            flush_limit = min(flush_limit, min(startup_line_indexes))
+                    else:
+                        next_startup_committed = True
 
                 previous_projection = next_committed_projection
                 if (

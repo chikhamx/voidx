@@ -2136,13 +2136,7 @@ async def test_worker_clear_keeps_startup_in_first_frame_and_first_input(
     )
 
     token = tui._flush_committed()
-    assert token is writer.tokens[0]
-    tui._render_frame()
-    assert writer.frames == []
-
-    token.future.set_result(None)
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    assert token is None
     tui._render_frame()
 
     first_frame = "\n".join(writer.frames[-1].target_lines)
@@ -4681,3 +4675,146 @@ async def test_deferred_commit_cancel_before_waiter_starts_clears_token(tmp_path
     assert getattr(tui, "_deferred_commit_token", None) is None
     assert tui._pending_commit_tasks == {}
     assert dock.consume_force_flush_request()
+
+
+@pytest.mark.asyncio
+async def test_startup_banner_stays_in_dynamic_frame_until_turn_init_or_fallback(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._running = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitFrameWriter()
+    tui._terminal_writer = writer
+
+    dock.reset()
+    dock.append_startup(
+        model="test-model",
+        provider="test-provider",
+        workspace=str(tmp_path),
+        session_title="New session",
+        is_new=True,
+    )
+
+    # 1. At startup, _flush_committed must NOT flush startup to scrollback in TTY mode
+    token = tui._flush_committed(force=True)
+    assert token is None
+    assert tui._committed_line_count == 0
+    assert getattr(tui, "_startup_committed", False) is False
+
+    # 2. Frame rendering renders startup banner in dynamic frame
+    from voidx_cli.terminal_writer import FrameResult
+    tui._render_frame()
+    assert writer.frames
+    tui._handle_terminal_frame_result(FrameResult(writer.frames[-1].generation, 1, 1, 0., "full", True))
+    first_frame = "\n".join(writer.frames[-1].target_lines)
+    assert "voidx v" in first_frame
+
+    # 3. User types input — banner remains in dynamic frame, not flushed to scrollback
+    assert tui._process_input(b"h") is True
+    tui._render_after_input()
+    tui._handle_terminal_frame_result(FrameResult(writer.frames[-1].generation, 1, 1, 0., "full", True))
+    assert tui._committed_line_count == 0
+    assert getattr(tui, "_startup_committed", False) is False
+    input_frame = "\n".join(writer.frames[-1].target_lines)
+    assert "voidx v" in input_frame
+    assert "h" in input_frame
+
+    # 4. Turn starts — user query submitted, waiting for LLM
+    dock.start_turn("hello")
+    token = tui._flush_committed()
+    assert token is None
+    assert tui._committed_line_count == 0
+    assert getattr(tui, "_startup_committed", False) is False
+
+    # 5. LLM calls turn_init: goal_label is set
+    tui.status.goal_label = lambda: "Explore project"
+    token = tui._flush_committed(force=True)
+    assert token is not None
+    token.future.set_result(None)
+    await asyncio.sleep(0)
+    assert getattr(tui, "_startup_committed", False) is True
+    assert tui._committed_line_count > 0
+
+    # 6. Next frame rendering: startup banner is now committed into scrollback,
+    # and no longer part of the dynamic frame
+    tui._render_frame()
+    committed_frame = "\n".join(writer.frames[-1].target_lines)
+    assert "voidx v" not in committed_frame
+    tui._running = False
+
+
+@pytest.mark.asyncio
+async def test_startup_banner_commits_on_fallback_when_llm_outputs_without_turn_init(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._running = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitFrameWriter()
+    tui._terminal_writer = writer
+
+    dock.reset()
+    dock.append_startup(
+        model="test-model",
+        provider="test-provider",
+        workspace=str(tmp_path),
+        session_title="New session",
+        is_new=True,
+    )
+
+    tui._flush_committed(force=True)
+    assert tui._committed_line_count == 0
+
+    # User submits turn
+    dock.start_turn("test query")
+    tui._flush_committed()
+    assert tui._committed_line_count == 0
+
+    # LLM skips turn_init and directly outputs an assistant node / tool call
+    dock.tree.new_node(
+        parent=dock.tree.root,
+        node_type="tool_call",
+        header="Tool: read file",
+        collapsed=False,
+    )
+    token = tui._flush_committed(force=True)
+    assert token is not None
+    token.future.set_result(None)
+    await asyncio.sleep(0)
+    assert getattr(tui, "_startup_committed", False) is True
+    assert tui._committed_line_count > 0
+    tui._running = False
+
+
+def test_startup_banner_non_tty_flushes_immediately(tmp_path, monkeypatch):
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    tui = _tui(tmp_path)
+    tui._tty = False
+    tui._console = Console(file=None, force_terminal=False, width=80, height=24, _environ={})
+
+    dock.reset()
+    dock.append_startup(
+        model="test-model",
+        provider="test-provider",
+        workspace=str(tmp_path),
+        session_title="New session",
+        is_new=True,
+    )
+
+    tui._flush_committed(force=True)
+    assert "voidx v" in fake_stdout.text
+    assert tui._committed_line_count > 0

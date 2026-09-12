@@ -153,6 +153,7 @@ class RenderState:
     restored_committed_line_count: int = 0
     restored_startup_flushed: bool = False
     restored_history_retired: bool = False
+    startup_committed: bool = False
     committed_line_count: int = 0
     committed_tree_revision: int = -1
     committed_projection: CommittedProjection | None = None
@@ -315,6 +316,7 @@ STATE_FIELD_MAP: dict[str, tuple[str, str]] = {
     "_restored_committed_line_count": ("_render_state", "restored_committed_line_count"),
     "_restored_startup_flushed": ("_render_state", "restored_startup_flushed"),
     "_restored_history_retired": ("_render_state", "restored_history_retired"),
+    "_startup_committed": ("_render_state", "startup_committed"),
     "_committed_line_count": ("_render_state", "committed_line_count"),
     "_committed_tree_revision": ("_render_state", "committed_tree_revision"),
     "_committed_projection": ("_render_state", "committed_projection"),
