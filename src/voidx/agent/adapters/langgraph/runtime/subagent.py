@@ -1149,6 +1149,7 @@ async def run_subagent(
                         workspace=ctx.workspace,
                     )
                 result = None
+                start_time = time.monotonic()
                 try:
                     try:
                         tool_ctx = ctx.model_copy(
@@ -1164,6 +1165,7 @@ async def run_subagent(
                             },
                         )
                 finally:
+                    elapsed = max(0.0, time.monotonic() - start_time)
                     if agent_gateway is not None and run_identity:
                         agent_gateway.finish_tool_activity(
                             run_identity,
@@ -1189,7 +1191,13 @@ async def run_subagent(
                         "ok": result_ok(result),
                     })
                 if capture_tree and parent_node is not None:
-                    capture.tool_done(tid, 0.0, True, tool_call_id=cid)
+                    capture.tool_done(
+                        tid,
+                        elapsed,
+                        result_ok(result) if result is not None else False,
+                        tool_call_id=cid,
+                        detail=result.summary or "" if result else "",
+                    )
                     capture.tool_result(result.output, tool_call_id=cid)
                 persistence_tool_name = tool_name_for_persistence(result, tid)
                 llm_content = maybe_persist_tool_result(

@@ -218,10 +218,15 @@ class DockNodeMixin(
         color = "dim" if ok else "red"
         icon = "●" if ok else "✗"
         tool_body = node.meta or node.header
-        suffix = f" [dim]({elapsed:.1f}s)[/dim]" if elapsed >= 2 else ""
+        parts: list[str] = []
         if detail:
-            suffix += f" [dim]{detail}[/dim]"
+            clean_detail = str(detail).strip()
+            if clean_detail:
+                parts.append(clean_detail)
             node.payload["summary"] = detail
+        if elapsed >= 2:
+            parts.append(f"{elapsed:.1f}s")
+        suffix = f" [dim]{' '.join(parts)}[/dim]" if parts else ""
         node.header = f"[{color}]{icon}[/{color}] {tool_body}{suffix}"
         node.elapsed = elapsed
         node.status = "done" if ok else "error"

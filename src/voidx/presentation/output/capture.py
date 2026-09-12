@@ -86,7 +86,14 @@ class CaptureConsole:
         self._tool_nodes[call_id] = self._current_tool
         dock.refresh()
     
-    def tool_done(self, tool_name: str, elapsed: float, ok: bool = True, tool_call_id: str | None = None) -> None:
+    def tool_done(
+        self,
+        tool_name: str,
+        elapsed: float,
+        ok: bool = True,
+        tool_call_id: str | None = None,
+        detail: str = "",
+    ) -> None:
         call_id = tool_call_id or self._current_tool_id
         if via_events() and call_id:
             ui_events.emit_direct(ToolFinished(
@@ -95,12 +102,22 @@ class CaptureConsole:
                 label=_title(tool_name),
                 elapsed=elapsed,
                 ok=ok,
+                detail=detail,
             ))
             return
         tool_node = self._tool_nodes.get(call_id) or self._current_tool
         if not tool_node: return
-        icon = "●" if ok else "✗"
-        tool_node.header += f"  {icon} {_title(tool_name)} ({elapsed:.1f}s)"
+        parts: list[str] = []
+        if detail:
+            clean_detail = str(detail).strip()
+            if clean_detail:
+                parts.append(clean_detail)
+            tool_node.payload["summary"] = detail
+        if elapsed >= 2:
+            parts.append(f"{elapsed:.1f}s")
+        suffix = f"  {' '.join(parts)}" if parts else ""
+        if suffix:
+            tool_node.header += suffix
         tool_node.elapsed = elapsed
         tool_node.status = "done" if ok else "error"
         self._tree.mark_dirty()

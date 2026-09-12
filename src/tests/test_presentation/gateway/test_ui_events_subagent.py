@@ -135,6 +135,22 @@ def test_capture_console_non_event_methods_append_under_parent(isolated_dock, mo
     assert all(child.parent is parent for child in parent.children)
 
 
+def test_capture_console_tool_done_formatting_non_event(isolated_dock, monkeypatch):
+    monkeypatch.setattr("voidx.presentation.output.capture.via_events", lambda: False)
+    isolated_dock.begin_capture()
+    parent = isolated_dock.tree.new_node(
+        isolated_dock.tree.root,
+        node_type="subagent",
+        header="child",
+        collapsed=False,
+    )
+    capture = CaptureConsole(isolated_dock.tree, parent, agent_id=0)
+    capture.tool_call("bash", {"command": "echo test"}, tool_call_id="call_1")
+    capture.tool_done("bash", 2.3, True, tool_call_id="call_1", detail="ok")
+
+    rendered = "\n".join(_rich_plain(line) for line in isolated_dock.tree.render(100))
+    assert "ok 2.3s" in rendered
+    assert "(2.3s)" not in rendered
 
 
 @pytest.mark.asyncio

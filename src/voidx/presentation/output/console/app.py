@@ -157,7 +157,7 @@ class VoidConsole:
             args = pending.pop(0) if pending else {}
             if not pending:
                 self._pending_tools.pop(tool_name, None)
-            elapsed_part = f" [dim]({elapsed:.1f}s)[/dim]" if elapsed >= 2 else ""
+            elapsed_part = f" [dim]{elapsed:.1f}s[/dim]" if elapsed >= 2 else ""
             if via_events():
                 event_id = _event_tool_id(tool_name)
                 detail = _fmt_args_short(tool_name, args)
@@ -199,7 +199,8 @@ class VoidConsole:
         if dock.active:
             dock.finish_tool(label, elapsed, ok)
             return
-        self.print(f"  {icon} [{style}]{label}[/{style}] [dim]({elapsed:.1f}s)[/dim]")
+        elapsed_part = f" [dim]{elapsed:.1f}s[/dim]" if elapsed >= 2 else ""
+        self.print(f"  {icon} [{style}]{label}[/{style}]{elapsed_part}")
 
     def tool_result(self, text: str, *, tool_name: str = "") -> None:
         if via_events():
@@ -310,10 +311,10 @@ class TreeAwareConsole:
         style = "green" if ok else "red"
         label = _title(tool_name)
         self._console.print(
-            f"  {icon} [{style}]{label}[/{style}] [dim]({elapsed:.1f}s)[/dim]"
+            f"  {icon} [{style}]{label}[/{style}] [dim]{elapsed:.1f}s[/dim]"
         )
         if self._current_tool:
-            self._current_tool.header += f"  [{style}]{label} ({elapsed:.1f}s)[/{style}]"
+            self._current_tool.header += f"  [{style}]{label} {elapsed:.1f}s[/{style}]"
             self._current_tool.elapsed = elapsed
             self._current_tool.status = "done" if ok else "error"
             self._tree.mark_dirty()

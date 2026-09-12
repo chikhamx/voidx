@@ -329,7 +329,8 @@ def test_dock_tool_collapsed_summary_does_not_duplicate_elapsed(tmp_path):
         dock.finish_tool_node(tool, "read", 2.5, True)
 
         rendered = "\n".join(_rich_plain(line) for line in dock.tree.render(120))
-        assert rendered.count("(2.5s)") == 1
+        assert rendered.count("2.5s") == 1
+        assert "(2.5s)" not in rendered
     finally:
         dock.deactivate()
         dock.reset()
@@ -425,6 +426,46 @@ def test_dock_git_tool_finish_detail_no_command_prefix(tmp_path):
         dock.deactivate()
         dock.reset()
 
+def test_dock_finish_tool_places_elapsed_after_detail_without_parentheses(tmp_path):
+    dock.deactivate()
+    dock.reset()
+    dock.begin_capture()
+    try:
+        tool = dock.start_tool(
+            "Bash",
+            "",
+            tool_name="bash",
+            raw_args={"command": "python script.py"},
+        )
+        dock.finish_tool_node(tool, "bash", 2.3, True, "ok")
+
+        rendered = "\n".join(_rich_plain(line) for line in dock.tree.render(120))
+        assert 'Bash("python script.py") ok 2.3s' in rendered
+        assert '(2.3s)' not in rendered
+    finally:
+        dock.deactivate()
+        dock.reset()
+
+
+def test_dock_finish_tool_elapsed_without_detail_has_no_parentheses(tmp_path):
+    dock.deactivate()
+    dock.reset()
+    dock.begin_capture()
+    try:
+        tool = dock.start_tool(
+            "Bash",
+            "",
+            tool_name="bash",
+            raw_args={"command": "python script.py"},
+        )
+        dock.finish_tool_node(tool, "bash", 2.3, True, "")
+
+        rendered = "\n".join(_rich_plain(line) for line in dock.tree.render(120))
+        assert 'Bash("python script.py") 2.3s' in rendered
+        assert '(2.3s)' not in rendered
+    finally:
+        dock.deactivate()
+        dock.reset()
 
 def test_input_cursor_position_counts_wide_chinese_cells(tmp_path, monkeypatch):
     class FakeStdout:
