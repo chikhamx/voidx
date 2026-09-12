@@ -29,7 +29,8 @@ class _VTScreen:
     Styles are validated but not painted; complex emoji clusters are unsupported.
     """
 
-    def __init__(self, *, width: int, height: int):
+    def __init__(self, *, width: int, height: int, scroll_up_saves_history: bool = True):
+        self.scroll_up_saves_history = scroll_up_saves_history
         self.width = width
         self.height = height
         self._cells = [[" "] * width for _ in range(height)]
@@ -110,7 +111,7 @@ class _VTScreen:
             bottom = getattr(self, "_bottom_margin", self.height - 1)
             for _ in range(min(params[0] or 1, bottom - top + 1)):
                 removed = self._cells.pop(top)
-                if top == 0:
+                if top == 0 and self.scroll_up_saves_history:
                     self.scrollback.append(tuple(removed))
                 self._cells.insert(bottom, [" "] * self.width)
             self._wrap_pending = False
@@ -1133,7 +1134,7 @@ async def test_terminal_model_commit_at_viewport_edge_has_no_trailing_scroll(
             await drain()
             assert screen.rows[bottom_start - 2] == f"EDGE-{batch}-{count - 1:02d}"
             assert screen.rows[bottom_start - 1:] == bottom
-            assert "\n" not in stream.text[before:]
+            _assert_controlled_commit_scroll(stream.text[before:], bottom_start - 1)
             assert f"\x1b[1;{bottom_start - 1}r" in stream.text[before:]
             assert "\x1b[r" in stream.text[before:]
         tui._render_frame()
@@ -1161,12 +1162,15 @@ async def test_input_cursor_target_matches_projected_physical_cursor(tmp_path, m
         assert sequence == f"\x1b[{snapshot.cursor_row};{snapshot.cursor_col}H"
 
 
-def test_vt_scroll_up_is_bounded_and_does_not_move_cursor():
-    screen = _VTScreen(width=8, height=4)
+@pytest.mark.parametrize("saves_history", [False, True], ids=["xterm-js", "ghostty"])
+def test_vt_scroll_up_is_bounded_and_does_not_move_cursor(saves_history):
+    screen = _VTScreen(width=8, height=4, scroll_up_saves_history=saves_history)
     screen.feed("one\r\ntwo\r\nthree\r\nbottom")
-    screen.feed("\x1b[1;3r\x1b[2;2H\x1b[1S\x1b[r")
+    screen.feed("\x1b[1;3r\x1b[2;2H\x1b[1S")
+    assert screen.cursor == (2, 2)
+    screen.feed("\x1b[r")
     assert screen.rows == ("two", "three", "", "bottom")
-    assert screen.history == ("one",)
+    assert screen.history == (("one",) if saves_history else ())
 
 
 @pytest.mark.asyncio
@@ -1184,7 +1188,7 @@ async def test_continuous_overflow_commit_then_frame_does_not_repaint_bottom(tmp
             before = len(stream.text)
             tui._flush_committed(force=True)
             await drain()
-            assert "\n" not in stream.text[before:]
+            _assert_controlled_commit_scroll(stream.text[before:], bottom_start - 1)
             assert screen.rows[bottom_start - 1:] == bottom
             before = len(stream.text)
             tui._render_frame()
@@ -1699,3 +1703,72 @@ async def test_terminal_model_read_read_bash_preserves_source_rows_in_scrollback
         assert any("RESULT-" in row for row in expected)
         assert "" in expected
         assert (screen.history + screen.rows)[first:first + len(expected)] == tuple(expected)
+
+
+def _assert_controlled_commit_scroll(payload, bottom):
+    scroll = f"\x1b[1;{bottom}r\x1b[{bottom};1H\r\n\x1b[r"
+    assert scroll in payload
+    remaining = payload.replace(scroll, "")
+    assert "\n" not in remaining and "\r" not in remaining
+    assert not re.search(r"\x1b\[[0-9;]*S", payload)
+
+
+@pytest.mark.parametrize("saves_history", [False, True], ids=["xterm-js", "ghostty"])
+@pytest.mark.parametrize("onlcr", [False, True], ids=["raw", "onlcr"])
+@pytest.mark.parametrize("count", [1, 4, 20])
+def test_plan_commit_preserves_history_and_protected_bottom(saves_history, onlcr, count):
+    from voidx_cli.commit_output import plan_commit
+
+    screen = _VTScreen(width=12, height=6, scroll_up_saves_history=saves_history)
+    initial = ("old-0", "old-1", "old-2", "old-3", "status", "input")
+    for row, text in enumerate(initial, 1):
+        screen.feed(f"\x1b[{row};1H{text}")
+    protected = screen.cells[4:]
+    stream = _ModelStream(screen)
+    expected = list(initial[:4])
+    for batch in range(2):
+        lines = [f"new-{batch}-{i}" for i in range(count)]
+        output = plan_commit("\n".join(lines), start_row=5, height=6, fixed_bottom_rows=2)
+        assert output is not None
+        assert (output.next_row, output.lines_written, output.scrolled_rows) == (5, count, count)
+        if onlcr:
+            stream.write(output.ansi)
+        else:
+            screen.feed(output.ansi)
+        screen.finish()
+        expected.extend(lines)
+        assert (*screen.history, *screen.rows[:4]) == tuple(expected)
+        assert screen.cells[4:] == protected
+        assert screen.rows[3] == lines[-1]
+        assert (screen._top_margin, screen._bottom_margin) == (0, 5)
+        _assert_controlled_commit_scroll(output.ansi, 4)
+
+
+@pytest.mark.asyncio
+async def test_worker_unconfirmed_frames_commit_reads_without_history_gaps(tmp_path, monkeypatch):
+    async with _terminal_tui(tmp_path, monkeypatch, worker=True, height=16) as (
+        tui, screen, stream, drain,
+    ):
+        dock.begin_capture()
+        dock.start_turn("q")
+        tui._busy = True
+        tui._render_frame()
+        await drain()
+        for index in range(30):
+            tool = dock.start_tool("Read", tool_name="read", raw_args={"file_path": f"f{index}.py"})
+            tui._render_frame()
+            dock.finish_tool_node(tool, "Read", .1, True)
+            tui._flush_committed(force=True)
+            tui._render_frame()
+            await drain()
+        await drain()
+        tui._flush_committed(force=True)
+        await drain()
+        tui._render_frame()
+        await drain()
+        rows = screen.history + screen.rows
+        reads = [i for i, row in enumerate(rows) if "Read" in row and re.search(r"f\d+\.py", row)]
+        assert len(reads) == 30
+        assert reads == list(range(reads[0], reads[0] + 30))
+        for index, row in enumerate(rows[reads[0]:reads[0] + 30]):
+            assert f"f{index}.py" in row

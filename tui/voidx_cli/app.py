@@ -1017,17 +1017,12 @@ class PureTui(
         bounded_limit: int,
         unowned_keys: dict[int, tuple[str | None, str | None, int]],
     ) -> set[int]:
-        """Scrollback-excluded lines whose turn has ended.
-
-        Hidden nodes (tool results, spacers) and their adjacent gap blanks
-        never reach scrollback.  While their turn is live they must stay in
-        the active frame; once the turn is terminal they must be recorded as
-        committed, otherwise the active-frame diff keeps them forever.
-        """
+        """Settle committed-result spacers without hiding live tool results."""
         excluded = set(range(bounded_limit)) - scrollback_indexes
         if not excluded:
             return set()
         turn_live = bool(getattr(dock, "turn_in_progress", False))
+        scrollback_node_ids = {line_map[index] for index in scrollback_indexes if index in line_map}
 
         def _hidden_settled(owner: str | None) -> bool:
             if owner is None:
@@ -1035,6 +1030,8 @@ class PureTui(
             node = dock.tree.get(owner)
             if node is None or not cls._scrollback_hidden_node(node):
                 return False
+            if node.payload.get("tool_result_spacer_for") in scrollback_node_ids:
+                return True
             return bool(node.payload.get("terminal")) or not turn_live
 
         settled: set[int] = set()
@@ -1258,8 +1255,74 @@ class PureTui(
         self._last_evicted_turn_ids = removed
         return removed
 
+    def _defer_commit_until_frames_confirmed(self):
+        token = getattr(self, "_deferred_commit_token", None)
+        if token is not None:
+            return token
+        try:
+            token = self._terminal_writer.submit_barrier(kind="drain")
+        except Exception as exc:
+            self._handle_terminal_submission_failure("deferred_commit_enqueue", exc)
+            raise
+        self._deferred_commit_token = token
+        epoch = self._restore_epoch
+        generation = self._submitted_generation
+        barriers = tuple(
+            op["token"] for op in self._pending_terminal_operations.values()
+            if op["kind"] == "barrier"
+        )
+
+        async def resume():
+            try:
+                await self._terminal_writer.wait(token)
+                if epoch != self._restore_epoch:
+                    return
+                # The barrier also covers frames dropped or coalesced without a result.
+                for pending in tuple(self._pending_layout_snapshots):
+                    if pending <= generation:
+                        self._pending_layout_snapshots.pop(pending, None)
+                        self._pending_layout_force_full.pop(pending, None)
+                        self._pending_worker_frame_states().pop(pending, None)
+                for barrier in barriers:
+                    self._apply_pending_terminal_operation(barrier)
+                self._deferred_commit_token = None
+                commit = self._flush_committed()
+                if commit is not None:
+                    task = self._pending_commit_tasks.get(id(commit))
+                    if task is not None:
+                        await task
+                    else:
+                        await self._terminal_writer.wait(commit)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._handle_terminal_submission_failure("deferred_commit", exc)
+            finally:
+                completed(None)
+
+        def completed(task):
+            pending = self._pending_commit_tasks.pop(id(token), None)
+            if getattr(self, "_deferred_commit_token", None) is token:
+                self._deferred_commit_token = None
+            if pending is not None and epoch == self._restore_epoch:
+                self.invalidate()
+
+        task = asyncio.create_task(resume())
+        self._pending_commit_tasks[id(token)] = task
+        task.add_done_callback(completed)
+        return token
+
     def _flush_committed(self, *, force: bool = False) -> BatchToken | None:
         """Flush completed content to terminal scrollback."""
+        worker_mode = self._tty and self._terminal_writer_worker_mode()
+        if worker_mode and (
+            getattr(self, "_deferred_commit_token", None) is not None
+            or self._pending_worker_frame_states()
+            or any(op["kind"] == "barrier" for op in self._pending_terminal_operations.values())
+        ):
+            if force:
+                dock.request_force_flush()
+            return self._defer_commit_until_frames_confirmed()
         force_requested = dock.consume_force_flush_request()
         if force_requested:
             force = True
@@ -1267,7 +1330,7 @@ class PureTui(
         echo_lines = _guidance_echo_lines(raw_echoes)
         worker_mode = self._tty and self._terminal_writer_worker_mode()
         if worker_mode and self._render_state.pending_commit_tokens:
-            if force_requested:
+            if force:
                 dock.request_force_flush()
             dock.restore_guidance_echoes(raw_echoes)
             return self._render_state.pending_commit_tokens[-1]

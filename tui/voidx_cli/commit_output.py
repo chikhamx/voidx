@@ -27,7 +27,8 @@ def plan_commit(
     scrolled = 0
     for line in lines:
         if row > bottom:
-            payload.append(f"\x1b[1;{bottom}r\x1b[{bottom};1H\x1b[1S\x1b[r")
+            # CSI S may discard rows instead of saving history (e.g. xterm.js).
+            payload.append(f"\x1b[1;{bottom}r\x1b[{bottom};1H\r\n\x1b[r")
             row = bottom
             scrolled += 1
         payload.append(f"\x1b[{row};1H{line}\x1b[K")

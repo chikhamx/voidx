@@ -1025,9 +1025,7 @@ def test_active_thinking_stream_does_not_leave_separator_in_transcript(
 
 
 def test_committed_tool_spacers_do_not_linger_in_active_frame(tmp_path, monkeypatch):
-    """Spacer blanks are excluded from scrollback, but once their turn ends
-    they must be recorded in the committed projection — otherwise the active
-    frame keeps one blank row per tool call forever."""
+    """Committed result spacers must not accumulate even while the turn is live."""
     fake_stdout = _FakeStdout()
     monkeypatch.setattr(sys, "stdout", fake_stdout)
     monkeypatch.setattr(
@@ -1051,7 +1049,7 @@ def test_committed_tool_spacers_do_not_linger_in_active_frame(tmp_path, monkeypa
     dock.begin_capture()
     dock.start_turn("edit files")
 
-    for i in range(3):
+    for i in range(20):
         tool = dock.start_tool(
             "Editing",
             f'file_path="f{i}.py"',
@@ -1060,10 +1058,16 @@ def test_committed_tool_spacers_do_not_linger_in_active_frame(tmp_path, monkeypa
         )
         dock.finish_tool_node(tool, "Edit", 0.1, True)
         _append_previewed_file_diff(dock, tool, f"marker{i}", path=f"src/f{i}.py")
+        tui._render_frame()
         tui._flush_committed(force=True)
 
-    # Mid-turn the spacers belong to the live turn and stay in the frame.
-    assert any(not line.strip() for line in active_lines())
+        assert all(line.strip() for line in active_lines()), f"spacer after edit {i}"
+
+    tool = dock.start_tool("Reading", tool_name="read")
+    dock.finish_tool_node(tool, "Read", 0.1, True)
+    dock.append_tool_result("result still needed midturn", parent=tool)
+    tui._flush_committed(force=True)
+    assert "result still needed midturn" in "\n".join(active_lines())
 
     dock.set_stream("final answer body")
     dock.commit_stream(refresh=False)
@@ -1247,7 +1251,7 @@ def test_physical_boundary_invalidates_bottom_anchor(tmp_path, reason):
 
 
 @pytest.mark.parametrize("start, count", [(10, 1), (11, 1), (8, 15), (0, 1)])
-def test_commit_payload_never_uses_lf_for_physical_positioning(tmp_path, monkeypatch, start, count):
+def test_commit_payload_uses_lf_only_for_controlled_scrolling(tmp_path, monkeypatch, start, count):
     output = _FakeStdout()
     monkeypatch.setattr(sys, "stdout", output)
     monkeypatch.setattr(shutil, "get_terminal_size", lambda fallback=None: os.terminal_size((80, 10)))
@@ -1266,8 +1270,12 @@ def test_commit_payload_never_uses_lf_for_physical_positioning(tmp_path, monkeyp
             dock.append_message(f"payload-{batch}-{row}")
         output.text = ""
         tui._flush_committed(force=True)
-        assert "\n" not in output.text
-        assert f"payload-{batch}-0" in Text.from_ansi(output.text).plain
+        scroll = "\x1b[1;7r\x1b[7;1H\r\n\x1b[r"
+        remaining = output.text.replace(scroll, "")
+        assert "\n" not in remaining and "\r" not in remaining
+        assert not re.search(r"\x1b\[[0-9;]*S", output.text)
+        for index in range(count):
+            assert remaining.count(f"payload-{batch}-{index}\x1b[K") == 1
         if start:
             assert "\x1b[1;7r" in output.text
             assert "\x1b[r" in output.text

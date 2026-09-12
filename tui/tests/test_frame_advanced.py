@@ -2013,6 +2013,7 @@ async def test_worker_resume_scheduled_render_commits_before_first_input(
     dock.append_message("Resumed session")
 
     tui._run_scheduled_render()
+    await asyncio.sleep(0)
 
     assert len(writer.commits) == 1
     commit_ansi = writer.commits[0]["ansi"]
@@ -2092,6 +2093,7 @@ async def test_flush_after_restore_commits_before_return(tmp_path, monkeypatch):
     dock.append_message("Resumed session")
 
     flush_task = asyncio.create_task(tui.flush_after_restore())
+    await asyncio.sleep(0)
     await asyncio.sleep(0)
 
     assert not flush_task.done()
@@ -3899,6 +3901,7 @@ async def test_resume_restored_tool_results_do_not_linger_in_active_frame(
 
     flush_task = asyncio.create_task(tui.flush_after_restore())
     await asyncio.sleep(0)
+    await asyncio.sleep(0)
     while writer.tokens:
         tok = writer.tokens.pop(0)
         if not tok.future.done():
@@ -4290,17 +4293,24 @@ async def test_worker_frame_result_after_commit_does_not_promote_stale_snapshot(
     assert len(writer.frames) == 1
     generation = writer.frames[0].generation
 
-    token = tui._flush_committed()
-    assert token is writer.tokens[0]
-
-    # A frame result queued before the commit must not promote the stale
-    # pre-commit snapshot while the commit is still pending.
+    barrier = tui._flush_committed(force=True)
+    assert writer.tokens == []
+    assert writer.barriers[-1] == {"kind": "drain"}
+    tui._handle_terminal_frame_result(
+        FrameResult(generation, 1, 1, 1.0, "diff", True)
+    )
+    assert tui._applied_layout_snapshot is not None
+    await asyncio.sleep(0)
+    token = writer.tokens[0]
+    assert tui._applied_layout_snapshot is None
+    # Duplicate results cannot overwrite the now pending commit geometry.
     tui._handle_terminal_frame_result(
         FrameResult(generation, 1, 1, 1.0, "diff", True)
     )
     assert tui._applied_layout_snapshot is None
-
+    task = tui._pending_commit_tasks[id(barrier)]
     await _resolve_deferred_commit(token)
+    await asyncio.wait_for(task, timeout=1)
 
 
 @pytest.mark.asyncio
@@ -4565,3 +4575,109 @@ def test_commit_geometry_real_planner_boundaries(tmp_path, monkeypatch, protecte
     assert kwargs["start_row"] == confirmed + 1
     assert tui._visible_committed_rows == output.next_row - 1
     assert tui._visible_committed_rows == min(13, max(0, confirmed + output.lines_written - output.scrolled_rows))
+
+
+@pytest.mark.asyncio
+async def test_force_during_pending_commit_is_preserved(tmp_path, monkeypatch):
+    tui, _ = _worker_commit_tui(tmp_path)
+    writer = _DeferredCommitWriter()
+    tui._terminal_writer = writer
+    dock.append_message("first")
+    token = tui._flush_committed()
+    dock.append_message("tail")
+    assert tui._flush_committed(force=True) is token
+    assert dock.consume_force_flush_request() is True
+    await _resolve_deferred_commit(token)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["dropped", "applied", "failure", "cancel"])
+async def test_deferred_commit_barrier_preserves_requests_and_releases_waiters(
+    tmp_path, monkeypatch, outcome,
+):
+    from voidx_cli.terminal_writer import FrameResult
+
+    class Writer(_DeferredCommitFrameWriter):
+        def submit_barrier(self, **kwargs):
+            self.barriers.append(kwargs)
+            self.barrier = _DeferredCommitToken(asyncio.get_running_loop())
+            return self.barrier
+
+    monkeypatch.setattr(shutil, "get_terminal_size", lambda fallback=None: os.terminal_size((80, 16)))
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(force_terminal=True, width=80, height=16, _environ={})
+    writer = Writer()
+    tui._terminal_writer = writer
+    dock.begin_capture()
+    dock.append_message("history")
+    tui._render_frame()
+    dock.queue_guidance_echo("keep guidance")
+    barrier = tui._flush_committed(force=True)
+    task = tui._pending_commit_tasks[id(barrier)]
+    assert tui._flush_committed() is barrier
+    tui._render_frame()
+    assert len(writer.frames) == 1
+    assert len(writer.barriers) == 1
+    assert writer.commits == []
+    await asyncio.sleep(0)
+    if outcome == "failure":
+        barrier.future.set_exception(RuntimeError("barrier failed"))
+    elif outcome == "cancel":
+        task.cancel()
+    else:
+        if outcome == "applied":
+            tui._handle_terminal_frame_result(FrameResult(writer.frames[0].generation, 1, 1, 0., "full", True))
+        barrier.future.set_result(None)
+    await asyncio.sleep(0)
+    if outcome in {"failure", "cancel"}:
+        if outcome == "cancel":
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            await task
+            assert tui._terminal_submission_failed
+        assert dock.consume_force_flush_request()
+        assert dock.consume_guidance_echoes() == ["keep guidance"]
+    else:
+        assert len(writer.commits) == 1
+        assert "keep guidance" in writer.commits[0]["ansi"]
+        await _resolve_deferred_commit(writer.tokens[0])
+        await asyncio.wait_for(task, 1)
+        assert tui._pending_worker_frame_states() == {}
+    assert getattr(tui, "_deferred_commit_token", None) is None
+    assert tui._pending_commit_tasks == {}
+
+
+@pytest.mark.asyncio
+async def test_deferred_commit_enqueue_failure_stops_without_consuming_echo(tmp_path, monkeypatch):
+    tui, writer = _worker_render_tui(tmp_path, monkeypatch)
+    tui._render_frame()
+    dock.queue_guidance_echo("retry echo")
+
+    def fail(**kwargs):
+        raise RuntimeError("drain enqueue failed")
+
+    monkeypatch.setattr(writer, "submit_barrier", fail)
+    with pytest.raises(RuntimeError, match="drain enqueue failed"):
+        tui._flush_committed(force=True)
+    assert tui._terminal_submission_failed
+    assert getattr(tui, "_deferred_commit_token", None) is None
+    assert dock.consume_force_flush_request()
+    assert dock.consume_guidance_echoes() == ["retry echo"]
+
+
+@pytest.mark.asyncio
+async def test_deferred_commit_cancel_before_waiter_starts_clears_token(tmp_path, monkeypatch):
+    tui, _ = _worker_render_tui(tmp_path, monkeypatch)
+    writer = _DeferredCommitFrameWriter()
+    tui._terminal_writer = writer
+    tui._render_frame()
+    token = tui._flush_committed(force=True)
+    task = tui._pending_commit_tasks[id(token)]
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert getattr(tui, "_deferred_commit_token", None) is None
+    assert tui._pending_commit_tasks == {}
+    assert dock.consume_force_flush_request()

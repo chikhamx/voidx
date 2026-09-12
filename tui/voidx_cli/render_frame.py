@@ -432,7 +432,16 @@ class _FrameRendererMixin:
         term_height = shutil.get_terminal_size().lines if self._tty else None
         render_failed = False
         worker_mode = self._tty and self._terminal_writer_worker_mode()
-        if worker_mode and self._render_state.pending_commit_tokens:
+        if worker_mode and (
+            self._render_state.pending_commit_tokens
+            or getattr(self, "_deferred_commit_token", None) is not None
+        ):
+            return
+        if worker_mode and any(
+            state["visible_rows"] != self._visible_committed_rows
+            for state in self._pending_worker_frame_states().values()
+        ):
+            self.invalidate()
             return
         if worker_mode and any(
             operation.get("barrier_kind") == "scroll"
