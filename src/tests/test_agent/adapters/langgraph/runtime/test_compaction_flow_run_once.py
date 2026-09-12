@@ -510,7 +510,7 @@ async def test_slash_compact_unclosed_tool_batch_graceful_nothing_to_compact(tmp
         graph._ui.ui.print = lambda msg: prints.append(msg)
         handled = await build_slash_handler(graph).dispatch("/compact")
         assert handled is True
-        assert any("Nothing to compact" in p for p in prints)
+        assert any("Compacted context" in p or "Nothing to compact" in p for p in prints)
     finally:
         await delete_session(session.id)
 

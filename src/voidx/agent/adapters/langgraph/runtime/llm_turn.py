@@ -613,12 +613,16 @@ class LlmTurn:
                         raise ContextBudgetExhausted(
                             "Main request remains over budget after one rollover rebuild"
                         )
-                    rollover_result = await host._compaction_coordinator.rollover_for_live_state(
-                        state_messages,
-                        prepared_request=prepared_request,
-                        force=True,
-                        prepare_candidate=prepare_rollover_candidate,
-                    )
+                    try:
+                        rollover_result = await host._compaction_coordinator.rollover_for_live_state(
+                            state_messages,
+                            prepared_request=prepared_request,
+                            force=True,
+                            prepare_candidate=prepare_rollover_candidate,
+                        )
+                    except ContextBudgetExhausted as exc:
+                        logging.getLogger(__name__).warning("Context rollover failed: %s", exc)
+                        rollover_result = None
                     if rollover_result is None and live_rollover_enabled:
                         raise ContextBudgetExhausted(
                             "Main request remains over budget and no valid rollover replacement was available"
@@ -857,12 +861,16 @@ class LlmTurn:
                             if prepared_request is not None
                             else None
                         )
-                        result = await host._compaction_coordinator.rollover_for_live_state(
-                            state_messages,
-                            prepared_request=prepared_request,
-                            force=True,
-                            prepare_candidate=prepare_rollover_candidate,
-                        )
+                        try:
+                            result = await host._compaction_coordinator.rollover_for_live_state(
+                                state_messages,
+                                prepared_request=prepared_request,
+                                force=True,
+                                prepare_candidate=prepare_rollover_candidate,
+                            )
+                        except ContextBudgetExhausted as exc:
+                            logging.getLogger(__name__).warning("Context rollover on overflow failed: %s", exc)
+                            result = None
                         if result is None:
                             raise ContextBudgetExhausted(
                                 "Provider context overflow could not be recovered by rollover"

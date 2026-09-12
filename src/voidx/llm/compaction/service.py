@@ -357,6 +357,81 @@ def validate_closed_tool_batches(messages: list[BaseMessage]) -> bool:
     return len(expected_ids) == 0
 
 
+def repair_closed_tool_batches(messages: list[BaseMessage]) -> list[BaseMessage]:
+    """Repair messages into strictly valid, closed tool batches.
+
+    - Resolves unclosed tool calls by inserting synthetic error ToolMessages
+      before subsequent non-matching messages or at sequence end.
+    - Drops orphan ToolMessages that do not correspond to an open tool call.
+    - Drops duplicate ToolMessages for already resolved tool call ids.
+    - Sanitizes invalid or duplicate tool calls on AIMessages.
+    """
+    if not messages:
+        return []
+
+    repaired: list[BaseMessage] = []
+    pending_calls: dict[str, str] = {}
+
+    def flush_pending() -> None:
+        for cid, tname in list(pending_calls.items()):
+            repaired.append(
+                ToolMessage(
+                    content="[Tool execution was interrupted or missing result]",
+                    tool_call_id=cid,
+                    name=tname or "tool",
+                    status="error",
+                )
+            )
+        pending_calls.clear()
+
+    for msg in messages:
+        if isinstance(msg, AIMessage):
+            flush_pending()
+            raw_calls = getattr(msg, "tool_calls", None) or []
+            if not isinstance(raw_calls, list):
+                raw_calls = []
+
+            sanitized_calls: list[dict] = []
+            seen_ids: set[str] = set()
+            for call in raw_calls:
+                if not isinstance(call, dict):
+                    continue
+                cid = str(call.get("id") or "").strip()
+                if not cid or cid in seen_ids:
+                    continue
+                seen_ids.add(cid)
+                cleaned_call = dict(call)
+                cleaned_call["id"] = cid
+                sanitized_calls.append(cleaned_call)
+
+            if len(sanitized_calls) != len(raw_calls) or any(
+                c["id"] != raw_calls[i].get("id") for i, c in enumerate(sanitized_calls)
+            ):
+                msg = msg.model_copy(update={"tool_calls": sanitized_calls})
+
+            for call in sanitized_calls:
+                cid = str(call["id"])
+                pending_calls[cid] = str(call.get("name") or "")
+
+            repaired.append(msg)
+        elif isinstance(msg, ToolMessage):
+            raw_cid = getattr(msg, "tool_call_id", None)
+            cid = str(raw_cid or "").strip() if raw_cid is not None else ""
+            if cid and cid in pending_calls:
+                pending_calls.pop(cid)
+                if getattr(msg, "tool_call_id", None) != cid:
+                    msg = msg.model_copy(update={"tool_call_id": cid})
+                repaired.append(msg)
+            else:
+                continue
+        else:
+            flush_pending()
+            repaired.append(msg)
+
+    flush_pending()
+    return repaired
+
+
 def select_closed_tool_tail(
     messages: list[BaseMessage],
     context_limit: int,

@@ -4,6 +4,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from voidx.llm.compaction.service import (
+    repair_closed_tool_batches,
     select_closed_tool_tail,
     validate_closed_tool_batches,
 )
@@ -136,3 +137,89 @@ def test_select_closed_tool_tail_only_retains_single_latest_batch():
     tail, source = select_closed_tool_tail(messages, context_limit=10000, token_counter=counter)
     assert tail == [b2_ai, b2_tool]
     assert source == [messages[0], b1_ai, b1_tool]
+
+
+def test_repair_closed_tool_batches_empty():
+    assert repair_closed_tool_batches([]) == []
+
+
+def test_repair_closed_tool_batches_already_valid():
+    msgs = [
+        HumanMessage(content="task"),
+        AIMessage(content="", tool_calls=[{"id": "c1", "name": "read", "args": {}}]),
+        ToolMessage(content="res1", tool_call_id="c1"),
+        AIMessage(content="answer"),
+    ]
+    repaired = repair_closed_tool_batches(msgs)
+    assert len(repaired) == 4
+    assert validate_closed_tool_batches(repaired) is True
+
+
+def test_repair_closed_tool_batches_unclosed_tail():
+    msgs = [
+        HumanMessage(content="task"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"id": "c1", "name": "read", "args": {}},
+                {"id": "c2", "name": "write", "args": {}},
+            ],
+        ),
+        ToolMessage(content="res1", tool_call_id="c1"),
+    ]
+    assert validate_closed_tool_batches(msgs) is False
+    repaired = repair_closed_tool_batches(msgs)
+    assert validate_closed_tool_batches(repaired) is True
+    assert len(repaired) == 4
+    last_msg = repaired[-1]
+    assert isinstance(last_msg, ToolMessage)
+    assert last_msg.tool_call_id == "c2"
+    assert last_msg.status == "error"
+
+
+def test_repair_closed_tool_batches_interrupted_by_user():
+    msgs = [
+        HumanMessage(content="task 1"),
+        AIMessage(content="", tool_calls=[{"id": "c1", "name": "bash", "args": {}}]),
+        HumanMessage(content="task 2 (user interrupted before tool finished)"),
+        AIMessage(content="task 2 response"),
+    ]
+    assert validate_closed_tool_batches(msgs) is False
+    repaired = repair_closed_tool_batches(msgs)
+    assert validate_closed_tool_batches(repaired) is True
+    assert len(repaired) == 5
+    # The synthetic ToolMessage must be inserted before the second HumanMessage
+    assert isinstance(repaired[2], ToolMessage)
+    assert repaired[2].tool_call_id == "c1"
+    assert repaired[2].status == "error"
+    assert isinstance(repaired[3], HumanMessage)
+    assert repaired[3].content == "task 2 (user interrupted before tool finished)"
+
+
+def test_repair_closed_tool_batches_orphan_and_duplicate():
+    msgs = [
+        ToolMessage(content="orphan", tool_call_id="orphan_id"),
+        AIMessage(content="", tool_calls=[{"id": "c1", "name": "read", "args": {}}]),
+        ToolMessage(content="res1", tool_call_id="c1"),
+        ToolMessage(content="res1_duplicate", tool_call_id="c1"),
+    ]
+    assert validate_closed_tool_batches(msgs) is False
+    repaired = repair_closed_tool_batches(msgs)
+    assert validate_closed_tool_batches(repaired) is True
+    assert len(repaired) == 2
+    assert isinstance(repaired[0], AIMessage)
+    assert isinstance(repaired[1], ToolMessage)
+    assert repaired[1].tool_call_id == "c1"
+
+
+def test_repair_closed_tool_batches_normalizes_ids_with_whitespace():
+    msgs = [
+        AIMessage(content="", tool_calls=[{"id": "  c1  ", "name": "read", "args": {}}]),
+        ToolMessage(content="res1", tool_call_id="c1 "),
+    ]
+    assert validate_closed_tool_batches(msgs) is False
+    repaired = repair_closed_tool_batches(msgs)
+    assert validate_closed_tool_batches(repaired) is True
+    assert len(repaired) == 2
+    assert repaired[0].tool_calls[0]["id"] == "c1"
+    assert repaired[1].tool_call_id == "c1"

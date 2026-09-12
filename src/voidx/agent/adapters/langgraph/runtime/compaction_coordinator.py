@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from math import ceil
 
 StreamingRenderer = None
@@ -44,6 +45,7 @@ from voidx.llm.message_markers import (
     is_step_hint_message,
 )
 from voidx.llm.compaction.service import (
+    repair_closed_tool_batches,
     select_closed_tool_tail,
     validate_closed_tool_batches,
 )
@@ -308,7 +310,10 @@ class CompactionCoordinator:
             and not is_step_hint_message(m)
         ]
         if not validate_closed_tool_batches(semantic_messages):
-            raise ContextBudgetExhausted("Cannot rollover an unclosed or invalid tool batch")
+            semantic_messages = repair_closed_tool_batches(semantic_messages)
+        if not validate_closed_tool_batches(semantic_messages):
+            logging.getLogger(__name__).warning("Cannot rollover: unclosed or invalid tool batch could not be repaired")
+            return None
         retained_tail, candidate_head = select_closed_tool_tail(
             semantic_messages,
             context_limit=context_limit,
@@ -348,7 +353,10 @@ class CompactionCoordinator:
                 return None
 
         if not validate_closed_tool_batches(head_messages):
-            raise ContextBudgetExhausted("Cannot replace an unclosed or invalid source tool batch")
+            head_messages = repair_closed_tool_batches(head_messages)
+        if not validate_closed_tool_batches(head_messages):
+            logging.getLogger(__name__).warning("Cannot replace: unclosed or invalid source tool batch could not be repaired")
+            return None
         summary_head = compaction_summary_messages(head_messages)
         if not summary_head:
             return None

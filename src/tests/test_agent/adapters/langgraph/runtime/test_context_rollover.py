@@ -534,3 +534,128 @@ async def test_provider_overflow_allows_only_one_live_rollover_rebuild(tmp_path,
         assert graph.model.calls == 1
     finally:
         await delete_session(sid)
+
+
+@pytest.mark.asyncio
+async def test_rollover_handles_unclosed_tool_batch_gracefully(tmp_path, monkeypatch):
+    import voidx.agent.adapters.langgraph.runtime.core.loop as loop_module
+    import voidx.agent.adapters.langgraph.runtime.llm_turn as graph_module
+    from voidx.agent.domain.compaction import CompactionResult
+
+    class FakeAnswerModel(FakeStreamingModel):
+        async def astream(self, messages, *args, **kwargs):
+            yield AIMessageChunk(content="repaired and answered")
+
+    session = await create_session(workspace=str(tmp_path))
+    sid = session.id
+    try:
+        monkeypatch.setattr(graph_module, "StreamingRenderer", FakeRenderer)
+        monkeypatch.setattr(loop_module, "_llm_retry_sleep_delay", lambda _delay: 0)
+        graph = make_langgraph_execution(
+            Config(
+                model=ModelConfig(provider="anthropic", model="claude-3-5-sonnet"),
+                workspace=str(tmp_path),
+            ),
+            api_key="sk-fake",
+            session=session,
+        )
+        graph.model = FakeAnswerModel()
+
+        # Save an unclosed tool batch into persistence
+        await save_message(MessageRow(
+            session_id=sid,
+            role="user",
+            content="task 1",
+        ))
+        await save_message(MessageRow(
+            session_id=sid,
+            role="assistant",
+            content="",
+            tool_calls=[{"id": "call_unclosed", "name": "bash", "args": {"command": "echo hi"}}],
+        ))
+        # Missing ToolMessage for call_unclosed! Followed directly by another user turn
+        await save_message(MessageRow(
+            session_id=sid,
+            role="user",
+            content="task 2: where is my answer?",
+        ))
+
+        # Force prepared_request.should_rollover = True on first prepare
+        prepare_calls = 0
+        original_prepare = graph_module.prepare_main_request
+
+        def prepare_with_rollover(messages, tool_defs, **kwargs):
+            nonlocal prepare_calls
+            prepare_calls += 1
+            prepared = original_prepare(messages, tool_defs, **kwargs)
+            if prepare_calls == 1:
+                return PreparedMainRequest(
+                    model_name=prepared.model_name,
+                    messages=prepared.messages,
+                    budget_messages=prepared.budget_messages,
+                    tool_defs=prepared.tool_defs,
+                    context_limit=prepared.context_limit,
+                    main_output_reserve=prepared.main_output_reserve,
+                    safety_margin=prepared.safety_margin,
+                    total_input_tokens=prepared.total_input_tokens,
+                    main_request_limit=1,  # Force rollover
+                    should_rollover=True,
+                    request_hash=prepared.request_hash,
+                    metadata=prepared.metadata,
+                )
+            return prepared
+
+        monkeypatch.setattr(graph_module, "prepare_main_request", prepare_with_rollover)
+
+        async def fake_compaction_agent(head, prev_summary):
+            return "Summarized previous progress including interrupted tool"
+
+        graph._compaction_coordinator.run_compaction_agent = fake_compaction_agent
+
+        # This should NOT raise ContextBudgetExhausted("Cannot rollover an unclosed or invalid tool batch")
+        result = await graph._call_llm({
+            "messages": [HumanMessage(content="task 2: where is my answer?")],
+            "step_count": 0,
+            "persona": "coordinate",
+        })
+
+        assert result is not None
+        assert result.get("should_continue") is not False
+        # Verify model successfully answered after rollover
+        last_msg = result["messages"][-1]
+        assert isinstance(last_msg, AIMessage)
+        assert last_msg.content == "repaired and answered"
+    finally:
+        await delete_session(sid)
+
+
+@pytest.mark.asyncio
+async def test_rollover_unrepairable_tool_batch_logs_warning_and_returns_none(tmp_path, monkeypatch, caplog):
+    import logging
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from voidx.agent.adapters.langgraph.runtime.compaction_coordinator import CompactionCoordinator
+    from voidx.agent.adapters.langgraph.runtime.prepared_request import prepare_main_request
+    import voidx.agent.adapters.langgraph.runtime.compaction_coordinator as coordinator_module
+
+    host = SimpleNamespace(_session=None, config=SimpleNamespace(model=SimpleNamespace(model="gpt-4o")))
+    coordinator = CompactionCoordinator(host)
+    summary = AsyncMock(return_value="summary")
+
+    messages = [
+        HumanMessage(content="task"),
+        AIMessage(content="", tool_calls=[{"id": "c1", "name": "read", "args": {}}]),
+    ]
+    prepared = prepare_main_request(messages, [], model_name="gpt-4o", context_limit=10000,
+                                    output_token_max=512, safety_margin=256)
+
+    # Force validate_closed_tool_batches to return False even after repair
+    monkeypatch.setattr(coordinator_module, "validate_closed_tool_batches", lambda msgs: False)
+
+    with caplog.at_level(logging.WARNING):
+        result = await coordinator.rollover_for_live_state(
+            messages, prepared_request=prepared, run_compaction_agent=summary,
+        )
+
+    assert result is None
+    assert any("Cannot rollover: unclosed or invalid tool batch could not be repaired" in record.message for record in caplog.records)

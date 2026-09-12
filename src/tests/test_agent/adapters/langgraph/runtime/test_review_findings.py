@@ -172,12 +172,11 @@ def test_custom_message_counter_does_not_drop_tool_schema():
      ToolMessage(content="first", tool_call_id="call"),
      ToolMessage(content="duplicate", tool_call_id="call")],
 ])
-async def test_rollover_rejects_invalid_source_before_summarizing(invalid):
+async def test_rollover_repairs_invalid_source_before_summarizing(invalid):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
     from voidx.agent.adapters.langgraph.runtime.compaction_coordinator import CompactionCoordinator
     from voidx.agent.adapters.langgraph.runtime.prepared_request import prepare_main_request
-    from voidx.agent.domain.compaction import ContextBudgetExhausted
 
     host = SimpleNamespace(_session=None, config=SimpleNamespace(model=SimpleNamespace(model="gpt-4o")))
     coordinator = CompactionCoordinator(host)
@@ -185,9 +184,11 @@ async def test_rollover_rejects_invalid_source_before_summarizing(invalid):
     messages = [HumanMessage(content="task " * 2000), *invalid]
     prepared = prepare_main_request(messages, [], model_name="gpt-4o", context_limit=10000,
                                     output_token_max=512, safety_margin=256)
-    with pytest.raises(ContextBudgetExhausted, match="batch"):
-        await coordinator.rollover_for_live_state(messages, prepared_request=prepared, run_compaction_agent=summary)
-    summary.assert_not_awaited()
+    result = await coordinator.rollover_for_live_state(
+        messages, prepared_request=prepared, run_compaction_agent=summary,
+    )
+    assert result is not None
+    summary.assert_awaited()
 
 
 @pytest.mark.asyncio
