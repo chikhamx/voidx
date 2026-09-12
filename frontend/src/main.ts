@@ -105,6 +105,7 @@ import {
   onNewThread,
   onThreadDelete,
   onThreadRename,
+    onThreadFork,
   filterSessions,
   initDock,
   renderTodoInDock,
@@ -114,6 +115,9 @@ import {
   appendTerminalOutput,
   onTerminalInput,
   onTerminalStart,
+    onTerminalResize,
+    onTerminalStop,
+    terminateActiveTerminal,
   setActiveTerminal,
   renderDiffReview,
   showDiffEmpty,
@@ -568,6 +572,20 @@ onTerminalInput((terminalId: string, data: string) => {
   rpcCall("terminal.input", {
     terminal_id: terminalId,
     data: data + "\n",
+  }).catch(() => { });
+});
+
+onTerminalResize((terminalId: string, cols: number, rows: number) => {
+    rpcCall("terminal.resize", {
+        terminal_id: terminalId,
+        cols,
+        rows,
+    }).catch(() => { });
+});
+
+onTerminalStop((terminalId: string) => {
+    rpcCall("terminal.stop", {
+        terminal_id: terminalId,
   }).catch(() => {});
 });
 
@@ -730,13 +748,17 @@ onSocketChange((ws) => {
     state.inFlight = false;
     state.timerGeneration += 1;
   }
-  if (!ws) return;
-  const onOpen = (): void => {
-    if (generation !== socketGeneration) return;
-    sendPendingSnapshotRecoveries();
-  };
-  const onClose = (): void => {
-    if (generation !== socketGeneration) return;
+    if (!ws) {
+        terminateActiveTerminal();
+        return;
+    }
+    const onOpen = (): void => {
+        if (generation !== socketGeneration) return;
+        sendPendingSnapshotRecoveries();
+    };
+    const onClose = (): void => {
+        if (generation !== socketGeneration) return;
+        terminateActiveTerminal();
     for (const state of snapshotRecoveryStates.values()) {
       state.inFlight = false;
       state.timerGeneration += 1;
@@ -2070,6 +2092,7 @@ function failThreadActivation(generation: number): void {
 }
 
 export function switchThread(threadId: string): Promise<void> {
+    terminateActiveTerminal();
   const generation = beginThreadActivation(threadId);
   return rpcCall("session.switch", {
     thread_id: threadId,
@@ -2219,6 +2242,19 @@ function initializeSidebarCallbacks(): void {
         console.warn("voidx: session rename failed", err.message);
       });
   });
+
+    onThreadFork((threadId: string) => {
+        rpcCall("session.fork", { thread_id: threadId })
+            .then((res: unknown) => {
+                const info = res as { thread_id: string };
+                if (info?.thread_id) {
+                    void switchThread(info.thread_id);
+                }
+            })
+            .catch((err: Error) => {
+                showSessionError("会话分叉", err);
+            });
+    });
 }
 
 initializeSidebarCallbacks();

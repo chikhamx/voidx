@@ -1,5 +1,6 @@
 // @ts-nocheck
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as rpc from "../../src/rpc";
 import { initIntegrationsPanel, renderIntegrationsPanel, _resetIntegrationsForTest } from "../../src/ui/integrations";
 
 beforeEach(() => {
@@ -37,6 +38,77 @@ describe("renderIntegrationsPanel", () => {
     expect(text).toContain("react-patterns");
     expect(text).toContain("python");
   });
+
+    it("renders Bocha search row with configured status and actions", () => {
+        initIntegrationsPanel();
+        renderIntegrationsPanel({
+            mcp_servers: [],
+            skills: [],
+            lsp: [],
+            tavily: { configured: false, source: "none" },
+            bocha: { configured: true, source: "settings", masked_value: "boch...1234" },
+        });
+
+        const content = document.querySelector("#integrations-content");
+        expect(content).not.toBeNull();
+        const text = content.textContent;
+        expect(text).toContain("Bocha");
+        expect(text).toContain("boch...1234");
+        expect(text).toContain("configured");
+
+        const buttons = content.querySelectorAll(".integrations-btn");
+        const buttonTexts = Array.from(buttons).map((b) => b.textContent);
+        expect(buttonTexts).toContain("Set Key");
+        expect(buttonTexts).toContain("Delete");
+    });
+
+    it("invokes bocha.set on Set Key click", async () => {
+        initIntegrationsPanel();
+        const rpcSpy = vi.spyOn(rpc, "rpcCall").mockResolvedValue({ ok: true });
+        vi.spyOn(window, "prompt").mockReturnValue("test-bocha-key");
+
+        renderIntegrationsPanel({
+            mcp_servers: [],
+            skills: [],
+            lsp: [],
+            bocha: { configured: false },
+        });
+
+        const content = document.querySelector("#integrations-content");
+        const bochaRow = Array.from(content.querySelectorAll(".integrations-row")).find(
+            (r) => r.textContent.includes("Bocha"),
+        );
+        const setKeyBtn = Array.from(bochaRow.querySelectorAll(".integrations-btn")).find(
+            (b) => b.textContent === "Set Key",
+        );
+        await setKeyBtn.click();
+
+        expect(rpcSpy).toHaveBeenCalledWith("bocha.set", { api_key: "test-bocha-key" });
+    });
+
+    it("invokes bocha.delete on Delete click", async () => {
+        initIntegrationsPanel();
+        const rpcSpy = vi.spyOn(rpc, "rpcCall").mockResolvedValue({ ok: true });
+        vi.spyOn(window, "confirm").mockReturnValue(true);
+
+        renderIntegrationsPanel({
+            mcp_servers: [],
+            skills: [],
+            lsp: [],
+            bocha: { configured: true },
+        });
+
+        const content = document.querySelector("#integrations-content");
+        const bochaRow = Array.from(content.querySelectorAll(".integrations-row")).find(
+            (r) => r.textContent.includes("Bocha"),
+        );
+        const deleteBtn = Array.from(bochaRow.querySelectorAll(".integrations-btn")).find(
+            (b) => b.textContent === "Delete",
+        );
+        await deleteBtn.click();
+
+        expect(rpcSpy).toHaveBeenCalledWith("bocha.delete", {});
+    });
 
   it("renders action buttons for MCP rows", () => {
     initIntegrationsPanel();

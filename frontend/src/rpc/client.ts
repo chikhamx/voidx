@@ -40,6 +40,7 @@ export function createWorkerSocket(
     close(): void {
       worker.terminate?.();
       transport.readyState = WebSocket.CLOSED;
+        flushPendingRequests(new Error("RPC connection closed"));
     },
     addEventListener(type: string, handler: (event: MessageEvent | Event) => void): void {
       const existing = listeners.get(type) || [];
@@ -61,8 +62,10 @@ export function createWorkerSocket(
       emit("open", new Event("open"));
     } else if (message.type === "close") {
       transport.readyState = WebSocket.CLOSED;
-      emit("close", new Event("close"));
+        flushPendingRequests(new Error("RPC connection closed"));
+        emit("close", new Event("close"));
     } else if (message.type === "error") {
+        flushPendingRequests(new Error("RPC connection error"));
       emit("error", new Event("error"));
     } else if (message.type === "message") {
       handleMessage({ data: message.data || "" } as MessageEvent);
@@ -79,8 +82,22 @@ export function onSocketChange(handler: SocketChangeHandler): () => void {
   return () => socketChangeHandlers.delete(handler);
 }
 
+export function flushPendingRequests(error: Error = new Error("RPC connection closed")): void {
+    for (const [, entry] of pending.entries()) {
+        try {
+            entry.reject(error);
+        } catch {
+            // 忽略单个 reject 异常
+        }
+    }
+    pending.clear();
+}
+
 export function _setSocket(ws: RpcSocket | null): void {
-  if (socket === ws) return;
+    if (socket === ws) return;
+    if (socket) {
+        flushPendingRequests(new Error("RPC socket reset"));
+    }
   socket = ws;
   for (const handler of socketChangeHandlers) {
     handler(ws);

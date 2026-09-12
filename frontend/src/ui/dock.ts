@@ -1,5 +1,6 @@
 import { renderTodoPanel } from "../utils/render";
 import type { DockTab } from "../utils/types";
+import { terminateActiveTerminal } from "./terminal";
 
 let activeTab: DockTab = "todo";
 
@@ -39,6 +40,7 @@ export function closeTerminalDrawer(restoreFocus = false): boolean {
   if (!drawer) return false;
   drawer.hidden = true;
   updateTerminalToggleState();
+    terminateActiveTerminal();
   if (restoreFocus) terminalEntry()?.focus();
   return false;
 }

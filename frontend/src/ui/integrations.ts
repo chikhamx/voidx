@@ -24,6 +24,13 @@ interface LspServer {
 interface TavilyConfig {
   configured?: boolean;
   source?: string;
+    masked_value?: string;
+}
+
+interface BochaConfig {
+    configured?: boolean;
+    source?: string;
+    masked_value?: string;
 }
 
 export interface IntegrationsSnapshot {
@@ -31,6 +38,7 @@ export interface IntegrationsSnapshot {
   skills?: Skill[];
   lsp?: LspServer[];
   tavily?: TavilyConfig;
+    bocha?: BochaConfig;
 }
 
 interface IntegrationsState {
@@ -82,14 +90,31 @@ export function renderIntegrationsPanel(snapshot: IntegrationsSnapshot = {}): vo
           const key = prompt("请输入 Tavily API Key (留空取消):");
           if (!key) return;
           try {
-            await rpcCall("tavily.set", { api_key: key });
-            refreshIntegrationsPanel();
-          } catch (e) { alert((e as Error).message); }
+                await rpcCall("tavily.set", { api_key: key.trim() });
+                refreshIntegrationsPanel();
+            } catch (e) { alert((e as Error).message); }
         }),
-        btnInline("Delete", async () => {
-          if (!confirm("确认删除 Tavily API Key?")) return;
-          try {
-            await rpcCall("tavily.delete", {});
+          btnInline("Delete", async () => {
+              if (!confirm("确认删除 Tavily API Key?")) return;
+              try {
+                  await rpcCall("tavily.delete", {});
+                  refreshIntegrationsPanel();
+              } catch (e) { alert((e as Error).message); }
+          }),
+      ]),
+        row("Bocha", bochaDetail(snapshot.bocha), [
+            btnInline("Set Key", async () => {
+                const key = prompt("请输入 Bocha API Key (留空取消):");
+                if (!key) return;
+                try {
+                    await rpcCall("bocha.set", { api_key: key.trim() });
+                    refreshIntegrationsPanel();
+                } catch (e) { alert((e as Error).message); }
+            }),
+            btnInline("Delete", async () => {
+                if (!confirm("确认删除 Bocha API Key?")) return;
+                try {
+                    await rpcCall("bocha.delete", {});
             refreshIntegrationsPanel();
           } catch (e) { alert((e as Error).message); }
         }),
@@ -245,7 +270,17 @@ function readonlyRow(label: string, value: string): HTMLDivElement {
 }
 
 function tavilyDetail(tavily: TavilyConfig = {}): string {
-  return `${tavily.configured ? "configured" : "not configured"} · ${tavily.source || "none"}`;
+    const status = tavily.configured ? "configured" : "not configured";
+    const source = tavily.source || "none";
+    const masked = tavily.masked_value ? ` · ${tavily.masked_value}` : "";
+    return `${status} · ${source}${masked}`;
+}
+
+function bochaDetail(bocha: BochaConfig = {}): string {
+    const status = bocha.configured ? "configured" : "not configured";
+    const source = bocha.source || "none";
+    const masked = bocha.masked_value ? ` · ${bocha.masked_value}` : "";
+    return `${status} · ${source}${masked}`;
 }
 
 function btnSmall(label: string, onClick: () => void): HTMLButtonElement {

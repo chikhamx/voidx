@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { beforeEach, describe, it, expect, vi } from "vitest";
-import { rpcCall, rpcNotify, onNotification, onRequest, _setSocket, _resetForTest, createWorkerSocket, isRpcConnected } from "../../src/rpc";
+import { rpcCall, rpcNotify, onNotification, onRequest, _setSocket, _resetForTest, createWorkerSocket, isRpcConnected, flushPendingRequests } from "../../src/rpc";
 
 describe("rpc", () => {
   let sentMessages;
@@ -58,6 +58,18 @@ describe("rpc", () => {
       mockSocket.readyState = WebSocket.CLOSED;
       await expect(rpcCall("session.list", {})).rejects.toThrow();
       expect(sentMessages).toHaveLength(0);
+    });
+
+      it("rejects pending requests when _setSocket(null) is called", async () => {
+          const promise = rpcCall("session.list", {});
+          _setSocket(null);
+          await expect(promise).rejects.toThrow("RPC socket reset");
+      });
+
+      it("rejects pending requests when flushPendingRequests is explicitly called", async () => {
+          const promise = rpcCall("session.list", {});
+          flushPendingRequests(new Error("custom error"));
+          await expect(promise).rejects.toThrow("custom error");
     });
   });
 
@@ -216,4 +228,42 @@ describe("rpc worker transport", () => {
       params: { reason: "test" },
     });
   });
+
+    it("flushes pending requests when worker emits close", async () => {
+        class FakeWorker {
+            sent = [];
+            listeners = new Map();
+            terminate = vi.fn();
+            postMessage(message) { this.sent.push(message); }
+            addEventListener(type, handler) { this.listeners.set(type, handler); }
+            emit(message) { this.listeners.get("message")({ data: message }); }
+        }
+        const worker = new FakeWorker();
+        const transport = createWorkerSocket("ws://localhost:1234", () => worker);
+        _setSocket(transport);
+        worker.emit({ type: "open" });
+
+        const promise = rpcCall("test.method", {});
+        worker.emit({ type: "close" });
+        await expect(promise).rejects.toThrow("RPC connection closed");
+    });
+
+    it("flushes pending requests when worker emits error", async () => {
+        class FakeWorker {
+            sent = [];
+            listeners = new Map();
+            terminate = vi.fn();
+            postMessage(message) { this.sent.push(message); }
+            addEventListener(type, handler) { this.listeners.set(type, handler); }
+            emit(message) { this.listeners.get("message")({ data: message }); }
+        }
+        const worker = new FakeWorker();
+        const transport = createWorkerSocket("ws://localhost:1234", () => worker);
+        _setSocket(transport);
+        worker.emit({ type: "open" });
+
+        const promise = rpcCall("test.method", {});
+        worker.emit({ type: "error" });
+        await expect(promise).rejects.toThrow("RPC connection error");
+    });
 });

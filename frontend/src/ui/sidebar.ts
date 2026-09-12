@@ -31,6 +31,7 @@ let threadSelectCb: ThreadCallback | null = null;
 let newThreadCb: NewThreadCallback | null = null;
 let threadDeleteCb: ThreadCallback | null = null;
 let threadRenameCb: ThreadCallback | null = null;
+let threadForkCb: ThreadCallback | null = null;
 let currentThreads: ThreadInfo[] = [];
 let currentProjectName = "Project";
 let currentWorkspacePath = "";
@@ -168,7 +169,7 @@ function groupByWorkspace(threads: ThreadInfo[]): WorkspaceGroup[] {
   return groups;
 }
 
-function _svgIcon(name: "folder" | "folder-open" | "plus" | "pencil" | "trash" | "chevron-down" | "chevron-right"): HTMLElement {
+function _svgIcon(name: "folder" | "folder-open" | "plus" | "pencil" | "trash" | "chevron-down" | "chevron-right" | "git-fork"): HTMLElement {
   const icon = document.createElement("span");
   icon.className = "vx-sidebar-row-icon";
   icon.innerHTML = iconSvg(name, 16, 1.5);
@@ -623,7 +624,18 @@ function _createSessionActions(threadId: string): HTMLElement {
     if (threadDeleteCb) threadDeleteCb(threadId);
   });
 
-  actions.append(renameBtn, deleteBtn);
+    const forkBtn = document.createElement("button");
+    forkBtn.className = "vx-session-action-icon";
+    forkBtn.dataset.action = "fork";
+    forkBtn.title = "Fork session";
+    forkBtn.setAttribute("aria-label", "Fork session");
+    forkBtn.append(_svgIcon("git-fork"));
+    forkBtn.addEventListener("click", (e: MouseEvent) => {
+        e.stopPropagation();
+        if (threadForkCb) threadForkCb(threadId);
+    });
+
+    actions.append(renameBtn, forkBtn, deleteBtn);
   return actions;
 }
 
@@ -714,11 +726,16 @@ export function onThreadRename(callback: ThreadCallback): void {
   threadRenameCb = callback;
 }
 
+export function onThreadFork(callback: ThreadCallback): void {
+    threadForkCb = callback;
+}
+
 export function _resetForTest(): void {
-  threadSelectCb = null;
-  newThreadCb = null;
-  threadDeleteCb = null;
-  threadRenameCb = null;
+    threadSelectCb = null;
+    newThreadCb = null;
+    threadDeleteCb = null;
+    threadRenameCb = null;
+    threadForkCb = null;
   currentThreads = [];
   currentProjectName = "Project";
   currentWorkspacePath = "";

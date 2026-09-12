@@ -1,5 +1,7 @@
 # Frontend 与 Backend 功能对齐及健壮性优化规范
 
+> **Status: Done** — Archived on 2026-09-12.
+
 - 日期：2026-09-12
 - 状态：设计完成，待实现
 - 目标读者：Human + LLM（混合读者，包含决策背景与精确执行规约）

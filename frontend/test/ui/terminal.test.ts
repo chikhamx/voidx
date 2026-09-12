@@ -6,7 +6,12 @@ import {
   showTerminalClosed,
   onTerminalInput,
   onTerminalStart,
-  _resetForTest,
+    onTerminalResize,
+    onTerminalStop,
+    terminateActiveTerminal,
+    setActiveTerminal,
+    _resetForTest,
+    _triggerTerminalResizeForTest,
 } from "../../src/ui/terminal";
 
 beforeEach(() => {
@@ -91,4 +96,61 @@ describe("onTerminalInput", () => {
 
     expect(cb).toHaveBeenCalledWith("t1", "ls -la");
   });
+});
+
+describe("onTerminalResize", () => {
+    it("debounces terminal resize calls by 100ms", () => {
+        vi.useFakeTimers();
+        try {
+            const cb = vi.fn();
+            onTerminalResize(cb);
+            setActiveTerminal("t1");
+
+            _triggerTerminalResizeForTest(80, 24);
+            _triggerTerminalResizeForTest(100, 30);
+            expect(cb).not.toHaveBeenCalled();
+
+            vi.advanceTimersByTime(100);
+            expect(cb).toHaveBeenCalledTimes(1);
+            expect(cb).toHaveBeenCalledWith("t1", 100, 30);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("does not trigger resize callback when activeTerminalId is not set", () => {
+        vi.useFakeTimers();
+        try {
+            const cb = vi.fn();
+            onTerminalResize(cb);
+
+            _triggerTerminalResizeForTest(80, 24);
+            vi.advanceTimersByTime(100);
+            expect(cb).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
+
+describe("terminateActiveTerminal", () => {
+    it("invokes stop callback and shows terminal closed", () => {
+        const cb = vi.fn();
+        onTerminalStop(cb);
+        initTerminal();
+        appendTerminalOutput("t1", "shell output");
+
+        terminateActiveTerminal();
+
+        expect(cb).toHaveBeenCalledWith("t1");
+        const pane = document.querySelector("#terminal-pane");
+        expect(pane.textContent).toContain("closed");
+    });
+
+    it("is a no-op when activeTerminalId is null", () => {
+        const cb = vi.fn();
+        onTerminalStop(cb);
+        terminateActiveTerminal();
+        expect(cb).not.toHaveBeenCalled();
+    });
 });

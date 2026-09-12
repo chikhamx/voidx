@@ -53,6 +53,7 @@ export {
   onNewThread,
   onThreadDelete,
   onThreadRename,
+    onThreadFork,
 } from "./sidebar";
 export { type AgentProfileInfo, type RuntimeProfile, initModeControls, isRuntimeProfile, refreshModeMenu, renderRuntimeProfile, runtimeProfileLabel, runtimeProfileRunMode } from "./mode";
 export { type AgentCatalog, type AgentProfileDiagnostic, type AgentStudioRpc, closeAgentStudio, openAgentStudio } from "./agent-studio";
@@ -63,6 +64,9 @@ export {
   showTerminalClosed,
   onTerminalInput,
   onTerminalStart,
+    onTerminalResize,
+    onTerminalStop,
+    terminateActiveTerminal,
   setActiveTerminal,
 } from "./terminal";
 export { type ResolvedTheme, type ThemePreference, applyTheme, getThemePreference, initTheme, resolveTheme, setThemePreference, syncThemeToggle, systemTheme, toggleTheme } from "./theme";

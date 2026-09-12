@@ -11,6 +11,7 @@ import {
   onNewThread,
   onThreadDelete,
   onThreadRename,
+    onThreadFork,
   findReusableEmptyThread,
   _resetForTest,
 } from "../../src/ui/sidebar";
@@ -964,16 +965,26 @@ describe("onNewThread", () => {
 });
 
 describe("session item actions", () => {
-  it("renders rename and delete icon buttons for each session", () => {
-    renderSidebar([{ thread_id: "t1", title: "S1", status: "idle", workspace: "/tmp/proj" }], "t1", "proj");
-    expandWorkspace();
-    const item = document.querySelector(".vx-session-item");
+    it("renders rename, fork and delete icon buttons for each session", () => {
+        renderSidebar([{ thread_id: "t1", title: "S1", status: "idle", workspace: "/tmp/proj" }], "t1", "proj");
+        expandWorkspace();
+        const item = document.querySelector(".vx-session-item");
 
-    expect(item.querySelector('[data-action="rename"]')).not.toBeNull();
-    expect(item.querySelector('[data-action="delete"]')).not.toBeNull();
-    expect(item.querySelector('[data-action="fork"]')).toBeNull();
-    expect(item.querySelector(".vx-session-menu-btn")).toBeNull();
-    expect(item.querySelectorAll(".vx-session-action-icon")).toHaveLength(2);
+        expect(item.querySelector('[data-action="rename"]')).not.toBeNull();
+        expect(item.querySelector('[data-action="fork"]')).not.toBeNull();
+        expect(item.querySelector('[data-action="delete"]')).not.toBeNull();
+        expect(item.querySelector(".vx-session-menu-btn")).toBeNull();
+        expect(item.querySelectorAll(".vx-session-action-icon")).toHaveLength(3);
+    });
+
+    it("calls onThreadFork when fork action clicked", () => {
+        const cb = vi.fn();
+        onThreadFork(cb);
+        renderSidebar([{ thread_id: "t1", title: "S1", status: "idle", workspace: "/tmp/proj" }], "t1", "proj");
+        expandWorkspace();
+        const item = document.querySelector(".vx-session-item");
+        item.querySelector('[data-action="fork"]').click();
+        expect(cb).toHaveBeenCalledWith("t1");
   });
 
   it("calls onThreadDelete when delete action clicked", () => {
