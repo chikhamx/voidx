@@ -203,19 +203,6 @@ function hasVisibleTurnContent(node: TranscriptNode): boolean {
   );
 }
 
-function validateToolMembers(nodes: readonly TranscriptNode[]): void {
-  const calls = new Set<string>();
-  for (const node of nodes) {
-    if (node.node_type === "tool_call") {
-      if (!node.tool_call_id || calls.has(node.tool_call_id)) {
-        throw new Error(`invalid or duplicate tool call id: ${node.tool_call_id ?? ""}`);
-      }
-      calls.add(node.tool_call_id);
-    } else if (node.node_type === "tool_result" && (!node.tool_call_id || !calls.has(node.tool_call_id))) {
-      throw new Error(`tool result without preceding call: ${node.tool_call_id ?? ""}`);
-    }
-  }
-}
 
 function descriptorFor(
   key: string,
@@ -251,8 +238,7 @@ export function buildTranscriptDescriptors(nodes: readonly TranscriptNode[]): Tr
     const hasTools = group.some((node) => node.node_type === "tool_call" || node.node_type === "tool_result");
 
     if (hasTools) {
-      validateToolMembers(group);
-      const renderable = group.filter((node) => !isSkippedNode(node));
+        const renderable = group.filter((node) => !isSkippedNode(node));
       if (renderable.length > 0) {
         const renderableOwners = renderable.map(() => owner);
         descriptors.push(descriptorFor(
@@ -519,9 +505,13 @@ export function collectExistingTranscriptBlocks(
             candidate.classList.contains("stream-buffer")
             || candidate.classList.contains("thought-item")
           );
-          const isOwnedMember = memberIds.has(candidateId)
-            || (candidate.classList.contains("thought-item")
-              && [...memberIds].some((id) => candidateId === `${id}-thought`))
+            const isOwnedToolGroup = !candidate.dataset.reconcileKey
+                && candidate.classList.contains("tool-group")
+                && (!turnId || candidate.dataset.turnId === turnId);
+            const isOwnedMember = memberIds.has(candidateId)
+                || (candidate.classList.contains("thought-item")
+                    && [...memberIds].some((id) => candidateId === `${id}-thought`))
+                || isOwnedToolGroup
             || isLiveTurnTail;
           if (!isOwnedFileCard && !isOwnedMember) break;
           roots.push(candidate);

@@ -679,4 +679,20 @@ describe("Task 3 window transaction viewport integration", () => {
     expect.soft(innerNextState.heights).toEqual(new Map());
     expect.soft(h.pendingFrames()).toBe(0);
   });
+
+    it("ignores internal scroll events during active transaction to avoid generational rollback", async () => {
+        const apply = await loadApply();
+        const h = createHarness({ scrollTop: 900, clientHeight: 100, scrollHeight: 1000 });
+        const initialGeneration = h.controller.getInteractionGeneration();
+
+        const input = inputFor(h);
+        // Simulate browser firing synchronous scroll during mutate
+        input.beforeMutation = () => {
+            h.transcript.dispatchEvent(new Event("scroll"));
+        };
+
+        const result = apply(input);
+        expect(result).toMatchObject({ status: "applied" });
+        expect(h.controller.getInteractionGeneration()).toBe(initialGeneration);
+    });
 });

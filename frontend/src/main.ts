@@ -37,7 +37,7 @@ import {
   peekTranscriptLiveOwners,
   validateTranscriptLiveOwnerTokens,
   planTranscriptDomWindow,
-  DEFAULT_BLOCK_ESTIMATE_PX,
+    DEFAULT_BLOCK_ESTIMATE_PX,
   DEFAULT_TRANSCRIPT_DOM_WINDOW_BUDGET,
   type TranscriptDomWindowState,
   type TranscriptSpacerSegment,
@@ -773,6 +773,12 @@ export function _peekTranscriptWindowHeightKeysForTest(
   return state ? [...state.heights.keys()] : null;
 }
 
+export function _peekTranscriptWindowStateForTest(
+    threadId: string,
+): TranscriptWindowState | null {
+    return transcriptWindows.get(threadId) ?? null;
+}
+
 
 function createTranscriptWindowSpacer(segment: TranscriptSpacerSegment): HTMLElement {
   const element = document.createElement("div");
@@ -789,8 +795,20 @@ function transcriptRowGapPx(): number {
   return Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
+let programmaticScrollTopTarget: number | null = null;
+let programmaticScrollTimeout: ReturnType<typeof setTimeout> | null = null;
+
 function writeTranscriptScrollTop(value: number): void {
-  transcriptEl.scrollTop = value;
+    if (!Number.isFinite(value) || Math.abs(transcriptEl.scrollTop - value) < 0.5) return;
+    transcriptEl.scrollTop = value;
+    programmaticScrollTopTarget = transcriptEl.scrollTop;
+    if (programmaticScrollTimeout !== null) {
+        clearTimeout(programmaticScrollTimeout);
+    }
+    programmaticScrollTimeout = setTimeout(() => {
+        programmaticScrollTopTarget = null;
+        programmaticScrollTimeout = null;
+    }, 50);
 }
 
 function installInitialTranscriptDomWindow(
@@ -963,7 +981,7 @@ function installInitialTranscriptDomWindow(
       releaseFileChangeCardReservations(reservations);
     },
   });
-  return result.status === "applied" ? nextState : null;
+    return result.status === "applied" ? nextState : null;
 }
 
 
@@ -1124,7 +1142,19 @@ function applyTranscriptWindowReplan(
       ...changedAttachedKeys,
       ...removedCanonicalKeys,
     ])],
-  };
+    };
+
+    const hasNoPlanChanges = plan.materializeKeys.length === 0
+        && plan.trimKeys.length === 0
+        && changedAttachedKeys.length === 0
+        && removedCanonicalKeys.length === 0
+        && claimByKey.size === 0
+        && state.snapshot === snapshot
+        && state.descriptors === descriptors;
+
+    if (hasNoPlanChanges) {
+        return true;
+    }
 
   let detached: ReturnType<typeof renderTranscriptBlocksDetached>;
   try {
@@ -1310,7 +1340,7 @@ function applyTranscriptWindowReplan(
     },
   });
   if (result.status !== "applied") return false;
-  transcriptWindows.set(state.threadId, nextState);
+    transcriptWindows.set(state.threadId, nextState);
   return true;
 }
 
@@ -1391,31 +1421,89 @@ function loadEarlierTranscriptPage(): void {
     });
 }
 
+function shouldReplanTranscriptWindow(
+    state: TranscriptWindowState,
+    scrollTop: number,
+    clientHeight: number,
+): boolean {
+    if (state.attachedKeys.size === 0) return true;
+    if (state.spacerSegments.length === 0) {
+        return state.attachedKeys.size < state.descriptors.length;
+    }
+
+    const threshold = Math.max(clientHeight, 300);
+    const viewportStart = scrollTop - threshold;
+    const viewportEnd = scrollTop + clientHeight + threshold;
+
+    for (const spacer of state.spacerSegments) {
+        if (viewportEnd > spacer.canonicalStartPx && viewportStart < spacer.canonicalEndPx) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+let transcriptScrollReplanQueued = false;
+let transcriptScrollWasAtTop = false;
+
 function handleTranscriptScroll(): void {
-  const threadId = uiState.sessionId;
-  const contextGeneration = threadContextGeneration;
-  const wasAtTopBeforeReplan = transcriptEl.scrollTop <= 24;
-  queueMicrotask(() => {
-    if (!threadId
-      || uiState.sessionId !== threadId
-      || uiState.isSwitchingThread
-      || threadContextGeneration !== contextGeneration) return;
-    const state = transcriptWindows.get(threadId);
-    if (!state) return;
-    const interactionGeneration = getTranscriptInteractionGeneration();
-    applyTranscriptWindowReplan(
-      state,
-      state.snapshot,
-      state.descriptors,
-      interactionGeneration,
-    );
-    if (wasAtTopBeforeReplan || transcriptEl.scrollTop <= 24) loadEarlierTranscriptPage();
+    const currentScrollTop = transcriptEl.scrollTop;
+    if (programmaticScrollTopTarget !== null) {
+        const isTargetScroll = Math.abs(currentScrollTop - programmaticScrollTopTarget) < 1.0;
+        programmaticScrollTopTarget = null;
+        if (programmaticScrollTimeout !== null) {
+            clearTimeout(programmaticScrollTimeout);
+            programmaticScrollTimeout = null;
+        }
+        if (isTargetScroll) return;
+    }
+    const threadId = uiState.sessionId;
+    const contextGeneration = threadContextGeneration;
+    if (currentScrollTop <= 24) {
+        transcriptScrollWasAtTop = true;
+    }
+    if (transcriptScrollReplanQueued) return;
+    transcriptScrollReplanQueued = true;
+    queueMicrotask(() => {
+        transcriptScrollReplanQueued = false;
+        const wasAtTopBeforeReplan = transcriptScrollWasAtTop;
+        transcriptScrollWasAtTop = false;
+        if (!threadId
+            || uiState.sessionId !== threadId
+            || uiState.isSwitchingThread
+            || threadContextGeneration !== contextGeneration) return;
+        const state = transcriptWindows.get(threadId);
+        if (!state) return;
+        const interactionGeneration = getTranscriptInteractionGeneration();
+        const shouldReplan = shouldReplanTranscriptWindow(
+            state,
+            transcriptEl.scrollTop,
+            transcriptEl.clientHeight,
+        );
+        if (shouldReplan) {
+            applyTranscriptWindowReplan(
+                state,
+                state.snapshot,
+                state.descriptors,
+                interactionGeneration,
+            );
+        }
+        if (wasAtTopBeforeReplan || transcriptEl.scrollTop <= 24) loadEarlierTranscriptPage();
   });
 }
 
 transcriptEl.addEventListener("scroll", handleTranscriptScroll);
 
+let lastTranscriptClientWidth = 0;
+let lastTranscriptClientHeight = 0;
+
 function handleTranscriptResize(): void {
+    const width = transcriptEl.clientWidth;
+    const height = transcriptEl.clientHeight;
+    if (width === lastTranscriptClientWidth && height === lastTranscriptClientHeight) return;
+    lastTranscriptClientWidth = width;
+    lastTranscriptClientHeight = height;
   const threadId = uiState.sessionId;
   const contextGeneration = threadContextGeneration;
   queueMicrotask(() => {
@@ -1927,6 +2015,15 @@ function isCurrentThreadActivation(generation: number): boolean {
 }
 
 function activateThread(threadId: string): void {
+    transcriptScrollReplanQueued = false;
+    transcriptScrollWasAtTop = false;
+    programmaticScrollTopTarget = null;
+    if (programmaticScrollTimeout !== null) {
+        clearTimeout(programmaticScrollTimeout);
+        programmaticScrollTimeout = null;
+    }
+    lastTranscriptClientWidth = 0;
+    lastTranscriptClientHeight = 0;
   if (threadId !== uiState.sessionId) {
     if (uiState.sessionId) {
       retireThreadTurn(uiState.sessionId);
@@ -2883,6 +2980,15 @@ export function _resetWorkbenchForTest(): void {
   transcriptWindows.clear();
   clearCommittedStreams();
   clearActiveStreams();
+    transcriptScrollReplanQueued = false;
+    transcriptScrollWasAtTop = false;
+    programmaticScrollTopTarget = null;
+    if (programmaticScrollTimeout !== null) {
+        clearTimeout(programmaticScrollTimeout);
+        programmaticScrollTimeout = null;
+    }
+    lastTranscriptClientWidth = 0;
+    lastTranscriptClientHeight = 0;
   resetTranscriptViewport();
   resetFileChangeCards();
   localItemSequence = 0;

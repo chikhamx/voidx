@@ -226,7 +226,7 @@ export function createTranscriptViewportController(
   };
 
   const onScroll = (): void => {
-    if (disposed) return;
+      if (disposed || transactionActive) return;
     activityGeneration += 1;
     interactionGeneration += 1;
     scrollGeometryDirty = true;

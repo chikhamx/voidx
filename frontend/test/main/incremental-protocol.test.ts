@@ -8,6 +8,7 @@ import {
   validatePendingLocalMessageTokens,
   _peekTranscriptWindowSnapshotForTest,
   _peekTranscriptWindowHeightKeysForTest,
+    _peekTranscriptWindowStateForTest,
 } from "../../src/main";
 import { _setSocket } from "../../src/rpc/client";
 import { uiState } from "../../src/services/state";
@@ -1056,6 +1057,60 @@ it("schedules a trim after a fallback full attach of a windowed snapshot", async
   });
 
 
+    it("does not call replaceChildren when scrolling within the attached window budget", async () => {
+        const socket = eventSocket(WebSocket.OPEN);
+        _setSocket(socket);
+        const transcript = document.querySelector("#transcript") as HTMLElement;
+        installTranscriptGeometry(transcript, 100, 96);
+
+        handleNotification("workspace.snapshot", {
+            revision: 1,
+            active_thread_id: "thread-1",
+            threads: [{ thread_id: "thread-1" }],
+            active_snapshot: {
+                thread_id: "thread-1",
+                revision: 1,
+                windowed: true,
+                before_turn_id: 100,
+                has_earlier: false,
+                nodes: Array.from({ length: 50 }, (_, index) => ({
+                    node_type: "turn",
+                    id: `no-flicker-${index}`,
+                    header: `item ${index}`,
+                })),
+            },
+        });
+
+        await Promise.resolve();
+
+        // Materialize and settle window around middle items
+        transcript.scrollTop = 25 * 96;
+        transcript.dispatchEvent(new Event("scroll"));
+        await Promise.resolve();
+
+        transcript.scrollTop = 25 * 96 + 2;
+        transcript.dispatchEvent(new Event("scroll"));
+        await Promise.resolve();
+
+        let replaceChildrenCount = 0;
+        const originalReplaceChildren = transcript.replaceChildren.bind(transcript);
+        transcript.replaceChildren = (...children) => {
+            replaceChildrenCount += 1;
+            originalReplaceChildren(...children);
+        };
+
+        try {
+            // Minor scroll within the already materialized overscan window
+            transcript.scrollTop = 25 * 96 + 10;
+            transcript.dispatchEvent(new Event("scroll"));
+            await Promise.resolve();
+
+            expect(replaceChildrenCount).toBe(0);
+        } finally {
+            transcript.replaceChildren = originalReplaceChildren;
+        }
+    });
+
   it("releases the pagination lock after a successful earlier page", async () => {
     const socket = eventSocket(WebSocket.OPEN);
     _setSocket(socket);
@@ -1304,6 +1359,63 @@ it("schedules a trim after a fallback full attach of a windowed snapshot", async
         expect(snapshot?.before_cursor).toBe("cursor-b");
         expect(snapshot?.transcript_epoch).toBe("epoch-a");
         expect(snapshot?.nodes.map((node) => node.id)).toEqual(["matching-new", "matching-current"]);
+    });
+
+    it("skips replanning when scrolling safely inside attached overscan cushion and replans near spacer", async () => {
+        const socket = eventSocket(WebSocket.OPEN);
+        _setSocket(socket);
+        const transcript = document.querySelector("#transcript");
+        const originalClientHeight = Object.getOwnPropertyDescriptor(transcript, "clientHeight");
+        Object.defineProperty(transcript, "clientHeight", { configurable: true, value: 600 });
+        try {
+            const nodes = Array.from({ length: 300 }, (_, i) => ({
+                node_type: "turn",
+                id: `hysteresis-node-${i}`,
+                header: `Node ${i}`,
+            }));
+
+            handleNotification("workspace.snapshot", {
+                revision: 1,
+                active_thread_id: "thread-hysteresis",
+                threads: [{ thread_id: "thread-hysteresis" }],
+                active_snapshot: {
+                    thread_id: "thread-hysteresis",
+                    revision: 1,
+                    windowed: true,
+                    has_earlier: false,
+                    nodes,
+                },
+            });
+
+            const stateBefore = _peekTranscriptWindowStateForTest("thread-hysteresis");
+            expect(stateBefore).not.toBeNull();
+            const initialGeneration = stateBefore.generation;
+
+            // In initial install with clientHeight=600, tail nodes (~270..299) are attached.
+            // topSpacer ends at ~26000.
+            const topSpacer = stateBefore.spacerSegments[0];
+            expect(topSpacer).toBeDefined();
+
+            // Safe scroll: well below topSpacer.canonicalEndPx by > 1200px.
+            transcript.scrollTop = topSpacer.canonicalEndPx + 1500;
+            transcript.dispatchEvent(new Event("scroll"));
+            await Promise.resolve();
+
+            // Safe scroll (distance to spacer is > threshold): no replan!
+            const stateAfterSafeScroll = _peekTranscriptWindowStateForTest("thread-hysteresis");
+            expect(stateAfterSafeScroll.generation).toBe(initialGeneration);
+
+            // Near-spacer scroll (moves close to canonicalEndPx, within threshold): triggers replan!
+            transcript.scrollTop = topSpacer.canonicalEndPx + 100;
+            transcript.dispatchEvent(new Event("scroll"));
+            await Promise.resolve();
+
+            const stateAfterNearSpacerScroll = _peekTranscriptWindowStateForTest("thread-hysteresis");
+            expect(stateAfterNearSpacerScroll.generation).toBeGreaterThan(initialGeneration);
+        } finally {
+            if (originalClientHeight) Object.defineProperty(transcript, "clientHeight", originalClientHeight);
+            else Reflect.deleteProperty(transcript, "clientHeight");
+        }
     });
 
   it("keeps blocked commit slots unchanged when replacement throws and retries the same revision", () => {

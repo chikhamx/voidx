@@ -66,6 +66,33 @@ describe("buildTranscriptDescriptors", () => {
     });
   });
 
+    it("allows multiple tool_call nodes with the same tool_call_id without throwing", () => {
+        const descriptors = buildTranscriptDescriptors([
+            node("turn-1", "turn", { text: "update file" }),
+            node("call-1", "tool_call", { tool_name: "write" }, { tool_call_id: "call_ZP2TAs18Pp2jxNYvh8mQFPc4" }),
+            node("diff-1", "tool_call", { diff_text: "--- a/file\n+++ b/file\n" }, { tool_call_id: "call_ZP2TAs18Pp2jxNYvh8mQFPc4" }),
+        ]);
+        expect(descriptors).toHaveLength(1);
+        expect(descriptors[0]).toMatchObject({
+            key: "turn-with-tools:turn-1",
+            turnId: "turn-1",
+            memberNodeIds: ["turn-1", "call-1", "diff-1"],
+        });
+    });
+
+    it("tolerates tool_result nodes without preceding calls in group", () => {
+        const descriptors = buildTranscriptDescriptors([
+            node("turn-1", "turn", { text: "result only" }),
+            node("result-1", "tool_result", { raw_text: "done" }, { tool_call_id: "call_standalone" }),
+        ]);
+        expect(descriptors).toHaveLength(1);
+        expect(descriptors[0]).toMatchObject({
+            key: "turn-with-tools:turn-1",
+            turnId: "turn-1",
+            memberNodeIds: ["turn-1", "result-1"],
+    });
+  });
+
   it("uses stable fingerprints and ignores unknown payload fields", () => {
     const base = node("answer", "assistant", {
       raw_text: "visible",

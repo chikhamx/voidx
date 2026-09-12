@@ -141,7 +141,7 @@ export function selectTranscriptWindowAnchor(
   ));
   if (partiallyVisible) return partiallyVisible.block;
 
-  return input.following ? usable[usable.length - 1]?.block ?? null : null;
+    return input.following ? usable[usable.length - 1]?.block ?? null : null;
 }
 
 export interface TranscriptDomWindowPlannerInput {
@@ -612,16 +612,27 @@ function isValidSpacerSegment(segment: TranscriptSpacerSegment): boolean {
     && cssHeightPx > 0;
 }
 
-function sameSpacerSegment(a: TranscriptSpacerSegment, b: TranscriptSpacerSegment): boolean {
-  return isValidSpacerSegment(a)
-    && isValidSpacerSegment(b)
-    && a.startIndex === b.startIndex
-    && a.endIndex === b.endIndex
-    && a.canonicalStartPx === b.canonicalStartPx
-    && a.canonicalEndPx === b.canonicalEndPx
-    && a.cssHeightPx === b.cssHeightPx
-    && a.omittedKeys.length === b.omittedKeys.length
-    && a.omittedKeys.every((key, index) => key === b.omittedKeys[index]);
+export function sameSpacerSegment(a: TranscriptSpacerSegment, b: TranscriptSpacerSegment): boolean {
+    return isValidSpacerSegment(a)
+        && isValidSpacerSegment(b)
+        && a.startIndex === b.startIndex
+        && a.endIndex === b.endIndex
+        && Math.abs(a.canonicalStartPx - b.canonicalStartPx) < 0.5
+        && Math.abs(a.canonicalEndPx - b.canonicalEndPx) < 0.5
+        && Math.abs(a.cssHeightPx - b.cssHeightPx) < 0.5
+        && a.omittedKeys.length === b.omittedKeys.length
+        && a.omittedKeys.every((key, index) => key === b.omittedKeys[index]);
+}
+
+export function sameSpacerSegments(
+    a: readonly TranscriptSpacerSegment[],
+    b: readonly TranscriptSpacerSegment[],
+): boolean {
+    if (a.length !== b.length) return false;
+    for (let index = 0; index < a.length; index += 1) {
+        if (!sameSpacerSegment(a[index], b[index])) return false;
+    }
+    return true;
 }
 
 function isValidTranscriptWindowSpacer(element: HTMLElement): boolean {

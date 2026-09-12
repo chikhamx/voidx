@@ -322,6 +322,104 @@ describe("renderTranscript", () => {
       "assistant-2",
     ]);
   });
+    it("renders persisted thought with collapsible header and default hidden body", () => {
+        resetStreams();
+        const root = document.createElement("div");
+        setTranscriptElement(root);
+
+        const snapshot = {
+            nodes: [
+                {
+                    node_type: "thought",
+                    id: "thought-collapsed-test",
+                    payload: { raw_text: "Diagnosing Excessive File Path Length" },
+                    body_lines: ["Diagnosing Excessive File Path Length"],
+                },
+            ],
+        };
+
+        renderTranscript(root, snapshot);
+        const item = root.querySelector<HTMLElement>(".thought-item");
+        expect(item).not.toBeNull();
+        const header = item?.querySelector<HTMLElement>(".thought-header");
+        const body = item?.querySelector<HTMLElement>(".thought-body");
+        expect(header).not.toBeNull();
+        expect(body).not.toBeNull();
+        expect(body?.hidden).toBe(true);
+
+        header?.click();
+        expect(body?.hidden).toBe(false);
+
+        header?.click();
+        expect(body?.hidden).toBe(true);
+    });
+
+    it("creates separate tool groups for non-adjacent tools separated by thought or assistant", () => {
+        resetStreams();
+        const root = document.createElement("div");
+        setTranscriptElement(root);
+
+        const snapshot = {
+            nodes: [
+                { node_type: "turn", id: "turn-order", header: "run tasks" },
+                { node_type: "thought", id: "thought-1", payload: { raw_text: "thinking 1" } },
+                { node_type: "assistant", id: "msg-1", payload: { raw_text: "start tools" } },
+                {
+                    node_type: "tool_call",
+                    id: "call-1",
+                    tool_call_id: "c1",
+                    payload: { tool_name: "bash", args: "echo 1" },
+                },
+                {
+                    node_type: "tool_result",
+                    id: "res-1",
+                    tool_call_id: "c1",
+                    payload: { raw_text: "1" },
+                },
+                { node_type: "thought", id: "thought-2", payload: { raw_text: "thinking 2" } },
+                {
+                    node_type: "tool_call",
+                    id: "call-2",
+                    tool_call_id: "c2",
+                    payload: { tool_name: "read", args: { file_path: "foo.txt" } },
+                },
+                {
+                    node_type: "tool_result",
+                    id: "res-2",
+                    tool_call_id: "c2",
+                    payload: { raw_text: "content" },
+                },
+            ],
+        };
+
+        renderTranscript(root, snapshot);
+        const groups = root.querySelectorAll(".tool-group");
+        expect(groups).toHaveLength(2);
+
+        const items1 = groups[0].querySelectorAll(".tool-item");
+        const items2 = groups[1].querySelectorAll(".tool-item");
+        expect(items1).toHaveLength(1);
+        expect(items2).toHaveLength(1);
+
+        expect(items1[0].getAttribute("data-tool-id")).toBe("c1");
+        expect(items2[0].getAttribute("data-tool-id")).toBe("c2");
+
+        const order = Array.from(root.children).map((el) => {
+            if (el.classList.contains("tool-group")) return "tool-group";
+            if (el.classList.contains("thought-item")) return el.dataset.itemId;
+            if (el.classList.contains("stream-buffer")) return el.dataset.streamId;
+            return el.dataset.itemId || el.className;
+        });
+        expect(order).toEqual([
+            "turn-order",
+            "thought-1",
+            "msg-1",
+            "tool-group",
+            "thought-2",
+            "tool-group",
+        ]);
+    });
+
   it("keeps persisted thought nodes in transcript order", () => {
     resetStreams();
     const root = document.createElement("div");

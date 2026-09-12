@@ -152,6 +152,32 @@ describe("selectTranscriptWindowAnchor", () => {
       pendingRoots: new Set([pending.primary]),
     })).toBe(last);
   });
+
+    it("returns null when all usable blocks are outside the viewport", async () => {
+        const api = await import("../../src/utils/transcript-dom-window") as unknown as {
+            selectTranscriptWindowAnchor: (input: {
+                blocks: Array<{ key: string; primary: HTMLElement }>;
+                viewportTop: number;
+                viewportBottom: number;
+                following: boolean;
+                pendingRoots?: ReadonlySet<HTMLElement>;
+            }) => { key: string; primary: HTMLElement } | null;
+        };
+        const block = (key: string, top: number, bottom: number) => {
+            const primary = document.createElement("div");
+            primary.getBoundingClientRect = () => ({ top, bottom } as DOMRect);
+            return { key, primary };
+        };
+
+        const farAbove = block("far-above", -1000, -800);
+        const nearAbove = block("near-above", -200, -50);
+        expect(api.selectTranscriptWindowAnchor({
+            blocks: [farAbove, nearAbove],
+            viewportTop: 100,
+            viewportBottom: 400,
+            following: false,
+        })).toBeNull();
+  });
 });
 
 
@@ -380,6 +406,7 @@ describe("planTranscriptDomWindow", () => {
     const empty = planner({ viewport: { scrollTop: 0, clientHeight: -1, following: false } });
     expect([...empty.nextAttachedKeys]).toEqual(["k4"]);
   });
+
 
   it("refuses destructive trim without an anchor but still materializes", () => {
     const plan = planner({
@@ -1550,4 +1577,41 @@ describe("Task 3 anchor-preserving window transaction", () => {
       overBudgetReason: "layout extent unavailable",
     });
   });
+    describe("sameSpacerSegment / sameSpacerSegments", () => {
+        it("recognizes identical spacer segments and tolerates subpixel height differences", async () => {
+            const { sameSpacerSegment, sameSpacerSegments } = await import(
+                "../../src/utils/transcript-dom-window"
+            );
+            const seg1 = {
+                startIndex: 0,
+                endIndex: 5,
+                omittedKeys: ["a", "b", "c", "d", "e"],
+                canonicalStartPx: 0,
+                canonicalEndPx: 480,
+                cssHeightPx: 480,
+            };
+            const seg2 = {
+                startIndex: 0,
+                endIndex: 5,
+                omittedKeys: ["a", "b", "c", "d", "e"],
+                canonicalStartPx: 0,
+                canonicalEndPx: 480,
+                cssHeightPx: 480.2, // subpixel difference < 0.5px
+            };
+            const seg3 = {
+                startIndex: 0,
+                endIndex: 5,
+                omittedKeys: ["a", "b", "c", "d", "e"],
+                canonicalStartPx: 0,
+                canonicalEndPx: 480,
+                cssHeightPx: 481, // >= 0.5px difference
+            };
+
+            expect(sameSpacerSegment(seg1, seg2)).toBe(true);
+            expect(sameSpacerSegment(seg1, seg3)).toBe(false);
+            expect(sameSpacerSegments([seg1], [seg2])).toBe(true);
+            expect(sameSpacerSegments([seg1], [seg3])).toBe(false);
+            expect(sameSpacerSegments([seg1], [])).toBe(false);
+        });
+    });
 });

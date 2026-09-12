@@ -6,7 +6,7 @@ import {
 } from './stream';
 import type { ThoughtItemData } from './render-types';
 
-function formatThoughtMeta(meta: string | null | undefined, elapsed?: number | null): string {
+export function formatThoughtMeta(meta: string | null | undefined, elapsed?: number | null): string {
   let seconds = elapsed;
 
   if ((seconds === undefined || seconds === null) && meta) {
@@ -58,6 +58,51 @@ function findMergeableThoughtTarget(
   return null;
 }
 
+export function createThoughtItemElement(
+    itemId: string,
+    data: ThoughtItemData,
+): HTMLElement {
+    const el = document.createElement("div");
+    el.className = "thought-item";
+    el.dataset.itemId = itemId;
+    el.dataset.text = data.text || "";
+    el.dataset.elapsed = String(typeof data.elapsed === "number" ? data.elapsed : 0);
+
+    const header = document.createElement("div");
+    header.className = "thought-header";
+
+    const label = document.createElement("span");
+    label.className = "thought-label";
+    const formatted = formatThoughtMeta(data.meta, data.elapsed);
+    label.innerHTML = `${iconSvg("brain", 14, 2)}${formatted}`;
+
+    const chevron = document.createElement("span");
+    chevron.className = "thought-chevron";
+    chevron.innerHTML = iconSvg("chevron-right", 12, 2);
+
+    header.addEventListener("click", () => {
+        const body = el.querySelector<HTMLElement>(".thought-body");
+        if (body) {
+            body.hidden = !body.hidden;
+            chevron.innerHTML = iconSvg(body.hidden ? "chevron-right" : "chevron-down", 12, 2);
+        }
+    });
+
+    header.append(label, chevron);
+    el.append(header);
+
+    const body = document.createElement("div");
+    body.className = "thought-body";
+    body.hidden = true;
+    if (data.text) {
+        const md = renderMarkdown(data.text);
+        md.className = "markdown-body";
+        body.append(md);
+    }
+    el.append(body);
+    return el;
+}
+
 export function appendThoughtItem(
   itemId: string,
   data: ThoughtItemData,
@@ -105,44 +150,7 @@ export function appendThoughtItem(
     return;
   }
 
-  const el = document.createElement("div");
-  el.className = "thought-item";
-  el.dataset.itemId = itemId;
-  el.dataset.text = data.text || "";
-  el.dataset.elapsed = String(typeof data.elapsed === "number" ? data.elapsed : 0);
-
-  const header = document.createElement("div");
-  header.className = "thought-header";
-
-  const label = document.createElement("span");
-  label.className = "thought-label";
-  const formatted = formatThoughtMeta(data.meta, data.elapsed);
-  label.innerHTML = `${iconSvg("brain", 14, 2)}${formatted}`;
-
-  const chevron = document.createElement("span");
-  chevron.className = "thought-chevron";
-  chevron.innerHTML = iconSvg("chevron-right", 12, 2);
-
-  header.addEventListener("click", () => {
-    const body = el.querySelector<HTMLElement>(".thought-body");
-    if (body) {
-      body.hidden = !body.hidden;
-      chevron.innerHTML = iconSvg(body.hidden ? "chevron-right" : "chevron-down", 12, 2);
-    }
-  });
-
-  header.append(label, chevron);
-  el.append(header);
-
-  const body = document.createElement("div");
-  body.className = "thought-body";
-  body.hidden = true;
-  if (data.text) {
-    const md = renderMarkdown(data.text);
-    md.className = "markdown-body";
-    body.append(md);
-  }
-  el.append(body);
+    const el = createThoughtItemElement(itemId, data);
 
   if (insertBeforeEl) {
     insertBeforeEl.parentNode?.insertBefore(el, insertBeforeEl);

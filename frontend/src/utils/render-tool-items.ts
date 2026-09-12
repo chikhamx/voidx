@@ -198,97 +198,107 @@ function getToolItemHeaderInfo(data: ToolItemData): ToolHeaderInfo {
   };
 }
 
-function createToolGroup(turnId = ""): HTMLElement {
-  const group = document.createElement("div");
-  group.className = "tool-group";
-  group.dataset.visibleCount = String(TOOL_GROUP_PREVIEW_LIMIT);
-  if (turnId) group.dataset.turnId = turnId;
+export function createToolGroup(turnId = ""): HTMLElement {
+    const group = document.createElement("div");
+    group.className = "tool-group";
+    group.dataset.visibleCount = String(TOOL_GROUP_PREVIEW_LIMIT);
+    if (turnId) group.dataset.turnId = turnId;
 
-  const header = document.createElement("div");
-  header.className = "tool-group-header";
+    const header = document.createElement("div");
+    header.className = "tool-group-header";
 
-  const name = document.createElement("span");
-  name.className = "tool-group-name";
-  name.textContent = "tool";
+    const name = document.createElement("span");
+    name.className = "tool-group-name";
+    name.textContent = "tool";
 
-  const chevron = document.createElement("span");
-  chevron.className = "tool-group-chevron";
-  chevron.innerHTML = iconSvg("chevron-right", 12, 2);
+    const chevron = document.createElement("span");
+    chevron.className = "tool-group-chevron";
+    chevron.innerHTML = iconSvg("chevron-right", 12, 2);
 
-  const args = document.createElement("span");
-  args.className = "tool-group-args";
+    const args = document.createElement("span");
+    args.className = "tool-group-args";
 
-  header.addEventListener("click", () => {
-    const body = group.querySelector<HTMLElement>(".tool-group-body");
-    if (!body) return;
-    body.hidden = !body.hidden;
-    chevron.innerHTML = iconSvg(body.hidden ? "chevron-right" : "chevron-down", 12, 2);
-    renderToolGroupVisibility(group);
-  });
+    header.addEventListener("click", () => {
+        const body = group.querySelector<HTMLElement>(".tool-group-body");
+        if (!body) return;
+        body.hidden = !body.hidden;
+        chevron.innerHTML = iconSvg(body.hidden ? "chevron-right" : "chevron-down", 12, 2);
+        renderToolGroupVisibility(group);
+    });
 
-  header.append(name, chevron, args);
-  group.append(header);
+    header.append(name, chevron, args);
+    group.append(header);
 
-  const body = document.createElement("div");
-  body.className = "tool-group-body";
-  body.hidden = true;
-  group.append(body);
+    const body = document.createElement("div");
+    body.className = "tool-group-body";
+    body.hidden = true;
+    group.append(body);
 
-  return group;
+    return group;
+}
+
+export function findAdjacentToolGroup(
+    container: HTMLElement | DocumentFragment,
+    turnId = "",
+): HTMLElement | null {
+    let curr = container.lastElementChild as HTMLElement | null;
+    while (curr) {
+        if (curr.classList.contains("tool-group")) {
+            if (!turnId || !curr.dataset.turnId || curr.dataset.turnId === turnId) {
+                return curr;
+            }
+            break;
+        }
+        if (
+            curr.classList.contains("message-item") ||
+            curr.classList.contains("stream-buffer") ||
+            curr.classList.contains("thought-item") ||
+            curr.classList.contains("node")
+        ) {
+            break;
+        }
+        if (curr.classList.contains("file-change-card")) {
+            curr = curr.previousElementSibling as HTMLElement | null;
+            continue;
+        }
+        curr = curr.previousElementSibling as HTMLElement | null;
+    }
+    return null;
 }
 
 function latestToolGroup(transcriptEl: HTMLElement, turnId = ""): HTMLElement {
-  let curr = transcriptEl.lastElementChild as HTMLElement | null;
-  while (curr) {
-    if (curr.classList.contains("tool-group")) {
-      if (!turnId || !curr.dataset.turnId || curr.dataset.turnId === turnId) {
-        return curr;
-      }
-      break;
-    }
-    if (
-      curr.classList.contains("message-item") ||
-      curr.classList.contains("stream-buffer") ||
-      curr.classList.contains("thought-item")
-    ) {
-      break;
-    }
-    if (curr.classList.contains("file-change-card")) {
-      curr = curr.previousElementSibling as HTMLElement | null;
-      continue;
-    }
-    curr = curr.previousElementSibling as HTMLElement | null;
-  }
+    const adjacent = findAdjacentToolGroup(transcriptEl, turnId);
+    if (adjacent) return adjacent;
   const group = createToolGroup(turnId);
   transcriptEl.append(group);
   return group;
 }
 
-function updateToolGroupSummary(group: HTMLElement, data: ToolItemData): void {
-  const name = group.querySelector<HTMLElement>(".tool-group-name");
-  const args = group.querySelector<HTMLElement>(".tool-group-args");
+export function updateToolGroupSummary(group: HTMLElement, data: ToolItemData): void {
+    const name = group.querySelector<HTMLElement>(".tool-group-name");
+    const args = group.querySelector<HTMLElement>(".tool-group-args");
 
-  const toolItems = [...group.querySelectorAll<HTMLElement>(".tool-item")];
-  const tools: ToolInfo[] = toolItems.map(el => {
-    const toolName = el.querySelector<HTMLElement>(".tool-name")?.textContent || "";
-    return { tool_name: toolName };
-  });
+    const toolItems = [...group.querySelectorAll<HTMLElement>(".tool-item")];
+    const tools: ToolInfo[] = toolItems.map(el => {
+        const toolName = el.querySelector<HTMLElement>(".tool-name")?.textContent || "";
+        return { tool_name: toolName };
+    });
 
-  if (tools.length === 0 && data.tool_name) {
-    tools.push({ tool_name: data.tool_name });
-  }
+    if (tools.length === 0 && data.tool_name) {
+        tools.push({ tool_name: data.tool_name });
+    }
 
-  const summary = getToolGroupSummary(tools);
+    const summary = getToolGroupSummary(tools);
 
-  if (name) {
-    name.innerHTML = `<span class="tool-group-icon">${summary.icon}</span>${summary.text}`;
-  }
-  if (args) {
-    args.textContent = "";
-  }
+    if (name) {
+        name.innerHTML = `<span class="tool-group-icon">${summary.icon}</span>${summary.text}`;
+    }
+    if (args) {
+        args.textContent = "";
+    }
 }
 
-function renderToolGroupVisibility(group: HTMLElement): void {
+export function renderToolGroupVisibility(group: HTMLElement): void {
   const body = group.querySelector<HTMLElement>(".tool-group-body");
   if (!body) return;
   const items = [...body.querySelectorAll<HTMLElement>(".tool-item")];
@@ -412,12 +422,10 @@ export function renderProductionToolItemDetached(
   if (!el) {
     el = createToolItemElement(itemId, data);
     tools.set(toolId, el);
-    const key = turnId || "__unscoped__";
-    let group = groups.get(key);
-    if (!group) {
-      group = createToolGroup(turnId);
-      groups.set(key, group);
-      root.append(group);
+      let group = findAdjacentToolGroup(root, turnId);
+      if (!group) {
+          group = createToolGroup(turnId);
+          root.append(group);
     }
     group.querySelector(".tool-group-body")?.append(el);
     updateToolGroupSummary(group, data);

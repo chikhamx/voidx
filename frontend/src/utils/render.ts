@@ -34,7 +34,14 @@ import type {
   MessageItemData, TodoItem, ByIdMap,
   TranscriptSnapshot,
 } from './render-types';
-import { handleToolItem, renderProductionToolItemDetached } from './render-tool-items';
+import {
+    handleToolItem,
+    renderProductionToolItemDetached,
+    createToolGroup,
+    findAdjacentToolGroup,
+    updateToolGroupSummary,
+    renderToolGroupVisibility,
+} from './render-tool-items';
 import {
   createHistoricalFileChangeContext,
   renderFileChangeSummary,
@@ -47,7 +54,7 @@ import {
   commitFileChangeCardReservationsNoFail,
   releaseFileChangeCardReservations,
 } from './render-file-changes';
-import { appendThoughtItem } from './render-thought-items';
+import { appendThoughtItem, createThoughtItemElement, formatThoughtMeta } from './render-thought-items';
 import { appendNoticeItem, appendDiffItem, appendCompactionDivider } from './render-notice-status';
 
 export type { TranscriptSnapshot } from './render-types';
@@ -587,71 +594,61 @@ function appendHistoricalThought(
     const oldText = previous.dataset.text || "";
     if (text && !oldText.includes(text)) {
       previous.dataset.text = oldText ? `${oldText}\n\n${text}` : text;
-      previous.querySelector(".thought-body")?.append(renderMarkdown(text));
+            const prevElapsed = parseFloat(previous.dataset.elapsed || "0") || 0;
+            const totalElapsed = prevElapsed + (typeof elapsed === "number" ? elapsed : 0);
+            previous.dataset.elapsed = String(totalElapsed);
+            const label = previous.querySelector<HTMLElement>(".thought-label");
+            if (label) {
+                label.innerHTML = `${iconSvg("brain", 14, 2)}${formatThoughtMeta(null, totalElapsed)}`;
+            }
+            const md = renderMarkdown(text);
+            md.className = "markdown-body";
+            previous.querySelector(".thought-body")?.append(md);
+        }
+        return previous;
     }
-    return previous;
-  }
-  const el = document.createElement("div");
-  el.className = "thought-item";
-  el.dataset.itemId = itemId;
-  el.dataset.text = text;
-  el.dataset.elapsed = String(elapsed || 0);
-  const label = document.createElement("div");
-  label.className = "thought-label";
-  label.textContent = "thought";
-  const body = document.createElement("div");
-  body.className = "thought-body";
-  body.append(renderMarkdown(text));
-  el.append(label, body);
+    const el = createThoughtItemElement(itemId, {
+        text,
+        elapsed: typeof elapsed === "number" ? elapsed : null,
+    });
   root.append(el);
   return el;
 }
 
-function historicalToolGroup(
-  root: DocumentFragment,
-  groups: Map<string, HTMLElement>,
-  turnId: string,
-): HTMLElement {
-  const key = turnId || "__unscoped__";
-  let group = groups.get(key);
-  if (group) return group;
-  group = document.createElement("div");
-  group.className = "tool-group";
-  group.dataset.turnId = turnId;
-  const body = document.createElement("div");
-  body.className = "tool-group-body";
-  group.append(body);
-  groups.set(key, group);
-  root.append(group);
-  return group;
-}
-
 function appendHistoricalTool(
-  root: DocumentFragment,
-  groups: Map<string, HTMLElement>,
-  tools: Map<string, HTMLElement>,
-  fileContext: ReturnType<typeof createHistoricalFileChangeContext>,
-  node: TranscriptNode,
-  turnId: string,
+    root: DocumentFragment,
+    groups: Map<string, HTMLElement>,
+    tools: Map<string, HTMLElement>,
+    fileContext: ReturnType<typeof createHistoricalFileChangeContext>,
+    node: TranscriptNode,
+    turnId: string,
 ): void {
-  const payload = node.payload as Record<string, unknown> | undefined;
-  const toolId = node.tool_call_id || node.id;
-  let el = tools.get(toolId);
-  if (!el) {
-    el = document.createElement("div");
-    el.className = "tool-item";
-    el.dataset.itemId = node.id;
-    el.dataset.toolId = toolId;
-    const name = document.createElement("span");
-    name.className = "tool-name";
-    name.textContent = String(payload?.tool_name || "tool");
-    const detail = document.createElement("div");
-    detail.className = "tool-body";
-    el.append(name, detail);
-    historicalToolGroup(root, groups, turnId)
-      .querySelector(".tool-group-body")
-      ?.append(el);
-    tools.set(toolId, el);
+    const payload = node.payload as Record<string, unknown> | undefined;
+    const toolId = node.tool_call_id || node.id;
+    let el = tools.get(toolId);
+    if (!el) {
+        el = document.createElement("div");
+        el.className = "tool-item";
+        el.dataset.itemId = node.id;
+        el.dataset.toolId = toolId;
+        const name = document.createElement("span");
+        name.className = "tool-name";
+        name.textContent = String(payload?.tool_name || "tool");
+        const detail = document.createElement("div");
+        detail.className = "tool-body";
+        el.append(name, detail);
+        let group = findAdjacentToolGroup(root, turnId);
+        if (!group) {
+            group = createToolGroup(turnId);
+            root.append(group);
+        }
+        group.querySelector(".tool-group-body")?.append(el);
+        tools.set(toolId, el);
+        updateToolGroupSummary(group, {
+            tool_name: (payload?.tool_name as string) || "tool",
+            tool_call_id: toolId,
+        });
+        renderToolGroupVisibility(group);
   }
   if (payload?.diff_text) {
     renderHistoricalFileChanges(
