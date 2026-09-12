@@ -462,6 +462,75 @@ async def test_stream_llm_marks_malformed_provider_json_tool_call():
     assert renderer.text == []
 
 
+class NaturalLanguageWithToolCallKeywordsStreamingModel:
+    def bind_tools(self, tool_defs):
+        return self
+
+    async def astream(self, messages):
+        yield AIMessageChunk(content=(
+            "分析异常原因如下：\n"
+            "在处理 tool_calls 时，代码会检查 function 和 arguments：\n"
+            '{"name": "read", "arguments": {"file_path": "test.py"}}'
+        ))
+
+
+class MultilineMalformedProviderJsonStreamingModel:
+    def bind_tools(self, tool_defs):
+        return self
+
+    async def astream(self, messages):
+        yield AIMessageChunk(content=(
+            "{\n"
+            '  "tool_calls": [\n'
+            '    {"function": {"name": "read", "arguments": "{\\"file_path\\": \\"test.py\\"}"}}\n'
+        ))
+
+
+@pytest.mark.asyncio
+async def test_stream_llm_does_not_mark_natural_language_as_malformed_tool_call():
+    renderer = FakeRenderer()
+
+    msg = await _stream_llm(NaturalLanguageWithToolCallKeywordsStreamingModel(), [], renderer, "openai")
+
+    assert msg.tool_calls == []
+    assert "分析异常原因如下：" in msg.content
+    assert msg.response_metadata.get("malformed_tool_call") is not True
+    assert renderer.text != []
+
+
+@pytest.mark.asyncio
+async def test_stream_llm_marks_multiline_malformed_provider_json_tool_call():
+    renderer = FakeRenderer()
+
+    msg = await _stream_llm(MultilineMalformedProviderJsonStreamingModel(), [], renderer, "openai")
+
+    assert msg.tool_calls == []
+    assert msg.content == ""
+    assert msg.response_metadata["malformed_tool_call"] is True
+    assert msg.response_metadata["malformed_tool_call_format"] == "provider_json"
+    assert renderer.text == []
+class NaturalLanguageWithXmlOrDsmlKeywordsStreamingModel:
+    def bind_tools(self, tool_defs):
+        return self
+
+    async def astream(self, messages):
+        yield AIMessageChunk(content=(
+            "代码审查分析如下：\n"
+            "系统对旧版的 <tool_call> 和 DSML (<||DSML||invoke) 协议进行了兼容处理。\n"
+            "这是正常的自然语言解释。"
+        ))
+
+
+@pytest.mark.asyncio
+async def test_stream_llm_does_not_mark_natural_language_mentioning_xml_or_dsml_as_malformed():
+    renderer = FakeRenderer()
+
+    msg = await _stream_llm(NaturalLanguageWithXmlOrDsmlKeywordsStreamingModel(), [], renderer, "openai")
+
+    assert msg.tool_calls == []
+    assert "代码审查分析如下：" in msg.content
+    assert msg.response_metadata.get("malformed_tool_call") is not True
+    assert renderer.text != []
 @pytest.mark.asyncio
 async def test_stream_llm_parses_legacy_xml_text_tool_calls():
     renderer = FakeRenderer()

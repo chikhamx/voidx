@@ -318,7 +318,7 @@ def _is_empty_content(content: object) -> bool:
 
 def _should_render_text_chunk(text: str) -> bool:
     normalized = _normalize_dsml(text).strip()
-    if "DSML" in normalized and "<|" in normalized:
+    if _looks_like_malformed_dsml_tool_call(normalized):
         return False
     if _looks_like_legacy_xml_tool_call(normalized):
         return False
@@ -515,7 +515,28 @@ def _decode_legacy_xml_arg(raw: str) -> object:
     return value
 
 
+def _first_non_empty_line(text: str) -> str:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
+
+
+def _is_natural_text_or_code_block(first_line: str) -> bool:
+    if not first_line or first_line.startswith("```"):
+        return True
+    if re.search(r"[\u4e00-\u9fff]", first_line):
+        return True
+    return False
+
+
 def _looks_like_legacy_xml_tool_call(text: str) -> bool:
+    first_line = _first_non_empty_line(text)
+    if _is_natural_text_or_code_block(first_line):
+        return False
+    if not first_line.startswith(("<tool_call", "</tool_call>", "<arg_key", "<tool_name", "<tool>")):
+        return False
     lowered = text.lower()
     return (
         "<tool_call" in lowered
@@ -553,6 +574,11 @@ def _content_text_fragments(content: object) -> list[str]:
 
 
 def _looks_like_malformed_dsml_tool_call(text: str) -> bool:
+    first_line = _first_non_empty_line(text)
+    if _is_natural_text_or_code_block(first_line):
+        return False
+    if not (first_line.startswith(("<|", "<｜", "<||", "<tool_calls")) or "DSML" in first_line):
+        return False
     return (
         "DSML" in text
         and "<" in text
@@ -561,6 +587,11 @@ def _looks_like_malformed_dsml_tool_call(text: str) -> bool:
 
 
 def _looks_like_provider_tool_call_fragment(text: str) -> bool:
+    first_line = _first_non_empty_line(text)
+    if _is_natural_text_or_code_block(first_line):
+        return False
+    if not first_line.startswith(("{", "[", '"tool_calls"', "'tool_calls'", "tool_calls:")):
+        return False
     lowered = text.lower()
     return (
         "tool_calls" in lowered
