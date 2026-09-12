@@ -16,6 +16,10 @@ _SKILL_HEADER_RE = re.compile(r"^## Skill:\s*(?P<name>.+?)\s*$", re.MULTILINE)
 _SKILL_TOOL_CONTEXT_MARKER_RE = re.compile(
     rf"(?m)^{re.escape(SKILL_TOOL_CONTEXT_MARKER)}[ \t]*(?:\r?\n|$)"
 )
+_SKILL_BLOCK_RE = re.compile(
+    r'<tool_context\b(?P<attrs>[^>]*)>(?P<body>[\s\S]*?)</tool_context>',
+    re.IGNORECASE,
+)
 
 
 def skill_body_hash(body: str) -> str:
@@ -36,10 +40,18 @@ def render_skill_instruction(skill: SkillDefinition) -> str:
 
 
 def render_skill_tool_context(instructions: Iterable[str]) -> str:
-    body = "\n\n".join(item.strip() for item in instructions if item.strip())
-    if not body:
-        return ""
-    return f"{SKILL_TOOL_CONTEXT_MARKER}\nScope: current-turn\n\n{body}"
+    parts: list[str] = []
+    for item in instructions:
+        item_str = item.strip()
+        if not item_str:
+            continue
+        match = _SKILL_HEADER_RE.search(item_str)
+        if match:
+            name = match.group("name").strip()
+            parts.append(f'<tool_context type="skill" name="{name}">\n{item_str}\n</tool_context>')
+        else:
+            parts.append(f'<tool_context type="skill">\n{item_str}\n</tool_context>')
+    return "\n\n".join(parts)
 
 
 def strip_skill_tool_context(content: Any) -> Any:
@@ -63,53 +75,64 @@ def strip_skill_tool_context(content: Any) -> Any:
 
 def has_skill_tool_context(content: Any) -> bool:
     if isinstance(content, str):
-        return _SKILL_TOOL_CONTEXT_MARKER_RE.search(content) is not None
+        return _has_skill_tool_context_text(content)
     if isinstance(content, list):
         return any(
             isinstance(item, dict)
             and item.get("type") == "text"
             and isinstance(item.get("text"), str)
-            and _SKILL_TOOL_CONTEXT_MARKER_RE.search(item["text"]) is not None
+            and _has_skill_tool_context_text(item["text"])
             for item in content
         )
     return False
 
 
+def _has_skill_tool_context_text(text: str) -> bool:
+    if _SKILL_TOOL_CONTEXT_MARKER_RE.search(text) is not None:
+        return True
+    for match in _SKILL_BLOCK_RE.finditer(text):
+        attrs = match.group("attrs")
+        if re.search(r'\btype=["\']skill["\']', attrs):
+            if not re.search(r'\bstatus=["\']stripped["\']', attrs):
+                return True
+    return False
+
+
 def _strip_skill_tool_context_text(text: str) -> str:
-    if _SKILL_TOOL_CONTEXT_MARKER_RE.search(text) is None:
-        return text
-    parts = _SKILL_TOOL_CONTEXT_MARKER_RE.split(text)
-    prefix = parts[0]
-    replacements = [_stripped_summary(block) for block in parts[1:]]
-    replacement = "\n\n".join(replacements)
-    if prefix.strip():
-        return f"{prefix.rstrip()}\n\n{replacement}"
-    return replacement
+    def _replace_skill_tag(match: re.Match[str]) -> str:
+        attrs = match.group("attrs")
+        if not re.search(r'\btype=["\']skill["\']', attrs):
+            return match.group(0)
+        if re.search(r'\bstatus=["\']stripped["\']', attrs):
+            return match.group(0)
+        name_match = re.search(r'\bname=["\'](?P<name>[^"\']+)["\']', attrs)
+        if name_match:
+            name = name_match.group("name").strip()
+            return f'<tool_context type="skill" name="{name}" status="stripped" />'
+        body = match.group("body")
+        header_match = _SKILL_HEADER_RE.search(body)
+        if header_match:
+            name = header_match.group("name").strip()
+            return f'<tool_context type="skill" name="{name}" status="stripped" />'
+        return '<tool_context type="skill" status="stripped" />'
 
+    result = _SKILL_BLOCK_RE.sub(_replace_skill_tag, text)
 
-def _stripped_summary(block: str) -> str:
-    summaries = _skill_block_summaries(block)
-    if not summaries:
-        summaries = ["- active skill body omitted from historical tool result"]
-    return "\n".join([SKILL_TOOL_CONTEXT_STRIPPED_MARKER, *summaries])
+    if _SKILL_TOOL_CONTEXT_MARKER_RE.search(result):
+        parts = _SKILL_TOOL_CONTEXT_MARKER_RE.split(result)
+        prefix = parts[0]
+        replacements = []
+        for block in parts[1:]:
+            matches = list(_SKILL_HEADER_RE.finditer(block))
+            if matches:
+                for m in matches:
+                    replacements.append(f'<tool_context type="skill" name="{m.group("name").strip()}" status="stripped" />')
+            else:
+                replacements.append('<tool_context type="skill" status="stripped" />')
+        replacement = "\n\n".join(replacements)
+        if prefix.strip():
+            result = f"{prefix.rstrip()}\n\n{replacement}"
+        else:
+            result = replacement
 
-
-def _skill_block_summaries(block: str) -> list[str]:
-    matches = list(_SKILL_HEADER_RE.finditer(block))
-    summaries: list[str] = []
-    for index, match in enumerate(matches):
-        name = match.group("name").strip()
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(block)
-        section = block[match.end():end]
-        source = _field_value(section, "Source") or "unknown"
-        body_hash = _field_value(section, "Body-Hash") or "unknown"
-        summaries.append(f"- {name} sha256={body_hash} source={source}")
-    return summaries
-
-
-def _field_value(text: str, field: str) -> str:
-    prefix = f"{field}:"
-    for line in text.splitlines():
-        if line.startswith(prefix):
-            return line[len(prefix):].strip()
-    return ""
+    return result

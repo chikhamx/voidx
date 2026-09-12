@@ -21,6 +21,10 @@ _MCP_TOOL_LINE_RE = re.compile(r"^-\s+(?P<tool>[^\s:]+)", re.MULTILINE)
 _MCP_TOOL_CONTEXT_MARKER_RE = re.compile(
     rf"(?m)^{re.escape(MCP_TOOL_CONTEXT_MARKER)}[ \t]*(?:\r?\n|$)"
 )
+_MCP_BLOCK_RE = re.compile(
+    r'<tool_context\b(?P<attrs>[^>]*)>(?P<body>[\s\S]*?)</tool_context>',
+    re.IGNORECASE,
+)
 
 
 def render_mcp_server_summary(
@@ -32,24 +36,21 @@ def render_mcp_server_summary(
     server_info: dict[str, Any] | None = None,
 ) -> str:
     lines = [
-        MCP_TOOL_CONTEXT_MARKER,
-        "Scope: current-turn",
-        "",
+        f'<tool_context type="mcp" server="{server}">',
         f"## MCP Server: {server}",
     ]
     if description.strip():
         lines.append(f"Summary: {description.strip()}")
     lines.append("")
     lines.append(f'Use `mcp(op="load", server="{server}")` to expand tools and parameters.')
+    lines.append("</tool_context>")
     return "\n".join(lines)
 
 
 def render_mcp_tool_context(server: str, status: str, tools: list[McpToolDef]) -> str:
     """Render one MCP server's tools as current-turn context for the model."""
     lines = [
-        MCP_TOOL_CONTEXT_MARKER,
-        "Scope: current-turn",
-        "",
+        f'<tool_context type="mcp" server="{server}">',
         f"## MCP Server: {server}",
         f"Status: {status}",
         "",
@@ -59,6 +60,7 @@ def render_mcp_tool_context(server: str, status: str, tools: list[McpToolDef]) -
         lines.append("No tools available for this server.")
     for tool_def in tools:
         lines.extend(_render_tool_lines(server, tool_def))
+    lines.append("</tool_context>")
     return "\n".join(lines)
 
 
@@ -118,31 +120,68 @@ def _placeholder_for(summary, name: str) -> Any:
     return "..."
 
 
+def has_mcp_tool_context(content: Any) -> bool:
+    if isinstance(content, str):
+        return _has_mcp_tool_context_text(content)
+    if isinstance(content, list):
+        return any(
+            isinstance(item, dict)
+            and item.get("type") == "text"
+            and isinstance(item.get("text"), str)
+            and _has_mcp_tool_context_text(item["text"])
+            for item in content
+        )
+    return False
+
+
+def _has_mcp_tool_context_text(text: str) -> bool:
+    if _MCP_TOOL_CONTEXT_MARKER_RE.search(text) is not None:
+        return True
+    for match in _MCP_BLOCK_RE.finditer(text):
+        attrs = match.group("attrs")
+        if re.search(r'\btype=["\']mcp["\']', attrs):
+            if not re.search(r'\bstatus=["\']stripped["\']', attrs):
+                return True
+    return False
+
+
 def _strip_mcp_tool_context_text(text: str) -> str:
-    if _MCP_TOOL_CONTEXT_MARKER_RE.search(text) is None:
-        return text
-    parts = _MCP_TOOL_CONTEXT_MARKER_RE.split(text)
-    prefix = parts[0]
-    replacements = [_stripped_summary(block) for block in parts[1:]]
-    replacement = "\n\n".join(replacements)
-    if prefix.strip():
-        return f"{prefix.rstrip()}\n\n{replacement}"
-    return replacement
+    def _replace_mcp_tag(match: re.Match[str]) -> str:
+        attrs = match.group("attrs")
+        if not re.search(r'\btype=["\']mcp["\']', attrs):
+            return match.group(0)
+        if re.search(r'\bstatus=["\']stripped["\']', attrs):
+            return match.group(0)
+        server_match = re.search(r'\bserver=["\'](?P<server>[^"\']+)["\']', attrs)
+        if server_match:
+            server = server_match.group("server").strip()
+            return f'<tool_context type="mcp" server="{server}" status="stripped" />'
+        body = match.group("body")
+        header_match = _MCP_SERVER_HEADER_RE.search(body)
+        if header_match:
+            server = header_match.group("name").strip()
+            return f'<tool_context type="mcp" server="{server}" status="stripped" />'
+        return '<tool_context type="mcp" status="stripped" />'
 
+    result = _MCP_BLOCK_RE.sub(_replace_mcp_tag, text)
 
-def _stripped_summary(block: str) -> str:
-    server = _extract_server_name(block)
-    tools = _tool_names(block)
-    lines = [MCP_TOOL_CONTEXT_STRIPPED_MARKER]
-    if server and tools:
-        lines.append(f"- MCP server context omitted: {server}; tools: {', '.join(tools)}")
-    elif server:
-        lines.append(f"- MCP server context omitted: {server}")
-    elif tools:
-        lines.append(f"- MCP server context omitted; tools: {', '.join(tools)}")
-    else:
-        lines.append("- MCP server context omitted")
-    return "\n".join(lines)
+    if _MCP_TOOL_CONTEXT_MARKER_RE.search(result):
+        parts = _MCP_TOOL_CONTEXT_MARKER_RE.split(result)
+        prefix = parts[0]
+        replacements = []
+        for block in parts[1:]:
+            server = _extract_server_name(block)
+            if server:
+                replacements.append(f'<tool_context type="mcp" server="{server}" status="stripped" />')
+            else:
+                replacements.append('<tool_context type="mcp" status="stripped" />')
+        replacement = "\n\n".join(replacements)
+        if prefix.strip():
+            result = f"{prefix.rstrip()}\n\n{replacement}"
+        else:
+            result = replacement
+
+    return result
 
 
 def _extract_server_name(block: str) -> str:

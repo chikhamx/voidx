@@ -1,5 +1,7 @@
 # 上下文内部哨兵标记清理与 XML 语义标签化规范
 
+> **Status: Done** — Archived on 2026-09-12.
+
 - 日期：2026-09-12
 - 状态：设计完成，待评审与实现
 - 适用范围：`agent/application/runtime_context.py`、`agent/application/prompts.py`、`automation/workflow/context.py`、`skills/context.py`、`mcp/context.py` 及相关上下文测试套件。

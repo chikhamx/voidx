@@ -32,11 +32,12 @@ from voidx.agent.application.automation.workflow.runtime import WorkflowActivati
 def test_runtime_context_strips_historical_skill_tool_context(tmp_path):
     tool_output = (
         '{"confirmed_intent": "implement"}\n\n'
-        f"{SKILL_TOOL_CONTEXT_MARKER}\nScope: current-turn\n\n"
+        '<tool_context type="skill" name="tdd">\n'
         "## Skill: tdd\n"
         "Source: bundled\n"
         "Body-Hash: abc123\n\n"
-        "Full skill body"
+        "Full skill body\n"
+        "</tool_context>"
     )
     messages = [
         HumanMessage(content="old request"),
@@ -54,19 +55,19 @@ def test_runtime_context_strips_historical_skill_tool_context(tmp_path):
     context.apply_to_messages(messages)
 
     historical_tool = next(message for message in messages if isinstance(message, ToolMessage))
-    assert SKILL_TOOL_CONTEXT_STRIPPED_MARKER in historical_tool.content
-    assert "tdd sha256=abc123 source=bundled" in historical_tool.content
+    assert '<tool_context type="skill" name="tdd" status="stripped" />' in historical_tool.content
     assert "Full skill body" not in historical_tool.content
 
 
 def test_runtime_context_strips_tool_skill_context_before_latest_ai_message(tmp_path):
     tool_output = (
         '{"loaded": true}\n\n'
-        f"{SKILL_TOOL_CONTEXT_MARKER}\nScope: current-turn\n\n"
+        '<tool_context type="skill" name="tdd">\n'
         "## Skill: tdd\n"
         "Source: bundled\n"
         "Body-Hash: abc123\n\n"
-        "Full skill body"
+        "Full skill body\n"
+        "</tool_context>"
     )
     messages = [
         HumanMessage(content="current request"),
@@ -85,7 +86,7 @@ def test_runtime_context_strips_tool_skill_context_before_latest_ai_message(tmp_
 
     historical_tool = next(message for message in messages if isinstance(message, ToolMessage))
     latest_ai = next(message for message in messages if isinstance(message, AIMessage))
-    assert SKILL_TOOL_CONTEXT_STRIPPED_MARKER in historical_tool.content
+    assert '<tool_context type="skill" name="tdd" status="stripped" />' in historical_tool.content
     assert "Full skill body" not in historical_tool.content
     assert latest_ai.content.startswith("<current_task_state>")
 
@@ -93,11 +94,12 @@ def test_runtime_context_strips_tool_skill_context_before_latest_ai_message(tmp_
 def test_runtime_context_preserves_latest_tool_skill_context(tmp_path):
     tool_output = (
         '{"loaded": true}\n\n'
-        f"{SKILL_TOOL_CONTEXT_MARKER}\nScope: current-turn\n\n"
+        '<tool_context type="skill" name="tdd">\n'
         "## Skill: tdd\n"
         "Source: bundled\n"
         "Body-Hash: abc123\n\n"
-        "Full skill body"
+        "Full skill body\n"
+        "</tool_context>"
     )
     messages = [
         HumanMessage(content="current request"),
@@ -114,7 +116,7 @@ def test_runtime_context_preserves_latest_tool_skill_context(tmp_path):
     context.apply_to_messages(messages)
 
     latest_tool = next(message for message in messages if isinstance(message, ToolMessage))
-    assert SKILL_TOOL_CONTEXT_MARKER in latest_tool.content
+    assert '<tool_context type="skill" name="tdd">' in latest_tool.content
     assert "Full skill body" in latest_tool.content
     assert latest_tool.content == tool_output
     assert isinstance(messages[-1], HumanMessage)
@@ -124,19 +126,21 @@ def test_runtime_context_preserves_latest_tool_skill_context(tmp_path):
 def test_runtime_context_preserves_current_tool_skill_context_batch(tmp_path):
     first_tool_output = (
         '{"loaded": "first"}\n\n'
-        f"{SKILL_TOOL_CONTEXT_MARKER}\nScope: current-turn\n\n"
+        '<tool_context type="skill" name="tdd">\n'
         "## Skill: tdd\n"
         "Source: bundled\n"
         "Body-Hash: first\n\n"
-        "First skill body"
+        "First skill body\n"
+        "</tool_context>"
     )
     second_tool_output = (
         '{"loaded": "second"}\n\n'
-        f"{SKILL_TOOL_CONTEXT_MARKER}\nScope: current-turn\n\n"
+        '<tool_context type="skill" name="verify">\n'
         "## Skill: verify\n"
         "Source: bundled\n"
         "Body-Hash: second\n\n"
-        "Second skill body"
+        "Second skill body\n"
+        "</tool_context>"
     )
     messages = [
         HumanMessage(content="current request"),
@@ -162,9 +166,9 @@ def test_runtime_context_preserves_current_tool_skill_context_batch(tmp_path):
 
     tool_messages = [message for message in messages if isinstance(message, ToolMessage)]
     assert len(tool_messages) == 2
-    assert SKILL_TOOL_CONTEXT_MARKER in tool_messages[0].content
+    assert '<tool_context type="skill" name="tdd">' in tool_messages[0].content
     assert "First skill body" in tool_messages[0].content
-    assert SKILL_TOOL_CONTEXT_MARKER in tool_messages[1].content
+    assert '<tool_context type="skill" name="verify">' in tool_messages[1].content
     assert "Second skill body" in tool_messages[1].content
     assert tool_messages[1].content == second_tool_output
     assert isinstance(messages[-1], HumanMessage)
@@ -173,16 +177,18 @@ def test_runtime_context_preserves_current_tool_skill_context_batch(tmp_path):
 
 def test_runtime_context_strips_multiple_historical_skill_tool_context_blocks(tmp_path):
     tool_output = (
-        f"{SKILL_TOOL_CONTEXT_MARKER}\nScope: current-turn\n\n"
+        '<tool_context type="skill" name="tdd">\n'
         "## Skill: tdd\n"
         "Source: bundled\n"
         "Body-Hash: first\n\n"
-        "First body\n\n"
-        f"{SKILL_TOOL_CONTEXT_MARKER}\nScope: current-turn\n\n"
+        "First body\n"
+        "</tool_context>\n\n"
+        '<tool_context type="skill" name="verify">\n'
         "## Skill: verify\n"
         "Source: bundled\n"
         "Body-Hash: second\n\n"
-        "Second body"
+        "Second body\n"
+        "</tool_context>"
     )
     messages = [
         HumanMessage(content="old request"),
@@ -200,18 +206,14 @@ def test_runtime_context_strips_multiple_historical_skill_tool_context_blocks(tm
     context.apply_to_messages(messages)
 
     historical_tool = next(message for message in messages if isinstance(message, ToolMessage))
-    assert historical_tool.content.count(SKILL_TOOL_CONTEXT_STRIPPED_MARKER) == 2
-    assert "tdd sha256=first source=bundled" in historical_tool.content
-    assert "verify sha256=second source=bundled" in historical_tool.content
+    assert '<tool_context type="skill" name="tdd" status="stripped" />' in historical_tool.content
+    assert '<tool_context type="skill" name="verify" status="stripped" />' in historical_tool.content
     assert "First body" not in historical_tool.content
     assert "Second body" not in historical_tool.content
 
 
 def test_runtime_context_does_not_restrip_already_stripped_skill_tool_context(tmp_path):
-    stripped_output = (
-        f"{SKILL_TOOL_CONTEXT_STRIPPED_MARKER}\n"
-        "- tdd sha256=abc123 source=bundled"
-    )
+    stripped_output = '<tool_context type="skill" name="tdd" status="stripped" />'
     messages = [
         HumanMessage(content="old request"),
         ToolMessage(content=stripped_output, tool_call_id="call_skills"),
@@ -269,11 +271,12 @@ def test_task_context_only_contains_active_workflow_summaries(tmp_path):
 def test_runtime_context_preserves_current_turn_skill_tool_context(tmp_path):
     tool_output = (
         '{"confirmed_intent": "implement"}\n\n'
-        f"{SKILL_TOOL_CONTEXT_MARKER}\nScope: current-turn\n\n"
+        '<tool_context type="skill" name="tdd">\n'
         "## Skill: tdd\n"
         "Source: bundled\n"
         "Body-Hash: abc123\n\n"
-        "Full skill body"
+        "Full skill body\n"
+        "</tool_context>"
     )
     messages = [
         HumanMessage(content="current request"),
@@ -291,6 +294,35 @@ def test_runtime_context_preserves_current_turn_skill_tool_context(tmp_path):
     context.apply_to_messages(messages)
 
     current_tool = next(message for message in messages if isinstance(message, ToolMessage))
-    assert SKILL_TOOL_CONTEXT_MARKER in current_tool.content
+    assert '<tool_context type="skill" name="tdd">' in current_tool.content
     assert "Full skill body" in current_tool.content
-    assert SKILL_TOOL_CONTEXT_STRIPPED_MARKER not in current_tool.content
+    assert 'status="stripped"' not in current_tool.content
+
+
+def test_runtime_context_strips_legacy_historical_skill_tool_context(tmp_path):
+    tool_output = (
+        '{"confirmed_intent": "implement"}\n\n'
+        f"{SKILL_TOOL_CONTEXT_MARKER}\nScope: current-turn\n\n"
+        "## Skill: tdd\n"
+        "Source: bundled\n"
+        "Body-Hash: abc123\n\n"
+        "Full skill body"
+    )
+    messages = [
+        HumanMessage(content="old request"),
+        ToolMessage(content=tool_output, tool_call_id="call_intent"),
+        HumanMessage(content="current request"),
+    ]
+    context = RuntimeContextBuilder(
+        config=Config(workspace=str(tmp_path)),
+        workspace=str(tmp_path),
+        base_system_prompt="You are voidx.",
+        persona="voidx",
+        interaction_mode=InteractionMode.AUTO,
+    ).build()
+
+    context.apply_to_messages(messages)
+
+    historical_tool = next(message for message in messages if isinstance(message, ToolMessage))
+    assert '<tool_context type="skill" name="tdd" status="stripped" />' in historical_tool.content
+    assert "Full skill body" not in historical_tool.content

@@ -93,9 +93,10 @@ async def test_workflow_context_message_renders_fixed_full_workflow_nodes(tmp_pa
 
     context = await InstructionService(str(tmp_path)).workflow_context_for(workflow_dag=DEFAULT_WORKFLOW_DAG)
 
-    assert context.content.startswith(WORKFLOW_CONTEXT_MARKER)
-    assert f"Scope: {WORKFLOW_CONTEXT_SCOPE}" in context.content
-    assert "structured workflow definitions" in context.content
+    assert not context.content.startswith(WORKFLOW_CONTEXT_MARKER)
+    assert f"Scope: {WORKFLOW_CONTEXT_SCOPE}" not in context.content
+    assert "structured workflow definitions" not in context.content
+    assert context.content.startswith("## Workflow Node:")
     assert "compaction" not in context.content
     for node in WorkflowService(DEFAULT_WORKFLOW_DAG).nodes():
         assert f"## Workflow Node: {node.name}" in context.content

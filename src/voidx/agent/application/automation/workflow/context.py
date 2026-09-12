@@ -42,12 +42,7 @@ def render_workflow_context(
     body = "\n\n".join(item for item in rendered if item)
     if not body:
         return ""
-    return (
-        f"{WORKFLOW_CONTEXT_MARKER}\n"
-        f"Scope: {WORKFLOW_CONTEXT_SCOPE}\n\n"
-        f"{_WORKFLOW_CONTEXT_NOTE}\n\n"
-        f"{body}"
-    )
+    return body
 
 
 def is_workflow_context_content(content: object) -> bool:

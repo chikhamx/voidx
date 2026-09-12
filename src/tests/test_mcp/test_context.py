@@ -77,7 +77,8 @@ class TestRenderMcpToolContext:
         ]
         text = render_mcp_tool_context("tavily", "connected", tools)
 
-        assert text.startswith(f"{MCP_TOOL_CONTEXT_MARKER}\nScope: current-turn")
+        assert text.startswith('<tool_context type="mcp" server="tavily">')
+        assert text.endswith("</tool_context>")
         assert "## MCP Server: tavily" in text
         assert "Status: connected" in text
         assert "- tavily_search: Search the web." in text
@@ -104,9 +105,7 @@ class TestStripMcpToolContext:
         )
         stripped = strip_mcp_tool_context(text)
 
-        assert MCP_TOOL_CONTEXT_STRIPPED_MARKER in stripped
-        assert "tavily" in stripped
-        assert "tavily_search" in stripped
+        assert '<tool_context type="mcp" server="tavily" status="stripped" />' in stripped
         assert "Scope: current-turn" not in stripped
 
     def test_strip_preserves_prefix(self):

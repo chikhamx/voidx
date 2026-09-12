@@ -149,6 +149,6 @@ def test_workflow_runtime_uses_full_workflow_context():
     assert "voidx has a structured workflow runtime." not in rendered
     assert len(runtime.rules) == 3
     assert "Answer simple factual queries" in rendered
-    assert "VOIDX_WORKFLOW_CONTEXT" in rendered
+    assert "VOIDX_WORKFLOW_CONTEXT" not in rendered
     assert "## Workflow Node: debug" in rendered
     assert "## Workflow Node: design" in rendered

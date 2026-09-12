@@ -34,7 +34,7 @@ async def test_mcp_reference_injects_tool_context_for_matched_server():
         manager=manager,
     )
 
-    assert MCP_TOOL_CONTEXT_MARKER in result.prefix
+    assert '<tool_context type="mcp" server="tavily">' in result.prefix
     assert 'mcp(op="load", server="tavily")' in result.prefix
     assert "Tools:" not in result.prefix
     assert len(result.remove_spans) == 1
@@ -60,7 +60,7 @@ async def test_mcp_reference_uses_semantic_summary_for_load_prompt():
         manager=manager,
     )
 
-    assert MCP_TOOL_CONTEXT_MARKER in result.prefix
+    assert '<tool_context type="mcp" server="tavily">' in result.prefix
     assert "Tools:" not in result.prefix
     assert 'mcp(op="load", server="tavily")' in result.prefix
     assert "Web search" in result.prefix

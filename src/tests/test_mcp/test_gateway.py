@@ -167,7 +167,7 @@ class TestLoad:
         result = await tool.execute({"op": "load", "server": "tavily"}, _ctx(tmp_path))
 
         assert not result.metadata.get("error")
-        assert result.output.startswith("VOIDX_MCP_TOOL_CONTEXT")
+        assert result.output.startswith('<tool_context type="mcp" server="tavily">')
         assert "## MCP Server: tavily" in result.output
         assert "tavily_search" in result.output
         assert "Required: query" in result.output

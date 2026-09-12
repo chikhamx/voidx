@@ -40,7 +40,8 @@ class TestSkillsToolLoad:
         assert result.metadata["count"] == 1
         assert result.metadata["loaded_skills"][0]["name"] == "docs"
         assert result.metadata["loaded_skills"][0]["scope"] == "project"
-        assert SKILL_TOOL_CONTEXT_MARKER in result.output
+        assert '<tool_context type="skill" name="docs">' in result.output
+        assert '</tool_context>' in result.output
         assert "## Skill: docs" in result.output
         assert "Docs body" in result.output
 

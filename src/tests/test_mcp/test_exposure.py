@@ -179,7 +179,7 @@ class TestGatewayEndToEnd:
             assert "connected" in listed.output
 
             loaded = await registry.execute_tool("mcp", {"op": "load", "server": "fake"}, ctx)
-            assert loaded.output.startswith("VOIDX_MCP_TOOL_CONTEXT")
+            assert loaded.output.startswith('<tool_context type="mcp" server="fake">')
             assert "search" in loaded.output
 
             called = await registry.execute_tool(
