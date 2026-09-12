@@ -13,7 +13,11 @@ from voidx.agent.application.attachments import parse_structured_content
 from voidx.llm.message_status import message_status
 from voidx.agent.adapters.persistence.session_models import MessageRow
 from voidx.agent.application.runtime_context import RowMessageCacheEntry
-from voidx.llm.message_markers import COMPACTION_MESSAGE_MARKER, GUIDANCE_MARKER
+from voidx.llm.message_markers import (
+    COMPACTION_MESSAGE_MARKER,
+    GUIDANCE_MARKER,
+    GUIDANCE_SOURCE_MARKER,
+)
 
 
 def is_guidance_row(row: MessageRow) -> bool:
@@ -89,9 +93,12 @@ def message_from_row(row: MessageRow) -> BaseMessage | None:
     if row.role == "system":
         return SystemMessage(content=row.content, id=msg_id)
     if row.role == "user":
+        additional = dict(row.additional_kwargs or {})
+        if additional.get(GUIDANCE_MARKER) and GUIDANCE_SOURCE_MARKER not in additional:
+            additional[GUIDANCE_SOURCE_MARKER] = "user"
         return HumanMessage(
             content=parse_structured_content(row.content, row.content_format),
-            additional_kwargs=row.additional_kwargs,
+            additional_kwargs=additional,
             id=msg_id,
         )
     if row.role == "assistant":

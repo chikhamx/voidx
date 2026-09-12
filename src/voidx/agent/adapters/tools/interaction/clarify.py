@@ -34,9 +34,9 @@ class ClarifyResult(BaseModel):
 class ClarifyTool:
     id = "clarify"
     description = (
-        "Ask the user one question when intent, scope, or requirements are ambiguous "
-        "and explicit input is needed before proceeding. Do not use for progress updates. "
-        "Later tool calls in the same response are deferred until the answer updates runtime state."
+        "Ask one clarifying question when intent, scope, or requirements need "
+        "user input. Not for status updates; later calls in the same response "
+        "wait for the answer."
     )
 
     def parameters_schema(self) -> dict:

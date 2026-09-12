@@ -43,9 +43,8 @@ class DocumentTool:
     child_shareable = True
     id = "document"
     description = (
-        'Read built-in documents only. action="list" reads a directory README index; '
-        'action="read" loads a specific Markdown document. This tool does not read workspace files, '
-        'generate documents, or search external sources. Start with action="list" when unsure what exists.'
+        "Read built-in documentation, not workspace files: list README indexes "
+        "or read a Markdown document. List first when unsure."
     )
 
     def parameters_schema(self) -> dict:

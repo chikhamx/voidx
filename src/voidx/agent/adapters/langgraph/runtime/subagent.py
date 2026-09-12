@@ -46,7 +46,8 @@ from voidx.agent.adapters.langgraph.runtime.tool_executor.workflow import (
     _state_update_from_executed_tools,
 )
 from voidx.agent.domain.task.intent import PersonaName
-from voidx.llm.message_markers import GUIDANCE_MARKER
+from voidx.llm.message_markers import GUIDANCE_MARKER, GUIDANCE_SOURCE_MARKER
+from voidx.llm.guidance import render_guidance_messages
 from voidx.agent.application.runtime_context import (
     ContextCompiler,
     ContextCompilerCache,
@@ -516,7 +517,7 @@ async def run_subagent(
         restored = task_state_history.restore(compiled)
         if pending_reminder.append_snapshot:
             restored.append(task_state_snapshot(snapshot.text))
-        return restored
+        return render_guidance_messages(restored)
 
     def commit_reminder(sent_messages: list) -> None:
         nonlocal history_reset_pending
@@ -721,7 +722,10 @@ async def run_subagent(
                     final=False,
                     language=str(getattr(config.user_profile, "language", "") or ""),
                 ),
-                additional_kwargs={GUIDANCE_MARKER: True},
+                additional_kwargs={
+                    GUIDANCE_MARKER: True,
+                    GUIDANCE_SOURCE_MARKER: "system",
+                },
             )
         ]
 
@@ -824,7 +828,10 @@ async def run_subagent(
                 final=True,
                 language=str(getattr(config.user_profile, "language", "") or ""),
             ),
-            additional_kwargs={GUIDANCE_MARKER: True},
+            additional_kwargs={
+                GUIDANCE_MARKER: True,
+                GUIDANCE_SOURCE_MARKER: "system",
+            },
         )
         final_messages: list = []
         renderer = ui_factories.streaming_renderer(
@@ -939,7 +946,10 @@ async def run_subagent(
                             final=False,
                             language=str(getattr(config.user_profile, "language", "") or ""),
                         ),
-                        additional_kwargs={GUIDANCE_MARKER: True},
+                        additional_kwargs={
+                            GUIDANCE_MARKER: True,
+                            GUIDANCE_SOURCE_MARKER: "system",
+                        },
                     )
                 )
                 context_tokens = estimate_context_tokens_with_tools(

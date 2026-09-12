@@ -33,18 +33,12 @@ class WorkflowInput(BaseModel):
     )
     condition: str = Field(
         default="",
-        description=(
-            "Exit condition for 'advance'. Must match an outgoing edge condition "
-            "in the workflow DAG (case-insensitive). Ignored for 'enter' and 'done'."
-        ),
+        description="Exit condition for advance; must match an outgoing DAG edge (case-insensitive).",
     )
     goal: str = Field(
         default="",
         max_length=120,
-        description=(
-            "Stable overall objective for the current task. Keep it short, sharp, and clear. "
-            "Required for 'enter'. Optional retarget for 'advance'. Ignored for 'done'."
-        ),
+        description="Stable task objective: required for enter, optional retarget for advance.",
     )
 
 
@@ -73,9 +67,8 @@ def _normalize_workflow_args(args):
 class WorkflowTool:
     id = "workflow"
     description = (
-        "Manage workflow node lifecycle. Enter a workflow before gated work, "
-        "advance after its gate is satisfied, and use done only to close active nodes "
-        "without activating successors."
+        "Manage workflow nodes: enter before gated work, advance after its "
+        "gate is satisfied, or done to close active nodes without activating successors."
     )
 
     def parameters_schema(self) -> dict:

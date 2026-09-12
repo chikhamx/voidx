@@ -49,10 +49,7 @@ class SkillsInput(BaseModel):
     )
     scope: Literal["project", "global"] = Field(
         default="project",
-        description=(
-            "Write scope for op=create: project writes .voidx/skills/<name>/SKILL.md; "
-            "global writes ~/.voidx/skills/<name>/SKILL.md."
-        ),
+        description="Write scope for create: project uses .voidx/skills/<name>/SKILL.md; global uses ~/.voidx/skills/<name>/SKILL.md.",
     )
 
 
@@ -76,8 +73,8 @@ class SkillsTool:
     child_shareable = True
     id = "skill"
     description = (
-        "Load skill instructions, create a new SKILL.md, or list discovered skills. "
-        "Load/list are read-only; create writes a SKILL.md file."
+        "Load skill instructions, create a SKILL.md, or list skills. "
+        "Load/list are read-only; create writes a file."
     )
 
     def __init__(self, skills_api_provider: Callable[[str], SkillsApi]) -> None:

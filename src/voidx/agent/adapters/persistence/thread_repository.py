@@ -277,6 +277,22 @@ class ThreadStore:
 
         await self._write(_tx)
 
+    async def release_guidance_ids(self, guidance_ids: list[str]) -> None:
+        ids = tuple(dict.fromkeys(item.strip() for item in guidance_ids if item.strip()))
+        if not ids:
+            return
+
+        def _tx(conn):
+            placeholders = ", ".join("?" for _ in ids)
+            conn.execute(
+                f"""UPDATE guidance_inbox
+                    SET delivery_id = NULL, delivered_phase = NULL
+                    WHERE guidance_id IN ({placeholders}) AND consumed_at IS NULL""",
+                (*ids,),
+            )
+
+        await self._write(_tx)
+
     async def release_guidance_ids_for_delivery(self, delivery_id: str) -> None:
         delivery_id = delivery_id.strip()
         if not delivery_id:

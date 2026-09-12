@@ -93,9 +93,9 @@ class TestTaskTracker:
     def test_todo_tool_description_guides_multi_step_progress(self):
         description = TodoWriteTool().description
 
-        assert "Track multi-step work" in description
-        assert "Use write to replace the list" in description
-        assert "Use update to move items" in description
+        assert "Track multi-step progress" in description
+        assert "write replaces the task list" in description
+        assert "update changes items" in description
 
     @pytest.mark.asyncio
     async def test_todo_tool_returns_structured_metadata(self, tmp_path):

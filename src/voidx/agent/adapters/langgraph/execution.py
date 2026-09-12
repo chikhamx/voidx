@@ -72,7 +72,8 @@ from voidx.agent.domain.task.state import GoalResolution, TaskState, goal_type_f
 from voidx.tooling.application.ai_approval import AiApprovalService
 from voidx.agent.application.instruction import InstructionService
 from voidx.agent.application.context_handoff import ChildContextHandoff
-from voidx.llm.message_markers import GUIDANCE_MARKER
+from voidx.llm.message_markers import GUIDANCE_MARKER, GUIDANCE_SOURCE_MARKER
+from voidx.agent.domain.guidance import GuidanceSource
 from voidx.llm.structured import ainvoke_structured
 from voidx.agent.adapters.persistence.session_repository import SessionInfo
 from voidx.observability.tool_log import log_tool_event
@@ -828,25 +829,26 @@ class LangGraphExecution:
     def _discard_pending_guidance(self) -> bool:
         return bool(self._pop_pending_guidance())
 
-    def _drain_pending_guidance(self) -> list[tuple[HumanMessage, bool, Literal["user", "guard"]]]:
-        messages: list[tuple[HumanMessage, bool, Literal["user", "guard"]]] = []
+    def _drain_pending_guidance(self) -> list[tuple[HumanMessage, bool, GuidanceSource]]:
+        messages: list[tuple[HumanMessage, bool, GuidanceSource]] = []
         current_state = self._current_thread_state()
         active_delivery_id = str(
             getattr(current_state, "guidance_delivery_id", "") or ""
         ).strip()
         for entry in self._pop_pending_guidance():
-            if (
-                current_state is not None
-                and active_delivery_id
-                and entry.guidance_id
-                and entry.delivery_id == active_delivery_id
-            ):
-                current_state.guidance_delivery_entry_ids.add(entry.guidance_id)
-                current_state.guidance_drained_ids.add(entry.guidance_id)
+            if current_state is not None and entry.guidance_id:
+                current_state.guidance_source_by_id[entry.guidance_id] = entry.source
+                if active_delivery_id and entry.delivery_id == active_delivery_id:
+                    current_state.guidance_delivery_entry_ids.add(entry.guidance_id)
+                    current_state.guidance_drained_ids.add(entry.guidance_id)
             messages.append((
                 HumanMessage(
                     content=entry.text,
-                    additional_kwargs={GUIDANCE_MARKER: True, "_voidx_guidance_event_id": entry.guidance_id},
+                    additional_kwargs={
+                        GUIDANCE_MARKER: True,
+                        GUIDANCE_SOURCE_MARKER: entry.source,
+                        "_voidx_guidance_event_id": entry.guidance_id,
+                    },
                 ),
                 entry.truncated,
                 entry.source,
@@ -923,7 +925,7 @@ class LangGraphExecution:
         self.goal_service = goal_service
 
     def _project_submitted_guidance(self, guidance: Any) -> None:
-        source = guidance.source if guidance.source in {"user", "guard"} else "guard"
+        source = guidance.source if guidance.source in {"user", "system", "guard"} else "guard"
         if source == "user" and self._ui.via_events():
             self._ui.events.emit_direct(
                 GuidanceSubmitted(text=guidance.text, truncated=guidance.truncated)
@@ -940,6 +942,8 @@ class LangGraphExecution:
         target_state = self._guidance_target_state(entry)
         if target_state is not None:
             target_state.pending_guidance.append(entry)
+            if entry.guidance_id:
+                target_state.guidance_source_by_id[entry.guidance_id] = entry.source
             if (
                 entry.delivery_id
                 and entry.delivery_id == getattr(target_state, "guidance_delivery_id", "")

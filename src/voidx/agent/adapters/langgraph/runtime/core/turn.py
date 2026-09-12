@@ -16,7 +16,7 @@ from voidx.agent.adapters.langgraph.runtime.turn_control import (
     normalize_terminal_message,
 )
 from voidx.agent.domain.task.state import GoalResolution, GoalSpec, TaskState
-from voidx.llm.message_markers import GUIDANCE_MARKER
+from voidx.llm.message_markers import GUIDANCE_MARKER, GUIDANCE_SOURCE_MARKER
 from voidx.agent.application.automation.workflow.service import reconcile_workflow_runs_for_turn
 from voidx.agent.domain.automation.workflow_schema import WorkflowDAG
 
@@ -197,7 +197,10 @@ def _prompt_for_loop_decision(
         assistant_msg,
         HumanMessage(
             content=repair_prompt,
-            additional_kwargs={GUIDANCE_MARKER: True},
+            additional_kwargs={
+                GUIDANCE_MARKER: True,
+                GUIDANCE_SOURCE_MARKER: "system",
+            },
         ),
     ]
     loop.context_tokens = estimate_tokens(llm_messages)
@@ -369,7 +372,10 @@ def _handle_invalid_turn(
             assistant_msg,
             HumanMessage(
                 content=INVALID_TURN_PROMPT,
-                additional_kwargs={GUIDANCE_MARKER: True},
+                additional_kwargs={
+                    GUIDANCE_MARKER: True,
+                    GUIDANCE_SOURCE_MARKER: "system",
+                },
             ),
         ]
         loop.context_tokens = estimate_tokens(llm_messages)
@@ -425,7 +431,10 @@ def _handle_plain_text(
             assistant_msg,
             HumanMessage(
                 content=prompt,
-                additional_kwargs={GUIDANCE_MARKER: True},
+                additional_kwargs={
+                    GUIDANCE_MARKER: True,
+                    GUIDANCE_SOURCE_MARKER: "system",
+                },
             ),
         ]
         loop.context_tokens = estimate_tokens(llm_messages)
@@ -507,7 +516,10 @@ def _fallback_turn_init(
     else:
         response_msg = HumanMessage(
             content="Turn initialized automatically. Continue the work.",
-            additional_kwargs={GUIDANCE_MARKER: True},
+            additional_kwargs={
+                GUIDANCE_MARKER: True,
+                GUIDANCE_SOURCE_MARKER: "system",
+            },
         )
 
     llm_messages = [

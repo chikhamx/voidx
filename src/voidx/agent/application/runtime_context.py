@@ -506,12 +506,22 @@ def _is_standalone_runtime_context(content: object) -> bool:
     return False
 
 
+def _is_user_guidance(message: BaseMessage) -> bool:
+    additional = getattr(message, "additional_kwargs", None)
+    if not isinstance(additional, dict):
+        return False
+    return bool(additional.get("_voidx_guidance")) and additional.get("_voidx_guidance_source") == "user"
+
+
 def raw_semantic_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
     raw: list[BaseMessage] = []
     for message in messages:
         if isinstance(message, SystemMessage):
             continue
         if isinstance(message, HumanMessage):
+            if _is_user_guidance(message):
+                raw.append(message)
+                continue
             if _is_runtime_context_overlay(message.content):
                 continue
             raw.append(_strip_turn_overlay(message))

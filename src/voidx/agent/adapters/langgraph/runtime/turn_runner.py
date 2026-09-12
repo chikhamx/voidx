@@ -259,6 +259,9 @@ class TurnRunner:
                     for entry in projected_guidance
                     if entry.guidance_id
                 )
+                for entry in projected_guidance:
+                    if entry.guidance_id:
+                        execution_state.guidance_source_by_id[entry.guidance_id] = entry.source
             elif guidance:
                 _project_guidance_snapshots(host, guidance, context)
 
@@ -653,6 +656,16 @@ class TurnRunner:
                     else set()
                 )
                 drained_ids.intersection_update(delivery_entry_ids)
+                sources: dict[str, str] = {}
+                if state is not None and hasattr(state, "guidance_source_by_id"):
+                    sources.update(state.guidance_source_by_id)
+                for entry in projected_guidance:
+                    if entry.guidance_id:
+                        sources[entry.guidance_id] = entry.source
+
+                user_ids = {gid for gid in delivery_entry_ids if sources.get(gid, "user") == "user"}
+                internal_ids = {gid for gid in delivery_entry_ids if sources.get(gid) in {"guard", "system"}}
+
                 if guidance_bound and guidance_service is not None:
                     if state is not None:
                         state.guidance_delivery_id = ""
@@ -664,12 +677,17 @@ class TurnRunner:
                             guidance_service, "release_guidance_ids", None
                         )
                         if callable(commit_by_ids) and callable(release_by_ids):
-                            committed_ids = drained_ids if turn_succeeded else set()
-                            released_ids = delivery_entry_ids - committed_ids
-                            if committed_ids:
-                                await commit_by_ids(committed_ids)
-                            if released_ids:
-                                await release_by_ids(released_ids)
+                            user_committed = (user_ids & drained_ids) if turn_succeeded else set()
+                            user_released = user_ids - user_committed
+                            internal_committed = internal_ids
+
+                            all_committed = user_committed | internal_committed
+                            all_released = user_released
+
+                            if all_committed:
+                                await commit_by_ids(all_committed)
+                            if all_released:
+                                await release_by_ids(all_released)
                         elif turn_succeeded and not _guidance_pending(
                             host, projected_guidance
                         ):
@@ -684,6 +702,8 @@ class TurnRunner:
                         if state is not None:
                             state.guidance_delivery_entry_ids.clear()
                             state.guidance_drained_ids.clear()
+                            if hasattr(state, "guidance_source_by_id"):
+                                state.guidance_source_by_id.clear()
                     guidance_bound = False
                 host._usage_stats.end_turn()
                 discard_guidance = getattr(host, "_discard_pending_guidance", None)
@@ -793,7 +813,10 @@ async def _persist_new_messages(host: Any, new_messages: list) -> None:
     if new_messages:
         await touch_session(host._session.id)
         if host._session_msg_cache is not None:
-            host._session = host._session.model_copy(update={"message_count": len(host._session_msg_cache)})
+            if hasattr(host._session, "model_copy"):
+                host._session = host._session.model_copy(update={"message_count": len(host._session_msg_cache)})
+            elif hasattr(host._session, "message_count"):
+                host._session.message_count = len(host._session_msg_cache)
 
 
 async def _persist_streamed_messages(host: Any, streamed_messages: list, payload_content: str | None) -> None:

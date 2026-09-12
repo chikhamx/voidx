@@ -46,3 +46,9 @@ Each subdirectory has its own `AGENTS.md` for directory-specific details only; g
 ## Safety
 - Do not commit `.voidx/`, `.env*`, or local credentials.
 - Run the relevant focused tests before broad test runs.
+
+## Anti-Patterns (Forbidden)
+- Do not silently swallow unexpected exceptions. Intentional suppression must be narrow and justified by the API contract.
+- Diagnose test failures before changing code or tests. Fix the actual defect; never weaken assertions, add production-only test special cases, or misuse mocks to manufacture a pass.
+- Do not remove existing code or comments without a demonstrated need within the requested scope.
+- Remove temporary print/debug residue introduced by the current task before finishing; preserve intentional logging and user changes.

@@ -59,6 +59,7 @@ def test_base_system_prompt_has_canonical_rules():
     assert [rule.name for rule in BASE_SYSTEM.global_rules] == [
         "workflow_gates",
         "task_state_snapshots",
+        "guidance_boundaries",
         "workspace_facts",
         "read_before_edit",
         "smallest_change",
@@ -146,7 +147,8 @@ def test_workflow_runtime_uses_full_workflow_context():
     assert "Only active workflow nodes are normative." in rendered
     assert "unless the user explicitly references another node by name" not in rendered
     assert "voidx has a structured workflow runtime." not in rendered
-    assert len(runtime.rules) == 2
+    assert len(runtime.rules) == 3
+    assert "Answer simple factual queries" in rendered
     assert "VOIDX_WORKFLOW_CONTEXT" in rendered
     assert "## Workflow Node: debug" in rendered
     assert "## Workflow Node: design" in rendered

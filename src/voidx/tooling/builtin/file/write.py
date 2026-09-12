@@ -37,7 +37,7 @@ class WriteInput(BaseModel):
     )
     lineno: int | None = Field(
         default=None,
-        description="For op=insert, 1-based line number to insert before. Ignored for op=append and op=write.",
+        description="1-based line number to insert before (required for op='insert').",
     )
     new_string: str = Field(
         default="",
@@ -115,7 +115,8 @@ async def _execute_write_insert(ctx: ToolContext, inp: WriteInput) -> ToolResult
         return ToolResult(output=f"File not found: {inp.file_path}", metadata={"error": True})
     stale = check_staleness(ctx, path)
     if stale:
-        return ToolResult(output=stale, metadata={"error": True})
+        hint = f"Read {inp.file_path} again to refresh file state before editing."
+        return ToolResult(output=stale, next_step_hint=hint, metadata={"error": True})
     original, read_error = _safe_read_text(path)
     if read_error is not None:
         return ToolResult(output=read_error, metadata={"error": True})
@@ -124,9 +125,10 @@ async def _execute_write_insert(ctx: ToolContext, inp: WriteInput) -> ToolResult
     assert inp.lineno is not None
     if inp.lineno > total_lines + 1:
         output = f"Cannot insert before line {inp.lineno}: file has {total_lines} lines."
+        hint = ""
         if not coverage_ranges_snapshot(ctx, path):
-            output = f"{output}\nHint: read the file first, then retry the edit."
-        return ToolResult(output=output, metadata={"error": True})
+            hint = f"Read {inp.file_path} first, then retry the edit."
+        return ToolResult(output=output, next_step_hint=hint, metadata={"error": True})
     resolved_lineno = inp.lineno - 1
     new_lines = _split_edit_lines(inp.new_string)
     overlap = resolve_overlap(
@@ -200,7 +202,8 @@ async def _execute_write_full(ctx: ToolContext, inp: WriteInput) -> ToolResult:
     if path.exists():
         stale = check_staleness(ctx, path)
         if stale:
-            return ToolResult(output=stale, metadata={"error": True})
+            hint = f"Read {inp.file_path} again to refresh file state before editing."
+            return ToolResult(output=stale, next_step_hint=hint, metadata={"error": True})
         original, read_error = _safe_read_text(path)
         if read_error is not None:
             return ToolResult(output=read_error, metadata={"error": True})
@@ -270,7 +273,8 @@ async def _apply_single_write_edit(
         path = resolved_path
         stale = check_staleness(ctx, path)
         if stale:
-            return ToolResult(output=stale, metadata={"error": True})
+            hint = f"Read {file_path} again to refresh file state before editing."
+            return ToolResult(output=stale, next_step_hint=hint, metadata={"error": True})
     original, read_error = _safe_read_text(path)
     if read_error is not None:
         return ToolResult(output=read_error, metadata={"error": True})

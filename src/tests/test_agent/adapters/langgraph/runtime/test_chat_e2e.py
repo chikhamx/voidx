@@ -195,7 +195,10 @@ async def test_chat_system_prompt_excludes_coding_persona_and_workflow(tmp_path)
         assert "Persona Model" not in system
         assert "Workflow Runtime" not in system
         assert "Current Task State" not in system
-        assert "### Runtime Rules" not in system
+        assert "### Runtime Rules" in system
+        assert "Runtime-rendered guidance preserves its source authority" in system
+        assert "workflow_gates" not in system
+        assert "task_state_snapshots" not in system
         assert "### Workspace Rules" not in system
         assert "### Delegation Rules" not in system
         assert "Show progress via todo" not in system

@@ -32,6 +32,7 @@ def test_coding_profile_spec_assembles_full_base_system_without_capability_filte
     assert [rule.name for rule in prompt.global_rules] == [
         "workflow_gates",
         "task_state_snapshots",
+        "guidance_boundaries",
         "workspace_facts",
         "read_before_edit",
         "smallest_change",
@@ -57,7 +58,10 @@ def test_chat_profile_spec_excludes_coding_only_rules():
     assert "coding assistant" not in rendered
     assert "conversational assistant" in rendered
     assert "summarize_results" in style_names
-    assert "### Runtime Rules" not in rendered
+    assert "### Runtime Rules" in rendered
+    assert "guidance_boundaries" in [r.name for r in prompt.global_rules]
+    assert "workflow_gates" not in [r.name for r in prompt.global_rules]
+    assert "task_state_snapshots" not in [r.name for r in prompt.global_rules]
     assert "### Workspace Rules" not in rendered
     assert "### Delegation Rules" not in rendered
     assert "### Verification Rules" in rendered

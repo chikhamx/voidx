@@ -162,7 +162,9 @@ class TestWriteTool:
 
         assert result.metadata.get("error") is True
         assert "Cannot insert before line 5" in result.output
-        assert "Hint: read the file first, then retry the edit." in result.output
+        assert "Hint:" not in result.output
+        assert "read" in result.next_step_hint.lower()
+        assert "invalid-unread.txt" in result.next_step_hint
         assert target.read_text(encoding="utf-8") == "one\ntwo\n"
 
     @pytest.mark.asyncio

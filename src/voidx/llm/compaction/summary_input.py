@@ -6,6 +6,7 @@ import re
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
+from voidx.llm.guidance import is_compaction_eligible_guidance
 from voidx.llm.message_markers import (
     is_compaction_message,
     is_continuation_message,
@@ -38,7 +39,11 @@ def compaction_summary_messages(selected_head: list[BaseMessage]) -> list[BaseMe
             continue
         if is_continuation_message(original) or is_context_pressure_message(original):
             continue
-        if is_step_hint_message(original) or is_guidance_message(original):
+        if is_step_hint_message(original):
+            continue
+        if is_guidance_message(original):
+            if is_compaction_eligible_guidance(original):
+                eligible.append(original)
             continue
         if is_compaction_message(original):
             eligible.append(original)

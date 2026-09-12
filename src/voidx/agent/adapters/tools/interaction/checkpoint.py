@@ -68,10 +68,9 @@ _DECISION_MAP: dict[str, str] = {
 class PlanCheckpointTool:
     id = "checkpoint"
     description = (
-        "Present a concrete implementation plan as an approval gate before file edits, "
-        "write-capable commands, or delegated implementation. no code changes occur in this tool. "
-        "The user can approve, request a design document first, modify scope, or reject. "
-        "Later tool calls in the same response are deferred until the decision updates runtime state."
+        "Present a plan for user approval before edits, write-capable commands, "
+        "or delegated implementation. Makes no changes; later calls in the same "
+        "response wait for the decision."
     )
 
     def parameters_schema(self) -> dict:

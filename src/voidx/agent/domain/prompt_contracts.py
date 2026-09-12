@@ -29,6 +29,7 @@ CHAT_PROFILE_SPEC = BaseSystemProfile(
         "uncertainty",
     ],
     global_section_names={
+        "Runtime Rules": ["guidance_boundaries"],
         "Verification Rules": ["fresh_verification"],
         "Trust Rules": ["external_content"],
         "Collaboration Rules": ["min_questions", "follow_requests"],

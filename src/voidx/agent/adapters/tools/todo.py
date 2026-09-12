@@ -78,8 +78,8 @@ def _normalize_todo_args(args):
 class TodoWriteTool:
     id = "todo"
     description = (
-        "Track multi-step work with a short task list. Use write to replace the list, "
-        "Use update to move items between pending/active/done, and use read to inspect current progress."
+        "Track multi-step progress: write replaces the task list, update changes "
+        "items by id, and read inspects status."
     )
 
     def __init__(self, tracker=None):

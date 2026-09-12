@@ -49,7 +49,7 @@ class LoopInitInput(BaseModel):
     interval_seconds: int | None = Field(
         default=None,
         ge=1,
-        description="Fixed interval in whole seconds (integer only, >= 1). Omit for dynamic mode.",
+        description="Fixed interval in whole seconds, at least 1; omit for dynamic mode.",
     )
 
     @model_validator(mode="before")
@@ -93,7 +93,7 @@ class LoopStartInput(BaseModel):
 class LoopCommitInput(BaseModel):
     outcome: Literal["continue"] = Field(
         default="continue",
-        description="Iteration outcome. The only valid value is 'continue' to schedule the next wakeup.",
+        description="Required for commit; 'continue' schedules the next wakeup. Finishing an iteration does not stop the loop; stopping remains user-controlled.",
     )
     summary: str = Field(
         description="Concise durable summary of what was accomplished in this iteration.",
@@ -129,11 +129,7 @@ class LoopCommitInput(BaseModel):
 class LoopDecisionInput(BaseModel):
     operation: Literal["start", "commit", "init"] = Field(
         default="commit",
-        description=(
-            "start declares the iteration goal; commit submits the iteration decision "
-            "(requires outcome/summary); init submits a LoopSpec for user approval "
-            "(idle phase only, requires prompt)."
-        ),
+        description="start declares a goal; commit records outcome/summary; init submits a prompt for LoopSpec approval in idle phase only.",
     )
     goal: str = Field(default="", description="Iteration goal. Required for operation=start.")
     prompt: str = Field(
@@ -143,15 +139,11 @@ class LoopDecisionInput(BaseModel):
     interval_seconds: int | None = Field(
         default=None,
         ge=1,
-        description="For operation=init: fixed interval in seconds (integer only). Omit for dynamic mode.",
+        description="Fixed interval in whole seconds, at least 1; omit for dynamic mode.",
     )
     outcome: Literal["continue"] | None = Field(
         default=None,
-        description=(
-            "Iteration outcome. Required for operation=commit; the only valid value is "
-            "'continue', which schedules the next wakeup. The loop only ends when the user "
-            "stops it, so finishing this iteration's work is NOT a reason to end the loop."
-        ),
+        description="Required for commit; 'continue' schedules the next wakeup. Finishing an iteration does not stop the loop; stopping remains user-controlled.",
     )
     summary: str = Field(default="", description="Concise durable summary of this loop iteration.")
     progress: Literal["none", "partial", "meaningful"] = Field(

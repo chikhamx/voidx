@@ -134,10 +134,12 @@ class GuidanceService:
         if callable(release):
             await release(sorted(guidance_ids))
             return
-        for guidance_id in guidance_ids:
-            guidance = await self._store.get_guidance(guidance_id)
-            if guidance is not None and guidance.delivery_id:
-                await self._store.release_guidance(guidance.delivery_id)
+        single_release = getattr(self._store, "release_guidance_id", None)
+        if callable(single_release):
+            for guidance_id in sorted(guidance_ids):
+                await single_release(guidance_id)
+            return
+        raise NotImplementedError("Underlying store does not support per-id guidance release")
 
     async def commit_delivery(self, delivery_id: str) -> None:
         await self._store.consume_guidance(delivery_id)
@@ -147,10 +149,12 @@ class GuidanceService:
         if callable(consume):
             await consume(sorted(guidance_ids))
             return
-        for guidance_id in guidance_ids:
-            guidance = await self._store.get_guidance(guidance_id)
-            if guidance is not None and guidance.delivery_id:
-                await self._store.consume_guidance(guidance.delivery_id)
+        single_consume = getattr(self._store, "consume_guidance_id", None)
+        if callable(single_consume):
+            for guidance_id in sorted(guidance_ids):
+                await single_consume(guidance_id)
+            return
+        raise NotImplementedError("Underlying store does not support per-id guidance consumption")
 
     def _submit_sync(self, guidance: Guidance) -> Guidance:
         submit_sync = getattr(self._store, "submit_guidance_sync", None)

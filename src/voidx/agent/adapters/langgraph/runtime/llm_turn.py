@@ -88,6 +88,7 @@ from voidx.agent.application.runtime_context import raw_semantic_messages
 from voidx.agent.adapters.persistence.session_models import MessageRow
 from voidx.llm.message_markers import (
     GUIDANCE_MARKER,
+    GUIDANCE_SOURCE_MARKER,
     is_continuation_message,
     is_context_pressure_message,
 )
@@ -205,7 +206,10 @@ class LlmTurn:
                     session_id=host._session.id,
                     role="user",
                     content=str(message.content),
-                    additional_kwargs={GUIDANCE_MARKER: True},
+                    additional_kwargs={
+                        GUIDANCE_MARKER: True,
+                        GUIDANCE_SOURCE_MARKER: "user",
+                    },
                 )
                 message_id = await save_turn_message(row)
                 if host._session_msg_cache is not None:
@@ -596,7 +600,10 @@ class LlmTurn:
                     if final_response_prompt:
                         rebuilt.append(HumanMessage(
                             content=final_response_prompt,
-                            additional_kwargs={GUIDANCE_MARKER: True},
+                            additional_kwargs={
+                                GUIDANCE_MARKER: True,
+                                GUIDANCE_SOURCE_MARKER: "system",
+                            },
                         ))
                     rebuilt, _ = prepare_reminder(rebuilt, builder)
                     return prepare_main_request(
@@ -692,7 +699,10 @@ class LlmTurn:
                             *llm_messages,
                             HumanMessage(
                                 content=GOAL_FINAL_RESPONSE_REPAIR_INSTRUCTION,
-                                additional_kwargs={GUIDANCE_MARKER: True},
+                                additional_kwargs={
+                                    GUIDANCE_MARKER: True,
+                                    GUIDANCE_SOURCE_MARKER: "system",
+                                },
                             ),
                         ]
                         loop.context_tokens = estimate_llm_context_tokens(

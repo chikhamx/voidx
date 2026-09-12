@@ -12,17 +12,16 @@ from voidx.tooling.domain.schema import model_to_json_schema
 class CompactContextInput(BaseModel):
     summary: str = Field(
         description=(
-            "Structured Markdown summary of the older context to preserve. "
-            "Keep durable facts, decisions, constraints, progress, blockers, "
-            "verification results, and relevant files."
+            "Structured Markdown summary preserving durable facts, decisions, "
+            "constraints, progress, blockers, verification evidence, and relevant files."
         ),
         min_length=1,
     )
     tail_anchor_id: str = Field(
         default="",
         description=(
-            "Optional id of the first live message that should remain after "
-            "compaction. Use the tail_anchor_id shown in VOIDX_COMPACTION_GUIDE."
+            "Optional id of the first live message to retain; use tail_anchor_id "
+            "from VOIDX_COMPACTION_GUIDE."
         ),
     )
 

@@ -47,15 +47,15 @@ class ManageInput(BaseModel):
     )
     paths: str | list[str] | None = Field(
         default=None,
-        description="File or directory path(s); paths is required for op=create and op=delete. Ignored for op=move.",
+        description="Target path or list of paths (required for create/delete).",
     )
     moves: list[MoveSpec] | None = Field(
         default=None,
-        description="Move mappings required for op=move; each item has src, dest, and per-move overwrite. Ignored for op=create/op=delete.",
+        description="Move mappings with src, dest, and per-move overwrite (required for op='move').",
     )
     overwrite: bool = Field(
         default=False,
-        description="For op=create only: replace an existing file after safety checks. Ignored for directory create, delete, and move.",
+        description="Replace an existing file after safety checks (for op='create' and kind='file').",
     )
 
     @model_validator(mode="after")
@@ -94,7 +94,7 @@ def _normalize_manage_args(args):
 
 class ManageTool:
     id = "manage"
-    description = "Create empty files or directories; create an empty file or directory, delete files or directories, or move/rename paths. No file content is written; use write to add file content."
+    description = "Create empty files or directories, delete, or move/rename paths. Does not write file content; use write for content."
 
     def parameters_schema(self) -> dict:
         return model_to_json_schema(ManageInput)

@@ -56,14 +56,14 @@ class TestWorkflowTool:
         description = WorkflowInput.model_fields["goal"].description
 
         assert description is not None
-        assert "Stable overall objective" in description
+        assert "Stable task objective" in description
 
     def test_workflow_tool_description_is_actionable(self):
         description = WorkflowTool().description
 
-        assert "Enter a workflow before gated work" in description
+        assert "enter before gated work" in description
         assert "advance after its gate is satisfied" in description
-        assert "done only to close active nodes" in description
+        assert "done to close active nodes" in description
 
 
     def test_workflow_repeat_tracker_helpers_use_context_state(self, tmp_path):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 STEP_HINT_MARKER = "_voidx_step_hint"
 GUIDANCE_MARKER = "_voidx_guidance"
+GUIDANCE_SOURCE_MARKER = "_voidx_guidance_source"
 CONTEXT_PRESSURE_MARKER = "_voidx_context_pressure"
 COMPACTION_MESSAGE_MARKER = "_voidx_compaction_message"
 CONTINUATION_MESSAGE_MARKER = "_voidx_continuation"

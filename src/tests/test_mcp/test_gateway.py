@@ -310,9 +310,9 @@ class TestDescription:
     def test_description_teaches_workflow_without_catalog(self, manager):
         tool = McpGatewayTool(manager)
         desc = tool.description
-        assert 'op="list"' in desc
-        assert 'op="load"' in desc
-        assert 'op="call"' in desc
+        assert "list" in desc
+        assert "load" in desc.lower()
+        assert "call" in desc.lower()
         assert "tavily" not in desc
         assert "github" not in desc
 

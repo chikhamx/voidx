@@ -148,3 +148,38 @@ def test_compaction_summary_messages_keeps_user_quote_of_legacy_continuation() -
     ])
 
     assert len(filtered) == 1
+def test_compaction_summary_messages_retains_user_guidance_and_filters_system_guard() -> None:
+    from voidx.llm.message_markers import GUIDANCE_SOURCE_MARKER
+
+    messages = [
+        HumanMessage(content="initial request"),
+        HumanMessage(
+            content="user guidance: do not use regex",
+            additional_kwargs={GUIDANCE_MARKER: True, GUIDANCE_SOURCE_MARKER: "user"},
+        ),
+        HumanMessage(
+            content="guard guidance: repetition alert",
+            additional_kwargs={GUIDANCE_MARKER: True, GUIDANCE_SOURCE_MARKER: "guard"},
+        ),
+        HumanMessage(
+            content="system guidance: converge now",
+            additional_kwargs={GUIDANCE_MARKER: True, GUIDANCE_SOURCE_MARKER: "system"},
+        ),
+        HumanMessage(
+            content="legacy guidance without source",
+            additional_kwargs={GUIDANCE_MARKER: True},
+        ),
+        HumanMessage(
+            content="quoted text with <user_guidance>tag</user_guidance>",
+        ),
+    ]
+
+    filtered = compaction_summary_messages(messages)
+    contents = [m.content for m in filtered]
+
+    assert "initial request" in contents
+    assert "user guidance: do not use regex" in contents
+    assert "guard guidance: repetition alert" not in contents
+    assert "system guidance: converge now" not in contents
+    assert "legacy guidance without source" not in contents
+    assert "quoted text with <user_guidance>tag</user_guidance>" in contents

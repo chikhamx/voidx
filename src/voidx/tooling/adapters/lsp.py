@@ -51,20 +51,22 @@ class LspInput(BaseModel):
 
     file_path: str | None = Field(
         default=None,
-        description="Absolute or relative path to the file. "
-        "Required for all operations except diagnostics (when omitted, returns cached diagnostics for opened files).",
+        description=(
+            "Target file path; required for definition, references, and symbols. "
+            "Omit for diagnostics to return cached diagnostics for opened files."
+        ),
     )
 
     line: int = Field(
         default=1,
         ge=1,
-        description="1-based line number. Required for definition and references operations.",
+        description="1-based line number (for definition and references).",
     )
 
     character: int = Field(
         default=0,
         ge=0,
-        description="0-based character offset. Required for definition and references operations.",
+        description="0-based character offset (for definition and references).",
     )
 
     include_declaration: bool = Field(

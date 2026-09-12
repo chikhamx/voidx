@@ -49,7 +49,7 @@ class McpInput(BaseModel):
     arguments: dict[str, Any] | None = Field(
         default=None,
         strict=True,
-        description="Tool arguments for op=call. Pass a JSON object, not a serialized JSON string.",
+        description="Tool arguments as a JSON object (for op='call').",
     )
     query: str | None = Field(default=None, description="Optional filter for op=list.")
 
@@ -87,12 +87,9 @@ class McpGatewayTool:
     child_shareable = True
     id = "mcp"
     description = (
-        "Discover and use Model Context Protocol (MCP) servers through a stable gateway.\n\n"
-        "- `mcp(op=\"list\")` returns semantic server summaries; it does not load tool documentation.\n"
-        "- When a server is relevant, use `mcp(op=\"load\", server=\"...\")` before calling it.\n"
-        "- `mcp(op=\"load\")` may target a whole server or one tool and returns current-turn context.\n"
-        "- `mcp(op=\"call\", ...)` executes a real MCP tool; pass arguments as a JSON object.\n"
-        "- Never invent server names, tool names, or parameters; list or load when uncertain."
+        "Discover MCP servers with list when unknown. Load relevant tool schemas before call; "
+        "loading supplies current-turn context. Call with an arguments object. "
+        "Never invent server, tool, or parameter names."
     )
 
     def scoped(self, allowed_servers: set[str] | frozenset[str]) -> "ScopedMcpGatewayTool":

@@ -16,7 +16,7 @@ from voidx.llm.compaction import (
     STEP_HINT_MARKER,
     SUMMARY_TEMPLATE,
 )
-from voidx.llm.message_markers import GUIDANCE_MARKER
+from voidx.llm.message_markers import GUIDANCE_MARKER, GUIDANCE_SOURCE_MARKER
 from voidx.llm.usage import estimate_context_tokens
 
 
@@ -57,7 +57,7 @@ class TestFallbackSummary:
             HumanMessage(content="Fix the auth bug", id="1"),
             HumanMessage(
                 content="Keep the patch small",
-                additional_kwargs={GUIDANCE_MARKER: True},
+                additional_kwargs={GUIDANCE_MARKER: True, GUIDANCE_SOURCE_MARKER: "user"},
             ),
         ]
 
@@ -174,3 +174,45 @@ class TestFallbackSummary:
         constraints = summary.split("## Constraints & Preferences", 1)[1].split("## Progress", 1)[0]
         assert "keep it small" in constraints
         assert "Do not break API" in constraints
+
+    def test_fallback_summary_ignores_guard_and_system_guidance(self):
+        messages = [
+            HumanMessage(content="User base request"),
+            HumanMessage(
+                content="System alert",
+                additional_kwargs={GUIDANCE_MARKER: True, GUIDANCE_SOURCE_MARKER: "system"},
+            ),
+            HumanMessage(
+                content="Guard repetition alert",
+                additional_kwargs={GUIDANCE_MARKER: True, GUIDANCE_SOURCE_MARKER: "guard"},
+            ),
+            HumanMessage(
+                content="Legacy guidance no source",
+                additional_kwargs={GUIDANCE_MARKER: True},
+            ),
+        ]
+        summary = CompactionService.fallback_summary(messages)
+        assert "User base request" in summary
+        assert "System alert" not in summary
+        assert "Guard repetition alert" not in summary
+        assert "Legacy guidance no source" not in summary
+
+    def test_fallback_summary_retains_newer_items_when_exceeding_max_items(self):
+        # Create 15 messages (FALLBACK_SUMMARY_MAX_ITEMS is 10)
+        messages = [
+            HumanMessage(content=f"Requirement item {i}")
+            for i in range(15)
+        ]
+        summary = CompactionService.fallback_summary(messages)
+        # Should retain the newer items (e.g. item 14), rather than only the oldest
+        assert "Requirement item 14" in summary
+        assert "Requirement item 0" not in summary
+
+    def test_fallback_summary_merges_with_previous_and_marks_precedence(self):
+        from voidx.llm.compaction.fallback_summary import fallback_summary_with_previous
+        prev = "Old summary text"
+        messages = [HumanMessage(content="New requirement text")]
+        merged = fallback_summary_with_previous(messages, prev)
+        assert "Earlier Anchored History" in merged
+        assert "Newly Compacted History" in merged
+        assert "precedence" in merged.lower()

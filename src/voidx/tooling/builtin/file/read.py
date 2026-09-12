@@ -180,7 +180,7 @@ class FileReadInput(BaseModel):
     limit: int | None = Field(
         default=None,
         ge=1,
-        description="Maximum number of lines to read; omit to read until the output budget is reached.",
+        description="Max lines to read; omit to read until the output budget is reached.",
     )
 
     @field_validator("offset", mode="before")

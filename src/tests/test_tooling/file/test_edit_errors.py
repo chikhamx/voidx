@@ -34,7 +34,9 @@ class TestFileOpsErrors:
 
         assert result.metadata.get("error")
         assert "not found" in result.output
-        assert "Hint: read lines 3-3 in coverage-prefix.txt, then retry." in result.output
+        assert "Hint:" not in result.output
+        assert "read" in result.next_step_hint.lower()
+        assert "coverage-prefix.txt" in result.next_step_hint
         assert f.read_text() == "one\ntwo\nthree\n"
 
     @pytest.mark.asyncio
@@ -156,3 +158,73 @@ class TestFileOpsErrors:
         assert result.metadata.get("error")
         assert "1:" in result.output
         assert "return" in result.output
+    @pytest.mark.asyncio
+    async def test_replace_anchor_appears_on_different_line_hints_window_read(self, tmp_path):
+        f = tmp_path / "window.txt"
+        lines = [f"item_{i}" for i in range(1, 11)]
+        lines[6] = "unique_marker = True"  # line 7
+        f.write_text("\n".join(lines) + "\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+        await r.execute_tool("read", {"file_path": "window.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "window.txt",
+                "bounds": [{"line_no": 2, "anchor": "unique_marker"}],
+                "new_string": "replaced",
+            },
+            ctx,
+        )
+        assert result.metadata.get("error") is True
+        assert "appears on line 7" in result.output
+        assert "Hint:" not in result.output
+        # Suggested window is max(1, 7 - 2) to min(10, 7 + 2) -> 5 to 9
+        assert "5" in result.next_step_hint
+        assert "9" in result.next_step_hint
+        assert "read" in result.next_step_hint.lower()
+
+    @pytest.mark.asyncio
+    async def test_replace_ambiguous_anchor_hints_longer_anchor(self, tmp_path):
+        f = tmp_path / "ambig.txt"
+        f.write_text("common\nother\ncommon\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+        await r.execute_tool("read", {"file_path": "ambig.txt"}, ctx)
+
+        result = await r.execute_tool(
+            "replace",
+            {
+                "file_path": "ambig.txt",
+                "bounds": [{"line_no": 2, "anchor": "common"}],
+                "new_string": "replaced",
+            },
+            ctx,
+        )
+        assert result.metadata.get("error") is True
+        assert "ambiguous" in result.output.lower()
+        assert "Hint:" not in result.output
+        assert "longer" in result.next_step_hint.lower()
+
+    @pytest.mark.asyncio
+    async def test_write_insert_coverage_error_hints_read(self, tmp_path):
+        f = tmp_path / "write_cover.txt"
+        f.write_text("line 1\nline 2\nline 3\n")
+        ctx = ToolContext(workspace=str(tmp_path))
+        r = build_registry()
+        # file not read yet
+        result = await r.execute_tool(
+            "write",
+            {
+                "file_path": "write_cover.txt",
+                "op": "insert",
+                "lineno": 10,
+                "new_string": "inserted",
+            },
+            ctx,
+        )
+        assert result.metadata.get("error") is True
+        assert "Cannot insert before line 10" in result.output
+        assert "Hint:" not in result.output
+        assert "read" in result.next_step_hint.lower()

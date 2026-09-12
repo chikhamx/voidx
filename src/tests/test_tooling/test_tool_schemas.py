@@ -178,11 +178,11 @@ class TestToolSchemas:
 
         assert "numbered lines" in FileReadTool.description
         assert "1-based" in read_schema["properties"]["offset"]["description"]
-        assert "maximum number of lines" in read_schema["properties"]["limit"]["description"].lower()
+        assert "max lines to read" in read_schema["properties"]["limit"]["description"].lower()
         assert "complete file content" in write_schema["properties"]["new_string"]["description"]
-        assert "No file content is written" in ManageTool.description
-        assert "paths is required" in manage_schema["properties"]["paths"]["description"]
-        assert "per-move" in manage_schema["properties"]["moves"]["description"]
+        assert "Does not write file content" in ManageTool.description
+        assert "Target path or list of paths" in manage_schema["properties"]["paths"]["description"]
+        assert "Move mappings with src, dest" in manage_schema["properties"]["moves"]["description"]
 
     def test_replace_input_uses_bounds_without_operation(self):
         inp = FileReplaceInput(file_path="x.py", bounds=[{"line_no": 3, "anchor": "old"}, {"line_no": 5, "anchor": "tail"}], new_string="new")
@@ -191,7 +191,7 @@ class TestToolSchemas:
         assert inp.resolved_start_anchor == "old"
         assert inp.resolved_end_no == 5
         assert set(schema["properties"]) == {"file_path", "bounds", "new_string"}
-        assert "One or two boundary locators" in schema["properties"]["bounds"]["description"]
+        assert "1 locator replaces that single line" in schema["properties"]["bounds"]["description"]
         assert "complete lines" in FileReplaceTool().description.lower()
         assert "operation" not in schema["properties"]
         assert "edits" not in schema["properties"]
@@ -281,12 +281,12 @@ class TestToolSchemas:
         assert "return its run_id" in AgentTool(runner=None).description
         assert "outcome" in agent_schema["properties"]["goal"]["description"]
         assert "acceptance criteria" in agent_schema["properties"]["detail"]["description"]
-        assert "built-in document" in DocumentTool.description
-        assert "does not read workspace files" in DocumentTool.description
+        assert "built-in documentation" in DocumentTool.description
+        assert "not workspace files" in DocumentTool.description
         assert "list reads a directory README index" in document_schema["properties"]["action"]["description"]
-        assert "one question" in ClarifyTool.description
-        assert "Do not use for progress updates" in ClarifyTool.description
+        assert "one clarifying question" in ClarifyTool.description.lower()
+        assert "not for status updates" in ClarifyTool.description.lower()
         assert "mutually exclusive" in clarify_schema["properties"]["options"]["description"]
-        assert "approval gate" in PlanCheckpointTool.description
-        assert "no code changes" in PlanCheckpointTool.description
+        assert "plan for user approval" in PlanCheckpointTool.description.lower()
+        assert "makes no changes" in PlanCheckpointTool.description.lower()
         assert "one small action" in checkpoint_schema["properties"]["steps"]["description"]

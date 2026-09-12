@@ -433,7 +433,7 @@ class TestSelectTokenCounting:
             HumanMessage(content="real request", id="u1"),
             HumanMessage(
                 content="Use TypeScript",
-                additional_kwargs={GUIDANCE_MARKER: True},
+                additional_kwargs={GUIDANCE_MARKER: True, "_voidx_guidance_source": "user"},
             ),
         ])
 

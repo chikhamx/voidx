@@ -31,6 +31,7 @@ from voidx.llm.compaction.fallback_summary import (
 )
 from voidx.llm.compaction.prune import prune_messages
 from voidx.llm.message_markers import is_guidance_message, is_step_hint_message
+from voidx.llm.guidance import is_compaction_eligible_guidance
 from voidx.llm.usage import estimate_context_tokens
 
 
@@ -134,7 +135,9 @@ class CompactionService:
         for i, msg in enumerate(messages):
             if isinstance(msg, HumanMessage):
                 # Skip synthetic continuation messages
-                if is_step_hint_message(msg) or is_guidance_message(msg):
+                if is_step_hint_message(msg):
+                    continue
+                if is_guidance_message(msg) and not is_compaction_eligible_guidance(msg):
                     continue
                 content = str(getattr(msg, "content", ""))
                 if "Continue if you have next steps" in content:
@@ -257,6 +260,8 @@ class CompactionService:
 
         for msg in head_messages:
             if is_step_hint_message(msg):
+                continue
+            if is_guidance_message(msg) and not is_compaction_eligible_guidance(msg):
                 continue
             content = message_text(msg)
             if not content.strip():

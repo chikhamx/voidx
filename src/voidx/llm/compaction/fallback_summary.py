@@ -16,6 +16,7 @@ from voidx.llm.compaction.constants import (
     FALLBACK_SUMMARY_MAX_PER_MSG,
 )
 from voidx.llm.message_markers import is_guidance_message, is_step_hint_message
+from voidx.llm.guidance import is_compaction_eligible_guidance
 
 
 def message_text(msg: object) -> str:
@@ -147,6 +148,8 @@ def fallback_summary(messages: list) -> str:
     for msg in messages:
         if is_step_hint_message(msg):
             continue
+        if is_guidance_message(msg) and not is_compaction_eligible_guidance(msg):
+            continue
         content = message_text(msg).strip()
         if isinstance(msg, HumanMessage):
             if content:
@@ -171,12 +174,12 @@ def fallback_summary(messages: list) -> str:
                 tool_parts.append(f"{name}: {truncate_line(content, FALLBACK_SUMMARY_MAX_PER_MSG)}")
                 file_parts.extend(extract_path_mentions(content))
 
-    user_parts = dedupe(user_parts)[:FALLBACK_SUMMARY_MAX_ITEMS]
-    assistant_parts = dedupe(assistant_parts)[:FALLBACK_SUMMARY_MAX_ITEMS]
-    tool_parts = dedupe(tool_parts)[:FALLBACK_SUMMARY_MAX_ITEMS]
-    constraint_parts = dedupe(constraint_parts)[:FALLBACK_SUMMARY_MAX_ITEMS]
-    next_step_parts = dedupe(next_step_parts)[:FALLBACK_SUMMARY_MAX_ITEMS]
-    file_parts = dedupe(file_parts)[:FALLBACK_SUMMARY_MAX_ITEMS]
+    user_parts = dedupe(user_parts)[-FALLBACK_SUMMARY_MAX_ITEMS:]
+    assistant_parts = dedupe(assistant_parts)[-FALLBACK_SUMMARY_MAX_ITEMS:]
+    tool_parts = dedupe(tool_parts)[-FALLBACK_SUMMARY_MAX_ITEMS:]
+    constraint_parts = dedupe(constraint_parts)[-FALLBACK_SUMMARY_MAX_ITEMS:]
+    next_step_parts = dedupe(next_step_parts)[-FALLBACK_SUMMARY_MAX_ITEMS:]
+    file_parts = dedupe(file_parts)[-FALLBACK_SUMMARY_MAX_ITEMS:]
 
     lines = [
         "## Goal",
@@ -233,7 +236,7 @@ def fallback_summary_with_previous(
     previous = (previous_summary or "").strip()
     if not previous:
         return extracted
-    new_section = "## Newly Compacted History\n" + extracted
+    new_section = "## Newly Compacted History (newer; takes precedence)\n" + extracted
     separator_budget = 2
     previous_budget = max(
         0,

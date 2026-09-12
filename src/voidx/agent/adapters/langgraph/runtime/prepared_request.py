@@ -14,6 +14,7 @@ from langchain_core.messages import BaseMessage
 
 from voidx.llm.compaction.constants import COMPACTION_BUFFER
 from voidx.llm.usage import estimate_context_tokens_with_tools
+from voidx.llm.guidance import render_guidance_messages
 
 
 @dataclass(frozen=True)
@@ -47,7 +48,8 @@ def prepare_main_request(
     metadata: dict[str, Any] | None = None,
 ) -> PreparedMainRequest:
     """Construct a stable provider snapshot and calculate its logical budget."""
-    provider_messages = deepcopy(list(messages))
+    rendered_messages = render_guidance_messages(messages)
+    provider_messages = deepcopy(list(rendered_messages))
     logical_messages = deepcopy(provider_messages)
     provider_tools = deepcopy(list(tool_defs))
     meta = deepcopy(dict(metadata or {}))

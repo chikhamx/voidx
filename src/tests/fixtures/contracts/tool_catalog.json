@@ -23,7 +23,7 @@
           },
           "limit": {
             "default": null,
-            "description": "Maximum number of lines to read; omit to read until the output budget is reached.",
+            "description": "Max lines to read; omit to read until the output budget is reached.",
             "title": "Limit",
             "type": [
               "integer",
@@ -45,7 +45,7 @@
     "type": "function",
     "function": {
       "name": "manage",
-      "description": "Create empty files or directories; create an empty file or directory, delete files or directories, or move/rename paths. No file content is written; use write to add file content.",
+      "description": "Create empty files or directories, delete, or move/rename paths. Does not write file content; use write for content.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -71,7 +71,7 @@
           },
           "paths": {
             "default": null,
-            "description": "File or directory path(s); paths is required for op=create and op=delete. Ignored for op=move.",
+            "description": "Target path or list of paths (required for create/delete).",
             "title": "Paths",
             "type": [
               "string",
@@ -84,7 +84,7 @@
           },
           "moves": {
             "default": null,
-            "description": "Move mappings required for op=move; each item has src, dest, and per-move overwrite. Ignored for op=create/op=delete.",
+            "description": "Move mappings with src, dest, and per-move overwrite (required for op='move').",
             "title": "Moves",
             "type": [
               "array",
@@ -121,7 +121,7 @@
           },
           "overwrite": {
             "default": false,
-            "description": "For op=create only: replace an existing file after safety checks. Ignored for directory create, delete, and move.",
+            "description": "Replace an existing file after safety checks (for op='create' and kind='file').",
             "title": "Overwrite",
             "type": "boolean"
           }
@@ -163,7 +163,7 @@
           },
           "lineno": {
             "default": null,
-            "description": "For op=insert, 1-based line number to insert before. Ignored for op=append and op=write.",
+            "description": "1-based line number to insert before (required for op='insert').",
             "title": "Lineno",
             "type": [
               "integer",
@@ -192,7 +192,7 @@
     "type": "function",
     "function": {
       "name": "replace",
-      "description": "Replace complete lines in an existing text file. Read the target lines first. Use one bound for one line or two bounds for an inclusive line range; order is ignored. Each bound has a 1-based line_no hint and a case-sensitive anchor from that line. missing or ambiguous anchors fail without modifying the file. new_string is the full replacement for only the resolved line(s).",
+      "description": "Replace complete lines in an existing text file. Read the target lines first. Missing or ambiguous anchors fail without modifying the file.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -202,7 +202,7 @@
             "type": "string"
           },
           "bounds": {
-            "description": "One or two boundary locators. One locator replaces that resolved line; two locators replace the inclusive range between resolved boundaries. Length must be 1 or 2.",
+            "description": "1 locator replaces that single line; 2 locators replace the inclusive range between resolved boundaries. Order is ignored.",
             "items": {
               "properties": {
                 "line_no": {
@@ -212,7 +212,7 @@
                   "type": "integer"
                 },
                 "anchor": {
-                  "description": "Literal, case-sensitive substring expected on the boundary line. Required for range replacements; empty only for intentional exact-line single-line replacement.",
+                  "description": "Literal, case-sensitive substring from the boundary line. Required for range replacements; empty only for intentional exact-line single-line replacement.",
                   "title": "Anchor",
                   "type": "string"
                 }
@@ -231,7 +231,7 @@
             "type": "array"
           },
           "new_string": {
-            "description": "Complete replacement text for the resolved line(s). May contain multiple lines; do not include unchanged surrounding lines. Empty string deletes the resolved line(s).",
+            "description": "Complete replacement text for the resolved lines; omit unchanged surrounding lines. Empty string deletes those lines.",
             "title": "New String",
             "type": "string"
           }
@@ -418,7 +418,7 @@
           },
           "file_path": {
             "default": null,
-            "description": "Absolute or relative path to the file. Required for all operations except diagnostics (when omitted, returns cached diagnostics for opened files).",
+            "description": "Target file path; required for definition, references, and symbols. Omit for diagnostics to return cached diagnostics for opened files.",
             "title": "File Path",
             "type": [
               "string",
@@ -427,14 +427,14 @@
           },
           "line": {
             "default": 1,
-            "description": "1-based line number. Required for definition and references operations.",
+            "description": "1-based line number (for definition and references).",
             "minimum": 1,
             "title": "Line",
             "type": "integer"
           },
           "character": {
             "default": 0,
-            "description": "0-based character offset. Required for definition and references operations.",
+            "description": "0-based character offset (for definition and references).",
             "minimum": 0,
             "title": "Character",
             "type": "integer"
@@ -512,7 +512,7 @@
     "type": "function",
     "function": {
       "name": "clarify",
-      "description": "Ask the user one question when intent, scope, or requirements are ambiguous and explicit input is needed before proceeding. Do not use for progress updates. Later tool calls in the same response are deferred until the answer updates runtime state.",
+      "description": "Ask one clarifying question when intent, scope, or requirements need user input. Not for status updates; later calls in the same response wait for the answer.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -543,7 +543,7 @@
     "type": "function",
     "function": {
       "name": "checkpoint",
-      "description": "Present a concrete implementation plan as an approval gate before file edits, write-capable commands, or delegated implementation. no code changes occur in this tool. The user can approve, request a design document first, modify scope, or reject. Later tool calls in the same response are deferred until the decision updates runtime state.",
+      "description": "Present a plan for user approval before edits, write-capable commands, or delegated implementation. Makes no changes; later calls in the same response wait for the decision.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -592,7 +592,7 @@
     "type": "function",
     "function": {
       "name": "workflow",
-      "description": "Manage workflow node lifecycle. Enter a workflow before gated work, advance after its gate is satisfied, and use done only to close active nodes without activating successors.",
+      "description": "Manage workflow nodes: enter before gated work, advance after its gate is satisfied, or done to close active nodes without activating successors.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -614,13 +614,13 @@
           },
           "condition": {
             "default": "",
-            "description": "Exit condition for 'advance'. Must match an outgoing edge condition in the workflow DAG (case-insensitive). Ignored for 'enter' and 'done'.",
+            "description": "Exit condition for advance; must match an outgoing DAG edge (case-insensitive).",
             "title": "Condition",
             "type": "string"
           },
           "goal": {
             "default": "",
-            "description": "Stable overall objective for the current task. Keep it short, sharp, and clear. Required for 'enter'. Optional retarget for 'advance'. Ignored for 'done'.",
+            "description": "Stable task objective: required for enter, optional retarget for advance.",
             "maxLength": 120,
             "title": "Goal",
             "type": "string"
@@ -646,14 +646,14 @@
         "type": "object",
         "properties": {
           "summary": {
-            "description": "Structured Markdown summary of the older context to preserve. Keep durable facts, decisions, constraints, progress, blockers, verification results, and relevant files.",
+            "description": "Structured Markdown summary preserving durable facts, decisions, constraints, progress, blockers, verification evidence, and relevant files.",
             "minLength": 1,
             "title": "Summary",
             "type": "string"
           },
           "tail_anchor_id": {
             "default": "",
-            "description": "Optional id of the first live message that should remain after compaction. Use the tail_anchor_id shown in VOIDX_COMPACTION_GUIDE.",
+            "description": "Optional id of the first live message to retain; use tail_anchor_id from VOIDX_COMPACTION_GUIDE.",
             "title": "Tail Anchor Id",
             "type": "string"
           }
@@ -671,7 +671,7 @@
     "type": "function",
     "function": {
       "name": "document",
-      "description": "Read built-in documents only. action=\"list\" reads a directory README index; action=\"read\" loads a specific Markdown document. This tool does not read workspace files, generate documents, or search external sources. Start with action=\"list\" when unsure what exists.",
+      "description": "Read built-in documentation, not workspace files: list README indexes or read a Markdown document. List first when unsure.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -916,7 +916,7 @@
           },
           "interval_seconds": {
             "default": null,
-            "description": "Fixed interval in whole seconds (integer only, >= 1). Omit for dynamic mode.",
+            "description": "Fixed interval in whole seconds, at least 1; omit for dynamic mode.",
             "title": "Interval Seconds",
             "type": [
               "integer",
@@ -965,7 +965,7 @@
           "outcome": {
             "const": "continue",
             "default": "continue",
-            "description": "Iteration outcome. The only valid value is 'continue' to schedule the next wakeup.",
+            "description": "Required for commit; 'continue' schedules the next wakeup. Finishing an iteration does not stop the loop; stopping remains user-controlled.",
             "title": "Outcome",
             "type": "string"
           },
@@ -1023,7 +1023,7 @@
         "properties": {
           "operation": {
             "default": "commit",
-            "description": "start declares the iteration goal; commit submits the iteration decision (requires outcome/summary); init submits a LoopSpec for user approval (idle phase only, requires prompt).",
+            "description": "start declares a goal; commit records outcome/summary; init submits a prompt for LoopSpec approval in idle phase only.",
             "enum": [
               "start",
               "commit",
@@ -1046,7 +1046,7 @@
           },
           "interval_seconds": {
             "default": null,
-            "description": "For operation=init: fixed interval in seconds (integer only). Omit for dynamic mode.",
+            "description": "Fixed interval in whole seconds, at least 1; omit for dynamic mode.",
             "title": "Interval Seconds",
             "type": [
               "integer",
@@ -1055,7 +1055,7 @@
           },
           "outcome": {
             "default": null,
-            "description": "Iteration outcome. Required for operation=commit; the only valid value is 'continue', which schedules the next wakeup. The loop only ends when the user stops it, so finishing this iteration's work is NOT a reason to end the loop.",
+            "description": "Required for commit; 'continue' schedules the next wakeup. Finishing an iteration does not stop the loop; stopping remains user-controlled.",
             "title": "Outcome",
             "type": [
               "string",
@@ -1143,7 +1143,7 @@
     "type": "function",
     "function": {
       "name": "todo",
-      "description": "Track multi-step work with a short task list. Use write to replace the list, Use update to move items between pending/active/done, and use read to inspect current progress.",
+      "description": "Track multi-step progress: write replaces the task list, update changes items by id, and read inspects status.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1274,7 +1274,7 @@
     "type": "function",
     "function": {
       "name": "skill",
-      "description": "Load skill instructions, create a new SKILL.md, or list discovered skills. Load/list are read-only; create writes a SKILL.md file.",
+      "description": "Load skill instructions, create a SKILL.md, or list skills. Load/list are read-only; create writes a file.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1317,7 +1317,7 @@
           },
           "scope": {
             "default": "project",
-            "description": "Write scope for op=create: project writes .voidx/skills/<name>/SKILL.md; global writes ~/.voidx/skills/<name>/SKILL.md.",
+            "description": "Write scope for create: project uses .voidx/skills/<name>/SKILL.md; global uses ~/.voidx/skills/<name>/SKILL.md.",
             "enum": [
               "project",
               "global"
@@ -1436,7 +1436,7 @@
     "type": "function",
     "function": {
       "name": "mcp",
-      "description": "Discover and use Model Context Protocol (MCP) servers through a stable gateway.\n\n- `mcp(op=\"list\")` returns semantic server summaries; it does not load tool documentation.\n- When a server is relevant, use `mcp(op=\"load\", server=\"...\")` before calling it.\n- `mcp(op=\"load\")` may target a whole server or one tool and returns current-turn context.\n- `mcp(op=\"call\", ...)` executes a real MCP tool; pass arguments as a JSON object.\n- Never invent server names, tool names, or parameters; list or load when uncertain.",
+      "description": "Discover MCP servers with list when unknown. Load relevant tool schemas before call; loading supplies current-turn context. Call with an arguments object. Never invent server, tool, or parameter names.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1470,7 +1470,7 @@
           },
           "arguments": {
             "default": null,
-            "description": "Tool arguments for op=call. Pass a JSON object, not a serialized JSON string.",
+            "description": "Tool arguments as a JSON object (for op='call').",
             "title": "Arguments",
             "type": [
               "object",

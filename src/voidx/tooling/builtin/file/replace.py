@@ -25,6 +25,7 @@ from voidx.tooling.application.file_state import (
 )
 
 from .replace_resolve import (
+    SegmentResolveError,
     _find_text_segment,
     _result_trailing_newline,
     _validate_resolved_edits,
@@ -45,7 +46,7 @@ class ReplaceBound(BaseModel):
     )
     anchor: str = Field(
         description=(
-            "Literal, case-sensitive substring expected on the boundary line. "
+            "Literal, case-sensitive substring from the boundary line. "
             "Required for range replacements; empty only for intentional exact-line "
             "single-line replacement."
         ),
@@ -58,16 +59,14 @@ class FileReplaceInput(BaseModel):
         min_length=1,
         max_length=2,
         description=(
-            "One or two boundary locators. One locator replaces that resolved line; "
-            "two locators replace the inclusive range between resolved boundaries. "
-            "Length must be 1 or 2."
+            "1 locator replaces that single line; 2 locators replace the inclusive "
+            "range between resolved boundaries. Order is ignored."
         ),
     )
     new_string: str = Field(
         description=(
-            "Complete replacement text for the resolved line(s). May contain multiple "
-            "lines; do not include unchanged surrounding lines. Empty string deletes "
-            "the resolved line(s)."
+            "Complete replacement text for the resolved lines; omit unchanged "
+            "surrounding lines. Empty string deletes those lines."
         ),
     )
 
@@ -200,12 +199,8 @@ def _log_replace_failure(
 class FileReplaceTool:
     id = "replace"
     description = (
-        "Replace complete lines in an existing text file. "
-        "Read the target lines first. "
-        "Use one bound for one line or two bounds for an inclusive line range; order is ignored. "
-        "Each bound has a 1-based line_no hint and a case-sensitive anchor from that line. "
-        "missing or ambiguous anchors fail without modifying the file. "
-        "new_string is the full replacement for only the resolved line(s)."
+        "Replace complete lines in an existing text file. Read the target lines first. "
+        "Missing or ambiguous anchors fail without modifying the file."
     )
 
     def parameters_schema(self) -> dict:
@@ -260,7 +255,8 @@ async def _resolve_edit_target(ctx: ToolContext, file_path: str, *, allow_missin
         return None, ToolResult(output=f"File not found: {file_path}", metadata={"error": True})
     stale = check_staleness(ctx, path)
     if stale:
-        return None, ToolResult(output=stale, metadata={"error": True})
+        hint = f"Read {file_path} again to refresh file state before editing."
+        return None, ToolResult(output=stale, next_step_hint=hint, metadata={"error": True})
     return path, None
 
 
@@ -356,8 +352,9 @@ async def _execute_text_replace(
     )
     if fallback.match is None:
         output = fallback.error or "text segment not found"
+        hint = fallback.next_step_hint
         if check_read_coverage(ctx, path, start_no, end_no, display_path=file_path):
-            output = f"{output}\nHint: read lines {start_no}-{end_no} in {file_path}, then retry."
+            hint = f"Read lines {start_no}-{end_no} in {file_path}, then retry."
         _log_replace_failure(
             tool_name=tool_name,
             file_path=file_path,
@@ -370,7 +367,7 @@ async def _execute_text_replace(
             new_string=new_string,
             lines=display.lines,
         )
-        return ToolResult(output=output, metadata={"error": True})
+        return ToolResult(output=output, next_step_hint=hint, metadata={"error": True})
 
     _, _, start_line, end_line = fallback.match
     drift_hint = ""
@@ -403,7 +400,8 @@ async def _execute_text_replace(
             display_path=file_path,
         )
         if coverage_error:
-            output = f"{coverage_error}\nRetry after reading lines {actual_start_line}-{actual_end_line}."
+            output = coverage_error
+            hint = f"Read lines {actual_start_line}-{actual_end_line} in {file_path}, then retry."
             _log_replace_failure(
                 tool_name=tool_name,
                 file_path=file_path,
@@ -416,7 +414,7 @@ async def _execute_text_replace(
                 new_string=new_string,
                 lines=display.lines,
             )
-            return ToolResult(output=output, metadata={"error": True})
+            return ToolResult(output=output, next_step_hint=hint, metadata={"error": True})
 
     old_ranges = coverage_ranges_snapshot(ctx, path)
 
@@ -684,6 +682,7 @@ class DriftFallbackResult(NamedTuple):
     error: str | None
     matched_map: LineDriftMap | None
     remapped_range: tuple[int, int] | None
+    next_step_hint: str = ""
 
 
 def _find_text_segment_with_drift_fallback(
@@ -695,11 +694,20 @@ def _find_text_segment_with_drift_fallback(
     maps: list[LineDriftMap],
 ) -> DriftFallbackResult:
     first = _find_text_segment(lines, start_no, end_no, prefix, suffix)
-    if not isinstance(first, str):
+    if not isinstance(first, SegmentResolveError):
         return DriftFallbackResult(match=first, error=None, matched_map=None, remapped_range=None)
 
+    first_error = first.message
+    first_hint = first.next_step_hint
+
     if not maps:
-        return DriftFallbackResult(match=None, error=first, matched_map=None, remapped_range=None)
+        return DriftFallbackResult(
+            match=None,
+            error=first_error,
+            matched_map=None,
+            remapped_range=None,
+            next_step_hint=first_hint,
+        )
 
     candidates: list[tuple[tuple[int, int, int, int], LineDriftMap, tuple[int, int]]] = []
     for m in sorted(maps, key=lambda x: x.epoch, reverse=True):
@@ -707,11 +715,17 @@ def _find_text_segment_with_drift_fallback(
         if remapped is None or remapped == (start_no, end_no):
             continue
         result = _find_text_segment(lines, remapped[0], remapped[1], prefix, suffix)
-        if not isinstance(result, str):
+        if not isinstance(result, SegmentResolveError):
             candidates.append((result, m, remapped))
 
     if not candidates:
-        return DriftFallbackResult(match=None, error=first, matched_map=None, remapped_range=None)
+        return DriftFallbackResult(
+            match=None,
+            error=first_error,
+            matched_map=None,
+            remapped_range=None,
+            next_step_hint=first_hint,
+        )
 
     if len(candidates) == 1:
         match, m, remapped = candidates[0]
@@ -726,7 +740,8 @@ def _find_text_segment_with_drift_fallback(
     ranges_str = ", ".join(f"{c[0][2]}-{c[0][3]}" for c in candidates)
     return DriftFallbackResult(
         match=None,
-        error=f"replace range is ambiguous after drift fallback: candidate ranges {ranges_str}. Please re-read the file.",
+        error=f"replace range is ambiguous after drift fallback: candidate ranges {ranges_str}.",
         matched_map=None,
         remapped_range=None,
+        next_step_hint="Read the target lines again, then retry replace with the refreshed line number.",
     )

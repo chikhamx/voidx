@@ -22,9 +22,12 @@ class TestReplaceBoundsInput:
         assert "bounds" in properties
         assert "start_no" not in properties
         assert "end_no" not in properties
-        assert "One or two boundary locators" in properties["bounds"]["description"]
-        assert "inclusive range" in properties["bounds"]["description"]
-        assert "Length must be 1 or 2" in properties["bounds"]["description"]
+        bounds_desc = properties["bounds"]["description"]
+        assert "1 locator replaces that single line" in bounds_desc
+        assert "inclusive range" in bounds_desc
+        assert "Order is ignored" in bounds_desc
+        assert properties["bounds"]["minItems"] == 1
+        assert properties["bounds"]["maxItems"] == 2
         assert "unchanged surrounding lines" in properties["new_string"]["description"]
         visible = "\n".join(prop.get("description", "") for prop in properties.values())
         assert "drift" not in visible.lower()

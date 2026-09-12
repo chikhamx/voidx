@@ -340,7 +340,6 @@ class SessionCommandsMixin:
 
     async def _continue(self) -> None:
         from inspect import isawaitable
-        from voidx.llm.message_markers import DEFAULT_CONTINUATION_TEXT
 
         session = getattr(self.session_port, "session", None)
         has_conversation = False

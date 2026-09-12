@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
+
+class SegmentResolveError(NamedTuple):
+    message: str
+    next_step_hint: str = ""
+
+    def __str__(self) -> str:
+        return self.message
 
 from voidx.tooling.domain.file import (
     TEXT_REPLACE_LINE_RADIUS,
@@ -48,7 +55,7 @@ def _find_text_segment(
     end_no: int,
     prefix: str,
     suffix: str,
-) -> tuple[int, int, int, int] | str:
+) -> tuple[int, int, int, int] | SegmentResolveError:
     if start_no == end_no:
         return _find_single_line_segment(lines, start_no, prefix, suffix)
 
@@ -62,24 +69,28 @@ def _find_text_segment(
 
     ranked = _rank_line_range_pairs(prefix_lines, suffix_lines, start_no, end_no)
     if not ranked:
-        return (
+        message = (
             "No valid replace range found. "
             f"You specified lines {start_no}-{end_no}, but the closest anchor match covers a different range.\n"
             f"start_anchor {prefix!r} matched on line(s): {_format_lines(prefix_lines)}\n"
-            f"end_anchor {suffix!r} matched on line(s): {_format_lines(suffix_lines)}\n"
-            "Hint: Read the target block again, then retry replace with the current "
+            f"end_anchor {suffix!r} matched on line(s): {_format_lines(suffix_lines)}"
+        )
+        hint = (
+            "Read the target block again, then retry replace with the current "
             "start_no/end_no and matching anchors."
         )
+        return SegmentResolveError(message=message, next_step_hint=hint)
 
     best_score = ranked[0][0]
     best = [item for item in ranked if item[0] == best_score]
     if len(best) > 1:
         ranges = ", ".join(f"{start}-{end}" for _, start, end in best)
-        return (
+        message = (
             "replace range is ambiguous: candidate ranges "
-            f"{ranges} have the same score.\n"
-            "Hint: Provide more specific start_anchor/end_anchor or adjust start_no/end_no."
+            f"{ranges} have the same score."
         )
+        hint = "Provide more specific start_anchor/end_anchor or adjust start_no/end_no."
+        return SegmentResolveError(message=message, next_step_hint=hint)
 
     _, start_line, end_line = ranked[0]
     start_offset = _global_offset_for_line(lines, start_line)
@@ -97,14 +108,16 @@ def _find_single_line_segment(
     target_line: int,
     prefix: str,
     suffix: str,
-) -> tuple[int, int, int, int] | str:
+) -> tuple[int, int, int, int] | SegmentResolveError:
     # Single-line replace with empty start_anchor: trust the line number
     # instead of searching for an empty line. Do NOT call _find_line_candidates
     # with "" — that would match nearby empty lines and could edit the wrong
     # line when the target line is non-empty.
     if prefix == "":
         if target_line < 1 or target_line > len(lines):
-            return f"line {target_line} out of range for file with {len(lines)} lines."
+            message = f"line {target_line} out of range for file with {len(lines)} lines."
+            hint = f"Read the file to check valid line numbers (1-{len(lines)})."
+            return SegmentResolveError(message=message, next_step_hint=hint)
         prefix_lines = [target_line]
     else:
         prefix_lines = _find_line_candidates(lines, target_line, prefix)
@@ -121,27 +134,31 @@ def _find_single_line_segment(
         if not prefix_lines:
             suffix_matches = _global_anchor_search(lines, suffix)
             candidate_lines = sorted(set(matched_prefix_lines + suffix_matches))
-            return (
+            message = (
                 f"start_anchor {prefix!r} matched near line {target_line}, "
                 f"but end_anchor {suffix!r} is not on the same line.\n"
                 "Single-line replace requires both anchors on the same line.\n"
-                f"{_format_candidate_lines(lines, candidate_lines)}\n"
-                "Hint: If you meant to replace multiple lines, use different "
+                f"{_format_candidate_lines(lines, candidate_lines)}"
+            )
+            hint = (
+                "If you meant to replace multiple lines, use different "
                 "start_no/end_no values so start_anchor matches the first line and "
                 "end_anchor matches the last line."
             )
+            return SegmentResolveError(message=message, next_step_hint=hint)
 
     prefix_lines.sort(key=lambda l: abs(l - target_line))
     best_dist = abs(prefix_lines[0] - target_line)
     best = [l for l in prefix_lines if abs(l - target_line) == best_dist]
 
     if len(best) > 1:
-        return (
+        message = (
             f"single-line match ambiguous: {len(best)} candidate lines match anchors "
             f"at equal distance from line {target_line}:\n"
-            f"{_format_candidate_lines(lines, best)}\n"
-            "Hint: Provide a longer start_anchor that uniquely identifies the target line."
+            f"{_format_candidate_lines(lines, best)}"
         )
+        hint = "Provide a longer start_anchor that uniquely identifies the target line."
+        return SegmentResolveError(message=message, next_step_hint=hint)
 
     matched_line = best[0]
     start_offset = _global_offset_for_line(lines, matched_line)
@@ -149,17 +166,22 @@ def _find_single_line_segment(
     return (start_offset, end_offset, matched_line, matched_line)
 
 
-def _anchor_not_found_message(lines: list[str], target_line: int, anchor_name: str, anchor: str) -> str:
+def _anchor_not_found_message(
+    lines: list[str], target_line: int, anchor_name: str, anchor: str
+) -> SegmentResolveError:
     if anchor == "":
         actual = ""
         if 1 <= target_line <= len(lines):
             actual = f" — line {target_line} is not empty"
-        return (
+        message = (
             f"empty line anchor was not found near line {target_line}{actual}.\n"
-            f"Lines around {target_line}:\n{_window_snippet(lines, target_line)}\n"
-            f"Hint: If the target line has content, use a substring from that line as {anchor_name} "
+            f"Lines around {target_line}:\n{_window_snippet(lines, target_line)}"
+        )
+        hint = (
+            f"If the target line has content, use a substring from that line as {anchor_name} "
             "instead of an empty string."
         )
+        return SegmentResolveError(message=message, next_step_hint=hint)
 
     matches = _global_anchor_search(lines, anchor)
     base = (
@@ -168,22 +190,32 @@ def _anchor_not_found_message(lines: list[str], target_line: int, anchor_name: s
     )
     if len(matches) == 1:
         matched = matches[0]
-        return (
+        total_lines = len(lines)
+        read_start = max(1, matched - 2)
+        read_end = min(total_lines, matched + 2) if total_lines > 0 else 1
+        message = (
             f"{base}\n"
-            f"Hint: {anchor!r} appears on line {matched}. Read lines {matched}-{matched}, "
+            f"{anchor!r} appears on line {matched}."
+        )
+        hint = (
+            f"Read lines {read_start}-{read_end} to confirm the boundary, "
             "then retry replace with the refreshed line number and anchor."
         )
+        return SegmentResolveError(message=message, next_step_hint=hint)
     if matches:
-        return (
+        message = (
             f"{base}\n"
-            f"Hint: {anchor!r} appears on lines {_format_lines(matches)} — provide a longer "
-            "anchor to identify the target line."
+            f"{anchor!r} appears on lines {_format_lines(matches)}."
         )
-    return (
+        hint = "Provide a longer anchor to identify the target line."
+        return SegmentResolveError(message=message, next_step_hint=hint)
+
+    message = (
         f"{base}\n"
-        f"Hint: {anchor!r} was not found anywhere in the file. Check for typos or read "
-        "the file again before retrying."
+        f"{anchor!r} was not found anywhere in the file."
     )
+    hint = "Check for typos or read the file again before retrying."
+    return SegmentResolveError(message=message, next_step_hint=hint)
 
 
 def _find_line_candidates(

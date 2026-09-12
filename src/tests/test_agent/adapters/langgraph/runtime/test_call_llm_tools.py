@@ -146,7 +146,7 @@ async def test_call_llm_guard_guidance_stays_hidden_from_ui_events(tmp_path, mon
     assert result["step_count"] == 2
     assert model.messages is not None
     assert is_guidance_message(model.messages[-1])
-    assert model.messages[-1].content == "No meaningful progress has been detected"
+    assert model.messages[-1].content == '<system_guidance source="guard">No meaningful progress has been detected</system_guidance>'
     assert not any(isinstance(event, GuidanceSubmitted | MessageAppended | GuidanceCommitted) for event in events.emitted)
 
 
@@ -199,7 +199,7 @@ async def test_call_llm_user_guidance_commits_preview_without_persistent_message
     assert result["step_count"] == 2
     assert model.messages is not None
     assert is_guidance_message(model.messages[-1])
-    assert model.messages[-1].content == "先写 spedc文档"
+    assert model.messages[-1].content == "<user_guidance>先写 spedc文档</user_guidance>"
     assert events.emitted == [GuidanceCommitted(text="先写 spedc文档")]
 
 
@@ -311,7 +311,7 @@ async def test_call_llm_guidance_is_thread_scoped(tmp_path, monkeypatch):
         assert model_a.messages is not None
         assert any(
             is_guidance_message(message)
-            and str(message.content) == "Only thread A should see this"
+            and str(message.content) == "<user_guidance>Only thread A should see this</user_guidance>"
             for message in model_a.messages
         )
     finally:
@@ -383,7 +383,7 @@ async def test_call_llm_guidance_isolated_between_threads_in_same_session(tmp_pa
         assert model_a.messages is not None
         assert any(
             is_guidance_message(message)
-            and str(message.content) == "Only thread A should see this"
+            and str(message.content) == "<user_guidance>Only thread A should see this</user_guidance>"
             for message in model_a.messages
         )
     finally:

@@ -23,7 +23,7 @@ class TestManageToolRegistryAndSchema:
 
         assert set(schema["properties"]) == {"op", "kind", "paths", "moves", "overwrite"}
         assert schema["properties"]["kind"]["default"] == "file"
-        assert "directory" in ManageTool.description.lower()
+        assert "directories" in ManageTool.description.lower()
         assert "file_path" not in schema["properties"]
         assert "dest_path" not in schema["properties"]
         assert "create" in schema["properties"]["op"]["description"]

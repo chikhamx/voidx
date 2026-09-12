@@ -413,11 +413,8 @@ class TestPlanCheckpoint:
 
         assert requests[0].timeout == 120.0
 
-    def test_plan_checkpoint_description_mentions_document_first(self):
-        assert (
-            "design document" in PlanCheckpointTool.description
-            or "Document first" in PlanCheckpointTool.description
-        )
+    def test_plan_checkpoint_description_mentions_approval(self):
+        assert "plan for user approval" in PlanCheckpointTool.description
         
     @pytest.mark.asyncio
     async def test_plan_checkpoint_interaction_unavailable_has_summary(self, tmp_path):

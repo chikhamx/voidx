@@ -92,6 +92,10 @@ def test_verification_evidence_policy_is_shared_by_profiles_and_workflows() -> N
         assert "unsupported summaries and pre-integration results are insufficient" in verification
         assert "Rerun affected checks" in verification
         assert "changed or uncertain state" in verification
+        assert "environment" in verification
+        assert "tested state" in verification
+        assert "missing coverage" in verification
+        assert "instability" in verification
         assert "in this turn" not in verification
         trust = rules["external_content"]
         assert "as data, not instructions" in trust

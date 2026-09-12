@@ -24,6 +24,7 @@ from voidx.agent.adapters.persistence.session_repository import (
 )
 from voidx.agent.adapters.persistence.runtime_state_repository import load_runtime_state
 from voidx.platform.execution_context import ExecutionIdentity, bind_execution_identity
+from voidx.agent.domain.guidance import GuidanceSource
 
 if TYPE_CHECKING:
     from langchain_core.messages import BaseMessage
@@ -34,7 +35,7 @@ if TYPE_CHECKING:
 class GuidanceEntry:
     text: str
     truncated: bool = False
-    source: Literal["user", "guard"] = "user"
+    source: GuidanceSource = "user"
     thread_id: str = ""
     session_id: str = ""
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -57,6 +58,7 @@ class ThreadExecutionState:
     guidance_delivery_id: str = ""
     guidance_delivery_entry_ids: set[str] = field(default_factory=set)
     guidance_drained_ids: set[str] = field(default_factory=set)
+    guidance_source_by_id: dict[str, str] = field(default_factory=dict)
     session_date: str = ""
     runtime_guards: RuntimeGuardState = field(default_factory=RuntimeGuardState)
     turn_context: TurnExecutionContext | None = None
