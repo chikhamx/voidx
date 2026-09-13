@@ -262,6 +262,7 @@ class DockEventConsumer:
                     session_title=e.session_title,
                     is_new=e.is_new,
                     profile_configured=e.profile_configured,
+                    session_id=getattr(e, "session_id", ""),
                 )
             case MessageAppended(text=text, style=style, markup=markup):
                 return self._dock.append_message(text, style=style, markup=markup)

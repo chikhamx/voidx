@@ -63,6 +63,7 @@ class StartupShown(UiEventBase):
     session_title: str
     is_new: bool
     profile_configured: bool = True
+    session_id: str = ""
 
 
 class MessageAppended(UiEventBase):

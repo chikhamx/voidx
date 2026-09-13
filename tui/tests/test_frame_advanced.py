@@ -4733,14 +4733,17 @@ async def test_startup_banner_stays_in_dynamic_frame_until_turn_init_or_fallback
     assert tui._committed_line_count == 0
     assert getattr(tui, "_startup_committed", False) is False
 
-    # 5. LLM calls turn_init: goal_label is set
+    # 5. LLM calls turn_init: goal_label and session_id are set
     tui.status.goal_label = lambda: "Explore project"
+    tui.status.session_id = lambda: "ses_12345"
     token = tui._flush_committed(force=True)
     assert token is not None
     token.future.set_result(None)
     await asyncio.sleep(0)
     assert getattr(tui, "_startup_committed", False) is True
     assert tui._committed_line_count > 0
+    assert any("Explore project" in commit["ansi"] for commit in writer.commits)
+    assert any("ses_12345" in commit["ansi"] for commit in writer.commits)
 
     # 6. Next frame rendering: startup banner is now committed into scrollback,
     # and no longer part of the dynamic frame
@@ -4818,3 +4821,97 @@ def test_startup_banner_non_tty_flushes_immediately(tmp_path, monkeypatch):
     tui._flush_committed(force=True)
     assert "voidx v" in fake_stdout.text
     assert tui._committed_line_count > 0
+
+
+@pytest.mark.asyncio
+async def test_startup_banner_lifecycle_with_clear_and_resume(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._running = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    writer = _DeferredCommitFrameWriter()
+    tui._terminal_writer = writer
+
+    # Initial session launch
+    dock.reset()
+    dock.append_startup(
+        model="test-model",
+        provider="test-provider",
+        workspace=str(tmp_path),
+        session_title="New session",
+        is_new=True,
+    )
+
+    from voidx_cli.terminal_writer import FrameResult
+    tui._render_frame()
+    if writer.frames:
+        tui._handle_terminal_frame_result(FrameResult(writer.frames[-1].generation, 1, 1, 0., "full", True))
+    tui._flush_committed()
+    assert getattr(tui, "_startup_committed", False) is False
+    assert tui._committed_line_count == 0
+
+    # Turn 1: LLM turn_init commits startup banner
+    tui.status.session_id = lambda: "ses_turn1"
+    dock.start_turn("first question")
+    commit_token = tui._flush_committed()
+    assert commit_token is not None
+    commit_token.future.set_result(None)
+    await asyncio.sleep(0)
+    assert getattr(tui, "_startup_committed", False) is True
+
+    # User executes /clear: dock resets, screen cleared, new startup appended
+    dock.reset()
+    dock.append_startup(
+        model="test-model",
+        provider="test-provider",
+        workspace=str(tmp_path),
+        session_title="New session",
+        is_new=True,
+    )
+
+    # Frame render handles clear_screen request and resets _startup_committed
+    from voidx_cli.terminal_writer import FrameResult
+    tui._render_frame()
+    if writer.frames:
+        tui._handle_terminal_frame_result(FrameResult(writer.frames[-1].generation, 1, 1, 0., "full", True))
+    assert getattr(tui, "_startup_committed", False) is False
+
+    # Under new session before turn starts, startup banner must remain uncommitted
+    commit_token = tui._flush_committed()
+    assert commit_token is None
+    assert getattr(tui, "_startup_committed", False) is False
+
+    # Turn 2 in cleared session: now commits with new session info
+    tui.status.session_id = lambda: "ses_turn2"
+    dock.start_turn("second question")
+    commit_token = tui._flush_committed()
+    assert commit_token is not None
+    commit_token.future.set_result(None)
+    await asyncio.sleep(0)
+    assert getattr(tui, "_startup_committed", False) is True
+    assert any("ses_turn2" in commit["ansi"] for commit in writer.commits)
+
+    # Now simulate /resume: prepare_session_switch resets state
+    await tui.prepare_session_switch()
+    assert getattr(tui, "_startup_committed", False) is False
+    assert tui._committed_line_count == 0
+
+    # Restored transcript tree is loaded into dock
+    restored = type(dock.tree)()
+    restored.new_node(
+        parent=restored.root,
+        node_type="turn",
+        header="Turn 1 from history",
+        body_lines=["restored historical content"],
+        collapsed=False,
+    )
+    dock.restore_tree(restored, append=True)
+
+    # Resumed session commits restored history without startup gating blocking it
+    assert tui._should_commit_startup() is True
+    tui._running = False

@@ -30,6 +30,7 @@ def show_startup(
     workspace: str,
     session_title: str,
     is_new: bool,
+    session_id: str = "",
 ) -> None:
     """Render the Claude Code style startup banner."""
 
@@ -40,6 +41,7 @@ def show_startup(
         workspace=workspace,
         session_title=session_title,
         is_new=is_new,
+        session_id=session_id,
     )))
 
 
@@ -51,6 +53,7 @@ def render_startup_lines(
     workspace: str,
     session_title: str,
     is_new: bool,
+    session_id: str = "",
 ) -> list[str]:
     """Build Rich-markup startup banner lines."""
 
@@ -60,7 +63,20 @@ def render_startup_lines(
     folder_name = os.path.basename(workspace) or workspace
 
     greeting = "Welcome back!" if not is_new else "Welcome to voidx!"
-    session_line = "New session" if is_new else f"Resumed: {session_title or 'previous session'}"
+    if not is_new:
+        session_line = f"Resumed: {session_title or 'previous session'}"
+    else:
+        title = session_title.strip() if session_title else ""
+        if title and title != "New session":
+            prefix = "" if title.lower().startswith("session") else "Session: "
+            if session_id and session_id not in title:
+                session_line = f"{prefix}{title} ({session_id})"
+            else:
+                session_line = f"{prefix}{title}"
+        elif session_id:
+            session_line = f"Session: {session_id}"
+        else:
+            session_line = "New session"
     info: list[tuple[str, str]] = [
         ("greeting", greeting),
         ("model", f"● Model  {provider}/{model}"),

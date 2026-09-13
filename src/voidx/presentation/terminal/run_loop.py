@@ -164,7 +164,7 @@ class TerminalRunLoop:
             provider=initial_status.provider,
             model=initial_status.model,
             workspace=initial_status.workspace,
-            session_title=title,
+            session_title=lambda: self._status_reader.runtime_status().session.title,
             context_limit=initial_status.context_limit,
             reasoning_effort=initial_status.reasoning_effort,
             permission_label=lambda: self._status_reader.runtime_status().permission_label,
@@ -184,6 +184,7 @@ class TerminalRunLoop:
             runtime_profile=lambda: self._status_reader.runtime_status().session.runtime_profile,
             profile_snapshot=lambda: self._status_reader.runtime_status().session.profile_snapshot,
             session_id=lambda: self._status_reader.runtime_status().session.session_id,
+            session_is_new=lambda: self._status_reader.runtime_status().session.is_new,
         )
 
         if web_headless:

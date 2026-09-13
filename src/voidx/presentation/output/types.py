@@ -119,7 +119,7 @@ class UiStatus:
     provider: str
     model: str
     workspace: str
-    session_title: str
+    session_title: str | Callable[[], str]
     context_limit: int
     debug: Callable[[], bool]
     plan_mode: Callable[[], bool]
@@ -136,6 +136,7 @@ class UiStatus:
     runtime_profile: Callable[[], str] = field(default_factory=lambda: lambda: "coding")
     profile_snapshot: Callable[[], Any | None] = field(default_factory=lambda: lambda: None)
     session_id: Callable[[], str] = field(default_factory=lambda: lambda: "")
+    session_is_new: Callable[[], bool] = field(default_factory=lambda: lambda: True)
 
 
 

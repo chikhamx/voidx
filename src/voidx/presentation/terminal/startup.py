@@ -44,6 +44,7 @@ class StartupPresenter:
             session_title=title,
             is_new=status.session.is_new,
             profile_configured=status.profile_configured,
+            session_id=status.session.session_id,
         )
         startup_via_event = active_dock is not None and self._ui.events.is_running and not prefer_direct
         if startup_via_event:
@@ -60,6 +61,7 @@ class StartupPresenter:
                 session_title=title,
                 is_new=status.session.is_new,
                 profile_configured=status.profile_configured,
+                session_id=status.session.session_id,
             )
             if append_transcript:
                 await self._restore_snapshot(append=True)
@@ -72,6 +74,7 @@ class StartupPresenter:
             workspace=status.workspace,
             session_title=title,
             is_new=status.session.is_new,
+            session_id=status.session.session_id,
         )
         if not status.profile_configured:
             self._ui.ui.print()

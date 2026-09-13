@@ -74,6 +74,17 @@ def _safe_status_value(value: object, fallback: str) -> str:
     return text if text else fallback
 
 
+def _resolve_status_value(val: object, fallback: str = "") -> str:
+    if callable(val):
+        try:
+            return _safe_status_value(val(), fallback)
+        except Exception:
+            return fallback
+    if val is not None:
+        return _safe_status_value(val, fallback)
+    return fallback
+
+
 def _call_status(func: object, fallback: str) -> str:
     if not callable(func):
         return fallback

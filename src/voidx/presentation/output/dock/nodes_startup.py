@@ -15,6 +15,7 @@ class DockStartupNodeMixin:
         session_title: str,
         is_new: bool,
         profile_configured: bool = True,
+        session_id: str = "",
     ) -> OutputNode | None:
         from voidx.presentation.session import render_startup_lines
 
@@ -25,6 +26,7 @@ class DockStartupNodeMixin:
             workspace=workspace,
             session_title=session_title,
             is_new=is_new,
+            session_id=session_id,
         )
         if not profile_configured:
             lines.extend([
@@ -43,6 +45,14 @@ class DockStartupNodeMixin:
             existing.header = lines[0]
             existing.body_lines = lines[1:]
             existing.collapsed = False
+            existing.payload.update(
+                model=model,
+                provider=provider,
+                workspace=workspace,
+                is_new=is_new,
+                session_title=session_title,
+                session_id=session_id,
+            )
             self._tree.mark_dirty()
             self._mark_completed(existing)
             self.refresh()
@@ -53,6 +63,14 @@ class DockStartupNodeMixin:
             header=lines[0],
             body_lines=lines[1:],
             collapsed=False,
+            payload={
+                "model": model,
+                "provider": provider,
+                "workspace": workspace,
+                "is_new": is_new,
+                "session_title": session_title,
+                "session_id": session_id,
+            },
         )
         self._mark_completed(node)
         self.refresh()

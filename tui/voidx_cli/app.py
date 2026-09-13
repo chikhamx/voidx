@@ -33,6 +33,7 @@ from .helpers import (
     _EXIT_TERMINAL_SEQUENCE,
     _plain_line,
     _rendered_row_count,
+    _resolve_status_value,
 )
 from . import activity as tui_activity
 from .choice_mixin import _ChoicePromptMixin
@@ -483,6 +484,7 @@ class PureTui(
         if text.strip() == "/clear" or text.strip().startswith("/session new"):
             self._locked_submit_context = None
             self._locked_submit_context_explicit = False
+            self._startup_committed = False
         explicit_context = context is not None
         context = self._submit_context(
             thread_id=thread_id,
@@ -1323,9 +1325,51 @@ class PureTui(
         return token
 
     def _has_uncommitted_startup(self) -> bool:
-        if not self._tty or self._startup_committed:
+        if not self._tty:
+            return False
+        if not bool(dock):
+            return False
+        if getattr(dock, "_needs_clear_screen", False):
+            self._startup_committed = False
+        if self._startup_committed:
             return False
         return any(child.node_type == "startup" for child in dock.tree.root.children)
+
+    def _update_startup_banner_if_needed(self) -> None:
+        if not self._has_uncommitted_startup():
+            return
+        startup_node = next(
+            (c for c in dock.tree.root.children if c.node_type == "startup"),
+            None,
+        )
+        if startup_node is None:
+            return
+
+        is_new = bool(startup_node.payload.get("is_new", True))
+        session_id = _resolve_status_value(getattr(self.status, "session_id", None), "")
+        goal_label = _resolve_status_value(getattr(self.status, "goal_label", None), "")
+        status_title = _resolve_status_value(getattr(self.status, "session_title", None), "")
+
+        effective_title = goal_label or (status_title if status_title != "New session" else "") or ""
+        if not effective_title:
+            effective_title = startup_node.payload.get("session_title") or "New session"
+
+        prev_title = startup_node.payload.get("session_title", "")
+        prev_id = startup_node.payload.get("session_id", "")
+        if prev_title == effective_title and prev_id == session_id:
+            return
+
+        model = _resolve_status_value(getattr(self.status, "model", None), "") or startup_node.payload.get("model", "")
+        provider = _resolve_status_value(getattr(self.status, "provider", None), "") or startup_node.payload.get("provider", "")
+        workspace = _resolve_status_value(getattr(self.status, "workspace", None), "") or startup_node.payload.get("workspace", "")
+        dock.append_startup(
+            model=model or "model",
+            provider=provider or "provider",
+            workspace=workspace or ".",
+            session_title=effective_title,
+            is_new=is_new,
+            session_id=session_id,
+        )
 
     def _should_commit_startup(self) -> bool:
         if not self._has_uncommitted_startup():
@@ -1599,6 +1643,16 @@ class PureTui(
                         if startup_line_indexes:
                             flush_limit = min(flush_limit, min(startup_line_indexes))
                     else:
+                        self._update_startup_banner_if_needed()
+                        tree_lines, line_map = dock.tree.render_with_line_map(width)
+                        total = len(tree_lines)
+                        flush_limit = min(
+                            dock.force_safe_flush_line_count(width, 0)
+                            if force
+                            else dock.safe_flush_line_count(width, 0),
+                            total,
+                        )
+                        flush_limit = self._pending_stream_flush_limit(line_map, flush_limit)
                         next_startup_committed = True
 
                 previous_projection = next_committed_projection
@@ -1849,6 +1903,7 @@ class PureTui(
             self._drain_queue(self._queue)
             self._locked_submit_context = None
             self._locked_submit_context_explicit = False
+            self._startup_committed = False
             self._queue.put_nowait(_SubmitQueueItem(
                 "/clear",
                 restore_text=draft_text,
@@ -1871,6 +1926,7 @@ class PureTui(
         if stripped == "/clear" or stripped.startswith("/session new"):
             self._locked_submit_context = None
             self._locked_submit_context_explicit = False
+            self._startup_committed = False
         submit_text = self._expand_registered_tokens(draft_text)
         paste_entries = self._paste_entries_snapshot()
         self._record_history(draft_text, paste_entries)

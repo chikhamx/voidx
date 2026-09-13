@@ -443,6 +443,8 @@ class _FrameRendererMixin:
 
     def _render_frame(self) -> None:
         """Render to terminal: capture Rich output, write with cursor control."""
+        if hasattr(self, "_update_startup_banner_if_needed"):
+            self._update_startup_banner_if_needed()
         started_at = time.perf_counter()
         width = self._frame_width()
         term_height = shutil.get_terminal_size().lines if self._tty else None
@@ -473,6 +475,7 @@ class _FrameRendererMixin:
                 self._committed_line_count = 0
                 self._committed_projection = None
                 self._visible_committed_rows = 0
+                self._startup_committed = False
             full_frame_repaint = self._full_frame_repaint_pending
             self._full_frame_repaint_pending = False
             force_full = (
@@ -489,6 +492,7 @@ class _FrameRendererMixin:
                     self._committed_line_count = 0
                     self._committed_projection = None
                     self._visible_committed_rows = 0
+                    self._startup_committed = False
                     self._invalidate_frame_cache()
                     self._invalidate_layout("clear")
 
