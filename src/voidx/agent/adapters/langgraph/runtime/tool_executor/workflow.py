@@ -253,6 +253,8 @@ def _auto_event_should_stop_after_transition(
 ) -> bool:
     if route_end:
         return bool(target) and target != route_end and not workflow_path_reaches(target, route_end, workflow_dag)
+    if target == "feedback":
+        return False
     return ok is False
 
 

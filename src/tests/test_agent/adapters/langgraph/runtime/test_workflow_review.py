@@ -174,7 +174,7 @@ async def test_workflow_non_terminal_transition_keeps_followup_llm_enabled(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_auto_review_has_issues_stops_before_feedback_followup(tmp_path):
+async def test_auto_review_has_issues_continues_to_feedback_without_route(tmp_path):
     graph = _graph(tmp_path)
 
     class FakeTools:
@@ -215,7 +215,7 @@ async def test_auto_review_has_issues_stops_before_feedback_followup(tmp_path):
         ),
     })
 
-    assert result["should_continue"] is False
+    assert result.get("should_continue", True) is True
     by_name = {run.name: run for run in _result_task_state(result).workflow_runs.values()}
     assert by_name["review"].status == WorkflowRunStatus.SATISFIED
     assert by_name["feedback"].status == WorkflowRunStatus.ACTIVE
@@ -314,4 +314,59 @@ async def test_auto_review_has_issues_review_and_fix_route_continues_to_feedback
     assert by_name["review"].status == WorkflowRunStatus.SATISFIED
     assert by_name["feedback"].status == WorkflowRunStatus.ACTIVE
 
+
+@pytest.mark.asyncio
+async def test_auto_review_has_issues_via_agent_control_wait_continues_to_feedback(tmp_path):
+    graph = _graph(tmp_path)
+
+    class FakeTools:
+        async def execute_tool(self, tid, _targs, _ctx):
+            assert tid == "agent_control"
+            return ToolResult(
+                output="Kai completed",
+                metadata={
+                    "run": {
+                        "mode": "review",
+                        "status": "completed",
+                        "result": {
+                            "verdict": "NEEDS_CHANGE",
+                            "result": "findings: 1. specs need change",
+                            "finish_reason": "final_answer",
+                        },
+                    },
+                },
+            )
+
+    async def allow_all(tool_calls, **_kwargs):
+        return tool_calls, []
+
+    graph.tools = FakeTools()
+    graph._authorize_tool_calls = allow_all
+    parent = AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "agent_control",
+            "args": {"action": "wait", "run_id": "run-kai"},
+            "id": "call_wait",
+            "type": "tool_call",
+        }],
+    )
+
+    result = await graph._execute_tools({
+        "messages": [parent],
+        "workspace": str(tmp_path),
+        "persona": "voidx",
+        "plan_mode": False,
+        "interaction_mode": "auto",
+        "task_state": _task_state_json(
+            workflow_runs={
+                "review": WorkflowRunState(name="review", status=WorkflowRunStatus.ACTIVE),
+            },
+        ),
+    })
+
+    assert result.get("should_continue", True) is True
+    by_name = {run.name: run for run in _result_task_state(result).workflow_runs.values()}
+    assert by_name["review"].status == WorkflowRunStatus.SATISFIED
+    assert by_name["feedback"].status == WorkflowRunStatus.ACTIVE
 
