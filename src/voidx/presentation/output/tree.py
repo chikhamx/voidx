@@ -1182,18 +1182,20 @@ class OutputTree:
                 self._node_prefixes[node.id] = []
                 return
 
-            line = node.header if node.header else ""
-            if node.node_type == "turn":
-                line = _full_width_row(line, self._render_width)
-            elif node.node_type == "permission" or _is_full_width_user_row(node):
-                if _align_full_width_user_row(node):
-                    line = f" {line}"
-                line = _permission_row(line, self._render_width)
-            lines.append(line)
-            if line_map is not None:
-                line_map[len(lines) - 1] = node.id
-            if click_map is not None and _is_clickable(node):
-                click_map[len(lines) - 1] = node.id
+            render_header = bool(node.header) or _is_empty_message_spacer(node)
+            if render_header:
+                line = node.header if node.header else ""
+                if node.node_type == "turn":
+                    line = _full_width_row(line, self._render_width)
+                elif node.node_type == "permission" or _is_full_width_user_row(node):
+                    if _align_full_width_user_row(node):
+                        line = f" {line}"
+                    line = _permission_row(line, self._render_width)
+                lines.append(line)
+                if line_map is not None:
+                    line_map[len(lines) - 1] = node.id
+                if click_map is not None and _is_clickable(node):
+                    click_map[len(lines) - 1] = node.id
 
             body_prefix = "  " if node.node_type == "turn" else ""
             for bl in node.body_lines:
@@ -1307,16 +1309,15 @@ class OutputTree:
             self._node_prefixes[node.id] = list(prefix_parts)
             return
 
-        body_only_thinking = _is_thinking_stream(node) and not node.header
-
         # Header line
-        current_prefix = indent if inline_tool_result else (
-            tool_prefix if tool_call_row else (
-                "" if transparent_assistant_child else aligned_prefix
+        header = todo_header if todo_plan is not None else node.header
+        render_header = bool(header) or _is_empty_message_spacer(node)
+        if render_header:
+            current_prefix = indent if inline_tool_result else (
+                tool_prefix if tool_call_row else (
+                    "" if transparent_assistant_child else aligned_prefix
+                )
             )
-        )
-        if not body_only_thinking:
-            header = todo_header if todo_plan is not None else node.header
             line = f"{current_prefix}{header}" if header else current_prefix
             if _is_full_width_user_row(node):
                 if _align_full_width_user_row(node):

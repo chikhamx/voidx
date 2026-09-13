@@ -555,3 +555,41 @@ def test_large_sibling_tree_rendering_performance_and_fidelity():
     assert line_map is not None
     # Must complete in well under 0.15s (O(N) vs previous O(N^2) taking 0.5s+)
     assert duration < 0.15, f"Rendering took too long: {duration:.4f}s"
+
+
+@pytest.mark.parametrize(
+    ("prompt_type", "expected_prefix"),
+    [
+        ("checkpoint", "Plan:"),
+        ("clarify", "Question:"),
+        ("goal_spec", "Goal:"),
+        ("loop_spec", "Loop:"),
+    ],
+)
+def test_interactive_prompt_blocks_have_exactly_one_blank_line(prompt_type, expected_prefix):
+    from voidx.presentation.output.dock.stream import build_canonical_stream_projection
+
+    dock = BottomInputDock()
+    dock.begin_capture()
+    dock.start_turn("demo")
+    dock.set_stream("Some assistant text")
+    work_item = dock.prepare_stream_commit(refresh=False)
+    assert work_item is not None
+    projection = build_canonical_stream_projection(work_item)
+    dock.apply_stream_commit(work_item, projection)
+
+    if prompt_type == "checkpoint":
+        dock.show_checkpoint("cp_1", {"goal": "My plan", "steps": ["Step 1"]}, [{"key": "y", "label": "Yes"}])
+    elif prompt_type == "clarify":
+        dock.show_clarify("cl_1", "Which approach?", ["opt1"])
+    elif prompt_type == "goal_spec":
+        dock.show_goal_spec("g_1", {"objective": "My goal"}, [{"key": "y", "label": "Yes"}])
+    elif prompt_type == "loop_spec":
+        dock.show_loop_spec("l_1", {"prompt": "My loop"}, [{"key": "y", "label": "Yes"}])
+
+    lines = [_plain(line) for line in dock.tree.render(80)]
+    assistant_index = next(index for index, line in enumerate(lines) if "Some assistant text" in line)
+    prompt_index = next(index for index, line in enumerate(lines) if expected_prefix in line)
+
+    assert lines[assistant_index + 1] == ""
+    assert prompt_index == assistant_index + 2
