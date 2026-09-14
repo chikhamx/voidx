@@ -43,6 +43,7 @@ from voidx.persistence.jsonl import (
 )
 from voidx.persistence.session_ids import validate_session_storage_id
 from voidx.persistence.sqlite import execute_commit, fetch_all, fetch_one, now, write_transaction
+from voidx.platform.paths import workspace_candidates as _workspace_candidates
 
 
 def _uid() -> str:
@@ -485,9 +486,20 @@ async def get_session(session_id: str) -> SessionInfo | None:
     )
 
 
-async def list_sessions(limit: int = 50) -> list[SessionInfo]:
+async def list_sessions(limit: int = 50, workspace: str | None = None) -> list[SessionInfo]:
+    if workspace:
+        candidates = _workspace_candidates(workspace)
+        if not candidates:
+            return []
+        placeholders = ",".join("?" for _ in candidates)
+        workspace_clause = f"AND s.workspace IN ({placeholders})"
+        params = (*candidates, limit)
+    else:
+        workspace_clause = ""
+        params = (limit,)
+
     rows = await fetch_all(
-        """SELECT *
+        f"""SELECT *
            FROM sessions AS s
            WHERE NOT EXISTS (
                SELECT 1 FROM provisional_sessions AS p WHERE p.session_id = s.id
@@ -497,9 +509,10 @@ async def list_sessions(limit: int = 50) -> list[SessionInfo]:
                WHERE g.evaluator_session_id = s.id
                   OR g.work_session_id = s.id
            )
+           {workspace_clause}
            ORDER BY updated_at DESC
            LIMIT ?""",
-        (limit,),
+        params,
     )
     return [
         SessionInfo(
@@ -515,10 +528,14 @@ async def list_sessions(limit: int = 50) -> list[SessionInfo]:
 
 
 async def latest_session_for_workspace(workspace: str) -> SessionInfo | None:
+    candidates = _workspace_candidates(workspace)
+    if not candidates:
+        return None
+    placeholders = ",".join("?" for _ in candidates)
     row = await fetch_one(
-        """SELECT *
+        f"""SELECT *
            FROM sessions
-           WHERE workspace = ?
+           WHERE workspace IN ({placeholders})
              AND NOT EXISTS (
                  SELECT 1 FROM provisional_sessions AS p WHERE p.session_id = sessions.id
              )
@@ -529,7 +546,7 @@ async def latest_session_for_workspace(workspace: str) -> SessionInfo | None:
              )
            ORDER BY updated_at DESC
            LIMIT 1""",
-        (workspace,),
+        tuple(candidates),
     )
     if not row:
         return None

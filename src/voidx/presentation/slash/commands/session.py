@@ -7,7 +7,11 @@ from voidx.presentation.slash.helpers import _format_bytes
 
 def _order_sessions_by_workspace(sessions, workspace):
     by_recency = sorted(sessions, key=lambda s: getattr(s, "updated_at", "") or "", reverse=True)
-    return sorted(by_recency, key=lambda s: s.workspace != workspace)
+    if not workspace:
+        return by_recency
+    from voidx.platform.paths import workspace_candidates
+    candidates = set(workspace_candidates(workspace))
+    return [s for s in by_recency if getattr(s, "workspace", "") in candidates]
 
 
 class SessionCommandsMixin:
@@ -246,9 +250,12 @@ class SessionCommandsMixin:
         if repository is None:
             raise RuntimeError("session_repository is required")
 
-        sessions = _order_sessions_by_workspace(
-            await repository.list_sessions(), self.session_port.workspace
-        )
+        ws = self.session_port.workspace
+        try:
+            raw_sessions = await repository.list_sessions(workspace=ws)
+        except TypeError:
+            raw_sessions = await repository.list_sessions()
+        sessions = _order_sessions_by_workspace(raw_sessions, ws)
         if not sessions:
             self.session_port.ui.print("No saved sessions.")
             return
@@ -277,9 +284,12 @@ class SessionCommandsMixin:
 
         sid = cmd.removeprefix("/resume").strip()
         if not sid:
-            sessions = _order_sessions_by_workspace(
-                await repository.list_sessions(), self.session_port.workspace
-            )
+            ws = self.session_port.workspace
+            try:
+                raw_sessions = await repository.list_sessions(workspace=ws)
+            except TypeError:
+                raw_sessions = await repository.list_sessions()
+            sessions = _order_sessions_by_workspace(raw_sessions, ws)
             if not sessions:
                 self.session_port.ui.print("[dim]No saved sessions.[/dim]")
                 return

@@ -17,7 +17,15 @@ class SessionRepositoryAdapter:
     async def get_session(self, session_id: str):
         return await session_repository.get_session(session_id)
 
-    async def list_sessions(self, limit: int = 50):
+    async def list_sessions(self, limit: int = 50, workspace: str | None = None):
+        if workspace is not None:
+            try:
+                return await session_repository.list_sessions(limit=limit, workspace=workspace)
+            except TypeError:
+                sessions = await session_repository.list_sessions(limit=limit)
+                from voidx.platform.paths import workspace_candidates
+                candidates = set(workspace_candidates(workspace))
+                return [s for s in sessions if getattr(s, "workspace", "") in candidates]
         return await session_repository.list_sessions(limit=limit)
 
     async def fork_session(self, session_id: str, *, title: str | None = None):

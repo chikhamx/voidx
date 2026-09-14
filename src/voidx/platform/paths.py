@@ -87,3 +87,23 @@ def resolve_tool_path(workspace: str, file_path: str, allowed_paths: list[str] |
         except ValueError:
             continue
     return None
+
+
+def workspace_candidates(workspace: str) -> list[str]:
+    """Return all common representations of a workspace path for fuzzy matching."""
+    if not workspace or not workspace.strip():
+        return []
+    candidates = {workspace}
+    try:
+        home = str(Path.home())
+        if workspace.startswith(home):
+            candidates.add("~" + workspace[len(home):])
+        elif workspace.startswith("~"):
+            candidates.add(home + workspace[1:])
+        expanded = str(Path(workspace).expanduser().resolve())
+        candidates.add(expanded)
+        if expanded.startswith(home):
+            candidates.add("~" + expanded[len(home):])
+    except Exception:
+        pass
+    return [c for c in candidates if c]

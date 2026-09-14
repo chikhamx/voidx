@@ -65,8 +65,8 @@ def isolated_memory_store(tmp_path):
     store.DATA_DIR = previous_data_dir
 
 
-def _graph(app=None):
-    return SimpleNamespace(app=app, _ui=runtime_ui_port)
+def _graph(app=None, workspace="."):
+    return SimpleNamespace(app=app, _ui=runtime_ui_port, workspace=workspace)
 
 
 def _capture_output(monkeypatch):
@@ -310,19 +310,28 @@ def test_session_del_command_is_in_palette():
 @pytest.mark.asyncio
 async def test_session_list_alias_lists_savedsessions(monkeypatch, isolated_memory_store):
     output = _capture_output(monkeypatch)
-    session = await create_session()
+    ws = "/target/ws"
+    other_ws = "/other/ws"
+    session = await create_session(workspace=ws)
+    other_session = await create_session(workspace=other_ws)
     try:
         await store.execute_commit(
             "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
             ("Listed Session", "2026-06-15T00:00:00+00:00", session.id),
         )
+        await store.execute_commit(
+            "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
+            ("Other Session", "2026-06-16T00:00:00+00:00", other_session.id),
+        )
 
-        assert await SlashHandler(_graph()).dispatch("/session list") is True
+        assert await SlashHandler(_graph(workspace=ws)).dispatch("/session list") is True
 
         assert any("Sessions:" in line for line in output)
         assert any(session.id[:8] in line and "Listed Session" in line for line in output)
+        assert not any(other_session.id[:8] in line for line in output)
     finally:
         await delete_session(session.id)
+        await delete_session(other_session.id)
 
 
 @pytest.mark.asyncio
@@ -653,8 +662,8 @@ async def test_switch_profile_creates_goal_session_when_no_session(monkeypatch, 
 
 
 @pytest.mark.asyncio
-async def test_resume_lists_workspace_matches_first_then_by_recency(monkeypatch, isolated_memory_store):
-    """/resume with no id lists sessions with current workspace first, then by updated_at desc."""
+async def test_resume_lists_only_current_workspace_sessions(monkeypatch, isolated_memory_store):
+    """/resume with no id lists only sessions from current workspace by updated_at desc."""
     current = "/current"
     other = "/other"
 
@@ -687,9 +696,9 @@ async def test_resume_lists_workspace_matches_first_then_by_recency(monkeypatch,
 
     await SlashHandler(graph).dispatch("/resume")
 
-    assert len(captured) == 3
+    assert len(captured) == 2
     ids_in_order = [item[0].split(" | ")[0] for item in captured]
-    assert ids_in_order == [s_cur_new.id[:8], s_cur_old.id[:8], s_other_new.id[:8]]
+    assert ids_in_order == [s_cur_new.id[:8], s_cur_old.id[:8]]
 
 
 @pytest.mark.asyncio

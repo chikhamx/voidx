@@ -279,6 +279,32 @@ async def test_list_sessions():
 
 
 @pytest.mark.asyncio
+async def test_list_sessions_filtered_by_workspace(tmp_path):
+    from pathlib import Path
+    ws1 = str(tmp_path / "ws1")
+    ws2 = str(tmp_path / "ws2")
+    s1 = await create_session(workspace=ws1)
+    s2 = await create_session(workspace=ws2)
+    try:
+        sessions1 = await list_sessions(workspace=ws1)
+        ids1 = [s.id for s in sessions1]
+        assert s1.id in ids1
+        assert s2.id not in ids1
+
+        # Test path normalization matching (e.g. ~/ws vs /home/user/ws)
+        home = str(Path.home())
+        if ws1.startswith(home):
+            tilde_ws1 = "~" + ws1[len(home):]
+            tilde_sessions = await list_sessions(workspace=tilde_ws1)
+            tilde_ids = [s.id for s in tilde_sessions]
+            assert s1.id in tilde_ids
+            assert s2.id not in tilde_ids
+    finally:
+        await delete_session(s1.id)
+        await delete_session(s2.id)
+
+
+@pytest.mark.asyncio
 async def test_latest_session_for_workspace_returns_newest_matching_workspace(tmp_path):
     workspace = str(tmp_path)
     other_workspace = str(tmp_path / "other")
