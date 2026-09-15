@@ -1,5 +1,7 @@
 # Desktop Stream Frame/Layout — P0.4 技术规格
 
+> **Status: Done** — Archived on 2026-09-16.
+
 > **Status: Implemented and verified** — Independent specification review passed; implementation verification completed.
 > **Date: 2026-08-30**
 > **Audience: Human + LLM**

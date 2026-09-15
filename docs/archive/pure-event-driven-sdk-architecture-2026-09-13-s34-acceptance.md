@@ -1,5 +1,7 @@
 # 无头自治 SDK：S3/S4 验收记录
 
+> **Status: Done** — Archived on 2026-09-16.
+
 - 日期：2026-09-15；读者：human+llm。
 - 结论：**S3 真实无头自治装配、S4 恢复/锁/故障收敛，通过本记录所列场景验收。**
 - 范围依据：[自治会话补充规范](pure-event-driven-sdk-architecture-2026-09-13-autonomous-session.md) §8 S3/S4，连同其引用的身份、预算、审批、停止和恢复合同。

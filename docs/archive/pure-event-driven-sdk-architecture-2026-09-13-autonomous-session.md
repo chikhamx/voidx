@@ -1,5 +1,7 @@
 # 自治会话 SDK：执行补充规范
 
+> **Status: Done** — Archived on 2026-09-16.
+
 - 日期：2026-09-14
 - 状态：会话模式设计已由用户批准；本补充规范待实施，**不代表自治 SDK、生产迁移或 Stage D 已完成**。
 - audience：human+llm。

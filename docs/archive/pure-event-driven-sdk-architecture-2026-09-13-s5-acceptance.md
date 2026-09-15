@@ -1,5 +1,7 @@
 # 无头自治 SDK：S5 正式验收矩阵
 
+> **Status: Done** — Archived on 2026-09-16.
+
 - 日期：2026-09-15；读者：human+llm；验收对象：当前集成脏树中的**显式 SDK → SemanticGatewayBridge → Gateway/client** 链路。
 - 合同：[自治会话补充规范](pure-event-driven-sdk-architecture-2026-09-13-autonomous-session.md) §8 S5，沿用其真实身份、审批、取消和恢复约束；格式承接 [S3/S4 验收记录](pure-event-driven-sdk-architecture-2026-09-13-s34-acceptance.md)。root 指 intake 根会话，child 指真实 work/evaluator/loop 执行会话；HITL 指需人确认的交互。
 - **当前结论：S5 scoped PASS。** 下表合同场景已在最终集成树核验；父级独立浏览器组合 23 passed、0 skipped，1166 个后端源码哈希及关键前端哈希匹配。结论仅适用于显式 SDK/Gateway/client 链路，不授权 S6 生产入口迁移或主规范 Stage D。
