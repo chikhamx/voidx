@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import asyncio
+import os
 import re
 import shutil
 import sys
@@ -441,6 +442,38 @@ class _FrameRendererMixin:
             )
         )
 
+    def _visible_history_for_size(self, width: int, height: int) -> int:
+        visible = self._visible_committed_rows
+        snapshot = self._applied_layout_snapshot
+        lines = self._prev_frame_lines
+        if (
+            os.environ.get("TERM_PROGRAM", "").lower() != "ghostty"
+            or snapshot is None
+            # Guard against test sentinels that stand in for a real snapshot.
+            or not hasattr(snapshot, "terminal_width")
+            or snapshot.terminal_width != width
+            or height >= snapshot.terminal_height
+        ):
+            return visible
+        # Ghostty trimTrailingBlankRows stops only at a row with text (a row
+        # carrying a tracked pin from selection/saved-cursor also stops it, but
+        # this TUI never creates those). The live cursor row is NOT pinned:
+        # what actually stops the trim is the non-empty bottom-dock tail.
+        if lines is None:
+            # A commit cleared the frame lines; fall back to the frame geometry.
+            # The bottom-dock status row keeps the frame tail non-empty.
+            last_text_row = snapshot.frame_start_row + snapshot.frame_rows - 1
+        else:
+            last_text_row = snapshot.frame_start_row - 1
+            for index, line in enumerate(lines):
+                # hasText parity: a background-only row has no text and is
+                # trimmable, so test for visible glyphs, not raw ANSI bytes.
+                if Text.from_ansi(line).plain.strip():
+                    last_text_row = snapshot.frame_start_row + index
+        retained_end = last_text_row
+        shifted = max(0, retained_end - height)
+        return max(0, visible - shifted)
+
     def _render_frame(self) -> None:
         """Render to terminal: capture Rich output, write with cursor control."""
         if hasattr(self, "_update_startup_banner_if_needed"):
@@ -453,6 +486,7 @@ class _FrameRendererMixin:
         if self._worker_geometry_pending():
             self.invalidate()
             return
+        visible_for_size = self._visible_history_for_size(width, term_height) if self._tty else 0
         resize_frame = False
         clear_screen = False
         clear_submitted = False
@@ -574,7 +608,7 @@ class _FrameRendererMixin:
                     if bottom_dock_anchored:
                         fixed_bottom_rows = self._last_bottom_rows
                         scroll_bottom = term_height - fixed_bottom_rows
-                visible_before = 0 if clear_screen else self._visible_committed_rows
+                visible_before = 0 if clear_screen else visible_for_size
                 visible_after, scroll_ansi = self._frame_scroll_plan(
                     scroll_frame_rows,
                     term_height,
@@ -739,7 +773,7 @@ class _FrameRendererMixin:
                     if bottom_dock_anchored:
                         fixed_bottom_rows = self._last_bottom_rows
                         scroll_bottom = term_height - fixed_bottom_rows
-                visible_before = 0 if clear_screen else self._visible_committed_rows
+                visible_before = 0 if clear_screen else visible_for_size
                 visible_after, scroll_ansi = self._frame_scroll_plan(
                     scroll_frame_rows,
                     term_height,
@@ -2833,7 +2867,6 @@ class _FrameRendererMixin:
                 visible_rows = rows[-(row_limit - 1):]
                 ansi = "\x1b[2m…\x1b[0m\n" + "\n".join(visible_rows)
         return _rendered_row_count(ansi), ansi
-
 
     def _panel_row_count(self, panel_lines: list[str], width: int) -> int:
         return self._panel_row_count_and_ansi(panel_lines, width)[0]
