@@ -38,6 +38,8 @@ class LlmRetryResult:
 
 
 async def _emit_terminal_error(ui: Any, message: str) -> None:
+    if ui is None:
+        return
     try:
         if await ui.events.emit(ErrorAppended(message=message)):
             return
@@ -47,6 +49,10 @@ async def _emit_terminal_error(ui: Any, message: str) -> None:
         ui.ui.error(message)
     except Exception:
         pass
+
+
+def _via_events(ui: Any) -> bool:
+    return ui is not None and ui.via_events()
 
 
 async def handle_llm_exception(
@@ -64,7 +70,7 @@ async def handle_llm_exception(
 
     if kind == LLMErrorKind.NON_RETRYABLE:
         failure_text = f"LLM call failed (non-retryable): {_clean_error_message(error)}"
-        if ui.via_events():
+        if _via_events(ui):
             await ui.events.emit(StatusUpdated(
                 status_id="llm:retry",
                 label="Failed",
@@ -78,7 +84,7 @@ async def handle_llm_exception(
         loop.timeout_retry_attempts += 1
         if loop.timeout_retry_attempts > timeout_max_retries:
             failure_text = f"LLM call failed after {loop.timeout_retry_attempts} timeout(s): {_clean_error_message(error)}"
-            if loop.retry_status_active and ui.via_events():
+            if loop.retry_status_active and _via_events(ui):
                 await ui.events.emit(StatusFinished(status_id="llm:retry"))
             await _emit_terminal_error(ui, failure_text)
             return LlmRetryResult("fail", failure_text)
@@ -88,20 +94,20 @@ async def handle_llm_exception(
         delay = _llm_retry_delay(loop.failed_attempts)
         delay_str = str(int(delay)) if delay == int(delay) else str(delay)
         retry_detail = f"retrying in {delay_str}s: {_clean_error_message(error)}"
-        if ui.via_events():
+        if _via_events(ui):
             loop.retry_status_active = True
             await ui.events.emit(StatusUpdated(
                 status_id="llm:retry",
                 label="Retrying",
                 detail=retry_detail,
             ))
-        else:
+        elif ui is not None:
             ui.ui.print(f"[dim]Retrying ({retry_detail})[/dim]")
         await asyncio.sleep(_llm_retry_sleep_delay(delay))
         return LlmRetryResult("retry")
 
     failure_text = f"LLM call failed after {max_retries + 1} attempts: {_clean_error_message(error)}"
-    if loop.retry_status_active and ui.via_events():
+    if loop.retry_status_active and _via_events(ui):
         await ui.events.emit(StatusFinished(status_id="llm:retry"))
     await _emit_terminal_error(ui, failure_text)
     return LlmRetryResult("fail", failure_text)

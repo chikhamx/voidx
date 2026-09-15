@@ -110,6 +110,11 @@ _GOAL_FINAL_RESPONSE_MAX_REPAIRS = 2
 
 
 
+def _ui_via_events(host: Any) -> bool:
+    ui = getattr(host, "_ui", None)
+    return ui is not None and ui.via_events()
+
+
 class LlmTurn:
     def __init__(self, host: Any) -> None:
         self.host = host
@@ -492,7 +497,7 @@ class LlmTurn:
             )
             loop.context_tokens = estimate_llm_context_tokens(request_messages())
             host._usage_stats.update_context(loop.context_tokens)
-            if hard_update.outcome in {"hint_injected", "hint_upgraded"} and host._ui.via_events():
+            if hard_update.outcome in {"hint_injected", "hint_upgraded"} and _ui_via_events(host):
                 await host._ui.events.emit(ContextPressureUpdated(
                     pressure_id=hard_update.pressure_id,
                     level="hard",
@@ -513,7 +518,7 @@ class LlmTurn:
             if request_pressure_hint is not None:
                 loop.context_tokens = estimate_llm_context_tokens(request_messages())
                 host._usage_stats.update_context(loop.context_tokens)
-            if pressure_update.outcome in {"hint_injected", "hint_upgraded"} and host._ui.via_events():
+            if pressure_update.outcome in {"hint_injected", "hint_upgraded"} and _ui_via_events(host):
                 await host._ui.events.emit(ContextPressureUpdated(
                     pressure_id=pressure_update.pressure_id,
                     level=pressure_decision.pressure_level,
@@ -537,7 +542,7 @@ class LlmTurn:
                     await apply_compaction_result(result)
                 )
                 loop.context_tokens = context_tokens
-                if active_pressure is not None and host._ui.via_events():
+                if active_pressure is not None and _ui_via_events(host):
                     await host._ui.events.emit(ContextPressureFinished(
                         pressure_id=active_pressure[0],
                         level=active_pressure[1],
@@ -773,7 +778,7 @@ class LlmTurn:
                     }
                 if host._ui is not None and (host._debug or not assistant_msg.tool_calls):
                     host._ui.ui.print()
-                if loop.retry_status_active and host._ui.via_events():
+                if loop.retry_status_active and _ui_via_events(host):
                     await host._ui.events.emit(StatusFinished(status_id="llm:retry"))
 
                 turn_result = await handle_turn_control_response(
@@ -844,7 +849,7 @@ class LlmTurn:
 
                 kind = _classify_llm_error(e)
                 if kind == "context_overflow" and live_rollover_enabled and overflow_request_hash is not None:
-                    if host._ui.via_events():
+                    if _ui_via_events(host):
                         failure_pressure = active_pressure or (
                             f"voidx:context-pressure:{pressure_decision.turn_id}",
                             "hard",
@@ -898,7 +903,7 @@ class LlmTurn:
                             await apply_compaction_result(result)
                         )
                         loop.context_tokens = context_tokens
-                        if active_pressure is not None and host._ui.via_events():
+                        if active_pressure is not None and _ui_via_events(host):
                             await host._ui.events.emit(ContextPressureFinished(
                                 pressure_id=active_pressure[0],
                                 level=active_pressure[1],
@@ -917,7 +922,7 @@ class LlmTurn:
                             await apply_compaction_result(result)
                         )
                         loop.context_tokens = context_tokens
-                        if active_pressure is not None and host._ui.via_events():
+                        if active_pressure is not None and _ui_via_events(host):
                             await host._ui.events.emit(ContextPressureFinished(
                                 pressure_id=active_pressure[0],
                                 level=active_pressure[1],
@@ -928,7 +933,7 @@ class LlmTurn:
                 if retry_result.action == "retry":
                     continue
                 if retry_result.action == "fail":
-                    if kind == "overflow" and host._ui.via_events():
+                    if kind == "overflow" and _ui_via_events(host):
                         failure_pressure = active_pressure or (
                             f"voidx:context-pressure:{pressure_decision.turn_id}",
                             "hard",
@@ -957,7 +962,7 @@ class LlmTurn:
                     await output.stream_started(stream_id, "text")
                     await output.stream_chunk(stream_id, "text", final_text)
                     await output.stream_committed(stream_id, "text", final_text)
-                elif host._ui.via_events():
+                elif _ui_via_events(host):
                     await host._ui.events.emit(AssistantStreamUpdated(text=final_text, phase="text"))
                     await host._ui.events.emit(AssistantStreamCommitted())
                 else:
@@ -989,7 +994,7 @@ class LlmTurn:
                             markdown(final_text)
                         else:
                             host._ui.ui.print(final_text)
-        if active_pressure is not None and not final_msg.tool_calls and host._ui.via_events():
+        if active_pressure is not None and not final_msg.tool_calls and _ui_via_events(host):
             await host._ui.events.emit(ContextPressureFinished(
                 pressure_id=active_pressure[0],
                 level=active_pressure[1],
