@@ -48,6 +48,8 @@ from voidx.agent.adapters.persistence.session_models import (
     validate_runtime_profile,
 )
 from voidx.persistence.jsonl import (
+    append_session_record_locked,
+    session_dir,
     append_session_record,
     delete_session_directories,
     read_session_records,
@@ -514,6 +516,7 @@ class ThreadStore:
         thread_profile: ResolvedAgentProfile | RuntimeProfile,
         thread_state: AgentThreadState,
         protocol: GoalProtocolRecord,
+        lease_owner: str | None = None,
     ) -> GoalGenerationBinding:
         """Atomically commit Goal boundary I and its first work wakeup."""
         from voidx.platform.session_ids import validate_session_storage_id
@@ -540,6 +543,7 @@ class ThreadStore:
             raise GoalProtocolConflict("Goal profile snapshot conflict")
 
         def _tx(conn):
+            _validate_goal_recovery_lease(conn, generation, lease_owner)
             _ensure_goal_generation_writable(conn, generation)
             existing = conn.execute(
                 "SELECT * FROM goal_generations WHERE generation = ?",
@@ -885,7 +889,12 @@ class ThreadStore:
         *,
         main_session_id: str = "",
         generation: str = "",
+        lease_owner: str | None = None,
     ) -> int:
+        if lease_owner is not None:
+            if not generation:
+                raise ValueError("Fenced summary delivery requires a generation")
+            return await self._deliver_fenced_goal_public_summaries(generation, lease_owner)
         if not main_session_id and not generation:
             raise ValueError("Goal public summary delivery requires a session or generation")
         pending = await self.list_pending_goal_public_summaries(
@@ -899,13 +908,65 @@ class ThreadStore:
             )
         return delivered
 
+    async def _deliver_fenced_goal_public_summaries(
+        self, generation: str, lease_owner: str
+    ) -> int:
+        binding = await self.get_goal_generation(generation)
+        if binding is None:
+            raise KeyError(generation)
+        session_id = binding.main_session_id
+        async with session_directory_locks((session_id,)):
+            records = await read_session_records(session_id, "messages.jsonl") or []
+
+            def _tx(conn):
+                # Keep the SQLite write lock across JSONL append and acknowledgement:
+                # a new lease owner cannot enter between the fence and either write.
+                _validate_goal_recovery_lease(conn, generation, lease_owner)
+                rows = conn.execute(
+                    "SELECT * FROM goal_public_summary_outbox WHERE generation = ? "
+                    "AND delivered_at IS NULL ORDER BY created_at, summary_id",
+                    (generation,),
+                ).fetchall()
+                for row in rows:
+                    summary = _goal_public_summary_row(row)
+                    marker = summary["summary_id"]
+                    existing = next((r for r in records if
+                        (r.get("additional_kwargs") or {}).get("goal_public_summary_id") == marker), None)
+                    if existing is None:
+                        session = conn.execute(
+                            "SELECT message_count FROM sessions WHERE id = ?", (session_id,)
+                        ).fetchone()
+                        if session is None:
+                            raise GoalProtocolConflict("Goal public summary main session is missing")
+                        message_id = max(int(session["message_count"] or 0), max(
+                            (r["id"] for r in records if r.get("type") == "message"
+                             and isinstance(r.get("id"), int)), default=0)) + 1
+                        record = {
+                            "type": "message", "id": message_id, "role": "assistant",
+                            "content": summary["summary"], "content_format": "text",
+                            "created_at": summary["created_at"],
+                            "additional_kwargs": {"goal_public_summary_id": marker,
+                                                  "goal_public_summary": summary["payload"]},
+                        }
+                        append_session_record_locked(session_id, record)
+                        records.append(record)
+                    timestamp = now()
+                    conn.execute("UPDATE goal_public_summary_outbox SET delivered_at = ? WHERE summary_id = ?",
+                                 (timestamp, marker))
+                    conn.execute("UPDATE sessions SET message_count = message_count + 1, updated_at = ? WHERE id = ?",
+                                 (timestamp, session_id))
+                return len(rows)
+
+            return await self._write(_tx)
+
     async def fail_goal_generation(
-        self, failure: GoalRuntimeFailure
+        self, failure: GoalRuntimeFailure, *, lease_owner: str | None = None
     ) -> GoalRuntimeFailure:
         if not isinstance(failure, GoalRuntimeFailure):
             raise TypeError("failure must be a GoalRuntimeFailure")
 
         def _tx(conn):
+            _validate_goal_recovery_lease(conn, failure.generation, lease_owner)
             existing = conn.execute(
                 "SELECT * FROM goal_runtime_failures WHERE generation = ?",
                 (failure.generation,),
@@ -994,10 +1055,11 @@ class ThreadStore:
                    WHERE thread_id = ? AND delivered_at IS NULL""",
                 (timestamp, goal_thread_id),
             )
-            conn.execute(
-                "DELETE FROM goal_recovery_leases WHERE generation = ?",
-                (failure.generation,),
-            )
+            if lease_owner is None:
+                conn.execute(
+                    "DELETE FROM goal_recovery_leases WHERE generation = ?",
+                    (failure.generation,),
+                )
             conn.execute(
                 """UPDATE goal_generations
                    SET terminal_at = COALESCE(terminal_at, ?)
@@ -1398,9 +1460,10 @@ class ThreadStore:
         async with session_directory_locks(session_ids):
             await delete_session_directories(session_ids)
         return self._cleanup_bindings.get(generation) or _binding_from_cleanup_tombstone(row)
-    async def ensure_goal_phase_outbox(self, generation: str) -> RuntimeOutboxItem | None:
+    async def ensure_goal_phase_outbox(self, generation: str, *, lease_owner: str | None = None) -> RuntimeOutboxItem | None:
         """Ensure the next valid Goal phase outbox exists without dispatching it."""
         def _tx(conn):
+            _validate_goal_recovery_lease(conn, generation, lease_owner)
             _ensure_goal_generation_writable(conn, generation)
             binding_row = conn.execute(
                 "SELECT * FROM goal_generations WHERE generation = ?",
@@ -2071,6 +2134,13 @@ class ThreadStore:
 
         return await self._write(_tx)
 
+    async def get_wakeup_available_at(self, outbox_id: str) -> float | None:
+        row = await self._one(
+            "SELECT available_at FROM runtime_outbox WHERE id = ? AND kind = 'wakeup'",
+            (outbox_id,),
+        )
+        return float(row["available_at"]) if row is not None else None
+
     async def list_pending_outbox(self, thread_id: str) -> list[RuntimeOutboxItem]:
         """Undelivered outbox rows for the thread, regardless of availability."""
 
@@ -2536,10 +2606,10 @@ class ThreadStore:
         )
         return [_goal_protocol_from_row(row) for row in rows]
 
-    async def project_goal_protocol(self, protocol_id: str) -> GoalProtocolRecord:
+    async def project_goal_protocol(self, protocol_id: str, *, lease_owner: str | None = None) -> GoalProtocolRecord:
         """Project one durable Goal record and its phase successor atomically."""
         return await self._write(
-            lambda conn: _project_goal_protocol_tx(conn, protocol_id)
+            lambda conn: _project_goal_protocol_tx(conn, protocol_id, lease_owner=lease_owner)
         )
 
     async def ack_outbox(self, outbox_id: str) -> None:
@@ -2974,12 +3044,29 @@ def _validate_goal_attempt_lease(
     return attempt
 
 
+def _validate_goal_recovery_lease(conn, generation: str, lease_owner: str | None) -> None:
+    if lease_owner is None:
+        return
+    # A SELECT alone does not start SQLite's implicit write transaction.
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    lease = conn.execute(
+        "SELECT lease_owner, lease_expires_at FROM goal_recovery_leases WHERE generation = ?",
+        (generation,),
+    ).fetchone()
+    if lease is None or lease["lease_owner"] != lease_owner or lease["lease_expires_at"] <= time.time():
+        raise GoalProtocolConflict("Goal generation recovery lease expired or owner changed")
+
+
 def _project_goal_protocol_tx(
     conn,
     protocol_id: str,
     *,
     close_source_attempt: bool = True,
+    lease_owner: str | None = None,
 ) -> GoalProtocolRecord:
+    if lease_owner is not None and not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
     row = conn.execute(
         "SELECT * FROM goal_protocol_records WHERE protocol_id = ?",
         (protocol_id,),
@@ -2987,6 +3074,7 @@ def _project_goal_protocol_tx(
     if row is None:
         raise KeyError(protocol_id)
     record = _goal_protocol_from_row(row)
+    _validate_goal_recovery_lease(conn, record.generation, lease_owner)
     if record.status == "projected":
         return record
 

@@ -578,10 +578,11 @@ async def test_execute_tools_wraps_write_risk_tool_with_workspace_write_lock(tmp
 
     assert [message.tool_call_id for message in result["messages"]] == ["call_write"]
     assert result["messages"][0].content == "write output"
+    # Lock arbitration uses the semantic thread; tool persistence uses the session.
     assert events == [
-        ("acquire", "thread-write"),
+        ("acquire", "test-thread"),
         ("execute", "thread-write"),
-        ("release", "thread-write"),
+        ("release", "test-thread"),
     ]
 
 
@@ -637,10 +638,11 @@ async def test_execute_tools_releases_workspace_write_lock_on_tool_exception(tmp
 
     assert result["messages"][0].tool_call_id == "call_write"
     assert result["messages"][0].status == "error"
+    # Lock arbitration uses the semantic thread; tool persistence uses the session.
     assert events == [
-        ("acquire", "thread-write"),
+        ("acquire", "test-thread"),
         ("execute", "thread-write"),
-        ("release", "thread-write"),
+        ("release", "test-thread"),
     ]
 
 

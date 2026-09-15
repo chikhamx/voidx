@@ -12,6 +12,9 @@ from typing import TYPE_CHECKING, Any
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.errors import GraphRecursionError
 
+from voidx.agent.domain import semantic_events as semantic
+from voidx.llm.usage import TokenUsage
+
 from voidx.agent.adapters.langgraph.runtime.convergence import generate_fallback_summary
 
 from voidx.agent.application.attachments import build_user_message_payload, serialize_message_content
@@ -272,7 +275,8 @@ class TurnRunner:
             streamed_messages: list = []
             payload = None
             try:
-                host._ui.session_tracker.begin_turn(host._workspace)
+                if host._ui is not None:
+                    host._ui.session_tracker.begin_turn(host._workspace)
                 has_ref = "$" in user_text
                 skill_refs = (
                     host._resolve_skill_references(user_text)
@@ -301,22 +305,27 @@ class TurnRunner:
                 )
                 turn_display_text = display_text or ("/continue" if continuation else payload.display_text)
                 turn_metadata = turn_metadata_from_context(context)
-                host._current_tree = host._ui.dock.tree
-                if host._ui.via_events():
-                    host._turn_node = await host._ui.events.request(
-                        TurnStarted(text=turn_display_text, raw_text=payload.raw_text, metadata=turn_metadata)
-                    )
-                    await host._ui.events.emit(StatusUpdated(
-                        status_id="turn:analyzing",
-                        label="Analyzing",
-                        detail="loading session and preparing context",
-                        stage="analyzing",
-                        display="record_only",
+                if host._ui is None:
+                    await host.semantic_output.emit(semantic.TurnStarted, semantic.TurnStartedPayload(
+                        text=turn_display_text, metadata=turn_metadata,
                     ))
                 else:
-                    host._turn_node = host._ui.dock.start_turn(
-                        turn_display_text, metadata=turn_metadata, raw_text=payload.raw_text
-                    )
+                    host._current_tree = host._ui.dock.tree
+                    if host._ui is not None and host._ui.via_events():
+                        host._turn_node = await host._ui.events.request(
+                            TurnStarted(text=turn_display_text, raw_text=payload.raw_text, metadata=turn_metadata)
+                        )
+                        await host._ui.events.emit(StatusUpdated(
+                            status_id="turn:analyzing",
+                            label="Analyzing",
+                            detail="loading session and preparing context",
+                            stage="analyzing",
+                            display="record_only",
+                        ))
+                    else:
+                        host._turn_node = host._ui.dock.start_turn(
+                            turn_display_text, metadata=turn_metadata, raw_text=payload.raw_text
+                        )
                 # Load session messages — use in-memory cache when available
                 if host._session_msg_cache is not None:
                     session_msgs = list(host._session_msg_cache)
@@ -339,7 +348,12 @@ class TurnRunner:
                     msgs, _ = messages_from_rows_incremental(session_msgs, {})
 
                 for warning in payload.warnings:
-                    host._ui.ui.warn(warning)
+                    if host._ui is None:
+                        await host.semantic_output.emit(semantic.DiagnosticWarning, semantic.DiagnosticPayload(
+                            code="user_input_warning", summary=warning, recoverable=True,
+                        ))
+                    else:
+                        host._ui.ui.warn(warning)
 
                 turn_msg = None
                 if not continuation:
@@ -468,7 +482,7 @@ class TurnRunner:
                 }
 
                 # ── compaction: check overflow before running ──────────────────
-                if host._ui.via_events():
+                if host._ui is not None and host._ui.via_events():
                     await host._ui.events.emit(StatusFinished(status_id="turn:analyzing"))
                 preflight_result, _preflight_metadata = await host._preflight_compact_if_needed(
                     msgs,
@@ -577,35 +591,40 @@ class TurnRunner:
                     f"  [dim]·[/dim]  [cyan]{format_token_count(turn_in)}[/cyan] [dim]in[/dim]"
                     f"  [cyan]{format_token_count(turn_out)}[/cyan] [dim]out[/dim]"
                 )
-                host._ui.session_tracker.finish_turn()
-                change_lines = host._ui.session_tracker.change_summary_lines()
-                if host._ui.via_events():
-                    await host._ui.events.emit(
-                        MessageAppended(
-                            text=stats_text,
-                            style="turn_stats",
-                            markup=True,
-                        )
-                    )
-                    if change_lines:
+                if host._ui is None:
+                    await host.semantic_output.emit(semantic.TurnCompleted, semantic.TurnCompletedPayload(
+                        usage=TokenUsage(input_tokens=turn_in, output_tokens=turn_out, total_tokens=turn_in + turn_out),
+                    ))
+                else:
+                    host._ui.session_tracker.finish_turn()
+                    change_lines = host._ui.session_tracker.change_summary_lines()
+                    if host._ui is not None and host._ui.via_events():
                         await host._ui.events.emit(
                             MessageAppended(
-                                text="\n".join(change_lines),
-                                style="file_changes",
+                                text=stats_text,
+                                style="turn_stats",
                                 markup=True,
                             )
                         )
-                    await host._ui.events.emit(TodoCommitted())
-                    await host._ui.events.emit(TurnCompleted())
-                    await host._ui.events.drain()
-                else:
-                    host._ui.dock.append_message(stats_text, markup=True)
-                    if change_lines:
-                        host._ui.dock.append_message(
-                            "\n".join(change_lines),
-                            markup=True,
-                        )
-                    host._ui.dock.commit_todo_state()
+                        if change_lines:
+                            await host._ui.events.emit(
+                                MessageAppended(
+                                    text="\n".join(change_lines),
+                                    style="file_changes",
+                                    markup=True,
+                                )
+                            )
+                        await host._ui.events.emit(TodoCommitted())
+                        await host._ui.events.emit(TurnCompleted())
+                        await host._ui.events.drain()
+                    else:
+                        host._ui.dock.append_message(stats_text, markup=True)
+                        if change_lines:
+                            host._ui.dock.append_message(
+                                "\n".join(change_lines),
+                                markup=True,
+                            )
+                        host._ui.dock.commit_todo_state()
                 if host._session:
                     await host._persist_transcript_snapshot()
                 turn_succeeded = True
@@ -620,22 +639,38 @@ class TurnRunner:
                     streamed_messages,
                     payload.content if payload else None,
                 )
-                if host._ui.via_events():
+                if host._ui is not None and host._ui.via_events():
                     await host._ui.events.emit(TurnCompleted())
                     await host._ui.events.drain()
-                else:
+                elif host._ui is not None:
                     host._ui.ui.print(f"[yellow]{fallback_text}[/yellow]")
+                else:
+                    await host.semantic_output.stream_committed("fallback", "text", fallback_text)
+                    stats = host._usage_stats
+                    await host.semantic_output.emit(semantic.TurnCompleted, semantic.TurnCompletedPayload(
+                        usage=TokenUsage(
+                            input_tokens=stats.turn_input_tokens,
+                            output_tokens=stats.turn_output_tokens,
+                            total_tokens=stats.turn_input_tokens + stats.turn_output_tokens,
+                        ),
+                    ))
             except (KeyboardInterrupt, asyncio.CancelledError):
                 await _persist_streamed_messages(host, streamed_messages, payload.content if payload else None)
-                if host._ui.via_events():
+                if host._ui is not None and host._ui.via_events():
                     await host._ui.events.emit(TurnCancelled())
                     await host._ui.events.drain()
+                if host._ui is None:
+                    await host.semantic_output.emit(semantic.TurnCancelled, semantic.ReasonPayload(reason="cancelled"))
                 raise
             except Exception as exc:
                 await _persist_streamed_messages(host, streamed_messages, payload.content if payload else None)
-                if host._ui.via_events():
+                if host._ui is not None and host._ui.via_events():
                     await host._ui.events.emit(TurnFailed(message=str(exc)))
                     await host._ui.events.drain()
+                if host._ui is None:
+                    await host.semantic_output.emit(semantic.TurnFailed, semantic.DiagnosticPayload(
+                        code="turn_failed", summary="Turn execution failed.", recoverable=False,
+                    ))
                 raise
             finally:
                 turn_calls = host._usage_stats.turn_calls
@@ -717,21 +752,22 @@ class TurnRunner:
                 if guidance_discarded:
                     message = "Guidance discarded: no LLM call to inject into."
                     log_tool_event("guidance_discarded", message=message)
-                    if host._ui.via_events():
+                    if host._ui is not None and host._ui.via_events():
                         await host._ui.events.emit(GuidanceCommitted(source="system"))
-                    else:
+                    elif host._ui is not None:
                         clear_guidance_preview = getattr(host._ui.dock, "clear_guidance_preview", None)
                         if callable(clear_guidance_preview):
                             clear_guidance_preview()
-                host._ui.session_tracker.finish_turn()
-                if host._ui.via_events():
+                if host._ui is not None:
+                    host._ui.session_tracker.finish_turn()
+                if host._ui is not None and host._ui.via_events():
                     await host._ui.events.emit(StatusFinished(status_id="turn:analyzing"))
                     await host._ui.events.emit(StatusFinished(status_id="agent:-1:progress"))
                     await host._ui.events.emit(StatusFinished(status_id="compaction"))
                     await host._ui.events.emit(TodoCleared())
                     await host._ui.events.emit(InputSet(text="", hints=[]))
                     await host._ui.events.drain()
-                else:
+                elif host._ui is not None:
                     host._ui.dock.clear_todo_state()
                     host._ui.dock.set_input("", [])
                 self.idle_event.set()
@@ -859,7 +895,8 @@ async def _persist_streamed_messages(host: Any, streamed_messages: list, payload
 
 
 def _invalidate_tui(host: object) -> None:
-    host._ui.invalidate()
+    if host._ui is not None:
+        host._ui.invalidate()
 
 
 def _load_task_state(value: TaskState | dict | None, *, fallback: TaskState | None = None) -> TaskState:

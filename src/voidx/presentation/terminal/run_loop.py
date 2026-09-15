@@ -60,6 +60,7 @@ class TerminalRunLoop:
         skills_api_provider: Callable[[str], object] | None = None,
         agent_tool_catalog_provider: Callable[[], list] | None = None,
         session_repository: SessionRepository | None = None,
+        sdk_gateway_factory: Callable | None = None,
     ) -> None:
         self._status_reader = status_reader
         self._sessions = sessions
@@ -81,6 +82,7 @@ class TerminalRunLoop:
         self._skills_api_provider = skills_api_provider
         self._agent_tool_catalog_provider = agent_tool_catalog_provider
         self._session_repository = session_repository
+        self._sdk_gateway_factory = sdk_gateway_factory
         self._gateway_session = None
         self._thread_registry = GatewayThreadRegistryAdapter(lambda: self._gateway_session)
         self._command_handler = GatewayCommandHandler(status_reader, guidance, self._thread_registry)
@@ -106,6 +108,7 @@ class TerminalRunLoop:
         dock_token = set_dock(active_dock)
         gateway_session = None
         gateway_server = None
+        sdk_gateway = None
         lsp_startup_tasks: list[asyncio.Task] = []
         update_check_task: asyncio.Task[None] | None = None
         if active_dock is not None:
@@ -136,6 +139,8 @@ class TerminalRunLoop:
         exit_message: str | None = None
 
         async def cleanup_run_loop() -> None:
+            if sdk_gateway is not None:
+                await sdk_gateway.aclose()
             await self._sessions.delete_empty_current_session()
             try:
                 await self._integrations.close_agent_gateway()
@@ -214,6 +219,10 @@ class TerminalRunLoop:
         self._gateway_session = gateway_session
         if gateway_session is not None:
             gateway_session.set_command_handler(partial(self._command_handler.handle, app))
+            if web_headless and self._sdk_gateway_factory is not None:
+                sdk_gateway = self._sdk_gateway_factory(
+                    gateway_session, partial(self._command_handler.handle, app))
+                await sdk_gateway.restore()
             gateway_session.set_thread_id_provider(
                 lambda: self._status_reader.runtime_status().session.session_id
             )
@@ -249,11 +258,16 @@ class TerminalRunLoop:
                     runtime_profile=CODING_PROFILE,
                     workspace=self._status_reader.runtime_status().workspace,
                 )
-            keep_running, next_exit_message = await self._input_port.dispatch_input(
-                user_input,
-                context=context,
-                thread_id=thread_id,
-            )
+            try:
+                keep_running, next_exit_message = await self._input_port.dispatch_input(
+                    user_input,
+                    context=context,
+                    thread_id=thread_id,
+                )
+            finally:
+                if sdk_gateway is not None:
+                    sdk_gateway.legacy_completed()
+                    gateway_session.complete_legacy_dispatch(context.thread_id)
             if next_exit_message is not None:
                 exit_message = next_exit_message
             return keep_running

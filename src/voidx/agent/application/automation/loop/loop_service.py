@@ -47,9 +47,11 @@ class LoopService(AutonomousServiceBase[LoopSpec, LoopScheduler]):
         scheduler: LoopScheduler,
         workspace: str,
         events: AgentEventPublisher | None = None,
+        session_id_factory=None,
     ) -> None:
         super().__init__(store=store, scheduler=scheduler, workspace=workspace)
         self._events = events or NullAgentEventPublisher()
+        self._session_id_factory = session_id_factory or (lambda spec, parent: spec.loop_session_id(parent))
 
     def _spec_thread_id(self, spec: LoopSpec, parent: str) -> str:
         return spec.loop_thread_id(parent)
@@ -100,10 +102,12 @@ class LoopService(AutonomousServiceBase[LoopSpec, LoopScheduler]):
         spec = self._spec_from_state(loaded.state, loop_thread_id)
         if spec is None:
             return None
-        loop_session_id = spec.loop_session_id(parent)
-        await self._store.ensure_session(loop_session_id, self._workspace, profile="loop")
-        if loaded.thread.session_id != loop_session_id:
+        loop_session_id = loaded.thread.session_id
+        if not loop_session_id or loop_session_id == parent:
+            # Preserve the legacy parent-bound migration, not isolated child rebinding.
+            loop_session_id = self._session_id_factory(spec, parent)
             await self._store.rebind_thread_session(loop_thread_id, loop_session_id)
+        await self._store.ensure_session(loop_session_id, self._workspace, profile='loop')
         self._active_specs[parent] = spec
         self._register_thread(loop_thread_id)
         self._start_pump()
@@ -126,7 +130,7 @@ class LoopService(AutonomousServiceBase[LoopSpec, LoopScheduler]):
 
     async def _activate(self, parent: str, spec: LoopSpec, display_text: str) -> LoopStatus:
         resolved = await self._resolve_attempt_profile(parent, "loop")
-        loop_session_id = spec.loop_session_id(parent)
+        loop_session_id = self._session_id_factory(spec, parent)
         await self._store.ensure_session(
             loop_session_id,
             self._workspace,

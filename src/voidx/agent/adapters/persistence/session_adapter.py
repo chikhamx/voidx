@@ -28,6 +28,9 @@ class SessionRepositoryAdapter:
                 return [s for s in sessions if getattr(s, "workspace", "") in candidates]
         return await session_repository.list_sessions(limit=limit)
 
+    async def semantic_thread_bindings(self, workspace: str) -> dict[str, str]:
+        return await session_repository.semantic_thread_bindings(workspace)
+
     async def fork_session(self, session_id: str, *, title: str | None = None):
         return await session_repository.fork_session(session_id, title=title)
 

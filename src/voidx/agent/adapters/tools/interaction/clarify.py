@@ -47,7 +47,7 @@ class ClarifyTool:
             inp = ClarifyInput.model_validate(args)
         except Exception as exc:
             return ToolResult(output=f"Invalid arguments: {exc}", summary="clarify: invalid arguments", metadata={"error": True})
-        if ctx.runtime.interaction is None:
+        if ctx.runtime.clarify_requester is None and ctx.runtime.interaction is None:
             return ToolResult(
                 title="clarify: unavailable",
                 output=(
@@ -58,14 +58,19 @@ class ClarifyTool:
                 metadata={"clarify_cancelled": True, "blocked": True},
             )
 
-        clarify_id = uuid4().hex
-        event_ui_active = _emit_clarify_shown(ctx.runtime.events, clarify_id, inp)
-        response = await ctx.runtime.interaction(UserInteraction(
-            prompt="Question:" if event_ui_active else inp.question,
-            options=[] if event_ui_active else inp.options,
-            timeout=120.0,
-        ))
-        _emit_clarify_answer(ctx.runtime.events, clarify_id, response)
+        if ctx.runtime.clarify_requester is not None:
+            response = await ctx.runtime.clarify_requester(UserInteraction(
+                prompt=inp.question, options=inp.options, timeout=120.0,
+            ))
+        else:
+            clarify_id = uuid4().hex
+            event_ui_active = _emit_clarify_shown(ctx.runtime.events, clarify_id, inp)
+            response = await ctx.runtime.interaction(UserInteraction(
+                prompt="Question:" if event_ui_active else inp.question,
+                options=[] if event_ui_active else inp.options,
+                timeout=120.0,
+            ))
+            _emit_clarify_answer(ctx.runtime.events, clarify_id, response)
         if response.cancelled:
             return ToolResult(
                 title="clarify: skipped",

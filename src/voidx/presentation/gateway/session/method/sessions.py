@@ -153,7 +153,7 @@ class SessionMethods:
                 transcript_epoch,
             )
 
-            epoch = await transcript_epoch(thread_id)
+            epoch = await transcript_epoch(await self._transcript_session_id(thread_id))
             before_turn_id = decode_transcript_cursor(
                 self._cursor_secret,
                 cursor,
@@ -210,15 +210,18 @@ class SessionMethods:
         if not request_id:
             raise MethodParamsError("request_id is required")
         value = params.get("value")
-        thread_id = str(params.get("thread_id") or self._active_thread_id or "")
-        await self.handle_response(
+        semantic = self._interaction_router is not None
+        if semantic and value is not None and not isinstance(value, str):
+            raise MethodParamsError("value must be a string or null")
+        thread_id = str(params.get("thread_id") or ("" if semantic else self._active_thread_id) or "")
+        accepted = await self.handle_response(
             UiResponse(
                 request_id=request_id,
                 value=None if value is None else str(value),
             ),
             thread_id=thread_id,
         )
-        return {"ok": True}
+        return {"ok": bool(accepted) if semantic else True}
 
     def _method_usage_get(self, params: dict) -> dict:
         provider = getattr(self, "_usage_stats_provider", None)

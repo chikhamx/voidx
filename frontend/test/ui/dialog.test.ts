@@ -254,3 +254,141 @@ describe("permission request lifecycle", () => {
     expect(document.querySelector(".request-permission-question")?.textContent).toContain("Allow new tool?");
   });
 });
+
+
+describe("permission replay identity", () => {
+    const request = {
+        kind: "permission", request_id: "replayed", thread_id: "thread-a",
+        response_method: "session.respond", prompt: "Allow?",
+        choices: [["Allow", "y", "Allow once"]],
+    };
+
+    it("does not queue a replay of the open request", () => {
+        showRequest(request);
+        showRequest({ ...request });
+        expect(document.querySelector("#request-dialog").open).toBe(true);
+        expect(pendingUiRequests).toHaveLength(0);
+    });
+
+    it("deduplicates queued replays without changing FIFO order", () => {
+        showRequest({ ...request, request_id: "first" });
+        showRequest(request);
+        showRequest({ ...request, request_id: "last" });
+        showRequest({ ...request });
+        expect(pendingUiRequests.map((r) => r.request_id)).toEqual(["replayed", "last"]);
+        clearPermissionRequests("first");
+        expect(document.querySelector("#request-dialog").dataset.requestId).toBe("replayed");
+        clearPermissionRequests("replayed");
+        expect(document.querySelector("#request-dialog").dataset.requestId).toBe("last");
+    });
+
+    it("does not merge identities from different threads or response routes", () => {
+        showRequest(request);
+        showRequest({ ...request, thread_id: "thread-b" });
+        showRequest({ ...request, response_method: "" });
+        expect(pendingUiRequests).toHaveLength(2);
+    });
+
+    it("merges business permission presentation with the equivalent ui.request", () => {
+        showPromptItemRequest({ ...request, prompt_type: "permission", interactive: true });
+        showRequest(request);
+        expect(pendingUiRequests).toHaveLength(0);
+        clearPermissionRequests(request.request_id);
+        expect(document.querySelector("#request-dialog").open).toBe(false);
+        expect(pendingUiRequests).toHaveLength(0);
+    });
+});
+
+ describe("replace permission lifecycle", () => {
+  const request = (id = "owned") => ({ kind: "permission", request_id: id,
+    thread_id: "thread", prompt: "Approve?", response_method: "session.respond",
+    reconnect_policy: "replace", choices: [["Allow", "allow", "Allow"]] });
+  const dialog = () => document.querySelector("#request-dialog");
+  const click = () => controlsEl.querySelector("button").click();
+  it("clears open and queued owned permissions but preserves legacy", async () => {
+    const { clearDisconnectedPermissionRequests } = await import("../../src/ui/dialog");
+    showRequest(request()); showRequest(request("queued"));
+    showRequest({ ...request("legacy"), reconnect_policy: undefined });
+    clearDisconnectedPermissionRequests();
+    expect(dialog().dataset.requestId).toBe("legacy");
+    expect(pendingUiRequests).toEqual([]);
+  });
+  it("waits for ok:true and blocks double submission", async () => {
+    const { _resolvePendingForTest } = await import("../../src/rpc/client");
+    const socket = { readyState: WebSocket.OPEN, send: vi.fn(), addEventListener() {} };
+    _setSocket(socket); showRequest(request()); click(); click();
+    expect(dialog().open).toBe(true);
+    expect(controlsEl.querySelector("button").disabled).toBe(true);
+    expect(socket.send).toHaveBeenCalledTimes(1);
+    _resolvePendingForTest(1, { ok: true }); await Promise.resolve();
+    expect(dialog().open).toBe(false);
+  });
+  it.each(["rejected", "error"])("keeps request and public error on %s", async (mode) => {
+    const { _resolvePendingForTest, flushPendingRequests } = await import("../../src/rpc/client");
+    showRequest(request()); click();
+    if (mode === "error") flushPendingRequests(new Error("PRIVATE_SECRET"));
+    else _resolvePendingForTest(1, { ok: false });
+    await Promise.resolve(); await Promise.resolve();
+    expect(dialog().open).toBe(true);
+    expect(document.querySelector("#request-details").textContent).toContain("结果未确认或未接受");
+    expect(document.querySelector("#request-details").textContent).not.toContain("PRIVATE_SECRET");
+    expect(controlsEl.querySelector("button").disabled).toBe(false);
+  });
+  it.each([true, false, "error"])("ignores late completion %s after resolved", async (result) => {
+    const { _resolvePendingForTest, flushPendingRequests } = await import("../../src/rpc/client");
+    showRequest(request()); click(); clearPermissionRequests("owned"); showRequest(request("new"));
+    if (result === "error") flushPendingRequests(new Error("PRIVATE_SECRET"));
+    else _resolvePendingForTest(1, { ok: result });
+    await Promise.resolve(); await Promise.resolve();
+    expect(dialog().open).toBe(true); expect(dialog().dataset.requestId).toBe("new");
+    expect(document.querySelector("#request-details").textContent).not.toContain("结果未确认");
+  });
+ });
+
+describe("disconnected RPC ownership", () => {
+  it.each([true, false, "error"])("cannot revive disconnected request on %s", async (result) => {
+    const { clearDisconnectedPermissionRequests } = await import("../../src/ui/dialog");
+    const { _resolvePendingForTest, flushPendingRequests } = await import("../../src/rpc/client");
+    const req = { kind: "permission", request_id: "old", response_method: "session.respond",
+      reconnect_policy: "replace", prompt: "Approve?", choices: [["Allow", "allow", "Allow"]] };
+    showRequest(req); controlsEl.querySelector("button").click();
+    clearDisconnectedPermissionRequests(); showRequest({ ...req, request_id: "new" });
+    if (result === "error") flushPendingRequests(new Error("PRIVATE_SECRET"));
+    else _resolvePendingForTest(1, { ok: result });
+    await Promise.resolve(); await Promise.resolve();
+    const dialog = document.querySelector("#request-dialog");
+    expect(dialog.open).toBe(true); expect(dialog.dataset.requestId).toBe("new");
+    expect(document.querySelector("#request-details [role=alert]")).toBeNull();
+  });
+});
+
+
+describe("semantic clarify requests", () => {
+    it("offers raw free text alongside choices and clears on disconnect", async () => {
+        const { clearDisconnectedPermissionRequests } = await import("../../src/ui/dialog");
+        const socket = { readyState: WebSocket.OPEN, send: vi.fn(), addEventListener: () => { } };
+        _setSocket(socket);
+        showRequest({
+            kind: "choice", request_id: "clarify-1", thread_id: "t",
+            prompt: "Which environment?", choices: [["Staging", "Staging", ""]],
+            response_method: "session.respond", reconnect_policy: "replace"
+        });
+        const field = controlsEl.querySelector("textarea");
+        expect(field).not.toBeNull();
+        field.value = "custom environment";
+        [...controlsEl.querySelectorAll("button")].find(b => b.textContent === "Submit").click();
+        const message = JSON.parse(socket.send.mock.calls[0][0]);
+        expect(message.params.value).toBe("custom environment");
+        expect(document.querySelector("#request-dialog").open).toBe(true);
+        clearDisconnectedPermissionRequests();
+        expect(document.querySelector("#request-dialog").open).toBe(false);
+    });
+
+    it("allows dismissing semantic open-ended clarification", () => {
+        showRequest({
+            kind: "text", request_id: "clarify-text", prompt: "Why?",
+            response_method: "session.respond", reconnect_policy: "replace"
+        });
+        expect(controlsEl.querySelector(".request-choice-cancel")).not.toBeNull();
+    });
+});

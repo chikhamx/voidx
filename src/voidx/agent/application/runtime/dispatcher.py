@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -20,6 +21,7 @@ from voidx.agent.ports.persistence import (
     ThreadStore,
 )
 from voidx.agent.ports.presentation import AgentEventPublisher
+from voidx.agent.ports.run_lifecycle import RunLifecycle, SchedulerEvents
 
 
 class RuntimeTurnRunner(Protocol):
@@ -69,7 +71,11 @@ class RuntimeDispatcher:
         claim_kind: str | None = None,
         events: AgentEventPublisher | None = None,
         guidance: Any | None = None,
+        owner: RunLifecycle | None = None,
+        semantic_events: SchedulerEvents | None = None,
     ) -> None:
+        self._run_owner = owner
+        self._semantic_events = semantic_events
         self._store = store
         self._runner = runner
         self._lease_owner = lease_owner
@@ -80,6 +86,10 @@ class RuntimeDispatcher:
         self._guidance = guidance
 
     async def dispatch_once(self) -> DispatchResult | None:
+        with self._run_owner.reserve_dispatch() if self._run_owner is not None else nullcontext():
+            return await self._dispatch_once()
+
+    async def _dispatch_once(self) -> DispatchResult | None:
         outbox = await self._store.claim_next_outbox(
             lease_owner=self._lease_owner,
             lease_seconds=self._lease_seconds,
@@ -90,6 +100,10 @@ class RuntimeDispatcher:
         return await self._dispatch_claimed(outbox)
 
     async def dispatch_outbox(self, outbox_id: str) -> DispatchResult | None:
+        with self._run_owner.reserve_dispatch() if self._run_owner is not None else nullcontext():
+            return await self._dispatch_outbox(outbox_id)
+
+    async def _dispatch_outbox(self, outbox_id: str) -> DispatchResult | None:
         outbox = await self._store.claim_outbox(
             outbox_id,
             lease_owner=self._lease_owner,
@@ -222,12 +236,19 @@ class RuntimeDispatcher:
                                 lease_seconds=self._lease_seconds,
                             )
                         except Exception:
+                            if self._run_owner is not None:
+                                raise
                             renewed = False
                         if not renewed:
                             lease_lost.set()
+                            if self._run_owner is not None:
+                                raise RuntimeError("Runtime turn lease lost")
                             return
 
-            renewal_task = asyncio.create_task(renew_lease())
+            renewal_task = (
+                asyncio.create_task(renew_lease()) if self._run_owner is None
+                else self._run_owner.spawn(renew_lease, role="renewal")
+            )
             try:
                 try:
                     result = await self._runner.run_turn(
@@ -256,6 +277,8 @@ class RuntimeDispatcher:
                     await release_guidance()
                     return None
                 except Exception as exc:
+                    if self._run_owner is not None:
+                        raise
                     try:
                         await commit_runtime_failure(
                             f"Runtime turn failed after side effect started: {exc}"
@@ -349,6 +372,11 @@ class RuntimeDispatcher:
                         await release_guidance()
                         await self._store.release_outbox_claim(outbox.outbox_id)
                         return None
+                    if self._semantic_events is not None:
+                        loaded = await self._store.load(outbox.thread_id)
+                        await self._semantic_events.committed(
+                            goal_phase=result, lifecycle=loaded.state.lifecycle.value,
+                        )
                     return DispatchResult(
                         attempt_id=attempt.attempt_id,
                         thread_id=outbox.thread_id,
@@ -357,7 +385,7 @@ class RuntimeDispatcher:
 
                 decision = self._lifecycle.normalize_decision(result)
                 try:
-                    await self._store.commit_decision(
+                    committed = await self._store.commit_decision(
                         attempt_id=attempt.attempt_id,
                         decision=decision,
                         expected_state_version=attempt.state_version,
@@ -376,6 +404,10 @@ class RuntimeDispatcher:
                     self._events.publish_message(
                         f"Automation paused for user input: {reason}"
                     )
+                if self._semantic_events is not None:
+                    available_at = (await self._store.get_wakeup_available_at(committed.next_outbox_id)
+                                    if committed.next_outbox_id else None)
+                    await self._semantic_events.committed(decision=decision, available_at=available_at)
                 return DispatchResult(
                     attempt_id=attempt.attempt_id,
                     thread_id=outbox.thread_id,

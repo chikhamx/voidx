@@ -96,6 +96,10 @@ class GatewaySession(
         *,
         thread_id: str = "",
         session_id: str = "",
+        transcript_session_resolver: Callable[[str], str | Awaitable[str]] | None = None,
+        thread_tree_provider: Callable[[str], OutputTree | None] | None = None,
+        interaction_router: Any | None = None,
+        interaction_cancel: Callable[[], Awaitable[None]] | None = None,
         runtime_profile: str = "coding",
         profile_snapshot: object | None = None,
         command_handler: Callable[[UiCommand], Awaitable[None] | None] | None = None,
@@ -111,6 +115,12 @@ class GatewaySession(
         session_repository: SessionRepository | None = None,
         dock: Any | None = None,
     ) -> None:
+        self._transcript_session_resolver = transcript_session_resolver
+        self._thread_tree_provider = thread_tree_provider
+        self._interaction_cancel = interaction_cancel
+        self._managed_run_threads: set[str] = set()
+        self._managed_terminal_statuses: dict[str, str] = {}
+        self._interaction_router = interaction_router
         self._tree_provider = tree_providers
         self._session_id = session_id or thread_id
         self._command_handler = command_handler
@@ -186,6 +196,10 @@ class GatewaySession(
         return await self._session_repository.close_provisional_owner(self._owner_id)
 
     @property
+    def strict_transport(self) -> bool:
+        return self._interaction_router is not None
+
+    @property
     def owner_id(self) -> str:
         return self._owner_id
 
@@ -227,8 +241,11 @@ class GatewaySession(
                 )
             )
             self._client_workspace_revisions[client] = self._workspace_revision
+            if self._interaction_router is not None:
+                for request in self._interaction_router.requests():
+                    await self.publish_interaction(request, client=client)
             self._start_persisted_thread_sync()
-        except Exception:
+        except BaseException:
             self.disconnect(client)
             raise
 
@@ -305,6 +322,8 @@ class GatewaySession(
             async with self._run_manager.submission_lock(thread_id):
                 return await self._handle_submit(command, thread_id)
         if command.kind == "cancel":
+            if self._interaction_router is not None:
+                return await self._dispatch_command(command)
             await self._run_manager.cancel(thread_id)
             self._sync_thread_status(thread_id)
             return True
@@ -375,6 +394,10 @@ class GatewaySession(
         )
         return True
 
+    def complete_legacy_dispatch(self, thread_id: str) -> None:
+        self._run_manager.complete_turn(thread_id)
+        self._sync_thread_status(thread_id)
+
     async def _rollback_temporary_thread(self, thread_id: str) -> None:
         if self._session_repository is not None:
             await self._session_repository.rollback_provisional_session(thread_id)
@@ -394,8 +417,38 @@ class GatewaySession(
         info = self._threads.get(thread_id)
         if info is not None:
             self._threads[thread_id] = info.model_copy(
-                update={"status": self._run_manager.status(thread_id)},
+                update={"status": self._managed_terminal_statuses.get(
+                    thread_id, self._run_manager.status(thread_id))},
             )
+
+    async def publish_interaction(
+        self, request: UiRequest, *, client: ProtocolClient | None = None,
+        sync_snapshot: bool = False,
+    ) -> None:
+        if self._interaction_router is None:
+            raise RuntimeError("Semantic interaction route is not installed")
+        if sync_snapshot and client is None:
+            await self.broadcast_snapshot(sync_persisted=False, force_snapshot=True)
+        params = request.model_dump()
+        params["response_method"] = "session.respond"
+        params["reconnect_policy"] = "replace"
+        text = JsonRpcNotification(method="ui.request", params=params).model_dump_json()
+        try:
+            for target in ((client,) if client is not None else tuple(self._clients)):
+                await target.send_text(text)
+        except BaseException as error:
+            await self._fail_interaction_route(error)
+            raise
+
+    async def _fail_interaction_route(self, error: BaseException) -> None:
+        self._interaction_router.close()
+        if self._interaction_cancel is not None:
+            try:
+                await self._interaction_cancel()
+            except BaseException as cleanup_error:
+                raise BaseExceptionGroup(
+                    "Gateway send and owner cancellation failed", [error, cleanup_error]
+                ) from None
 
     async def request(self, request: UiRequest) -> UiResponse | None:
         if not self._clients:
@@ -418,7 +471,10 @@ class GatewaySession(
         finally:
             self._run_manager.remove_pending_request(thread_id, request.request_id)
 
-    async def handle_response(self, response: UiResponse, *, thread_id: str = "") -> None:
+    async def handle_response(self, response: UiResponse, *, thread_id: str = "") -> bool | None:
+        if self._interaction_router is not None:
+            return await self._interaction_router.respond(
+                response.request_id, response.value, thread_id=thread_id)
         tid = thread_id or getattr(response, "thread_id", "") or self._active_thread_id or ""
         if tid and self._run_manager.resolve_pending_request(tid, response):
             return
@@ -454,6 +510,12 @@ class GatewaySession(
             return
         if getattr(event, "thread_id", "") != tid:
             event = event.model_copy(update={"thread_id": tid})
+        if self._interaction_router is not None and event.kind == "turn.started":
+            if tid not in self._threads:
+                self._threads[tid] = ThreadInfo(thread_id=tid)
+            self._active_thread_id = tid
+            self._adapters[tid] = UiEventItemAdapter(thread_id=tid, turn_id="")
+            await self.broadcast_snapshot(sync_persisted=False, force_snapshot=True)
         await self._apply_turn_terminal_event(event, tid)
         if not self._clients:
             return
@@ -581,6 +643,13 @@ class GatewaySession(
 
     async def _apply_turn_terminal_event(self, event: UiEvent, thread_id: str) -> None:
         kind = getattr(event, "kind", "")
+        if thread_id in self._managed_run_threads:
+            if kind == "turn.completed":
+                info = self._threads.get(thread_id)
+                if info is not None and info.temporary and self._session_repository is not None:
+                    await self._session_repository.promote_provisional_session(thread_id)
+                    self._threads[thread_id] = info.model_copy(update={"temporary": False})
+            return
         info = self._threads.get(thread_id)
         if kind == "turn.completed":
             if info is not None and info.temporary and self._session_repository is not None:
@@ -871,7 +940,7 @@ class GatewaySession(
             )
         await self._activate_dock(thread_id)
         self._active_thread_id = thread_id
-        await self.broadcast_snapshot(turn_limit=turn_limit)
+        await self.broadcast_snapshot(turn_limit=turn_limit, force_snapshot=True)
 
     async def _activate_dock(self, thread_id: str) -> None:
         """Keep the shared presentation tree aligned with the active thread."""
@@ -886,14 +955,18 @@ class GatewaySession(
         )
 
         current_thread_id = self._active_thread_id
-        if current_thread_id:
+        owns_transcript = getattr(self._interaction_router, "owns_transcript", lambda tid: False)
+        if current_thread_id and not owns_transcript(current_thread_id):
+            current_session_id = await self._transcript_session_id(current_thread_id)
             rows, turn_count = tree_to_transcript_rows(
-                current_thread_id,
+                current_session_id,
                 self._tree_provider(),
             )
-            await replace_transcript(current_thread_id, rows, turn_count=turn_count)
+            await replace_transcript(current_session_id, rows, turn_count=turn_count)
 
-        rows = await load_transcript(thread_id)
+        if owns_transcript(thread_id):
+            return
+        rows = await load_transcript(await self._transcript_session_id(thread_id))
         if rows:
             self._dock.restore_tree(transcript_rows_to_tree(rows), append=False)
         else:
@@ -918,6 +991,12 @@ class GatewaySession(
         )
         return envelope.model_dump_json()
 
+    async def _transcript_session_id(self, thread_id: str) -> str:
+        if self._transcript_session_resolver is not None:
+            result = self._transcript_session_resolver(thread_id)
+            return await result if inspect.isawaitable(result) else result
+        return thread_id
+
     async def _build_workspace_snapshot(
         self,
         *,
@@ -926,7 +1005,10 @@ class GatewaySession(
     ) -> WorkspaceSnapshot:
         if sync_persisted:
             await self.sync_persisted_threads()
-        if turn_limit is not None and self._active_thread_id:
+        live_tree = (self._thread_tree_provider(self._active_thread_id)
+                     if self._thread_tree_provider is not None else None)
+        if (live_tree is None and turn_limit is not None
+                and self._active_thread_id):
             active_snapshot = await self._windowed_thread_snapshot(
                 self._active_thread_id,
                 before_turn_id=None,
@@ -939,7 +1021,9 @@ class GatewaySession(
             )
 
             transcript = await self._active_thread_snapshot()
-            epoch = await transcript_epoch(self._active_thread_id or self._session_id)
+            epoch = await transcript_epoch(
+                await self._transcript_session_id(self._active_thread_id or self._session_id)
+            )
             active_snapshot = ThreadSnapshot(
                 thread_id=self._active_thread_id,
                 revision=self._seq,
@@ -984,13 +1068,13 @@ class GatewaySession(
         )
 
         page = await load_transcript_page(
-            thread_id,
+            await self._transcript_session_id(thread_id),
             before_turn_id=before_turn_id,
             turn_limit=turn_limit,
         )
-        epoch = await transcript_epoch(thread_id)
+        epoch = await transcript_epoch(await self._transcript_session_id(thread_id))
         transcript = tree_to_snapshot(
-            transcript_rows_to_tree(page.rows),
+            transcript_rows_to_tree(page.rows, preserve_tree_ids=self._transcript_session_resolver is not None),
             session_id=thread_id,
         )
         return ThreadSnapshot(
@@ -1028,15 +1112,20 @@ class GatewaySession(
         )
 
     async def _active_thread_snapshot(self) -> TranscriptSnapshot:
-        if self._active_thread_id and self._active_thread_id != self._session_id:
+        if self._thread_tree_provider is not None:
+            live_tree = self._thread_tree_provider(self._active_thread_id)
+            if live_tree is not None:
+                return tree_to_snapshot(live_tree, session_id=self._active_thread_id)
+        if (self._active_thread_id and (self._transcript_session_resolver is not None
+                or self._active_thread_id != self._session_id)):
             from voidx.presentation.adapters.persistence.transcript_snapshot import load_transcript
 
-            rows = await load_transcript(self._active_thread_id)
+            rows = await load_transcript(await self._transcript_session_id(self._active_thread_id))
             if rows:
                 from voidx.presentation.adapters.persistence.transcript_snapshot import transcript_rows_to_tree
 
                 return tree_to_snapshot(
-                    transcript_rows_to_tree(rows),
+                    transcript_rows_to_tree(rows, preserve_tree_ids=self._transcript_session_resolver is not None),
                     session_id=self._active_thread_id,
                 )
             return TranscriptSnapshot(session_id=self._active_thread_id, nodes=[])
@@ -1049,7 +1138,7 @@ class GatewaySession(
         )
         if self._active_snapshot_cache is not None and self._active_snapshot_cache[0] == cache_key:
             return self._active_snapshot_cache[1]
-        snapshot = tree_to_snapshot(tree, session_id=self._session_id)
+        snapshot = tree_to_snapshot(tree, session_id=self._active_thread_id or self._session_id)
         self._active_snapshot_cache = (cache_key, snapshot)
         return snapshot
 
@@ -1061,6 +1150,14 @@ class GatewaySession(
         self,
         encoded: list[tuple[ProtocolClient, str]],
     ) -> None:
+        if self._interaction_router is not None:
+            try:
+                for client, text in encoded:
+                    await client.send_text(text)
+            except BaseException as error:
+                await self._fail_interaction_route(error)
+                raise
+            return
         if not encoded:
             return
         results = await asyncio.gather(
@@ -1072,6 +1169,9 @@ class GatewaySession(
                 self.disconnect(client)
 
     async def _broadcast(self, text: str) -> None:
+        if self._interaction_router is not None:
+            await self._send_encoded([(client, text) for client in tuple(self._clients)])
+            return
         results = await asyncio.gather(
             *(client.send_text(text) for client in tuple(self._clients)),
             return_exceptions=True,

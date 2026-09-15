@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from uuid import uuid4
 
 import time
 import logging
@@ -113,6 +114,20 @@ class LlmTurn:
     def __init__(self, host: Any) -> None:
         self.host = host
 
+    async def stream(self, model, messages, protocol, *, headless=False):
+        output = getattr(self.host, "semantic_output", None)
+        if output is not None:
+            return await _stream_llm(
+                model, messages, None, protocol, semantic_output=output,
+            )
+        renderer_factory = StreamingRenderer or self.host._ui.streaming_renderer
+        renderer = renderer_factory(
+            self.host._ui.console, debug=self.host._debug, headless=headless,
+        )
+        return await _stream_llm(
+            model, messages, renderer, protocol, ui_port=self.host._ui,
+        )
+
     async def call(self, state: AgentState) -> dict:
         host = self.host
         host._last_stop_signal = ""
@@ -214,7 +229,7 @@ class LlmTurn:
                 message_id = await save_turn_message(row)
                 if host._session_msg_cache is not None:
                     host._session_msg_cache.append(row.model_copy(update={"id": message_id}))
-        if host._ui.via_events() and guidance_pairs:
+        if guidance_pairs and host._ui is not None and host._ui.via_events():
             user_guidance = [
                 str(msg.content)
                 for msg, _, source in guidance_pairs
@@ -552,12 +567,6 @@ class LlmTurn:
                     convergence_messages,
                     convergence_forced,
                 )
-                renderer_factory = StreamingRenderer or host._ui.streaming_renderer
-                renderer = renderer_factory(
-                    host._ui.console,
-                    debug=host._debug,
-                    headless=loop.turn_prompt_active,
-                )
                 forced_tool_name = ""
                 forced_tool_resolver = getattr(control_protocol, "forced_tool_name", None)
                 if callable(forced_tool_resolver):
@@ -662,12 +671,11 @@ class LlmTurn:
                     protocol=model_protocol,
                 )
                 rollover_continuation = None
-                assistant_msg = await _stream_llm(
+                assistant_msg = await self.stream(
                     model_with_tools,
                     request_llm_messages,
-                    renderer,
                     model_protocol,
-                    ui_port=host._ui,
+                    headless=loop.turn_prompt_active,
                 )
                 log_llm_exchange(
                     request_llm_messages,
@@ -763,7 +771,7 @@ class LlmTurn:
                         "step_count": step,
                         "should_continue": False,
                     }
-                if host._debug or not assistant_msg.tool_calls:
+                if host._ui is not None and (host._debug or not assistant_msg.tool_calls):
                     host._ui.ui.print()
                 if loop.retry_status_active and host._ui.via_events():
                     await host._ui.events.emit(StatusFinished(status_id="llm:retry"))
@@ -943,7 +951,13 @@ class LlmTurn:
         if loop.terminal_msg is not None and not loop.terminal_msg_visible:
             final_text = extract_text(final_msg).strip()
             if final_text:
-                if host._ui.via_events():
+                output = getattr(host, "semantic_output", None)
+                if output is not None:
+                    stream_id = uuid4().hex
+                    await output.stream_started(stream_id, "text")
+                    await output.stream_chunk(stream_id, "text", final_text)
+                    await output.stream_committed(stream_id, "text", final_text)
+                elif host._ui.via_events():
                     await host._ui.events.emit(AssistantStreamUpdated(text=final_text, phase="text"))
                     await host._ui.events.emit(AssistantStreamCommitted())
                 else:

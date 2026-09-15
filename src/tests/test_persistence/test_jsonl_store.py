@@ -91,3 +91,40 @@ async def test_replace_session_records_keeps_old_file_when_replace_fails(
     assert await jsonl_store.read_session_records(session_id, "transcript.jsonl") == [
         {"version": "old"}
     ]
+
+
+@pytest.mark.asyncio
+async def test_append_session_record_locked_requires_matching_lock(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path)
+    session_id = "session-locked"
+    path = jsonl_store.session_dir(session_id) / "messages.jsonl"
+
+    with pytest.raises(RuntimeError, match="session directory lock"):
+        jsonl_store.append_session_record_locked(session_id, {"id": 1})
+    async with jsonl_store.session_directory_locks(("other-session",)):
+        with pytest.raises(RuntimeError, match="session directory lock"):
+            jsonl_store.append_session_record_locked(session_id, {"id": 1})
+
+    assert not path.exists()
+
+
+@pytest.mark.asyncio
+async def test_append_session_record_locked_writes_real_jsonl(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path)
+    session_id = "session-locked"
+    records = [{"id": 1, "content": "摘要"}, {"id": 2, "content": "next"}]
+
+    async with jsonl_store.session_directory_locks((session_id,)):
+        jsonl_store.append_session_record_locked(session_id, records[0])
+        await asyncio.to_thread(
+            jsonl_store.append_session_record_locked, session_id, records[1]
+        )
+
+    path = jsonl_store.session_dir(session_id) / "messages.jsonl"
+    assert path.read_text(encoding="utf-8") == (
+        '{"id":1,"content":"摘要"}\n{"id":2,"content":"next"}\n'
+    )
+    assert await jsonl_store.read_session_records(session_id, "messages.jsonl") == records
+    with pytest.raises(RuntimeError, match="session directory lock"):
+        jsonl_store.append_session_record_locked(session_id, {"id": 3})
+    assert await jsonl_store.read_session_records(session_id, "messages.jsonl") == records

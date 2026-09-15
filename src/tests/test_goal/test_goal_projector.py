@@ -384,3 +384,149 @@ async def test_public_summary_delivery_is_idempotent_after_file_before_ack_crash
     delivered = (await store.list_goal_public_summaries("main-projector"))[0]
     assert delivered["delivered_at"] is not None
     assert (await store.get_session("main-projector")).message_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["project", "wakeup", "corruption"])
+@pytest.mark.parametrize("loss", ["expired", "new-owner"])
+async def test_recovery_write_boundary_fences_lease(store, monkeypatch, boundary, loss):
+    generation = await _initialize(store)
+    if boundary == "project":
+        record = GoalProtocolRecord.submitted(
+            protocol_id="checkpoint-atomic", parent_session_id="main-projector",
+            generation=generation, phase="checkpoint", attempt_number=1,
+            turn_id="work-atomic", session_id="work-projector",
+            payload=WorkCheckpoint(generation=generation, attempt_number=1,
+                                   summary="done", work_turn_id="work-atomic"),
+        )
+        await submit_fenced_goal_protocol(store, record)
+    elif boundary == "wakeup":
+        await store._write(lambda conn: conn.execute("DELETE FROM runtime_outbox"))
+    else:
+        await store._write(lambda conn: conn.execute("DELETE FROM goal_protocol_records"))
+
+    async def snapshot():
+        tables = ["goal_generations", "agent_threads", "agent_thread_state",
+                  "goal_protocol_records", "runtime_outbox", "goal_runtime_failures",
+                  "goal_public_summary_outbox"]
+        return {table: [dict(row) for row in await store._all(f"SELECT * FROM {table}")]
+                for table in tables}
+
+    baseline = await snapshot()
+    method = {"project": "project_goal_protocol", "wakeup": "ensure_goal_phase_outbox",
+              "corruption": "fail_goal_generation"}[boundary]
+    original = getattr(store, method)
+    foreign = None
+
+    async def preempt(*args, **kwargs):
+        nonlocal foreign
+        lease = await store.get_goal_generation_lease(generation)
+        assert await store.renew_goal_generation_lease(generation, lease["lease_owner"], lease_seconds=30)
+        await store._write(lambda conn: conn.execute(
+            "UPDATE goal_recovery_leases SET lease_expires_at = 0 WHERE generation = ?", (generation,)))
+        if loss == "new-owner":
+            assert await store.acquire_goal_generation_lease(generation, "foreign", lease_seconds=60)
+        foreign = await store.get_goal_generation_lease(generation)
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(store, method, preempt)
+    with pytest.raises(GoalProtocolConflict, match="lease"):
+        await GoalRecovery(store=store).recover_generation(generation)
+    assert await snapshot() == baseline
+    if loss == "new-owner":
+        assert await store.get_goal_generation_lease(generation) == foreign
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["init", "project-init"])
+@pytest.mark.parametrize("loss", ["missing", "expired", "new-owner"])
+async def test_init_write_requires_live_recovery_owner(store, boundary, loss):
+    kwargs = _boundary_kwargs()
+    generation = kwargs["generation"]
+    await store.ensure_session("main-projector", "/workspace", profile="goal",
+                               profile_snapshot=_profile_snapshot())
+    await store.submit_goal_protocol(kwargs["protocol"])
+    if loss != "missing":
+        assert await store.acquire_goal_generation_lease(generation, "old", lease_seconds=30)
+        await store._write(lambda conn: conn.execute(
+            "UPDATE goal_recovery_leases SET lease_expires_at = 0 WHERE generation = ?", (generation,)))
+        if loss == "new-owner":
+            assert await store.acquire_goal_generation_lease(generation, "foreign", lease_seconds=60)
+    before = await store.get_goal_protocol(kwargs["protocol"].protocol_id)
+    with pytest.raises(GoalProtocolConflict, match="lease"):
+        if boundary == "init":
+            await store.initialize_goal_generation(**kwargs, lease_owner="old")
+        else:
+            await GoalProjector(store=store).project(before.protocol_id, lease_owner="old")
+    assert await store.get_goal_generation(generation) is None
+    assert await store.get_goal_protocol(before.protocol_id) == before
+    assert await store._all("SELECT * FROM runtime_outbox") == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["init", "project-init", "wakeup", "corruption", "summaries"])
+async def test_live_recovery_owner_holds_sqlite_write_lock_through_commit(store, tmp_path, boundary):
+    import sqlite3
+
+    kwargs = _boundary_kwargs()
+    generation = kwargs["generation"]
+    if boundary in ("wakeup", "corruption", "summaries"):
+        await _initialize(store)
+    else:
+        await store.ensure_session("main-projector", "/workspace", profile="goal",
+                                   profile_snapshot=_profile_snapshot())
+        await store.submit_goal_protocol(kwargs["protocol"])
+    if boundary == "summaries":
+        await store.fail_goal_generation(
+            GoalRuntimeFailure(generation=generation, observed_sequence=0, reason="corrupt")
+        )
+    assert await store.acquire_goal_generation_lease(generation, "owner", lease_seconds=60)
+    statements, blocked, unexpected = [], [], []
+
+    def trace(sql):
+        statements.append(sql)
+        if sql.startswith("SELECT lease_owner, lease_expires_at FROM goal_recovery_leases"):
+            try:
+                contender.execute("UPDATE goal_recovery_leases SET lease_owner = 'foreign'")
+                contender.commit()
+            except sqlite3.OperationalError as exc:
+                blocked.append(str(exc))
+                contender.rollback()
+            else:
+                unexpected.append("foreign write succeeded during lease check")
+
+    # The callback runs on the persistence worker thread.
+    contender = sqlite3.connect(tmp_path / "store.db", timeout=0, check_same_thread=False)
+    store._conn.set_trace_callback(trace)
+    try:
+        if boundary == "init":
+            await store.initialize_goal_generation(**kwargs, lease_owner="owner")
+        elif boundary == "project-init":
+            await GoalProjector(store=store).project(kwargs["protocol"].protocol_id, lease_owner="owner")
+        elif boundary == "summaries":
+            assert await store.deliver_goal_public_summaries(generation=generation, lease_owner="owner") == 1
+        elif boundary == "wakeup":
+            await store.ensure_goal_phase_outbox(generation, lease_owner="owner")
+        else:
+            await store.fail_goal_generation(
+                GoalRuntimeFailure(generation=generation, observed_sequence=0, reason="corrupt"),
+                lease_owner="owner",
+            )
+    finally:
+        store._conn.set_trace_callback(None)
+        contender.close()
+    assert not unexpected
+    assert blocked == ["database is locked"]
+    if boundary == "summaries":
+        fence_index = next(i for i, sql in enumerate(statements)
+                           if sql.startswith("SELECT lease_owner, lease_expires_at FROM goal_recovery_leases"))
+        assert statements[fence_index - 1] == "BEGIN IMMEDIATE"
+    else:
+        assert statements[0] == "BEGIN IMMEDIATE"
+    assert statements[-1] == "COMMIT"
+    lease = await store.get_goal_generation_lease(generation)
+    assert lease["lease_owner"] == "owner"
+    if boundary == "corruption":
+        assert (await store.get_goal_runtime_failure(generation)).reason == "corrupt"
+        assert await store.release_goal_generation_lease(generation, "owner")
+        assert await store.get_goal_generation_lease(generation) is None

@@ -5,6 +5,7 @@ from voidx.agent.domain.display_policy import DEFAULT_DISPLAY_RULES, ToolDisplay
 
 import asyncio
 import time
+from uuid import uuid4
 from typing import TYPE_CHECKING
 
 from langchain_core.messages import AIMessage, ToolMessage
@@ -63,6 +64,7 @@ from .helpers import (
     _blocked_after_barrier_messages,
     _agent_result_preview,
     _make_interact_callback,
+    _bind_autonomous_requester,
     _requires_workspace_write_lock,
     _workspace_write_lock_manager,
     _infrastructure_skipped_tool,
@@ -147,7 +149,12 @@ async def _publish_loop_terminal_message(host, message: AIMessage) -> None:
     text = str(message.content or "").strip()
     if not text:
         return
-    if host._ui.via_events():
+    output = getattr(host, "semantic_output", None)
+    if output is not None:
+        stream_id = uuid4().hex
+        await output.stream_started(stream_id, "text")
+        await output.stream_committed(stream_id, "text", text)
+    elif host._ui.via_events():
         await host._ui.events.emit(AssistantStreamUpdated(text=text, phase="text"))
         await host._ui.events.emit(AssistantStreamCommitted())
     else:
@@ -231,7 +238,7 @@ class ToolExecutorAdapter:
         if not isinstance(last, AIMessage) or not last.tool_calls:
             return {}
 
-        if host._ui.dock.active and host._ui.dock.current_agent is not None:
+        if host._ui is not None and host._ui.dock.active and host._ui.dock.current_agent is not None:
             host._turn_node = host._ui.dock.current_agent
 
         host._current_messages = state["messages"]
@@ -261,12 +268,36 @@ class ToolExecutorAdapter:
         turn_context = thread_state.turn_context
         workflow_context = getattr(turn_context, "workflow_context", None)
         workflow_dag = getattr(workflow_context, "dag", None)
+        clarify_requester = None
+        requester = getattr(host, "interaction_requester", None)
+        if requester is not None:
+            from uuid import uuid4
+            from voidx.tooling.domain.interaction import InteractionRequest, UserResponse
+            from voidx.tooling.domain.ui_events import ChoicePayload
+
+            identity = dict(host.semantic_output.identity)
+
+            async def clarify_requester(interaction):
+                resolution = await requester(InteractionRequest(
+                    interaction_id=uuid4().hex,
+                    **{key: identity[key] for key in ("session_id", "thread_id", "turn_id")},
+                    input_kind="choice" if interaction.options else "text",
+                    purpose="clarify", prompt=interaction.prompt,
+                    choices=[ChoicePayload(label=option, value=option) for option in interaction.options],
+                    allow_free_text=True, timeout=interaction.timeout or 120.0,
+                ))
+                return UserResponse(
+                    value=resolution.value, free_text=resolution.free_text,
+                    cancelled=resolution.resolution_reason != "answered",
+                )
+
         agent_runtime = AgentToolRuntime(
             loop_control=getattr(turn_context, "loop_controller", None),
             goal_control=getattr(turn_context, "goal_controller", None),
             goal_intake=getattr(turn_context, "goal_intake_controller", None),
             goal_checkpoint_controller=getattr(turn_context, "goal_checkpoint_controller", None),
             loop_intake=getattr(turn_context, "loop_intake_controller", None),
+            loop_phase=getattr(turn_context, "loop_phase", "work"),
             goal_phase=getattr(turn_context, "goal_phase", "work"),
             goal_store=getattr(turn_context, "goal_store", None),
             goal_generation=getattr(turn_context, "goal_generation", ""),
@@ -290,6 +321,10 @@ class ToolExecutorAdapter:
                 if getattr(host, "agent_gateway", None) is not None
                 else ""
             ),
+            checkpoint_requester=requester,
+            autonomous_requester=_bind_autonomous_requester(host),
+            interaction_identity=identity if requester is not None else {},
+            clarify_requester=clarify_requester,
             interaction=_make_interact_callback(host._ui, host._ui),
             events=getattr(host, "tool_ui_events", None),
             access_grants=permission.get_access_grants,
@@ -439,7 +474,7 @@ class ToolExecutorAdapter:
             t0 = time.monotonic()
             ok = True
             heartbeat_task: asyncio.Task[None] | None = None
-            if host._ui.via_events():
+            if host._ui is not None and host._ui.via_events():
                 heartbeat_task = asyncio.create_task(
                     _emit_tool_heartbeat(
                         host,
@@ -450,12 +485,13 @@ class ToolExecutorAdapter:
                     name=f"voidx-tool-heartbeat:{tid}",
                 )
             try:
-                host._ui.session_tracker.capture_tool_call(
-                    tid,
-                    targs,
-                    ctx.workspace,
-                    authorization_runtime.sandbox_paths(write=False),
-                )
+                if host._ui is not None:
+                    host._ui.session_tracker.capture_tool_call(
+                        tid,
+                        targs,
+                        ctx.workspace,
+                        authorization_runtime.sandbox_paths(write=False),
+                    )
                 parent_tool_token = current_parent_tool_call_id.set(tool_event_id)
                 lock_manager = _workspace_write_lock_manager(host) if _requires_workspace_write_lock(tc) else None
                 lock_acquired = False
@@ -464,7 +500,7 @@ class ToolExecutorAdapter:
                 async def run_authorized_tool() -> ToolResult:
                     nonlocal lock_acquired
                     if lock_manager is not None:
-                        lock_acquired = await lock_manager.acquire_workspace_write_lock(session_id)
+                        lock_acquired = await lock_manager.acquire_workspace_write_lock(thread_state.thread_id)
                         if not lock_acquired:
                             return ToolResult(
                                 output="Workspace write lock acquisition cancelled before tool start.",
@@ -491,7 +527,7 @@ class ToolExecutorAdapter:
                         result = await run_authorized_tool()
                 finally:
                     if lock_acquired and lock_manager is not None:
-                        lock_manager.release_workspace_write_lock(session_id)
+                        lock_manager.release_workspace_write_lock(thread_state.thread_id)
                     current_parent_tool_call_id.reset(parent_tool_token)
                 ok = result_ok(result)
             except Exception as e:
@@ -530,7 +566,7 @@ class ToolExecutorAdapter:
             todo_state = todo_run_state_from_result(result) if tid == "todo" and ok else None
             todo_meta = getattr(result, "metadata", {}) or {} if tid == "todo" and ok else {}
             is_todo_read = todo_meta.get("todo_op") == "read"
-            if host._ui.via_events() and tid == "todo" and not is_todo_read:
+            if host._ui is not None and host._ui.via_events() and tid == "todo" and not is_todo_read:
                 todo_event = todo_updated_event(result)
                 if todo_event is not None:
                     await host._ui.events.emit(todo_event)
@@ -546,7 +582,8 @@ class ToolExecutorAdapter:
             await notify_tool_result(host, tc, result, ok, elapsed, display_policy, tool_node)
 
             if getattr(result, "diff", None) and ok:
-                host._ui.session_tracker.record_diff(result.diff)
+                if host._ui is not None:
+                    host._ui.session_tracker.record_diff(result.diff)
                 await notify_tool_diff(host, result, tool_event_id, tool_node)
             elif tid == "agent":
                 ui_output = result.display or (
@@ -720,7 +757,7 @@ class ToolExecutorAdapter:
             ),
             None,
         )
-        if host._ui.via_events() and terminal_reason != UI_EVENT_BUS_TIMEOUT_KIND:
+        if host._ui is not None and host._ui.via_events() and terminal_reason != UI_EVENT_BUS_TIMEOUT_KIND:
             try:
                 await host._ui.events.drain()
             except Exception as exc:

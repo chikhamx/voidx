@@ -11,11 +11,11 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext
+from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext, autonomous_init_decision
 from voidx.agent.domain.automation.loop import LoopSpec
 from voidx.agent.domain.task.state import GoalSpec, ToolStatePatch
 from voidx.tooling.domain.arguments import keep_tool_args
-from voidx.tooling.domain.interaction import UserInteraction
+from voidx.tooling.domain.interaction import InteractionRequest, UserInteraction
 from voidx.tooling.domain.result import ToolResult
 from voidx.tooling.domain.schema import model_to_json_schema
 from voidx.tooling.domain.ui_events import (
@@ -423,6 +423,16 @@ async def _submit_init(prompt: str, interval_seconds: int | None, ctx: ToolConte
 
 
 async def _request_loop_init_approval(spec: LoopSpec, ctx: ToolContext) -> str:
+    if ctx.runtime.autonomous_requester is not None:
+        return await autonomous_init_decision(ctx.runtime, InteractionRequest(
+            interaction_id="loop-init",
+            **{key: ctx.runtime.interaction_identity[key] for key in ("session_id", "thread_id", "turn_id")},
+            input_kind="choice", purpose="loop", prompt=_loop_init_approval_prompt(spec),
+            choices=[ChoicePayload(label=label, value=value, description=description)
+                     for label, value, description in _LOOP_INIT_APPROVAL_OPTIONS],
+            allow_free_text=True, timeout=_LOOP_INIT_APPROVAL_TIMEOUT_SECONDS,
+            loop=LoopSpecPayload(prompt=spec.prompt, interval_seconds=spec.interval_seconds),
+        ))
     if ctx.runtime.interaction is None:
         return "auto_approved"
     prompt_id = uuid4().hex

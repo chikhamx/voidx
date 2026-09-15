@@ -251,8 +251,9 @@ async def test_resume_generation_does_not_revive_outbox_with_existing_attempt(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("preempt", [False, True])
 async def test_resume_generation_replays_submitted_init_before_boundary_i(
-    tmp_path,
+    tmp_path, monkeypatch, preempt,
 ) -> None:
     db_path = tmp_path / "init-recovery.db"
     store = ThreadStore(db_path)
@@ -286,6 +287,33 @@ async def test_resume_generation_replays_submitted_init_before_boundary_i(
     )
     await store.submit_goal_protocol(record)
     scheduler = FakeGoalScheduler()
+
+    if preempt:
+        initialize = store.initialize_goal_generation
+        foreign = None
+
+        async def preempt_init(**kwargs):
+            nonlocal foreign
+            lease = await store.get_goal_generation_lease(spec.generation)
+            assert await store.renew_goal_generation_lease(spec.generation, lease["lease_owner"], lease_seconds=30)
+            await store._write(lambda conn: conn.execute(
+                "UPDATE goal_recovery_leases SET lease_expires_at = 0 WHERE generation = ?", (spec.generation,)))
+            assert await store.acquire_goal_generation_lease(spec.generation, "foreign", lease_seconds=60)
+            foreign = await store.get_goal_generation_lease(spec.generation)
+            return await initialize(**kwargs)
+
+        monkeypatch.setattr(store, "initialize_goal_generation", preempt_init)
+        with pytest.raises(GoalProtocolConflict, match="lease"):
+            await _service(store, scheduler).resume_generation(spec.generation)
+        assert await store.get_goal_generation(spec.generation) is None
+        assert (await store.get_goal_protocol(record.protocol_id)).status == "submitted"
+        assert await store._all("SELECT * FROM runtime_outbox") == []
+        assert await store._all("SELECT * FROM agent_threads") == []
+        assert len(await store._all("SELECT * FROM sessions")) == 1
+        assert await store.get_goal_generation_lease(spec.generation) == foreign
+        assert scheduler.registered == []
+        assert scheduler.pump_starts == 0
+        return
 
     status = await _service(store, scheduler).resume_generation(spec.generation)
 

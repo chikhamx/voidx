@@ -1,0 +1,187 @@
+{
+  "session_id": "hitl-render",
+  "revision": 3,
+  "root_id": "root",
+  "nodes": [
+    {
+      "id": "n1",
+      "parent_id": null,
+      "node_type": "turn",
+      "status": "done",
+      "title": "\u276f HITL",
+      "header": "\u276f HITL",
+      "header_style": "",
+      "body_lines": [],
+      "collapsed": false,
+      "elapsed": null,
+      "agent_name": null,
+      "step_info": null,
+      "meta": null,
+      "tool_call_id": null,
+      "agent_run_id": null,
+      "message_id": null,
+      "payload": {},
+      "child_ids": [
+        "n2",
+        "n4",
+        "n6"
+      ]
+    },
+    {
+      "id": "n2",
+      "parent_id": "n1",
+      "node_type": "checkpoint",
+      "status": "done",
+      "title": "",
+      "header": "",
+      "header_style": "",
+      "body_lines": [
+        "[bold]Question: Which option?[/bold]",
+        "Details: Keep all content",
+        ""
+      ],
+      "collapsed": false,
+      "elapsed": null,
+      "agent_name": null,
+      "step_info": null,
+      "meta": null,
+      "tool_call_id": null,
+      "agent_run_id": null,
+      "message_id": null,
+      "payload": {
+        "interaction": "clarify",
+        "decision": "approved"
+      },
+      "child_ids": [
+        "n3"
+      ]
+    },
+    {
+      "id": "n3",
+      "parent_id": "n2",
+      "node_type": "message",
+      "status": "done",
+      "title": "[bold]Answer:[/bold] Accepted clarify",
+      "header": "[bold]Answer:[/bold] Accepted clarify",
+      "header_style": "",
+      "body_lines": [],
+      "collapsed": false,
+      "elapsed": null,
+      "agent_name": null,
+      "step_info": null,
+      "meta": null,
+      "tool_call_id": null,
+      "agent_run_id": null,
+      "message_id": null,
+      "payload": {
+        "full_width_user_row": true,
+        "align_full_width_user_row": true
+      },
+      "child_ids": []
+    },
+    {
+      "id": "n4",
+      "parent_id": "n1",
+      "node_type": "checkpoint",
+      "status": "done",
+      "title": "",
+      "header": "",
+      "header_style": "",
+      "body_lines": [
+        "[bold]Goal: Ship safely[/bold]",
+        "Details: Keep all content",
+        ""
+      ],
+      "collapsed": false,
+      "elapsed": null,
+      "agent_name": null,
+      "step_info": null,
+      "meta": null,
+      "tool_call_id": null,
+      "agent_run_id": null,
+      "message_id": null,
+      "payload": {
+        "interaction": "goal_spec",
+        "decision": "approved"
+      },
+      "child_ids": [
+        "n5"
+      ]
+    },
+    {
+      "id": "n5",
+      "parent_id": "n4",
+      "node_type": "message",
+      "status": "done",
+      "title": "[bold]Answer:[/bold] Accepted goal_spec",
+      "header": "[bold]Answer:[/bold] Accepted goal_spec",
+      "header_style": "",
+      "body_lines": [],
+      "collapsed": false,
+      "elapsed": null,
+      "agent_name": null,
+      "step_info": null,
+      "meta": null,
+      "tool_call_id": null,
+      "agent_run_id": null,
+      "message_id": null,
+      "payload": {
+        "full_width_user_row": true,
+        "align_full_width_user_row": true
+      },
+      "child_ids": []
+    },
+    {
+      "id": "n6",
+      "parent_id": "n1",
+      "node_type": "checkpoint",
+      "status": "done",
+      "title": "",
+      "header": "",
+      "header_style": "",
+      "body_lines": [
+        "[bold]Loop: Check every 12 seconds[/bold]",
+        "Details: Keep all content",
+        ""
+      ],
+      "collapsed": false,
+      "elapsed": null,
+      "agent_name": null,
+      "step_info": null,
+      "meta": null,
+      "tool_call_id": null,
+      "agent_run_id": null,
+      "message_id": null,
+      "payload": {
+        "interaction": "loop_spec",
+        "decision": "approved"
+      },
+      "child_ids": [
+        "n7"
+      ]
+    },
+    {
+      "id": "n7",
+      "parent_id": "n6",
+      "node_type": "message",
+      "status": "done",
+      "title": "[bold]Answer:[/bold] Accepted loop_spec",
+      "header": "[bold]Answer:[/bold] Accepted loop_spec",
+      "header_style": "",
+      "body_lines": [],
+      "collapsed": false,
+      "elapsed": null,
+      "agent_name": null,
+      "step_info": null,
+      "meta": null,
+      "tool_call_id": null,
+      "agent_run_id": null,
+      "message_id": null,
+      "payload": {
+        "full_width_user_row": true,
+        "align_full_width_user_row": true
+      },
+      "child_ids": []
+    }
+  ]
+}

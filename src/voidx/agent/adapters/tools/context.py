@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -9,13 +10,33 @@ from typing import Protocol
 from pydantic import ConfigDict, Field, SkipValidation
 
 from voidx.tooling.domain.context import ToolExecutionContext
-from voidx.tooling.domain.interaction import UserInteraction, UserResponse
+from voidx.tooling.domain.interaction import InteractionRequest, InteractionResolution, UserInteraction, UserResponse
 from voidx.tooling.domain.ui_events import ToolUiEventPublisher
 from voidx.agent.ports.subagent import SubagentTransport
 
 
 class InteractionCallback(Protocol):
     def __call__(self, interaction: UserInteraction) -> UserResponse | Awaitable[UserResponse]: ...
+
+
+class CheckpointRequester(Protocol):
+    def __call__(self, request: InteractionRequest) -> Awaitable[InteractionResolution]: ...
+
+
+class AutonomousRequester(Protocol):
+    def __call__(self, request: InteractionRequest) -> Awaitable[InteractionResolution]: ...
+
+
+async def autonomous_init_decision(runtime: AgentToolRuntime, request: InteractionRequest) -> str:
+    resolution = await runtime.autonomous_requester(request)
+    if resolution.resolution_reason == "task_cancelled":
+        raise asyncio.CancelledError
+    if (resolution.decision == "approved" and resolution.resolution_reason == "answered"
+            and not resolution.free_text):
+        return "approved"
+    if resolution.resolution_reason == "answered" and (resolution.free_text or resolution.decision == "revised"):
+        return f"revise:{resolution.value}"
+    return "cancelled"
 
 
 @dataclass
@@ -28,6 +49,10 @@ class AgentToolRuntime:
     subagent_transport: SubagentTransport | None = None
     run_id: str = ""
     workflow_repeat_state: dict[str, dict[str, int]] = field(default_factory=dict)
+    checkpoint_requester: CheckpointRequester | None = None
+    autonomous_requester: AutonomousRequester | None = None
+    interaction_identity: dict[str, str] = field(default_factory=dict)
+    clarify_requester: InteractionCallback | None = None
     interaction: InteractionCallback | None = None
     events: ToolUiEventPublisher | None = None
     access_grants: object | None = None

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import html
 import json
 import re
@@ -61,18 +62,25 @@ async def stream_llm(
     *,
     ui_port: AgentUiPort | None = None,
     on_activity: Callable[[], None] | None = None,
+    semantic_output=None,
 ) -> AIMessage:
     """Stream LLM response, render live, return merged AIMessage."""
     from voidx.llm.thinking import extract_thinking
 
-    ui_port = ui_port or NullAgentUiPort()
     chunks: list[AIMessageChunk] = []
-    renderer.start()
-    if on_activity is not None:
-        on_activity()
-
+    stream_id = uuid.uuid4().hex
+    phases = {"text": ""}
+    iterator = None
     try:
-        async for raw_chunk in model.astream(_sanitize_messages_for_replay(messages, protocol=protocol)):
+        if semantic_output is not None:
+            await semantic_output.stream_started(stream_id, "text")
+        else:
+            ui_port = ui_port or NullAgentUiPort()
+            renderer.start()
+        if on_activity is not None:
+            on_activity()
+        iterator = model.astream(_sanitize_messages_for_replay(messages, protocol=protocol))
+        async for raw_chunk in iterator:
             if on_activity is not None:
                 on_activity()
             thinking = extract_thinking(raw_chunk, protocol)
@@ -83,17 +91,54 @@ async def stream_llm(
                 else raw_chunk.model_copy(update={"content": content})
             )
             chunks.append(chunk)
-            if thinking:
-                renderer.feed_thinking(thinking)
-            _render_stream_content(renderer, content)
+            if semantic_output is not None:
+                for phase, delta in (("thinking", thinking), ("text", "".join(_stream_text_parts(content)))):
+                    if not delta:
+                        continue
+                    if phase not in phases:
+                        phases[phase] = ""
+                        await semantic_output.stream_started(stream_id, phase)
+                    await semantic_output.stream_chunk(stream_id, phase, delta)
+                    phases[phase] += delta
+            else:
+                if thinking:
+                    renderer.feed_thinking(thinking)
+                _render_stream_content(renderer, content)
+        response = _merge_stream_chunks(chunks)
+        if semantic_output is not None:
+            for phase, text in phases.items():
+                if is_malformed_tool_call_response(response):
+                    await semantic_output.stream_discarded(stream_id, phase, "invalid_tool_call")
+                else:
+                    await semantic_output.stream_committed(
+                        stream_id, phase,
+                        "".join(_stream_text_parts(response.content)) if phase == "text" else text,
+                    )
+        return response
+    except asyncio.CancelledError:
+        # Cancellation must not wait on a full output queue. The run supervisor
+        # owns the terminal event that invalidates any remaining stream drafts.
+        if semantic_output is None:
+            renderer.discard()
+        raise
     except Exception:
-        renderer.discard()
+        if semantic_output is not None:
+            for phase in phases:
+                await semantic_output.stream_discarded(stream_id, phase, "model_stream_failed")
+            await semantic_output.stream_error()
+        else:
+            renderer.discard()
         raise
     finally:
-        renderer.done()
-        if getattr(ui_port.events, "is_running", False):
-            await ui_port.events.drain()
+        if iterator is not None and hasattr(iterator, "aclose"):
+            await iterator.aclose()
+        if semantic_output is None:
+            renderer.done()
+            if getattr(ui_port.events, "is_running", False):
+                await ui_port.events.drain()
 
+
+def _merge_stream_chunks(chunks: list[AIMessageChunk]) -> AIMessage:
     if not chunks:
         return AIMessage(content="")
 
@@ -290,17 +335,21 @@ def _strip_duplicate_thinking_text(text: str, thinking: str, *, protocol: str = 
     return text
 
 
-def _render_stream_content(renderer: Any, content: object) -> None:
+def _stream_text_parts(content: object):
     if isinstance(content, str) and content:
         if _should_render_text_chunk(content):
-            renderer.feed_text(content)
-        return
-    if isinstance(content, list):
+            yield content
+    elif isinstance(content, list):
         for item in content:
             if isinstance(item, dict) and item.get("type") == "text":
                 text = item.get("text", "")
                 if isinstance(text, str) and _should_render_text_chunk(text):
-                    renderer.feed_text(text)
+                    yield text
+
+
+def _render_stream_content(renderer: Any, content: object) -> None:
+    for text in _stream_text_parts(content):
+        renderer.feed_text(text)
 
 
 def _is_empty_content(content: object) -> bool:

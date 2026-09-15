@@ -1,0 +1,537 @@
+{
+  "live": [
+    {
+      "jsonrpc": "2.0",
+      "method": "ui.request",
+      "params": {
+        "request_id": "request-1",
+        "prompt": "Allow tools: write?",
+        "thread_id": "thread-1",
+        "kind": "permission",
+        "choices": [
+          [
+            "Yes, always",
+            "session",
+            "Allow these tools for this session"
+          ],
+          [
+            "Yes",
+            "allow",
+            "Allow this tool use once"
+          ],
+          [
+            "No",
+            "deny",
+            "Deny these tools"
+          ]
+        ],
+        "tools": [
+          {
+            "name": "write",
+            "pattern": "sdk-probe.txt",
+            "args": {
+              "file_path": "sdk-probe.txt",
+              "op": "write",
+              "new_string": "headless\n"
+            },
+            "risk": {
+              "level": "dangerous",
+              "tags": [
+                "workspace_edit"
+              ],
+              "reason": "Permission required: write → sdk-probe.txt",
+              "tool_name": "write",
+              "pattern": "sdk-probe.txt"
+            },
+            "allowed_scopes": [
+              "once",
+              "session"
+            ],
+            "default_scope": "once"
+          }
+        ],
+        "response_method": "session.respond",
+        "reconnect_policy": "replace"
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "item.completed",
+      "params": {
+        "item_id": "item-1",
+        "turn_id": "turn-1",
+        "thread_id": "thread-1",
+        "kind": "prompt",
+        "lifecycle": "completed",
+        "data": {
+          "prompt_type": "permission",
+          "request_id": "request-1",
+          "cleared": true
+        }
+      }
+    }
+  ],
+  "pending_reconnect": [
+    {
+      "jsonrpc": "2.0",
+      "method": "workspace.snapshot",
+      "params": {
+        "revision": 0,
+        "threads": [
+          {
+            "thread_id": "thread-1",
+            "title": "",
+            "workspace": ".",
+            "directory": "",
+            "model_provider": "",
+            "model_name": "",
+            "status": "idle",
+            "created_at": "",
+            "updated_at": "",
+            "message_count": 0,
+            "runtime_profile": "coding",
+            "temporary": false
+          }
+        ],
+        "active_thread_id": "thread-1",
+        "active_snapshot": {
+          "thread_id": "thread-1",
+          "revision": 2,
+          "nodes": [
+            {
+              "id": "n1",
+              "parent_id": null,
+              "node_type": "turn",
+              "status": "running",
+              "title": "[bold white]❯[/] Write sdk-probe.txt",
+              "header": "[bold white]❯[/] Write sdk-probe.txt",
+              "header_style": "",
+              "body_lines": [],
+              "collapsed": false,
+              "elapsed": null,
+              "agent_name": null,
+              "step_info": null,
+              "meta": null,
+              "tool_call_id": null,
+              "agent_run_id": null,
+              "message_id": null,
+              "payload": {
+                "raw_text": "Write sdk-probe.txt",
+                "transcript_turn_id": 0,
+                "lifecycle": "completed",
+                "active": true,
+                "terminal": false,
+                "committed": false,
+                "durable": false,
+                "referenced": false,
+                "pinned": false,
+                "render_pending": false
+              },
+              "child_ids": []
+            }
+          ],
+          "windowed": false,
+          "before_turn_id": null,
+          "after_turn_id": null,
+          "before_cursor": null,
+          "after_cursor": null,
+          "transcript_epoch": "epoch-1",
+          "has_earlier": false,
+          "has_later": false
+        },
+        "provider": "",
+        "model": "",
+        "workspace": "<workspace>",
+        "profile_configured": null,
+        "permission_mode": "",
+        "ai_approval_count": 0,
+        "runtime": {
+          "active_thread_ids": [],
+          "max_concurrent_sessions": 2
+        },
+        "workspace_write_lock": {
+          "holder_thread_id": "",
+          "waiting_thread_ids": []
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "ui.request",
+      "params": {
+        "request_id": "request-1",
+        "prompt": "Allow tools: write?",
+        "thread_id": "thread-1",
+        "kind": "permission",
+        "choices": [
+          [
+            "Yes, always",
+            "session",
+            "Allow these tools for this session"
+          ],
+          [
+            "Yes",
+            "allow",
+            "Allow this tool use once"
+          ],
+          [
+            "No",
+            "deny",
+            "Deny these tools"
+          ]
+        ],
+        "tools": [
+          {
+            "name": "write",
+            "pattern": "sdk-probe.txt",
+            "args": {
+              "file_path": "sdk-probe.txt",
+              "op": "write",
+              "new_string": "headless\n"
+            },
+            "risk": {
+              "level": "dangerous",
+              "tags": [
+                "workspace_edit"
+              ],
+              "reason": "Permission required: write → sdk-probe.txt",
+              "tool_name": "write",
+              "pattern": "sdk-probe.txt"
+            },
+            "allowed_scopes": [
+              "once",
+              "session"
+            ],
+            "default_scope": "once"
+          }
+        ],
+        "response_method": "session.respond",
+        "reconnect_policy": "replace"
+      }
+    }
+  ],
+  "fresh_reconnect": [
+    {
+      "jsonrpc": "2.0",
+      "method": "workspace.snapshot",
+      "params": {
+        "revision": 1,
+        "threads": [
+          {
+            "thread_id": "thread-1",
+            "title": "",
+            "workspace": ".",
+            "directory": "",
+            "model_provider": "",
+            "model_name": "",
+            "status": "idle",
+            "created_at": "",
+            "updated_at": "",
+            "message_count": 0,
+            "runtime_profile": "coding",
+            "temporary": false
+          }
+        ],
+        "active_thread_id": "thread-1",
+        "active_snapshot": {
+          "thread_id": "thread-1",
+          "revision": 5,
+          "nodes": [
+            {
+              "id": "n1",
+              "parent_id": null,
+              "node_type": "turn",
+              "status": "running",
+              "title": "[bold white]❯[/] Write sdk-probe.txt",
+              "header": "[bold white]❯[/] Write sdk-probe.txt",
+              "header_style": "",
+              "body_lines": [],
+              "collapsed": false,
+              "elapsed": null,
+              "agent_name": null,
+              "step_info": null,
+              "meta": null,
+              "tool_call_id": null,
+              "agent_run_id": null,
+              "message_id": null,
+              "payload": {
+                "raw_text": "Write sdk-probe.txt",
+                "transcript_turn_id": 0,
+                "lifecycle": "completed",
+                "active": false,
+                "terminal": true,
+                "committed": false,
+                "durable": false,
+                "referenced": false,
+                "pinned": false,
+                "render_pending": false
+              },
+              "child_ids": []
+            },
+            {
+              "id": "n2",
+              "parent_id": null,
+              "node_type": "assistant",
+              "status": "running",
+              "title": "",
+              "header": "",
+              "header_style": "",
+              "body_lines": [],
+              "collapsed": false,
+              "elapsed": null,
+              "agent_name": null,
+              "step_info": null,
+              "meta": null,
+              "tool_call_id": null,
+              "agent_run_id": null,
+              "message_id": null,
+              "payload": {
+                "lifecycle": "completed",
+                "active": false,
+                "terminal": true,
+                "committed": false,
+                "durable": false,
+                "referenced": false,
+                "pinned": false,
+                "render_pending": false
+              },
+              "child_ids": [
+                "n3",
+                "n4",
+                "n5",
+                "n6",
+                "n7",
+                "n8"
+              ]
+            },
+            {
+              "id": "n3",
+              "parent_id": "n2",
+              "node_type": "tool_call",
+              "status": "done",
+              "title": "[dim]●[/dim] [bold]Update[/bold](\"[cyan]sdk-probe.txt[/cyan]\")",
+              "header": "[dim]●[/dim] [bold]Update[/bold](\"[cyan]sdk-probe.txt[/cyan]\")",
+              "header_style": "",
+              "body_lines": [],
+              "collapsed": true,
+              "elapsed": 0.0,
+              "agent_name": null,
+              "step_info": null,
+              "meta": "[bold]Update[/bold](\"[cyan]sdk-probe.txt[/cyan]\")",
+              "tool_call_id": "write-probe",
+              "agent_run_id": null,
+              "message_id": null,
+              "payload": {
+                "tool_name": "write",
+                "args": "file_path=\"[cyan]sdk-probe.txt[/cyan]\", op=\"[cyan]write[/cyan]\", new_string=\"[cyan]headless\n[/cyan]\"",
+                "raw_args": {
+                  "file_path": "sdk-probe.txt",
+                  "op": "write",
+                  "new_string": "headless\n"
+                },
+                "display_mode": "show",
+                "lifecycle": "completed",
+                "active": false,
+                "terminal": true,
+                "committed": false,
+                "durable": false,
+                "referenced": false,
+                "pinned": false,
+                "render_pending": false
+              },
+              "child_ids": []
+            },
+            {
+              "id": "n4",
+              "parent_id": "n2",
+              "node_type": "tool_result",
+              "status": "done",
+              "title": "File created",
+              "header": "File created",
+              "header_style": "",
+              "body_lines": [],
+              "collapsed": false,
+              "elapsed": null,
+              "agent_name": null,
+              "step_info": null,
+              "meta": null,
+              "tool_call_id": "write-probe",
+              "agent_run_id": null,
+              "message_id": null,
+              "payload": {
+                "raw_text": "File created",
+                "independent_result": true,
+                "result_tool_call_id": "write-probe",
+                "result_anchor_id": "n3",
+                "display_mode": "show",
+                "lifecycle": "completed",
+                "active": false,
+                "terminal": true,
+                "committed": false,
+                "durable": false,
+                "referenced": false,
+                "pinned": false,
+                "render_pending": false
+              },
+              "child_ids": []
+            },
+            {
+              "id": "n5",
+              "parent_id": "n2",
+              "node_type": "message",
+              "status": "running",
+              "title": "",
+              "header": "",
+              "header_style": "",
+              "body_lines": [],
+              "collapsed": false,
+              "elapsed": null,
+              "agent_name": null,
+              "step_info": null,
+              "meta": null,
+              "tool_call_id": null,
+              "agent_run_id": null,
+              "message_id": null,
+              "payload": {
+                "tool_result_spacer_for": "n4",
+                "lifecycle": "completed",
+                "active": false,
+                "terminal": true,
+                "committed": false,
+                "durable": false,
+                "referenced": false,
+                "pinned": false,
+                "render_pending": false
+              },
+              "child_ids": []
+            },
+            {
+              "id": "n6",
+              "parent_id": "n2",
+              "node_type": "tool_call",
+              "status": "done",
+              "title": "[dim]●[/dim] [bold]Update[/bold](\"[cyan]sdk-probe.txt[/cyan]\")",
+              "header": "[dim]●[/dim] [bold]Update[/bold](\"[cyan]sdk-probe.txt[/cyan]\")",
+              "header_style": "",
+              "body_lines": [
+                "[dim]└[/dim]  Added 1 line, removed 0 lines",
+                "[on #003b0a][#A3BE8C]    1 +[/#A3BE8C]  headless[/on #003b0a]"
+              ],
+              "collapsed": false,
+              "elapsed": null,
+              "agent_name": null,
+              "step_info": null,
+              "meta": "[dim]●[/dim] [bold]Update[/bold](\"[cyan]sdk-probe.txt[/cyan]\")",
+              "tool_call_id": "write-probe",
+              "agent_run_id": null,
+              "message_id": null,
+              "payload": {
+                "diff_text": "--- a/sdk-probe.txt\n+++ b/sdk-probe.txt\n@@ -0,0 +1 @@\n+headless\n",
+                "diff_result": true,
+                "independent_result": true,
+                "result_tool_call_id": "write-probe",
+                "result_anchor_id": "n3",
+                "diff_index": 0,
+                "diff_path": "sdk-probe.txt",
+                "lifecycle": "completed",
+                "active": false,
+                "terminal": true,
+                "committed": false,
+                "durable": false,
+                "referenced": false,
+                "pinned": false,
+                "render_pending": false
+              },
+              "child_ids": []
+            },
+            {
+              "id": "n7",
+              "parent_id": "n2",
+              "node_type": "message",
+              "status": "running",
+              "title": "",
+              "header": "",
+              "header_style": "",
+              "body_lines": [],
+              "collapsed": false,
+              "elapsed": null,
+              "agent_name": null,
+              "step_info": null,
+              "meta": null,
+              "tool_call_id": null,
+              "agent_run_id": null,
+              "message_id": null,
+              "payload": {
+                "tool_result_spacer_for": "n6",
+                "lifecycle": "completed",
+                "active": false,
+                "terminal": true,
+                "committed": false,
+                "durable": false,
+                "referenced": false,
+                "pinned": false,
+                "render_pending": false
+              },
+              "child_ids": []
+            },
+            {
+              "id": "n8",
+              "parent_id": "n2",
+              "node_type": "assistant",
+              "status": "running",
+              "title": "\u0000voidx-ansi\u0000\u001b[2m●\u001b[0m FILE_WRITTEN",
+              "header": "\u0000voidx-ansi\u0000\u001b[2m●\u001b[0m FILE_WRITTEN",
+              "header_style": "",
+              "body_lines": [
+                "\u0000voidx-ansi\u0000  ",
+                "\u0000voidx-ansi\u0000  History body"
+              ],
+              "collapsed": false,
+              "elapsed": null,
+              "agent_name": null,
+              "step_info": null,
+              "meta": null,
+              "tool_call_id": null,
+              "agent_run_id": null,
+              "message_id": null,
+              "payload": {
+                "raw_text": "FILE_WRITTEN\n\nHistory body",
+                "lifecycle": "completed",
+                "active": false,
+                "terminal": true,
+                "committed": false,
+                "durable": false,
+                "referenced": false,
+                "pinned": false,
+                "render_pending": false
+              },
+              "child_ids": []
+            }
+          ],
+          "windowed": false,
+          "before_turn_id": null,
+          "after_turn_id": null,
+          "before_cursor": null,
+          "after_cursor": null,
+          "transcript_epoch": "epoch-1",
+          "has_earlier": false,
+          "has_later": false
+        },
+        "provider": "",
+        "model": "",
+        "workspace": "<workspace>",
+        "profile_configured": null,
+        "permission_mode": "",
+        "ai_approval_count": 0,
+        "runtime": {
+          "active_thread_ids": [],
+          "max_concurrent_sessions": 2
+        },
+        "workspace_write_lock": {
+          "holder_thread_id": "",
+          "waiting_thread_ids": []
+        }
+      }
+    }
+  ]
+}

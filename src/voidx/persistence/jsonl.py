@@ -12,12 +12,17 @@ import json
 import os
 import re
 import shutil
-import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 import voidx.persistence.sqlite as store
+from voidx.persistence.file_lock import (
+    acquire_file_lock_sync,
+    fcntl,
+    msvcrt,
+    release_file_lock_sync,
+)
 from voidx.persistence.session_ids import validate_session_storage_id
 
 
@@ -57,56 +62,18 @@ def _normalize_session_ids(session_ids: list[str] | tuple[str, ...]) -> list[str
     return sorted({validate_session_storage_id(session_id) for session_id in session_ids})
 
 
-try:
-    import fcntl
-except ImportError:  # pragma: no cover - unavailable on Windows.
-    fcntl = None
-
-try:
-    import msvcrt
-except ImportError:  # pragma: no cover - unavailable on POSIX.
-    msvcrt = None
-
-
 def _session_lock_path(session_id: str) -> Path:
     return session_dir(session_id).parent / f".{session_id}.lock"
 
 
-def _acquire_file_lock_sync(path: Path):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle = path.open("a+b")
-    try:
-        if fcntl is not None:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-            return handle, "fcntl"
-        if msvcrt is not None:
-            handle.seek(0, os.SEEK_END)
-            if handle.tell() == 0:
-                handle.write(b"\0")
-                handle.flush()
-            handle.seek(0)
-            while True:
-                try:
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
-                    return handle, "msvcrt"
-                except OSError:
-                    time.sleep(0.05)
-        raise RuntimeError("cross-process session directory locking is unavailable")
-    except Exception:
-        handle.close()
-        raise
+def _acquire_file_lock_sync(path: Path, *, blocking: bool = True):
+    return acquire_file_lock_sync(
+        path, blocking=blocking, fcntl_backend=fcntl, msvcrt_backend=msvcrt
+    )
 
 
 def _release_file_lock_sync(locked_handle) -> None:
-    handle, backend = locked_handle
-    try:
-        if backend == "fcntl":
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        elif backend == "msvcrt":
-            handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-    finally:
-        handle.close()
+    release_file_lock_sync(locked_handle, fcntl_backend=fcntl, msvcrt_backend=msvcrt)
 
 
 @asynccontextmanager
@@ -163,6 +130,14 @@ def _append_jsonl_records_sync(path: Path, records: list[dict[str, Any]]) -> tup
 
 def _append_jsonl_sync(path: Path, record: dict[str, Any]) -> None:
     _append_jsonl_records_sync(path, [record])
+
+
+def append_session_record_locked(session_id: str, record: dict[str, Any]) -> None:
+    """Synchronously append a message while the caller holds its session lock."""
+    safe_id = validate_session_storage_id(session_id)
+    if safe_id not in _held_session_lock_ids.get():
+        raise RuntimeError("append requires the session directory lock")
+    _append_jsonl_sync(session_dir(safe_id) / "messages.jsonl", record)
 
 
 

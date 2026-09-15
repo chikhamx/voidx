@@ -7,7 +7,7 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 
 import "../../src/main";
-import { uiState } from "../../src/services/state";
+import { uiState, updateStatusBar } from "../../src/services/state";
 import { _resetHistoryForTest, historyPrev } from "../../src/ui/history";
 import { _setSocket, _resetForTest as _resetRpcForTest } from "../../src/rpc/client";
 
@@ -60,6 +60,56 @@ describe("cancel while running", () => {
     keydown("Escape");
     expect(sentMethods(socket)).not.toContain("session.cancel");
   });
+});
+describe.each(["goal", "loop"])("%s Stop contract", (profile) => {
+    it.each([true, false])("keeps Stop visible when running=%s", async (running) => {
+        const socket = fakeSocket();
+        _setSocket(socket);
+        const { refreshModeMenu } = await import("../../src/ui/mode");
+        const refreshed = refreshModeMenu();
+        const request = socket.send.mock.calls.map(([text]) => JSON.parse(text))
+            .find((entry) => entry.method === "list-agent-profiles");
+        const { _resolvePendingForTest } = await import("../../src/rpc/client");
+        _resolvePendingForTest(request.id, {
+            profiles: [{
+                name: profile, display_name: profile, revision: 1, content_hash: "hash",
+                source: "builtin", run_mode: profile, hitl_mode: "autonomous",
+                availability: "available", diagnostics: [],
+            }]
+        });
+        await refreshed;
+        uiState.sessionId = "owner";
+        uiState.runtimeProfile = profile;
+        uiState.isRunning = running;
+        updateStatusBar();
+        expect(document.querySelector("#mode-stop").hidden).toBe(false);
+    });
+    it("routes an active owner to cancel, never a legacy submission", () => {
+        const socket = fakeSocket();
+        _setSocket(socket);
+        uiState.sessionId = "active-owner";
+        uiState.runtimeProfile = profile;
+        uiState.isRunning = true;
+        document.querySelector("#mode-stop").click();
+        expect(socket.send.mock.calls.map(([text]) => JSON.parse(text))).toEqual([
+            expect.objectContaining({ method: "session.cancel", params: { thread_id: "active-owner" } }),
+        ]);
+    });
+
+    it("preserves the inactive legacy stop command, never cancels", () => {
+        const socket = fakeSocket();
+        _setSocket(socket);
+        uiState.sessionId = "inactive-owner";
+        uiState.runtimeProfile = profile;
+        document.querySelector("#mode-stop").click();
+        expect(socket.send.mock.calls.map(([text]) => JSON.parse(text))).toEqual([
+            expect.objectContaining({
+                method: "session.submit", params: {
+                    thread_id: "inactive-owner", text: `/${profile} stop`,
+                }
+            }),
+        ]);
+    });
 });
 
 describe("Ctrl+C on input text", () => {

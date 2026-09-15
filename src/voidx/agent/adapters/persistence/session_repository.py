@@ -1303,3 +1303,80 @@ async def replace_goal_transcript_message_range(
             effective_message_count=len(effective) - len(source_message_ids) + 1,
             source_message_ids=list(source_message_ids),
         )
+
+
+def _transcript_semantic_threads(session_id: str) -> set[str]:
+    path = session_dir(session_id) / "transcript.jsonl"
+    if not path.exists():
+        return set()
+    threads: set[str] = set()
+    pending: set[str] = set()
+    turn_id = None
+    with path.open("rb") as handle:
+        for line_number, line in enumerate(handle, 1):
+            context = f"session {session_id}, transcript.jsonl line {line_number}"
+            unterminated = not line.endswith(b"\n")
+            try:
+                text = line.decode("utf-8")
+            except UnicodeDecodeError as error:
+                if not (unterminated and error.reason == "unexpected end of data"):
+                    raise ValueError(f"Invalid UTF-8 in {context}") from None
+                # A partial code point is valid crash residue only inside a JSON string.
+                text = line[:error.start].decode("utf-8") + "\ufffd"
+            try:
+                record = json.loads(text)
+            except json.JSONDecodeError as error:
+                remainder = text[error.pos:].rstrip()
+                incomplete = (
+                    error.pos == len(text.rstrip())
+                    or error.msg.startswith("Unterminated string")
+                    or (error.msg == "Expecting value" and bool(remainder)
+                        and any(token.startswith(remainder) for token in ("true", "false", "null")))
+                )
+                # Only a truncated, unterminated final JSONL record is crash residue.
+                if unterminated and incomplete:
+                    continue
+                raise ValueError(f"Invalid JSON in {context}") from None
+            if not isinstance(record, dict):
+                raise ValueError(f"Expected transcript object in {context}")
+            if "metadata" in record and not isinstance(record["metadata"], dict):
+                raise ValueError(f"Expected metadata object in {context}")
+            kind = record.get("type")
+            if kind == "transcript_reset":
+                threads.clear()
+                pending.clear()
+                turn_id = None
+            elif kind == "turn_start":
+                turn_id = record.get("turn_id")
+                pending.clear()
+            elif kind == "node" and turn_id is not None and record.get("turn_id") == turn_id:
+                identity = record.get("metadata", {}).get("semantic_identity")
+                if identity is not None:
+                    if (not isinstance(identity, dict) or identity.get("session_id") != session_id
+                            or not isinstance(identity.get("thread_id"), str) or not identity["thread_id"]):
+                        raise ValueError("Invalid semantic identity in transcript metadata")
+                    pending.add(identity["thread_id"])
+            elif kind == "turn_end" and turn_id is not None and record.get("turn_id") == turn_id:
+                threads.update(pending)
+                pending.clear()
+                turn_id = None
+    return threads
+
+
+async def semantic_thread_bindings(workspace: str) -> dict[str, str]:
+    candidates = _workspace_candidates(workspace)
+    if not candidates:
+        return {}
+    placeholders = ",".join("?" for _ in candidates)
+    # Unlike the user session list, discovery includes evaluator/work sessions.
+    sessions = await fetch_all(
+        f"SELECT id FROM sessions WHERE workspace IN ({placeholders})", tuple(candidates))
+    bindings: dict[str, str] = {}
+    for session in sessions:
+        async with session_directory_locks((session["id"],)):
+            threads = await asyncio.to_thread(_transcript_semantic_threads, session["id"])
+        for thread_id in threads:
+            previous = bindings.setdefault(thread_id, session["id"])
+            if previous != session["id"]:
+                raise ValueError("Semantic thread changed durable session identity")
+    return bindings

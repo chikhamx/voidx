@@ -612,3 +612,232 @@ async def test_gateway_server_stop_wait_closed_failure_still_closes_lifecycle():
     assert session.calls == ["close"]
     assert gateway._server is None
     assert gateway._bound_port is None
+
+
+class StrictSocket:
+    def __init__(self):
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.sent = []
+        self.closed = False
+        self.error = None
+
+    async def send(self, text):
+        self.entered.set()
+        await self.release.wait()
+        if self.error:
+            raise self.error
+        self.sent.append(text)
+
+    async def close(self):
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_strict_send_waits_and_preserves_order_without_queue():
+    from voidx.presentation.gateway.server import _WebSocketClient
+    socket = StrictSocket()
+    client = _WebSocketClient(socket, strict=True, queue_maxsize=1)
+    await client.start()
+    first = asyncio.create_task(client.send_text("first"))
+    await socket.entered.wait()
+    second = asyncio.create_task(client.send_text("second", priority=True))
+    await asyncio.sleep(0)
+    assert not first.done() and not second.done()
+    assert client._send_task is None
+    assert client._send_queue.empty()
+    socket.release.set()
+    await asyncio.gather(first, second)
+    assert socket.sent == ["first", "second"]
+    await client.close()
+    with pytest.raises(ConnectionError):
+        await client.send_text("closed")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["timeout", "error", "cancel", "close"])
+async def test_strict_send_failure_and_close_release_waiters(failure):
+    from voidx.presentation.gateway.server import _WebSocketClient
+    socket = StrictSocket()
+    client = _WebSocketClient(socket, strict=True, send_timeout=0.05)
+    await client.start()
+    sender = asyncio.create_task(client.send_text("first"))
+    await socket.entered.wait()
+    waiter = asyncio.create_task(client.send_text("second"))
+    if failure == "error":
+        socket.error = OSError("wire failed")
+        socket.release.set()
+    elif failure == "cancel":
+        sender.cancel()
+    elif failure == "close":
+        await asyncio.wait_for(client.close(), 1)
+    expected = {"timeout": TimeoutError, "error": OSError,
+                "cancel": asyncio.CancelledError, "close": TimeoutError}[failure]
+    with pytest.raises(expected):
+        await sender
+    if failure != "cancel":
+        assert not sender.cancelled()
+    with pytest.raises(ConnectionError):
+        await waiter
+    await client.close()
+    assert socket.closed
+    assert not client._send_lock.locked()
+
+
+@pytest.mark.asyncio
+async def test_connect_failure_disconnects_and_closes_strict_client():
+    from voidx.presentation.gateway.server import GatewayServer
+    socket = StrictSocket()
+    class Session:
+        strict_transport = True
+        client = None
+        disconnected = None
+
+        async def connect(self, client, **kwargs):
+            self.client = client
+            assert client._strict
+            raise RuntimeError("connect failed")
+
+        def disconnect(self, client):
+            self.disconnected = client
+
+    session = Session()
+    with pytest.raises(RuntimeError, match="connect failed"):
+        await GatewayServer(session)._handle(socket)
+    assert session.disconnected is session.client
+    assert socket.closed
+    assert session.client._send_task is None
+
+
+def test_semantic_transport_is_explicit_and_read_only():
+    dock = BottomInputDock()
+    default = GatewaySession(lambda: dock.tree)
+    semantic = GatewaySession(lambda: dock.tree, interaction_router=object())
+    assert default.strict_transport is False
+    assert semantic.strict_transport is True
+    with pytest.raises(AttributeError):
+        semantic.strict_transport = False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("strict", [True, False], ids=["strict", "legacy"])
+@pytest.mark.parametrize("primary_kind", ["none", "error", "cancel"])
+@pytest.mark.parametrize("disconnect_fails", [False, True])
+@pytest.mark.parametrize("close_fails", [False, True])
+async def test_handle_preserves_lifecycle_failures(
+    strict, primary_kind, disconnect_fails, close_fails, monkeypatch,
+):
+    from voidx.presentation.gateway.server import GatewayServer
+
+    primary = {
+        "none": None,
+        "error": ValueError("connect failed"),
+        "cancel": asyncio.CancelledError("connect cancelled"),
+    }[primary_kind]
+    disconnect_error = RuntimeError("disconnect failed") if disconnect_fails else None
+    close_error = OSError("close failed") if close_fails else None
+    calls = []
+    owner = asyncio.current_task()
+
+    class Socket:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+        async def close(self):
+            calls.append("close")
+            if strict:
+                assert asyncio.current_task() is owner
+            if close_error is not None:
+                raise close_error
+
+    class Session:
+        strict_transport = strict
+        client = None
+
+        async def connect(self, client, **kwargs):
+            calls.append("connect")
+            self.client = client
+            if primary is not None:
+                raise primary
+
+        def disconnect(self, client):
+            calls.append("disconnect")
+            assert client is self.client
+            if disconnect_error is not None:
+                raise disconnect_error
+
+    if strict:
+        def unexpected_task(*args, **kwargs):
+            pytest.fail("strict lifecycle must not create a task")
+
+        monkeypatch.setattr(asyncio, "create_task", unexpected_task)
+    session = Session()
+    caught = None
+    try:
+        await GatewayServer(session)._handle(Socket())
+    except BaseException as exc:
+        caught = exc
+    assert calls == ["connect", "disconnect", "close"]
+    if strict:
+        expected = tuple(error for error in (primary, disconnect_error, close_error)
+                         if error is not None)
+        assert session.client._send_task is None
+        if len(expected) > 1:
+            assert isinstance(caught, BaseExceptionGroup)
+            assert len(caught.exceptions) == len(expected)
+            assert all(actual is error for actual, error in zip(caught.exceptions, expected))
+        elif expected:
+            assert caught is expected[0]
+        else:
+            assert caught is None
+    else:
+        assert caught is (disconnect_error if disconnect_error is not None else primary)
+
+
+@pytest.mark.asyncio
+async def test_strict_concurrent_close_during_send_cancellation_cleanup():
+    from voidx.presentation.gateway.server import _WebSocketClient
+
+    entered = asyncio.Event()
+    cancelling = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    close_calls = []
+
+    class Socket:
+        async def send(self, text):
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelling.set()
+                await release_cleanup.wait()
+                raise
+
+        async def close(self):
+            close_calls.append("close")
+
+    client = _WebSocketClient(Socket(), strict=True, send_timeout=5)
+    sender = asyncio.create_task(client.send_text("blocked"))
+    first = second = None
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        first = asyncio.create_task(client.close())
+        await asyncio.wait_for(cancelling.wait(), 1)
+        assert client._active_send.expired()
+        second = asyncio.create_task(client.close())
+        await asyncio.sleep(0)
+    finally:
+        release_cleanup.set()
+        tasks = [task for task in (sender, first, second) if task is not None]
+        results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 1)
+    assert isinstance(results[0], TimeoutError)
+    assert not sender.cancelled()
+    assert results[1:] == [None, None]
+    assert close_calls
+    assert not client._send_lock.locked()
+    assert client._active_send is None
+    with pytest.raises(ConnectionError):
+        await client.send_text("closed")

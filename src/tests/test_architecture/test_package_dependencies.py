@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from ..dependency_policy import AGENT_APPLICATION_DTO_DEPENDENCIES
 from .import_graph import format_edges, import_edges, is_under, top_level, without_debt
 
 
@@ -31,6 +32,15 @@ ALLOWED: dict[str, set[str]] = {
 
 
 def _top_level_dependency_allowed(source: str, target: str) -> bool:
+    if (source, target) == ("voidx.bootstrap.production_sdk_gateway", "voidx.sdk"):
+        return True
+    if is_under(source, "voidx.sdk"):
+        return (source, target) in {
+            ("voidx.sdk", "voidx.sdk.agent"),
+            ("voidx.sdk.agent", "voidx.bootstrap.headless"),
+            ("voidx.sdk.agent", "voidx.config"),
+            ("voidx.sdk.agent", "voidx.agent.domain.semantic_events"),
+        }
     source_top = top_level(source)
     target_top = top_level(target)
     return source_top in ALLOWED and (
@@ -88,6 +98,13 @@ def test_agent_tool_adapters_do_not_import_presentation():
     ]
     assert violations == [], "agent tool adapter presentation dependencies:\n" + format_edges(violations)
 def _feature_core_dependency_allowed(source: str, target: str) -> bool:
+    if (source, target) in AGENT_APPLICATION_DTO_DEPENDENCIES:
+        return True
+    # Semantic wire events reuse these approved DTOs, not feature implementations.
+    if source == "voidx.agent.domain.semantic_events" and target in {
+        "voidx.llm.usage", "voidx.tooling.domain.interaction"
+    }:
+        return True
     target_top = top_level(target)
     if is_under(source, "voidx.agent.domain") or is_under(source, "voidx.agent.ports"):
         return target_top == "agent"
@@ -127,3 +144,48 @@ def test_feature_core_dependencies_are_narrow():
         if not _feature_core_dependency_allowed(edge.source, edge.target)
     ]
     assert violations == [], "feature core dependency violations:\n" + format_edges(violations)
+
+
+def test_semantic_event_dto_dependencies_are_exactly_scoped() -> None:
+    source = "voidx.agent.domain.semantic_events"
+    for target in ("voidx.llm.usage", "voidx.tooling.domain.interaction"):
+        assert _feature_core_dependency_allowed(source, target)
+        assert not _feature_core_dependency_allowed("voidx.agent.domain.events", target)
+        assert not _feature_core_dependency_allowed(source + ".nested", target)
+        assert not _feature_core_dependency_allowed(source, target + ".nested")
+    for target in (
+        "voidx.tooling.application.permission_service",
+        "voidx.tooling.domain.ui_events",
+        "voidx.llm.adapters",
+        "voidx.presentation.runtime_port",
+    ):
+        assert not _feature_core_dependency_allowed(source, target)
+
+
+def test_interaction_coordinator_exact_dto_dependency():
+    source = "voidx.agent.application.runtime.interaction_coordinator"
+    target = "voidx.tooling.domain.interaction"
+    assert _feature_core_dependency_allowed(source, target)
+    for other_source, other_target in (
+        (source + ".nested", target), (source, target + ".nested"),
+        (source, "voidx.tooling.domain.ui_events"),
+        (source, "voidx.tooling.application.permission_service"),
+        ("voidx.agent.application.runtime.run_supervisor", target),
+    ):
+        assert not _feature_core_dependency_allowed(other_source, other_target)
+
+
+def test_sdk_dependencies_are_exactly_scoped() -> None:
+    for source, target in (
+        ("voidx.sdk", "voidx.sdk.agent"),
+        ("voidx.sdk.agent", "voidx.bootstrap.headless"),
+        ("voidx.sdk.agent", "voidx.config"),
+        ("voidx.sdk.agent", "voidx.agent.domain.semantic_events"),
+    ):
+        assert _top_level_dependency_allowed(source, target)
+    for target in (
+        "voidx.bootstrap.agent", "voidx.presentation", "voidx.agent.adapters.langgraph.execution",
+        "voidx.agent.application.runtime.run_supervisor", "voidx.config.adapters.profile_store",
+    ):
+        assert not _top_level_dependency_allowed("voidx.sdk.agent", target)
+    assert not _top_level_dependency_allowed("voidx.agent.application.runtime", "voidx.sdk")

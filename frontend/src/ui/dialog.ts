@@ -32,11 +32,30 @@ export interface UiRequest {
   default?: string;
   secret?: boolean;
   response_method?: string;
+  reconnect_policy?: "replace";
 }
 
 export const pendingUiRequests: UiRequest[] = [];
 
+let activeRequest: { request: UiRequest; submitting: boolean } | null = null;
+
+export function clearDisconnectedPermissionRequests(): void {
+  for (let i = pendingUiRequests.length - 1; i >= 0; i -= 1) {
+    if (isReplaceInteraction(pendingUiRequests[i])) pendingUiRequests.splice(i, 1);
+  }
+  if (activeRequest && isReplaceInteraction(activeRequest.request)) {
+    activeRequest = null;
+    requestDialogEl.close();
+    showNextQueuedRequest();
+  }
+}
+
+function isReplaceInteraction(req: UiRequest): boolean {
+  return ["permission", "choice", "text"].includes(req.kind) && req.reconnect_policy === "replace";
+}
+
 export function _resetDialogForTest(): void {
+  activeRequest = null;
   pendingUiRequests.length = 0;
   requestDialogEl.dataset.requestKind = "";
   requestDialogEl.dataset.requestId = "";
@@ -63,6 +82,7 @@ export function clearPermissionRequests(requestId?: string): void {
     return;
   }
 
+  activeRequest = null;
   requestDialogEl.dataset.requestKind = "";
   requestDialogEl.dataset.requestId = "";
   requestDialogEl.dataset.responseMethod = "";
@@ -73,6 +93,20 @@ export function clearPermissionRequests(requestId?: string): void {
 
 export function showRequest(request: Record<string, unknown>): void {
   const req = request as unknown as UiRequest;
+    const sameIdentity = (candidate: {
+        request_id?: string; thread_id?: string; response_method?: string;
+    }): boolean => Boolean(req.request_id) && candidate.request_id === req.request_id &&
+    (candidate.thread_id || "") === (req.thread_id || "") &&
+        (candidate.response_method || "") === (req.response_method || "");
+    if (
+        (requestDialogEl.open && sameIdentity({
+            request_id: requestDialogEl.dataset.requestId,
+            thread_id: requestDialogEl.dataset.responseThreadId,
+            response_method: requestDialogEl.dataset.responseMethod,
+        })) || pendingUiRequests.some(sameIdentity)
+    ) {
+        return;
+    }
   if (requestDialogEl.open) {
     pendingUiRequests.push(req);
     return;
@@ -81,6 +115,7 @@ export function showRequest(request: Record<string, unknown>): void {
 }
 
 export function renderRequest(req: UiRequest): void {
+  activeRequest = { request: req, submitting: false };
   requestDialogEl.dataset.requestKind = req.kind;
   requestDialogEl.dataset.requestId = req.request_id || "";
   requestDialogEl.dataset.responseMethod = req.response_method || "";
@@ -95,9 +130,11 @@ export function renderRequest(req: UiRequest): void {
   } else if (req.kind === "choice") {
     requestDetailsEl.className = "";
     renderChoiceButtons(req);
+    if (isReplaceInteraction(req)) renderTextRequest(req);
   } else if (req.kind === "text") {
     requestDetailsEl.className = "";
     renderTextRequest(req);
+    if (isReplaceInteraction(req)) renderChoiceButtons(req);
   }
 
   requestDialogEl.showModal();
@@ -408,6 +445,34 @@ export function sendResponse(requestId: string, value: unknown): void {
     const params: Record<string, unknown> = { request_id: requestId, value };
     if (threadId) {
       params.thread_id = threadId;
+    }
+    const token = activeRequest;
+    if (token && isReplaceInteraction(token.request)) {
+      if (token.submitting || token.request.request_id !== requestId) return;
+      token.submitting = true;
+      const buttons = [...requestControlsEl.querySelectorAll("button")];
+      buttons.forEach((button) => { button.disabled = true; });
+      requestDetailsEl.querySelector("[role=alert]")?.remove();
+      const failed = (): void => {
+        if (activeRequest !== token) return;
+        token.submitting = false;
+        buttons.forEach((button) => { button.disabled = false; });
+        const error = document.createElement("p");
+        error.setAttribute("role", "alert");
+        error.textContent = "结果未确认或未接受，请确认状态后再操作。";
+        requestDetailsEl.append(error);
+      };
+      void rpcCall(responseMethod, params).then((result) => {
+        if (activeRequest !== token) return;
+        if ((result as { ok?: boolean } | null)?.ok !== true) {
+          failed();
+          return;
+        }
+        activeRequest = null;
+        requestDialogEl.close();
+        showNextQueuedRequest();
+      }, failed);
+      return;
     }
     rpcCall(responseMethod, params).catch(() => {});
     requestDialogEl.dataset.responseMethod = "";

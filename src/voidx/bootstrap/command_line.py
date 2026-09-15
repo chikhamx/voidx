@@ -8,12 +8,7 @@ from pathlib import Path
 
 import typer
 
-cli = typer.Typer(
-    name="voidx",
-    help="A coding agent in your terminal.",
-    no_args_is_help=False,
-    invoke_without_command=True,
-)
+from voidx.bootstrap.cli_registry import cli
 
 
 def _vconsole():
@@ -114,23 +109,18 @@ async def _run_chat(
 
 # ── default command (no subcommand needed) ──────────────────────────────
 
-@cli.callback(invoke_without_command=True)
 def main(
-    workspace: str = typer.Option(".", "-w", "--workspace", help="Working directory"),
-    model: str = typer.Option(None, "-m", "--model", help="Model name"),
-    provider: str = typer.Option(None, "-p", "--provider", help="Provider"),
-    resume: str = typer.Option(None, "-r", "--resume", help="Resume a session by ID"),
-    new: bool = typer.Option(False, "-n", "--new", help="Force new session"),
-    web: bool = typer.Option(False, "--web", help="Start the Web UI gateway"),
-    web_headless: bool = typer.Option(
-        False,
-        "--web-headless",
-        help="Run without the terminal UI; requires --web",
-    ),
-    web_host: str = typer.Option("127.0.0.1", "--web-host", help="Web UI gateway host"),
-    web_port: int = typer.Option(0, "--web-port", help="Web UI gateway port"),
-    chat: bool = typer.Option(False, "-c", "--chat", help="Start the session in Chat mode (restricted, read-only tools)"),
-    version: bool = typer.Option(False, "--version", help="Show version and exit"),
+    workspace: str = ".",
+    model: str | None = None,
+    provider: str | None = None,
+    resume: str | None = None,
+    new: bool = False,
+    web: bool = False,
+    web_headless: bool = False,
+    web_host: str = "127.0.0.1",
+    web_port: int = 0,
+    chat: bool = False,
+    version: bool = False,
 ) -> None:
     """Start an interactive coding session."""
     if version:
@@ -150,7 +140,6 @@ def main(
 
 # ── subcommands ────────────────────────────────────────────────────────
 
-@cli.command()
 def sessions() -> None:
     """List saved sessions."""
     from voidx.agent.adapters.persistence.session_repository import list_sessions
@@ -171,7 +160,6 @@ def sessions() -> None:
     asyncio.run(_run())
 
 
-@cli.command()
 def version() -> None:
     """Show version info."""
     _print_version()

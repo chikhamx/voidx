@@ -305,6 +305,7 @@ class GoalService(AutonomousServiceBase[GoalSpec, GoalScheduler]):
                         thread_profile=resolved,
                         thread_state=thread_state,
                         protocol=init,
+                        lease_owner=lease_owner,
                     )
                     binding = await self._store.get_goal_generation(generation)
                 if binding is None:
@@ -332,12 +333,23 @@ class GoalService(AutonomousServiceBase[GoalSpec, GoalScheduler]):
                 if loaded is None:
                     raise GoalProtocolConflict("Goal thread disappeared during recovery")
 
-                await self._store.deliver_goal_public_summaries(generation=generation)
-                self._active_specs[parent] = spec
+                await self._store.deliver_goal_public_summaries(
+                    generation=generation, lease_owner=lease_owner
+                )
+                status = self._loaded_status(parent, spec, loaded)
+                # The timestamp predates the async renewal, so delayed event-loop
+                # resumption cannot register after the renewed lease expires.
+                deadline = asyncio.get_running_loop().time() + 30.0
+                renewed = await self._store.renew_goal_generation_lease(
+                    generation, lease_owner, lease_seconds=30.0
+                )
+                if not renewed or asyncio.get_running_loop().time() >= deadline:
+                    raise GoalProtocolConflict("Goal recovery lease lost before scheduler handoff")
                 if not is_goal_terminal(loaded.state.lifecycle):
+                    self._active_specs[parent] = spec
                     self._register_thread(binding.goal_thread_id)
                     self._start_pump()
-                return await self._status(parent, include_terminal=True)
+                return status
             finally:
                 await self._store.release_goal_generation_lease(generation, lease_owner)
 
@@ -360,6 +372,10 @@ class GoalService(AutonomousServiceBase[GoalSpec, GoalScheduler]):
                 generation=state.generation
             )
             self._active_specs.pop(parent, None)
+        return self._loaded_status(parent, spec, loaded)
+
+    @staticmethod
+    def _loaded_status(parent, spec, loaded) -> GoalStatus:
         state = GoalState.model_validate(loaded.state.context["goal_run"])
         return GoalStatus(
             active=not is_goal_terminal(loaded.state.lifecycle),
@@ -381,7 +397,23 @@ class GoalService(AutonomousServiceBase[GoalSpec, GoalScheduler]):
     async def stop(self, parent_thread_id: str | None) -> bool:
         parent = parent_id(parent_thread_id)
         async with self._lock_for(parent):
-            return await self._deactivate_current(parent, summary="Goal stopped by user.")
+            spec = await self._active_spec(parent)
+            if spec is not None:
+                # Join execution before revoking the attempt needed by cancellation's transcript flush.
+                thread_id = spec.goal_thread_id(parent)
+                await self._scheduler.stop_goal(thread_id)
+                loaded = await self._store.load(thread_id)
+                if loaded is not None and is_goal_terminal(loaded.state.lifecycle):
+                    self._active_specs.pop(parent, None)
+                    self._unregister_thread(thread_id)
+                    await self._store.discard_pending_outbox(thread_id)
+                    if self._active_specs:
+                        self._start_pump()
+                    return True
+            deactivated = await self._deactivate_current(parent, summary="Goal stopped by user.")
+            if spec is not None and self._active_specs:
+                self._start_pump()
+            return deactivated
 
     async def _restore_active_spec(self, parent: str) -> GoalSpec | None:
         thread_id = await self._store.latest_thread_id_with_prefix(f"goal:{parent}:")

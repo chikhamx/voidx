@@ -1332,3 +1332,43 @@ describe("Task 2 detached descriptor rematerialization metadata", () => {
     expect(Array.from(attached.childNodes)).toEqual([sentinel]);
   });
 });
+
+
+describe("HITL transport snapshots", () => {
+    it("renders backend card bodies and answer children with stable IDs after reconnect", async () => {
+        const { default: snapshot } = await import("../fixtures/hitl-transcript.json");
+        resetStreams();
+        const root = document.createElement("div");
+        setTranscriptElement(root);
+        const cards = snapshot.nodes.filter(node => node.node_type === "checkpoint");
+        expect(cards.map(node => node.payload.interaction)).toEqual(["clarify", "goal_spec", "loop_spec"]);
+
+        function assertRendered(target: HTMLElement) {
+            expect(target.querySelectorAll("details.checkpoint-row")).toHaveLength(3);
+            for (const card of cards) {
+                const row = target.querySelector(`details[data-item-id="${card.id}"]`)!;
+                expect(row).not.toBeNull();
+                expect(row.querySelector(".checkpoint-row-body")!.textContent).toBe(
+                    card.body_lines.map(stripRichMarkup).join("\n"),
+                );
+                expect(card.child_ids).toHaveLength(1);
+                const answer = snapshot.nodes.find(node => node.id === card.child_ids[0])!;
+                expect(answer.parent_id).toBe(card.id);
+                const answerRow = target.querySelector(`[data-item-id="${answer.id}"]`)!;
+                expect(answerRow).not.toBeNull();
+                expect(answerRow.textContent).toContain(stripRichMarkup(answer.header));
+            }
+        }
+
+        expect(renderTranscript(root, snapshot).status).toBe("applied");
+        assertRendered(root);
+        const reconnectSnapshot = JSON.parse(JSON.stringify(snapshot));
+        expect(renderTranscript(root, reconnectSnapshot).status).toBe("applied");
+        assertRendered(root);
+        const reconnectedRoot = document.createElement("div");
+        resetStreams();
+        setTranscriptElement(reconnectedRoot);
+        expect(renderTranscript(reconnectedRoot, reconnectSnapshot).status).toBe("applied");
+        assertRendered(reconnectedRoot);
+    });
+});

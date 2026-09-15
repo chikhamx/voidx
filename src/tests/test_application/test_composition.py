@@ -55,7 +55,12 @@ def test_build_agent_components_wires_presentation_neutral_runtime(monkeypatch):
     runtime = components.service._autonomous_router._runtime
     assert isinstance(runtime, AgentRuntime)
     resources = runtime._resources
-    assert isinstance(resources.turn_engine, LangGraphTurnEngine)
+    from voidx.bootstrap.legacy_writer import LegacyTurnWriter, LegacyWriterTurnEngine
+
+    assert isinstance(resources.turn_engine, LegacyWriterTurnEngine)
+    assert isinstance(resources.turn_engine._engine, LangGraphTurnEngine)
+    assert isinstance(resources.turn_engine._writer, LegacyTurnWriter)
+    assert resources.turn_engine._writer is injected["workspace_write_lock"]
     assert isinstance(resources.sessions, MemorySessionAdapter)
     assert isinstance(resources.events, NullEventPublisher)
     assert isinstance(components.service._autonomous_router._coding_service, CodingService)

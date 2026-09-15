@@ -11,7 +11,7 @@ from voidx.agent.domain.agent_profile import content_hash_of
 from voidx.agent.domain.task.state import GoalSpec, PlanResolution, ToolStatePatch
 from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext
 from voidx.tooling.domain.result import ToolResult
-from voidx.tooling.domain.interaction import UserInteraction
+from voidx.tooling.domain.interaction import InteractionRequest, UserInteraction
 from voidx.tooling.domain.schema import model_to_json_schema
 from voidx.tooling.domain.ui_events import (
     CheckpointDecisionSubmitted,
@@ -81,6 +81,8 @@ class PlanCheckpointTool:
             inp = PlanCheckpointInput.model_validate(args)
         except Exception as exc:
             return ToolResult(output=f"Invalid arguments: {exc}", summary="plan: invalid arguments", metadata={"error": True})
+        if ctx.runtime.checkpoint_requester is not None:
+            return await self._semantic_execute(inp, ctx)
         if ctx.runtime.interaction is None:
             return ToolResult(
                 title="plan: approval unavailable",
@@ -182,6 +184,32 @@ class PlanCheckpointTool:
             was_custom_input=bool(response.free_text),
         )
         return _decision_result(inp, decision="modified", modified_scope=response.value.strip())
+
+
+    async def _semantic_execute(self, inp: PlanCheckpointInput, ctx: ToolContext) -> ToolResult:
+        checkpoint_id = uuid4().hex
+        request = InteractionRequest(
+            **ctx.runtime.interaction_identity,
+            interaction_id=checkpoint_id, checkpoint_id=checkpoint_id,
+            checkpoint_stage="decision", purpose="checkpoint", input_kind="choice",
+            prompt=_build_prompt(inp), allow_free_text=True,
+            checkpoint=CheckpointPlanPayload(**inp.model_dump()),
+            choices=[ChoicePayload(label=label, value=value, description=description)
+                     for label, value, description in _CHECKPOINT_OPTIONS],
+        )
+        resolution = await ctx.runtime.checkpoint_requester(request)
+        if (resolution.decision == "modified" and resolution.value == "modified"
+                and not resolution.free_text and resolution.resolution_reason == "answered"):
+            resolution = await ctx.runtime.checkpoint_requester(request.model_copy(update={
+                "interaction_id": uuid4().hex, "checkpoint_stage": "scope",
+                "input_kind": "text", "choices": [], "prompt": "Describe the modified scope:",
+            }))
+        return _decision_result(
+            inp, decision=resolution.decision,
+            modified_scope=resolution.value.strip() if resolution.decision == "modified" else "",
+            workflow_runs=ctx.runtime.workflow_runs, turn_count=ctx.turn_count,
+            workflow_dag=ctx.runtime.workflow_dag,
+        )
 
 
 def _decision_result(

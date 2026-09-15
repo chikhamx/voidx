@@ -8,6 +8,7 @@ from voidx.agent.domain.automation.goal import GoalSpec, GoalState
 from voidx.agent.application.automation.goal.runner import GoalRuntimeRunner
 from voidx.agent.application.runtime.dispatcher import DispatchResult, RuntimeDispatcher
 from voidx.agent.application.runtime.pump import WakeupPumpMixin
+from voidx.agent.ports.run_lifecycle import RunLifecycle, SchedulerEvents
 from voidx.agent.ports.persistence import ThreadStore
 from voidx.agent.ports.presentation import AgentEventPublisher, NullAgentEventPublisher
 
@@ -29,7 +30,11 @@ class GoalRuntimeScheduler(WakeupPumpMixin):
         pump_poll_seconds: float = 1.0,
         events: AgentEventPublisher | None = None,
         guidance: Any | None = None,
+        owner: RunLifecycle | None = None,
+        semantic_events: SchedulerEvents | None = None,
     ) -> None:
+        self._semantic_events = semantic_events
+        self._stopped_thread_ids: set[str] = set()
         self._store = store
         self._runtime = runtime
         self._workspace = workspace
@@ -40,10 +45,18 @@ class GoalRuntimeScheduler(WakeupPumpMixin):
             lease_owner=lease_owner,
             lease_seconds=lease_seconds,
             pump_poll_seconds=pump_poll_seconds,
+            owner=owner,
         )
 
     def register_goal_thread(self, thread_id: str) -> None:
+        self._stopped_thread_ids.discard(thread_id)
         self.register_managed_thread(thread_id)
+
+    async def stop_goal(self, thread_id: str) -> None:
+        # Fence new claims before joining cancellation's durable transcript flush.
+        self._stopped_thread_ids.add(thread_id)
+        if self._pump_thread_id == thread_id:
+            await self.stop_pump()
 
     def unregister_goal_thread(self, thread_id: str) -> None:
         self.unregister_managed_thread(thread_id)
@@ -75,6 +88,8 @@ class GoalRuntimeScheduler(WakeupPumpMixin):
             lease_seconds=self._lease_seconds,
             events=self._events,
             guidance=self._guidance,
+            owner=self._run_owner,
+            semantic_events=self._semantic_events,
         )
         return await dispatcher.dispatch_outbox(outbox.outbox_id)
 
@@ -85,6 +100,8 @@ class GoalRuntimeScheduler(WakeupPumpMixin):
         return {"thread_id_prefix": "goal:"}
 
     async def _owns_wakeup(self, thread_id: str) -> bool:
+        if thread_id in self._stopped_thread_ids:
+            return False
         if self._managed_thread_ids:
             return thread_id in self._managed_thread_ids
         if not thread_id.startswith("goal:"):

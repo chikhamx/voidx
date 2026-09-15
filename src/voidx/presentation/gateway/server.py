@@ -34,9 +34,13 @@ class _WebSocketClient:
         self,
         websocket: ServerConnection,
         *,
+        strict: bool = False,
         queue_maxsize: int = SEND_QUEUE_MAXSIZE,
         send_timeout: float = WEBSOCKET_SEND_TIMEOUT_SECONDS,
     ) -> None:
+        self._strict = strict
+        self._send_lock = asyncio.Lock()
+        self._active_send: asyncio.Timeout | None = None
         self._websocket = websocket
         self._send_queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=queue_maxsize)
         self._send_task: asyncio.Task[None] | None = None
@@ -45,10 +49,13 @@ class _WebSocketClient:
         self._send_timeout = send_timeout
 
     async def start(self) -> None:
-        if self._send_task is None:
+        if not self._strict and self._send_task is None:
             self._send_task = asyncio.create_task(self._send_loop(), name="voidx-gateway-ws-send-loop")
 
     async def send_text(self, text: str, *, priority: bool = False) -> None:
+        if self._strict:
+            await self._send_strict(text)
+            return
         if self._closed:
             return
         try:
@@ -66,6 +73,20 @@ class _WebSocketClient:
                 f"count={self._dropped_messages} queue_size={queue_size}"
             )
             log_tool_event("gateway_send_queue_full", tool_name="gateway", message=message)
+
+    async def _send_strict(self, text: str) -> None:
+        async with self._send_lock:
+            if self._closed:
+                raise ConnectionError("Gateway websocket is closed")
+            try:
+                async with asyncio.timeout(self._send_timeout) as deadline:
+                    self._active_send = deadline
+                    await self._websocket.send(text)
+            except BaseException:
+                self._closed = True
+                raise
+            finally:
+                self._active_send = None
 
     # Methods whose messages are state snapshots or refresh triggers;
     # older instances are safe to discard in favor of newer ones.
@@ -131,6 +152,15 @@ class _WebSocketClient:
             self._closed = True
 
     async def close(self) -> None:
+        if self._strict:
+            self._closed = True
+            if self._active_send is not None and not self._active_send.expired():
+                # Expire only the socket-send scope, not the publisher's task.
+                self._active_send.reschedule(asyncio.get_running_loop().time())
+            async with self._send_lock:
+                async with asyncio.timeout(self._send_timeout):
+                    await self._websocket.close()
+            return
         if self._closed and self._send_task is None:
             return
         self._closed = True
@@ -216,18 +246,39 @@ class GatewayServer:
         if not self._authorized(websocket):
             await websocket.close(code=1008, reason="unauthorized")
             return
-        client = _WebSocketClient(websocket)
-        await client.start()
-        await self._session.connect(
-            client,
-            capabilities=self._capabilities_from_websocket(websocket),
-        )
+        strict = self._session.strict_transport
+        client = _WebSocketClient(websocket, strict=strict)
+        failures: list[BaseException] = []
         try:
+            await client.start()
+            await self._session.connect(
+                client,
+                capabilities=self._capabilities_from_websocket(websocket),
+            )
             async for message in websocket:
                 await self._handle_message(client, str(message))
+        except BaseException as exc:
+            if not strict:
+                raise
+            failures.append(exc)
         finally:
-            self._session.disconnect(client)
-            await client.close()
+            try:
+                self._session.disconnect(client)
+            except BaseException as exc:
+                if not strict:
+                    raise
+                failures.append(exc)
+            finally:
+                try:
+                    await client.close()
+                except BaseException as exc:
+                    if not strict:
+                        raise
+                    failures.append(exc)
+        if len(failures) == 1:
+            raise failures[0]
+        if failures:
+            raise BaseExceptionGroup("Gateway websocket lifecycle failed", failures)
 
     async def _send_json(self, client: _WebSocketClient, payload: dict[str, object]) -> None:
         await client.send_text(json.dumps(payload), priority=True)

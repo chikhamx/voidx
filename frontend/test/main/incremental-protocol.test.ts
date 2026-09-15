@@ -673,6 +673,22 @@ describe("workspace snapshot keyed reconciliation", () => {
     });
   }
 
+    it("materializes both historical rounds after a zero-height initial install becomes visible", async () => {
+        const transcript = document.querySelector("#transcript");
+        installTranscriptGeometry(transcript, 30, 0);
+        transcript.scrollTop = 0;
+        snapshot(1, [
+            { node_type: "turn", id: "history-first", header: "First round evidence" },
+            { node_type: "turn", id: "history-second", header: "Second round evidence" },
+        ], true);
+        expect(transcript.querySelector('[data-item-id="history-first"]')).toBeNull();
+        Object.defineProperty(transcript, "clientHeight", { configurable: true, value: 522 });
+        // The estimated total fits the viewport: no scroll event can reveal the omitted round.
+        await Promise.resolve();
+        expect(transcript.textContent).toContain("First round evidence");
+        expect(transcript.textContent).toContain("Second round evidence");
+        expect(transcript.querySelector("[data-transcript-spacer]")).toBeNull();
+    });
   it("keeps unchanged block identity and replaces only changed blocks", () => {
     snapshot(1, [
       { node_type: "message", id: "keep", payload: { style: "text", raw_text: "same" } },
@@ -1499,4 +1515,33 @@ it("schedules a trim after a fallback full attach of a windowed snapshot", async
     expect(uiState.provider).toBe("applied-after-stale-snapshot");
     expect(sent(socket, "snapshot.requested")).toHaveLength(1);
   });
+});
+
+describe("autonomous child snapshot reactivation", () => {
+    it("revisits a child only with a newer ordered workspace revision", () => {
+        _resetWorkbenchForTest();
+        _setSocket(fakeSocket());
+        const show = (threadId, revision, text) => handleNotification("workspace.snapshot", {
+            ...(revision === null ? {} : { revision }),
+            active_thread_id: threadId,
+            threads: [{ thread_id: "work" }, { thread_id: "evaluator" }],
+            active_snapshot: {
+                thread_id: threadId,
+                revision: revision ?? 1,
+                nodes: [{ node_type: "message", id: text, payload: { style: "text", raw_text: text } }],
+            },
+        });
+        show("work", 1, "first work");
+        show("evaluator", 2, "first evaluation");
+        show("work", null, "unversioned stale work");
+        expect(uiState.sessionId).toBe("evaluator");
+        show("work", 2, "duplicate stale work");
+        expect(uiState.sessionId).toBe("evaluator");
+        show("work", 3, "second work");
+        expect(uiState.sessionId).toBe("work");
+        expect(document.querySelector("#transcript").textContent).toContain("second work");
+        show("evaluator", 2, "stale evaluation");
+        expect(uiState.sessionId).toBe("work");
+        _resetWorkbenchForTest();
+    });
 });

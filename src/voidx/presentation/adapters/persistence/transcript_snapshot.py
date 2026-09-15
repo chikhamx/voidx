@@ -144,6 +144,7 @@ def tree_to_transcript_turn_rows(
     session_id: str,
     tree: OutputTree,
     turn_id: int,
+    *, include_separators: bool = False,
 ) -> list[TranscriptNodeRow]:
     """Export one root turn and its logical root siblings without older turns."""
     if turn_id < 0:
@@ -167,7 +168,7 @@ def tree_to_transcript_turn_rows(
 
     def add_node(node: OutputNode, parent_node_id: int | None) -> None:
         nonlocal next_node_id, sort_order
-        if _is_blank_separator(node):
+        if not include_separators and _is_blank_separator(node):
             return
         node_id = next_node_id
         next_node_id += 1
@@ -209,7 +210,7 @@ def tree_to_transcript_turn_rows(
     for index, child in enumerate(tree.root.children[target_index:], start=target_index):
         if index > target_index and child.node_type == "turn":
             break
-        if child.node_type == "startup" or _is_blank_separator(child):
+        if child.node_type == "startup" or (not include_separators and _is_blank_separator(child)):
             continue
         add_node(child, None)
 
@@ -1206,7 +1207,9 @@ def tree_to_transcript_rows(session_id: str, tree: OutputTree) -> tuple[list[Tra
     return rows, len(entries)
 
 
-def transcript_rows_to_tree(rows: list[TranscriptNodeRow]) -> OutputTree:
+def transcript_rows_to_tree(
+    rows: list[TranscriptNodeRow], *, preserve_tree_ids: bool = False,
+) -> OutputTree:
     tree = OutputTree()
     by_turn: dict[int, list[TranscriptNodeRow]] = defaultdict(list)
     for row in rows:
@@ -1222,7 +1225,8 @@ def transcript_rows_to_tree(rows: list[TranscriptNodeRow]) -> OutputTree:
             if row.node_type == "turn":
                 payload["transcript_turn_id"] = turn_id
             node = OutputNode(
-                id=f"t{turn_id}:n{row.node_id}",
+                id=(str(metadata["tree_id"]) if preserve_tree_ids and metadata.get("tree_id")
+                    else f"t{turn_id}:n{row.node_id}"),
                 node_type=_node_type(row.node_type),
                 header=row.header,
                 header_style=str(metadata.get("header_style") or ""),

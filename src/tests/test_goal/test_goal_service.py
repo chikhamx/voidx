@@ -34,6 +34,11 @@ class FakeGoalScheduler:
     registered: list[str] = field(default_factory=list)
     unregistered: list[str] = field(default_factory=list)
     pump_starts: int = 0
+    pump_stops: int = 0
+    stopped_threads: list[str] = field(default_factory=list)
+
+    async def stop_goal(self, thread_id: str) -> None:
+        self.stopped_threads.append(thread_id)
 
     async def run_goal(self, parent_thread_id: str, spec: GoalSpec):
         self.calls.append((parent_thread_id, spec))
@@ -46,6 +51,9 @@ class FakeGoalScheduler:
 
     def start_pump(self) -> None:
         self.pump_starts += 1
+
+    async def stop_pump(self) -> None:
+        self.pump_stops += 1
 
 
 @pytest.mark.asyncio
@@ -206,6 +214,8 @@ async def test_goal_service_status_stop_and_replace_are_independent(tmp_path) ->
     assert scheduler.unregistered == [first.goal_thread_id]
     assert (await service.status("parent-1")).objective_summary == "second"
     assert await service.stop("parent-1") is True
+    assert scheduler.stopped_threads == [second.goal_thread_id]
+    assert scheduler.pump_stops == 0
     assert await service.status("parent-1") is None
 
 

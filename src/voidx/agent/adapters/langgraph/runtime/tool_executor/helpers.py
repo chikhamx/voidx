@@ -18,6 +18,7 @@ from voidx.agent.domain.task.intent import PersonaName
 from voidx.tooling.domain.result import ToolResult
 from voidx.tooling.domain.risk import ApprovedToolRisk
 from voidx.tooling.domain.interaction import (
+    InteractionResolution,
     UserInteraction,
     UserResponse,
 )
@@ -35,8 +36,31 @@ from .types import (
 from .guards import _split_runtime_guard_blocked_calls, _restore_runtime_guard_blocked_results
 
 
+def _bind_autonomous_requester(host: object):
+    requester = getattr(host, "interaction_requester", None)
+    output = getattr(host, "semantic_output", None)
+    if requester is None and output is None:
+        return None
+    if requester is None or output is None:
+        async def unavailable(value):
+            return InteractionResolution(decision="rejected", resolution_reason="dismissed")
+        return unavailable
+    identity = {key: output.identity[key]
+                for key in ("session_id", "thread_id", "turn_id")}
+    owner = getattr(requester, "__self__", requester)
+    issue_id = getattr(owner, "issue_id", None)
+
+    async def request(value):
+        # Budgeted coordinators require their own single-use capability, not a UUID.
+        interaction_id = issue_id() if issue_id is not None else uuid.uuid4().hex
+        return await requester(value.model_copy(update={**identity, "interaction_id": interaction_id}))
+
+    return request
+
+
 def _invalidate_tui(host: object) -> None:
-    host._ui.invalidate()
+    if host._ui is not None:
+        host._ui.invalidate()
 
 
 _OTHER_VALUE_PREFIX = "__voidx_choice_prompt_other__"

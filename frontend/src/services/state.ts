@@ -192,7 +192,7 @@ export function updateStatusBar(): void {
     renderRuntimeProfile(uiState.runtimeProfile);
     for (const id of ["mode-status", "mode-stop"]) {
       const button = document.querySelector<HTMLElement>(`#${id}`);
-      if (button) button.hidden = !["loop", "goal"].includes(runtimeProfileRunMode(uiState.runtimeProfile));
+        if (button) button.hidden = !["loop", "goal", "loop_dynamic", "goal_eval"].includes(runtimeProfileRunMode(uiState.runtimeProfile));
     }
     const sessionLabel = `${profileLabel} · session ${uiState.sessionId.slice(0, 8)}`;
     statusSessionEl.textContent = sessionLabel;

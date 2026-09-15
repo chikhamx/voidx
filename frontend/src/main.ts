@@ -190,7 +190,7 @@ import {
 import { _resetSettingsForTest } from "./ui/settings";
 import { _resetIntegrationsForTest } from "./ui/integrations";
 import { _resetContextMenuForTest } from "./ui/context-menu";
-import { _resetDialogForTest } from "./ui/dialog";
+import { _resetDialogForTest, clearDisconnectedPermissionRequests } from "./ui/dialog";
 import { _resetForTest as _resetSidebarForTest } from "./ui/sidebar";
 import { _resetModeControlsForTest } from "./ui/mode";
 import { _resetHistoryForTest } from "./ui/history";
@@ -525,7 +525,11 @@ initializeModeControls();
 
 for (const [id, command] of [["mode-status", "status"], ["mode-stop", "stop"]] as const) {
   document.querySelector<HTMLElement>(`#${id}`)?.addEventListener("click", () => {
-    submitModeCommand(`/${uiState.runtimeProfile} ${command}`);
+      if (command === "stop" && uiState.isRunning) {
+          cancelRunningTurn();
+      } else {
+          submitModeCommand(`/${uiState.runtimeProfile} ${command}`);
+      }
   });
 }
 initModelControls();
@@ -738,6 +742,7 @@ function sendPendingSnapshotRecoveries(): void {
 }
 
 onSocketChange((ws) => {
+  clearDisconnectedPermissionRequests();
   socketGeneration += 1;
   const generation = socketGeneration;
   lastWorkspaceRevision = 0;
@@ -758,6 +763,7 @@ onSocketChange((ws) => {
     };
     const onClose = (): void => {
         if (generation !== socketGeneration) return;
+        clearDisconnectedPermissionRequests();
         terminateActiveTerminal();
     for (const state of snapshotRecoveryStates.values()) {
       state.inFlight = false;
@@ -2483,7 +2489,12 @@ function renderWorkspaceSnapshot(params: Record<string, unknown>): void {
     pendingActivationSnapshot = params;
     return;
   }
-  if (activeThreadId && staleSnapshotThreadIds.has(activeThreadId)) return;
+  // Autonomous runs revisit child threads; only an ordered newer snapshot may reactivate one.
+  if (activeThreadId && staleSnapshotThreadIds.has(activeThreadId)) {
+    const incomingRevision = workspaceRevision(params);
+    if (incomingRevision === null || incomingRevision <= lastWorkspaceRevision) return;
+    staleSnapshotThreadIds.delete(activeThreadId);
+  }
 
   const revision = workspaceRevision(params);
   const recoveryThreadId = activeThreadId || uiState.sessionId;
@@ -2566,6 +2577,7 @@ function renderWorkspaceSnapshot(params: Record<string, unknown>): void {
     requestSnapshotRecovery(activeThreadId, { blocked: typedSnapshot.windowed !== true });
     return;
   }
+    const initialViewportUnavailable = transcriptEl.clientHeight <= 0;
   const initialWindowState = typedSnapshot.windowed === true
     && !transcriptWindows.has(activeThreadId)
     ? installInitialTranscriptDomWindow(activeThreadId, typedSnapshot)
@@ -2608,14 +2620,18 @@ function renderWorkspaceSnapshot(params: Record<string, unknown>): void {
         loading: false,
       };
       transcriptWindows.set(activeThreadId, fallbackState);
-      queueMicrotask(() => {
-        if (uiState.sessionId !== activeThreadId
-          || uiState.isSwitchingThread
-          || transcriptWindows.get(activeThreadId) !== fallbackState) return;
-        applyTranscriptWindowReplan(
-          fallbackState,
-          fallbackState.snapshot,
-          fallbackState.descriptors,
+      }
+      if (!subsequentWindowApplied && (!initialWindowState || initialViewportUnavailable)) {
+          const installedState = transcriptWindows.get(activeThreadId)!;
+          // Initial installation may run while the empty canvas hides the viewport.
+          queueMicrotask(() => {
+              if (uiState.sessionId !== activeThreadId
+                  || uiState.isSwitchingThread
+                  || transcriptWindows.get(activeThreadId) !== installedState) return;
+              applyTranscriptWindowReplan(
+                  installedState,
+                  installedState.snapshot,
+                  installedState.descriptors,
           getTranscriptInteractionGeneration(),
           true,
           Math.max(transcriptEl.clientHeight, DEFAULT_BLOCK_ESTIMATE_PX),

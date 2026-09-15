@@ -26,6 +26,7 @@ from voidx.tooling.domain.risk import ApprovalScope, RiskLevel
 from voidx.agent.domain.task.intent import PersonaName
 from voidx.agent.domain.tool_policy import ProfileToolPolicy
 from voidx.agent.adapters.tools.permission_projection import project_agent_tool_call
+from voidx.agent.adapters.langgraph.runtime.semantic_output import _redact_arguments
 from voidx.agent.adapters.langgraph.runtime.tool_policy_bridge import check_tool_policy
 from voidx.agent.adapters.langgraph.runtime.thread_context import (
     current_thread_execution_state,
@@ -400,7 +401,7 @@ class PermissionFlow:
                             host._permission.inc_ai_approval_count()
                 need_ask = _attach_ai_approval_failures(need_ask, candidates, result, allowed_ids)
             if ai_allowed:
-                if host._ui.via_events():
+                if host._ui is not None and host._ui.via_events():
                     await host._ui.events.emit(RefreshRequested())
                 need_ask = [decision for decision in need_ask if decision not in ai_allowed]
 
@@ -415,7 +416,7 @@ class PermissionFlow:
                     request_id=request_id,
                 )
             finally:
-                if host._ui.via_events():
+                if host._ui is not None and host._ui.via_events():
                     await host._ui.events.emit(PermissionPromptCleared(request_id=request_id))
             for decision in blocked:
                 denied.append((decision.tool_call, decision.reason or "Blocked command"))
@@ -435,7 +436,7 @@ class PermissionFlow:
                 request_id=request_id,
             )
         finally:
-            if host._ui.via_events():
+            if host._ui is not None and host._ui.via_events():
                 await host._ui.events.emit(PermissionPromptCleared(request_id=request_id))
         if choice is None:
             choice = "n"
@@ -485,7 +486,36 @@ class PermissionFlow:
         details = [item.model_dump(mode="json") for item in host._permission_tool_details(decisions)]
         request_id = request_id or _permission_request_id()
 
-        if host._ui.via_events():
+        requester = getattr(host, "interaction_requester", None)
+        if requester is not None:
+            from voidx.tooling.domain.interaction import InteractionRequest, InteractionPermissionTool
+            from voidx.tooling.domain.ui_events import ChoicePayload
+
+            identity = host.semantic_output.identity
+            owner = getattr(requester, "__self__", requester)
+            issue_id = getattr(owner, "issue_id", None)
+            if issue_id is not None:
+                request_id = issue_id()
+            # Keep legacy policy choices authoritative; normalize only the wire values.
+            wire_values = {"y": "allow", "a": "session", "n": "deny"}
+            reverse = {wire_values.get(value, value): value for _, value, _ in choices}
+            scopes = set.intersection(*(set(item["allowed_scopes"]) for item in details)) if details else set()
+            resolution = await requester(InteractionRequest(
+                interaction_id=request_id,
+                **{key: identity[key] for key in ("session_id", "thread_id", "turn_id")},
+                input_kind="permission", purpose="permission", prompt=f"Allow tools: {tool_list}?",
+                choices=[ChoicePayload(label=label, value=wire_values.get(value, value), description=description)
+                         for label, value, description in choices],
+                tools=[InteractionPermissionTool.model_validate({
+                    **item, "args": _redact_arguments(item["args"]),
+                }) for item in details],
+                allowed_scopes=sorted(scopes),
+            ))
+            if resolution.decision != "approved":
+                return "n"
+            return reverse.get(resolution.value, "n")
+
+        if host._ui is not None and host._ui.via_events():
             await host._ui.events.emit(PermissionPromptShown(
                 request_id=request_id,
                 prompt=f"Allow tools: {tool_list}?",

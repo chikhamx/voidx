@@ -120,3 +120,54 @@ def test_bootstrap_statically_exports_cli_without_dynamic_attribute_hook() -> No
 
     assert bootstrap.cli is command_line.cli
     assert "__getattr__" not in vars(bootstrap)
+
+
+def test_sdk_and_static_cli_import_without_ui_or_command_implementation() -> None:
+    script = """
+import importlib.abc
+import sys
+
+class NoPresentation(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "voidx.presentation" or fullname.startswith("voidx.presentation."):
+            raise AssertionError(f"Unexpected UI import: {fullname}")
+
+sys.meta_path.insert(0, NoPresentation())
+import voidx.sdk
+import voidx.bootstrap as bootstrap
+assert "cli" in vars(bootstrap), "CLI must be a static export"
+assert "__getattr__" not in vars(bootstrap)
+from voidx.main import cli
+import typer
+from typer.core import TyperGroup
+from typer.main import get_command
+from typer.testing import CliRunner
+
+assert cli is bootstrap.cli
+assert isinstance(cli, typer.Typer)
+command = get_command(cli)
+assert isinstance(command, TyperGroup)
+assert list(command.commands) == ["sessions", "version"]
+result = CliRunner().invoke(cli, ["--help"])
+assert result.exit_code == 0, result.output
+assert "--workspace" in result.output
+assert "voidx.bootstrap.command_line" not in sys.modules
+from voidx.bootstrap.command_line import cli as implementation_cli
+assert implementation_cli is cli
+assert not any(name == "voidx.presentation" or name.startswith("voidx.presentation.") for name in sys.modules)
+"""
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(REPO_ROOT / "src"), str(REPO_ROOT / "tui")]
+        + [path for path in env.get("PYTHONPATH", "").split(os.pathsep) if path]
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=REPO_ROOT / "src",
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

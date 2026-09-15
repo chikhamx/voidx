@@ -9,6 +9,9 @@ from voidx.observability.tool_log import log_tool_event
 
 async def notify_tool_started(host, tc, display_policy) -> object | None:
     """Emit tool-started notification across all UI channels. Returns tool_node for dock path."""
+    if (output := getattr(host, "semantic_output", None)) is not None:
+        await output.tool_started(tc)
+        return None
     tid = tc["name"]
     targs = tc.get("args", {})
     cid = tc.get("id", "")
@@ -53,6 +56,9 @@ async def notify_tool_started(host, tc, display_policy) -> object | None:
 
 async def notify_tool_result(host, tc, result, ok, elapsed, display_policy, tool_node) -> None:
     """Emit tool-finished notification across all UI channels."""
+    if (output := getattr(host, "semantic_output", None)) is not None:
+        await output.tool_result(tc, result, ok=ok, elapsed=elapsed)
+        return
     tid = tc["name"]
     cid = tc.get("id", "")
     tool_event_id = cid or f"{tid}:{id(tc)}"
@@ -84,6 +90,9 @@ async def notify_tool_result(host, tc, result, ok, elapsed, display_policy, tool
 
 async def notify_tool_diff(host, result, tool_event_id, tool_node) -> None:
     """Render diff output across all UI channels."""
+    if (output := getattr(host, "semantic_output", None)) is not None:
+        await output.file_changed(result, tool_event_id)
+        return
     if host._ui.via_events():
         await host._ui.events.emit(FileChangeAppended(
             tool_call_id=tool_event_id,
@@ -116,6 +125,8 @@ def notify_tool_failure(host, tc, result, display_mode, tool_event_id, ok: bool 
 
 async def notify_tool_text_output(host, output, tid, tool_event_id, tool_node, display_policy, ok) -> None:
     """Render non-diff text output across all UI channels."""
+    if getattr(host, "semantic_output", None) is not None:
+        return  # The complete result was already published by notify_tool_result.
     if not output or not str(output).strip():
         return
     resolved_mode, resolved_max = display_policy.resolve_display_mode(tid, output, result_ok=ok)

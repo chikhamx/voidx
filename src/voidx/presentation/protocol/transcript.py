@@ -64,7 +64,11 @@ def _node_to_snapshot(node: OutputNode, parent_id: str | None) -> TranscriptNode
     return TranscriptNode(
         id=node.id,
         parent_id=parent_id,
-        node_type=node.node_type,
+        node_type=(
+            "checkpoint"
+            if node.node_type in {"clarify", "goal_spec", "loop_spec"}
+            else node.node_type
+        ),
         status=node.status,
         title=node.header,
         header=node.header,

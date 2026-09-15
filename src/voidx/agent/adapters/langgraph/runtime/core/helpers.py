@@ -196,7 +196,8 @@ def _interaction_mode_for_persona(persona: str) -> str:
 
 
 def _invalidate_tui(host: object) -> None:
-    host._ui.invalidate()
+    if host._ui is not None:
+        host._ui.invalidate()
 
 
 

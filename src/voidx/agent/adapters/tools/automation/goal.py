@@ -10,9 +10,9 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from voidx.agent.domain.task.state import GoalSpec as TaskGoalSpec, ToolStatePatch
 
 from voidx.agent.domain.automation.goal import GoalSpec as AutonomousGoalSpec
-from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext
+from voidx.agent.adapters.tools.context import AgentToolExecutionContext as ToolContext, autonomous_init_decision
 from voidx.tooling.domain.result import ToolResult
-from voidx.tooling.domain.interaction import UserInteraction
+from voidx.tooling.domain.interaction import InteractionRequest, UserInteraction
 from voidx.tooling.domain.schema import model_to_json_schema
 from voidx.tooling.domain.ui_events import (
     ChoicePayload,
@@ -36,6 +36,16 @@ _INIT_APPROVAL_TIMEOUT_SECONDS = 300.0
 
 
 async def _request_init_approval(spec: AutonomousGoalSpec, ctx: ToolContext) -> str:
+    if ctx.runtime.autonomous_requester is not None:
+        return await autonomous_init_decision(ctx.runtime, InteractionRequest(
+            interaction_id="goal-init",
+            **{key: ctx.runtime.interaction_identity[key] for key in ("session_id", "thread_id", "turn_id")},
+            input_kind="choice", purpose="goal", prompt=_init_approval_prompt(spec),
+            choices=[ChoicePayload(label=label, value=value, description=description)
+                     for label, value, description in _INIT_APPROVAL_OPTIONS],
+            allow_free_text=True, timeout=_INIT_APPROVAL_TIMEOUT_SECONDS,
+            goal=GoalSpecPayload(objective=spec.objective, acceptance_condition=spec.acceptance_condition, achievement_method=spec.achievement_method, max_attempts=spec.max_attempts),
+        ))
     if ctx.runtime.interaction is None:
         return "auto_approved"
     prompt_id = uuid4().hex
@@ -297,8 +307,12 @@ class GoalInitTool:
                 metadata={"goal_init_submitted": False, "goal_init_decision": "cancelled"},
             )
         if isinstance(approval, str) and approval.startswith("revise:"):
+            feedback = approval.removeprefix("revise:").strip()
             return ToolResult(
-                output="Revise the goal spec and call goal_init again.",
+                output=(
+                    "Revise the goal spec and call goal_init again."
+                    + (f" User feedback: {feedback}" if feedback else "")
+                ),
                 metadata={"goal_init_submitted": False, "goal_init_decision": "revised"},
             )
         from voidx.agent.domain.automation.goal import GoalProtocolRecord, GoalSpecSnapshot

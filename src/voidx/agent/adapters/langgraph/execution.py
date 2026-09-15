@@ -51,6 +51,7 @@ from voidx.agent.adapters.langgraph.runtime.core.helpers import (
 from voidx.agent.adapters.langgraph.runtime.runtime import current_parent_tool_call_id as _current_parent_tool_call_id
 from voidx.agent.adapters.langgraph.runtime.runtime_guards import RuntimeGuardState
 from voidx.agent.adapters.langgraph.runtime.session_runtime import SessionRuntime
+from voidx.agent.adapters.langgraph.runtime.semantic_output import SemanticOutput
 from voidx.agent.ports.presentation import NullPresentationSnapshotPort, PresentationSnapshotPort
 from voidx.agent.adapters.langgraph.runtime.llm_turn import LlmTurn
 from voidx.agent.adapters.langgraph.runtime.permission_flow import PermissionFlow, _tool_call_key
@@ -164,6 +165,39 @@ class RuntimeConfigPort(Protocol):
 
 class LangGraphExecution:
     """LangGraph-backed agent execution infrastructure."""
+    async def aclose(self) -> None:
+        """Close execution-owned tasks and integrations, never shared stores/settings."""
+        task = getattr(self, "_close_task", None)
+        if task is None:
+            task = self._close_task = asyncio.create_task(self._close_resources())
+        await asyncio.shield(task)
+
+    async def _close_resources(self) -> None:
+        errors = []
+        tasks = set(getattr(self, "_clear_session_tasks", ()))
+        if getattr(self, "_title_task", None) is not None:
+            tasks.add(self._title_task)
+        for task in tasks:
+            task.cancel()
+        for result in await asyncio.gather(*tasks, return_exceptions=True):
+            if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
+                errors.append(result)
+        gateway = getattr(self, "agent_gateway", None)
+        for close in ([gateway.close_all] if gateway is not None else []) + [
+            manager.stop_all for manager in (self.mcp_manager, self.lsp_manager)
+            if manager is not None
+        ]:
+            try:
+                await close()
+            except Exception as error:
+                errors.append(error)
+        session = getattr(self, "_session", None)
+        if session is not None:
+            clear_thread_execution_states(self, session.id)
+        clear_thread_execution_states(self, "")
+        if errors:
+            raise BaseExceptionGroup("Execution resource cleanup failed", errors)
+
     async def _call_llm(self, state: AgentState) -> dict:
         return await _llm_turn_for(self).call(state)
 
@@ -366,9 +400,10 @@ class LangGraphExecution:
         skills_api_factory: Callable[[Any | None], Any] | None = None,
         skills_api_provider: Callable[[str], Any] | None = None,
         *,
-        ui: AgentUiPort,
+        ui: AgentUiPort | None,
         workspace_write_lock: WorkspaceWriteLockPort,
         presentation_snapshots: PresentationSnapshotPort | None = None,
+        interaction_requester: Callable[..., Awaitable[Any]] | None = None,
         external_manager_factory: Callable[..., tuple[Any, Any]] | None = None,
         mcp_reference_resolver: Callable[..., Awaitable[Any]] | None = None,
         web_route: Callable[..., Awaitable[Any]] | None = None,
@@ -387,7 +422,14 @@ class LangGraphExecution:
         update_service: Any | None = None,
         clipboard_image: Any | None = None,
         available_servers_renderer: Callable[..., str] | None = None,
+        semantic_output: SemanticOutput | None = None,
+        permission_notifier: Callable[[str], None] | None = None,
     ):
+        if ui is None:
+            if semantic_output is None:
+                raise ValueError("semantic_output is required without UI")
+            if permission_notifier is None:
+                raise ValueError("permission_notifier is required without UI")
         self.config = config
         self.api_key = api_key
         self.model = model_factory(api_key, config.model) if api_key else None
@@ -427,10 +469,10 @@ class LangGraphExecution:
         self.provider_specs = provider_specs
         self.language_labels = language_labels
         self.tone_labels = tone_labels
-        if update_service is None:
+        if ui is not None and update_service is None:
             raise RuntimeError("update_service is required")
         self.update_service = update_service
-        if clipboard_image is None:
+        if ui is not None and clipboard_image is None:
             raise RuntimeError("clipboard_image is required")
         self.clipboard_image = clipboard_image
         self._ai_approval = AiApprovalService(
@@ -439,6 +481,7 @@ class LangGraphExecution:
             structured_invoker=ainvoke_structured,
         )
         self._ui = ui
+        self.semantic_output = semantic_output
         self._workspace_write_lock = workspace_write_lock
         self._any_messages_sent = False
         self._startup_presenter = None
@@ -464,13 +507,14 @@ class LangGraphExecution:
                 else {}
             ),
         )
-        self._permission = self._permission_service_factory(config, settings=self._settings, notifier=self._ui.ui.print)
+        self._permission = self._permission_service_factory(config, settings=self._settings, notifier=permission_notifier if permission_notifier is not None else self._ui.ui.print)
 
         self._interaction_mode: InteractionMode = InteractionMode.AUTO
         self._debug: bool = False
         self._image_strip: bool = False
         self._instruction.set_debug(self._debug)
-        self._ui.ui.set_debug(self._debug)
+        if self._ui is not None:
+            self._ui.ui.set_debug(self._debug)
 
         self._file_mtimes: dict[str, dict[str, int]] = {}
         self._file_read_coverage: dict[str, dict] = {}
@@ -498,6 +542,7 @@ class LangGraphExecution:
         self._usage_stats, self._compaction = build_compaction_service(config)
         self._compaction_coordinator = CompactionCoordinator(self)
         self._llm_turn = LlmTurn(self)
+        self.interaction_requester = interaction_requester
         self._permission_flow = PermissionFlow(self)
         self._session_runtime = SessionRuntime(
             self,
@@ -929,7 +974,7 @@ class LangGraphExecution:
 
     def _project_submitted_guidance(self, guidance: Any) -> None:
         source = guidance.source if guidance.source in {"user", "system", "guard"} else "guard"
-        if source == "user" and self._ui.via_events():
+        if source == "user" and self._ui is not None and self._ui.via_events():
             self._ui.events.emit_direct(
                 GuidanceSubmitted(text=guidance.text, truncated=guidance.truncated)
             )

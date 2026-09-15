@@ -73,6 +73,10 @@ class GoalRecovery:
                     binding=binding,
                     state=state,
                 )
+                # A fenced needs-resume commit already closed its source attempt.
+                # Reopening the stream preserves that pause, not phase execution.
+                if state.phase_status == "needs_resume":
+                    return
                 next_record = by_sequence.get(state.projected_sequence_number + 1)
                 if next_record is None:
                     break
@@ -81,7 +85,13 @@ class GoalRecovery:
                         "Goal journal is ahead of GoalState",
                         observed_sequence=state.projected_sequence_number,
                     )
-                await self._projector.project(next_record.protocol_id)
+                if not await self._store.renew_goal_generation_lease(
+                    generation,
+                    owner,
+                    lease_seconds=self._lease_seconds,
+                ):
+                    raise GoalProtocolConflict("Goal generation recovery lease expired")
+                await self._projector.project(next_record.protocol_id, lease_owner=owner)
 
             loaded = await self._store.load(binding.goal_thread_id)
             if loaded is None:
@@ -94,7 +104,7 @@ class GoalRecovery:
                 state=state,
             )
             if not is_goal_terminal(loaded.state.lifecycle):
-                await self._store.ensure_goal_phase_outbox(generation)
+                await self._store.ensure_goal_phase_outbox(generation, lease_owner=owner)
         except GoalRuntimeCorruption as exc:
             await self._store.fail_goal_generation(
                 GoalRuntimeFailure(
@@ -102,7 +112,8 @@ class GoalRecovery:
                     observed_sequence=exc.observed_sequence,
                     reason=str(exc),
                     evidence=exc.evidence,
-                )
+                ),
+                lease_owner=owner,
             )
         finally:
             if acquired_here:

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import nullcontext
 from typing import Any
+
+from voidx.agent.ports.run_lifecycle import RunLifecycle
 
 from voidx.agent.application.runtime.dispatcher import DispatchResult, RuntimeDispatcher
 
@@ -22,12 +25,15 @@ class WakeupPumpMixin:
         lease_owner: str,
         lease_seconds: float,
         pump_poll_seconds: float,
+        owner: RunLifecycle | None = None,
     ) -> None:
+        self._run_owner = owner
         self._lease_owner = lease_owner
         self._lease_seconds = lease_seconds
         self._pump_poll_seconds = pump_poll_seconds
         self._managed_thread_ids: set[str] = set()
         self._pump_task: asyncio.Task | None = None
+        self._pump_thread_id: str | None = None
 
     def register_managed_thread(self, thread_id: str) -> None:
         if thread_id:
@@ -39,7 +45,10 @@ class WakeupPumpMixin:
     def start_pump(self) -> None:
         if self._pump_task is not None:
             return
-        self._pump_task = asyncio.create_task(self._pump_loop())
+        if self._run_owner is None:
+            self._pump_task = asyncio.create_task(self._pump_loop())
+        else:
+            self._pump_task = self._run_owner.spawn(self._pump_loop, role="pump")
 
     async def stop_pump(self) -> None:
         task, self._pump_task = self._pump_task, None
@@ -78,40 +87,49 @@ class WakeupPumpMixin:
             lease_seconds=self._lease_seconds,
             events=getattr(self, "_events", None),
             guidance=getattr(self, "_guidance", None),
+            owner=self._run_owner,
+            semantic_events=getattr(self, "_semantic_events", None),
         )
-        skipped: set[str] = set()
-        for _ in range(16):
-            outbox = None
-            for kind in self._pump_outbox_kinds():
-                outbox = await self._store.claim_next_outbox(
-                    lease_owner=self._lease_owner,
-                    lease_seconds=self._lease_seconds,
-                    kind=kind,
-                    exclude_outbox_ids=skipped,
-                    **self._claim_wakeup_filters(),
-                )
-                if outbox is not None:
-                    break
-            if outbox is None:
-                return None
-            if not await self._owns_wakeup(outbox.thread_id):
-                # Not ours: release the claim and leave it pending for the
-                # session that owns (or resumes) this autonomous thread.
-                skipped.add(outbox.outbox_id)
-                await self._store.release_outbox_claim(outbox.outbox_id)
-                continue
-            self._on_wakeup_owned(outbox)
-            return await dispatcher._dispatch_claimed(outbox)
-        return None
+        with self._run_owner.reserve_dispatch() if self._run_owner is not None else nullcontext():
+            skipped: set[str] = set()
+            for _ in range(16):
+                outbox = None
+                for kind in self._pump_outbox_kinds():
+                    outbox = await self._store.claim_next_outbox(
+                        lease_owner=self._lease_owner,
+                        lease_seconds=self._lease_seconds,
+                        kind=kind,
+                        exclude_outbox_ids=skipped,
+                        **self._claim_wakeup_filters(),
+                    )
+                    if outbox is not None:
+                        break
+                if outbox is None:
+                    return None
+                if not await self._owns_wakeup(outbox.thread_id):
+                    # Not ours: release the claim and leave it pending for the
+                    # session that owns (or resumes) this autonomous thread.
+                    skipped.add(outbox.outbox_id)
+                    await self._store.release_outbox_claim(outbox.outbox_id)
+                    continue
+                self._on_wakeup_owned(outbox)
+                self._pump_thread_id = outbox.thread_id
+                try:
+                    return await dispatcher._dispatch_claimed(outbox)
+                finally:
+                    self._pump_thread_id = None
+            return None
 
     async def _pump_loop(self) -> None:
-        while True:
+        while self._run_owner is None or self._run_owner.accepting_dispatches:
             try:
                 if not self._pump_has_work():
                     result = None
                 else:
                     result = await self._dispatch_next_wakeup()
             except Exception:
+                if self._run_owner is not None:
+                    raise
                 logging.getLogger(__name__).exception("wakeup pump dispatch failed")
                 result = None
             if result is None:

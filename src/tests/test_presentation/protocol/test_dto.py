@@ -161,3 +161,66 @@ def test_checked_in_frontend_protocol_schema_matches_backend_export():
     checked_in = json.loads(schema_path.read_text(encoding="utf-8"))
 
     assert checked_in == export_protocol_schema()
+
+
+@pytest.mark.parametrize("node_type", ["clarify", "goal_spec", "loop_spec"])
+def test_transcript_maps_hitl_transport_only_and_preserves_all_fields(node_type):
+    from copy import deepcopy
+    from voidx.presentation.protocol.transcript import TranscriptNode
+
+    tree = OutputTree()
+    turn = tree.new_node(tree.root, node_type="turn", header="Question")
+    card = tree.new_node(
+        turn, node_type=node_type, header="Card", header_style="bold",
+        body_lines=["First line", "Second line"], collapsed=True, status="done",
+        elapsed=1.5, agent_name="agent", step_info="step", meta="meta",
+        tool_call_id="call", agent_run_id="run", message_id=7,
+        payload={"interaction": node_type, "nested": {"value": [1, 2]}},
+    )
+    answer = tree.new_node(card, node_type="message", header="Answer", body_lines=["yes"], status="done")
+    before = deepcopy({key: value for key, value in vars(card).items() if key not in {"parent", "children"}})
+    expected = {key: getattr(card, key) for key in TranscriptNode.model_fields
+                if key not in {"node_type", "parent_id", "title", "child_ids"}}
+    expected.update(node_type="checkpoint", parent_id=turn.id, title=card.header, child_ids=[answer.id])
+    snapshot = tree_to_snapshot(tree, session_id="session", revision=9)
+    assert snapshot.model_dump() == TranscriptSnapshot.model_validate(snapshot.model_dump()).model_dump()
+    assert snapshot.session_id == "session" and snapshot.revision == 9
+    assert snapshot.nodes[1].model_dump() == expected
+    assert snapshot.nodes[2].parent_id == card.id
+    assert snapshot.nodes[2].id == answer.id
+    assert snapshot.nodes[2].body_lines == ["yes"]
+    assert {key: value for key, value in vars(card).items() if key not in {"parent", "children"}} == before
+    assert tree.root.children == [turn] and turn.children == [card]
+    assert card.parent is turn and card.children == [answer] and answer.parent is card
+
+
+def test_transcript_still_rejects_unknown_node_types():
+    from pydantic import ValidationError
+
+    tree = OutputTree()
+    tree.new_node(tree.root, node_type="unknown_hitl", payload={"interaction": "clarify"})
+    with pytest.raises(ValidationError, match="unknown_hitl"):
+        tree_to_snapshot(tree)
+
+
+def hitl_render_snapshot():
+    tree = OutputTree()
+    turn = tree.new_node(tree.root, node_type="turn", header="❯ HITL", status="done")
+    for kind, prompt in [("clarify", "Question: Which option?"),
+                         ("goal_spec", "Goal: Ship safely"),
+                         ("loop_spec", "Loop: Check every 12 seconds")]:
+        card = tree.new_node(
+            turn, node_type=kind, header="", status="done",
+            body_lines=[f"[bold]{prompt}[/bold]", "Details: Keep all content", ""],
+            payload={"interaction": kind, "decision": "approved"},
+        )
+        tree.new_node(
+            card, node_type="message", header=f"[bold]Answer:[/bold] Accepted {kind}",
+            status="done", payload={"full_width_user_row": True, "align_full_width_user_row": True},
+        )
+    return tree_to_snapshot(tree, session_id="hitl-render", revision=3).model_dump()
+
+
+def test_transcript_frontend_hitl_fixture_matches_backend_snapshot():
+    fixture = Path(__file__).resolve().parents[4] / "frontend/test/fixtures/hitl-transcript.json"
+    assert json.loads(fixture.read_text()) == hitl_render_snapshot()

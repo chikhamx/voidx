@@ -165,7 +165,8 @@ def build_agent_components(
         permission_service_factory=permission_service_factory,
         event_publisher_factory=event_publisher_factory,
     )
-    workspace_write_lock = DelegatingWorkspaceWriteLock()
+    from voidx.bootstrap.legacy_writer import LegacyTurnWriter, LegacyWriterTurnEngine
+    workspace_write_lock = LegacyTurnWriter(config.workspace)
     from voidx.bootstrap.providers import build_model_catalog
     from voidx.bootstrap.skills import build_skills_api_provider
     from voidx.update import service as update_service
@@ -236,7 +237,7 @@ def build_agent_components(
     }
     execution = LangGraphExecution(config, api_key, **execution_kwargs)
     application = ApplicationResources(
-        turn_engine=LangGraphTurnEngine(execution),
+        turn_engine=LegacyWriterTurnEngine(LangGraphTurnEngine(execution), workspace_write_lock),
         sessions=MemorySessionAdapter(),
         events=NullEventPublisher(),
     )
@@ -250,8 +251,11 @@ def build_agent_components(
         else None
     )
     workspace = config.workspace
+    from voidx.bootstrap.automation_session_ids import loop_session_id
+
     loop_service = LoopService(
         store=store,
+        session_id_factory=loop_session_id,
         scheduler=LoopRuntimeScheduler(
             store=store,
             runtime=runtime,
@@ -342,6 +346,8 @@ def build_agent_app(
     sessions = LangGraphSessionLifecycle(components.execution)
     integrations = LangGraphPresentationIntegrations(components.execution)
     frontend_binding = LangGraphPresentationBinding(components.execution, components.input_frontend_binder)
+    from voidx.bootstrap.production_sdk_gateway import ProductionSdkGateway
+
     run_loop = TerminalRunLoop(
         status_reader,
         sessions,
@@ -356,6 +362,8 @@ def build_agent_app(
         skills_api_provider=skills_api_provider,
         agent_tool_catalog_provider=tool_catalog,
         session_repository=SessionRepositoryAdapter(),
+        sdk_gateway_factory=lambda session, handler: ProductionSdkGateway(
+            session, handler, config=config, settings=settings),
     )
     return AgentFacade(run_loop=run_loop)
 

@@ -23,6 +23,7 @@ from voidx.agent.application.runtime.contracts import TurnRequest
 from voidx.agent.application.profile_tool_policy import profile_tool_policy_for
 from voidx.agent.application.runtime.dispatcher import DispatchResult, RuntimeDispatcher
 from voidx.agent.application.runtime.pump import WakeupPumpMixin
+from voidx.agent.ports.run_lifecycle import RunLifecycle, SchedulerEvents
 from voidx.agent.ports.persistence import ThreadStore
 from voidx.agent.ports.presentation import AgentEventPublisher, NullAgentEventPublisher
 
@@ -127,7 +128,10 @@ class LoopRuntimeScheduler(WakeupPumpMixin):
         session_id: str = "",
         events: AgentEventPublisher | None = None,
         guidance: Any | None = None,
+        owner: RunLifecycle | None = None,
+        semantic_events: SchedulerEvents | None = None,
     ) -> None:
+        self._semantic_events = semantic_events
         self._store = store
         self._runtime = runtime
         self._workspace = workspace
@@ -138,6 +142,7 @@ class LoopRuntimeScheduler(WakeupPumpMixin):
             lease_owner=lease_owner,
             lease_seconds=lease_seconds,
             pump_poll_seconds=pump_poll_seconds,
+            owner=owner,
         )
 
     def register_loop_thread(self, thread_id: str) -> None:
@@ -148,6 +153,9 @@ class LoopRuntimeScheduler(WakeupPumpMixin):
 
     def _pump_has_work(self) -> bool:
         return bool(self._managed_thread_ids)
+
+    def _pump_outbox_kinds(self) -> tuple[str, ...]:
+        return ("loop_prompt", "wakeup")
 
     def _claim_wakeup_filters(self) -> dict:
         return {"thread_id_prefix": "loop:"}
@@ -195,6 +203,8 @@ class LoopRuntimeScheduler(WakeupPumpMixin):
             lease_seconds=self._lease_seconds,
             events=self._events,
             guidance=self._guidance,
+            owner=self._run_owner,
+            semantic_events=self._semantic_events,
         )
         return await dispatcher.dispatch_outbox(outbox.outbox_id)
 
