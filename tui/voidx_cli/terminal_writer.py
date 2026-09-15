@@ -116,6 +116,7 @@ class _CommitBatch:
     positioned: bool = False
     fixed_bottom_rows: int = 0
     previous_frame_rows: int = 0
+    recovery_frame: FrameBatch | None = None
 
 
 @dataclass(frozen=True)
@@ -513,6 +514,7 @@ class TerminalWriter:
         positioned: bool = False,
         fixed_bottom_rows: int = 0,
         previous_frame_rows: int = 0,
+        recovery_frame: FrameBatch | None = None,
     ) -> BatchToken:
         self._drop_pending_frame_locked()
         entry = self._new_entry_locked(
@@ -524,6 +526,7 @@ class TerminalWriter:
                 positioned=positioned,
                 fixed_bottom_rows=fixed_bottom_rows,
                 previous_frame_rows=previous_frame_rows,
+                recovery_frame=recovery_frame,
             )
         )
         self._queue.append(entry)
@@ -569,6 +572,7 @@ class TerminalWriter:
         positioned: bool = False,
         fixed_bottom_rows: int = 0,
         previous_frame_rows: int = 0,
+        recovery_frame: FrameBatch | None = None,
     ) -> BatchToken:
         if clear_start_row < 0:
             raise ValueError("commit clear_start_row cannot be negative")
@@ -596,6 +600,7 @@ class TerminalWriter:
                         positioned=positioned,
                         fixed_bottom_rows=fixed_bottom_rows,
                         previous_frame_rows=previous_frame_rows,
+                        recovery_frame=recovery_frame,
                     )
                 except Exception:
                     self._pending_commit_bytes -= byte_length
@@ -620,6 +625,7 @@ class TerminalWriter:
                     positioned=positioned,
                     fixed_bottom_rows=fixed_bottom_rows,
                     previous_frame_rows=previous_frame_rows,
+                    recovery_frame=recovery_frame,
                 )
         except Exception:
             payload.close()
@@ -714,6 +720,14 @@ class TerminalWriter:
         return batch.kind == "shutdown"
 
     def _process_commit(self, batch: _CommitBatch) -> None:
+        # The recovery frame bundled with this commit is applied in the same
+        # synchronized block, so transient rows (vibe, thinking) are never
+        # visibly erased between commit and frame. Plain commits keep the
+        # original unsynchronized write.
+        atomic_frame = batch.recovery_frame
+        atomic = atomic_frame is not None
+        if atomic:
+            self._worker_write(_BEGIN_SYNCHRONIZED_OUTPUT)
         try:
             clear_start_row = (
                 self._applied_start_row
@@ -733,7 +747,8 @@ class TerminalWriter:
                 self._worker_write(value)
             if erase_tail and not wrote_newline:
                 self._worker_write("\x1b[K")
-            self._worker_flush()
+            if not atomic:
+                self._worker_flush()
             if batch.positioned and batch.fixed_bottom_rows and self._baseline_valid:
                 keep = min(batch.fixed_bottom_rows, len(self._applied_lines))
                 self._applied_start_row += len(self._applied_lines) - keep
@@ -772,6 +787,33 @@ class TerminalWriter:
             raise
         self._release_commit_payload(batch.payload)
 
+        if not atomic:
+            return
+        if atomic_frame.generation > self._applied_generation:
+            try:
+                changed_lines, strategy = self._apply_frame(atomic_frame)
+            except Exception as exc:
+                self._worker_write(_END_SYNCHRONIZED_OUTPUT)
+                self._worker_flush()
+                raise exc
+            self._worker_write(_END_SYNCHRONIZED_OUTPUT)
+            self._worker_flush()
+            self._finish_frame(atomic_frame, changed_lines, strategy)
+        else:
+            self._worker_write(_END_SYNCHRONIZED_OUTPUT)
+            self._worker_flush()
+            # Stale recovery frame: report it so the callback can drop state.
+            self._publish_frame_result(
+                FrameResult(
+                    generation=atomic_frame.generation,
+                    total_lines=len(atomic_frame.target_lines),
+                    changed_lines=0,
+                    render_ms=atomic_frame.render_ms,
+                    strategy="stale",
+                    applied=False,
+                )
+            )
+
     def _release_commit_payload(self, payload: _CommitPayload) -> None:
         if payload.closed:
             return
@@ -800,48 +842,7 @@ class TerminalWriter:
         frame_error: Exception | None = None
         try:
             try:
-                if batch.scroll_ansi:
-                    self._worker_write(batch.scroll_ansi)
-                if batch.scroll_ansi and self._baseline_valid and not batch.force_full:
-                    payload, changed_lines = scrolled_frame_payload(
-                        previous=self._applied_lines, previous_start=self._applied_start_row,
-                        current=batch.target_lines, start=batch.start_row,
-                        scroll_rows=batch.scroll_rows, scroll_bottom=batch.scroll_bottom,
-                    )
-                    self._worker_write(payload)
-                    strategy = "diff-scroll"
-                elif self._baseline_valid and self._bottom_only_baseline and not batch.force_full and self._applied_start_row != batch.start_row:
-                    payload, changed_lines = scrolled_frame_payload(
-                        previous=self._applied_lines, previous_start=self._applied_start_row,
-                        current=batch.target_lines, start=batch.start_row,
-                        scroll_rows=0, scroll_bottom=0,
-                    )
-                    self._worker_write(payload)
-                    strategy = "diff"
-                elif (
-                    self._baseline_valid
-                    and not batch.force_full
-                    and self._applied_start_row == batch.start_row
-                ):
-                    changed_lines, strategy = self._write_frame_diff(
-                        batch.start_row,
-                        self._applied_lines,
-                        batch.target_lines,
-                    )
-                else:
-                    if self._baseline_valid:
-                        for index in range(len(self._applied_lines)):
-                            row = self._applied_start_row + index
-                            if batch.scroll_ansi and row <= batch.scroll_bottom:
-                                row -= batch.scroll_rows
-                            if 1 <= row < batch.start_row:
-                                self._worker_write(f"\x1b[{row};1H\x1b[K")
-                    changed_lines, strategy = self._write_frame_full(
-                        batch.start_row,
-                        batch.target_lines,
-                    )
-                if batch.cursor_ansi:
-                    self._worker_write(batch.cursor_ansi)
+                changed_lines, strategy = self._apply_frame(batch)
             except Exception as exc:
                 frame_error = exc
             finally:
@@ -855,7 +856,56 @@ class TerminalWriter:
         if frame_error is not None:
             raise frame_error
         self._worker_flush()
+        self._finish_frame(batch, changed_lines, strategy)
 
+    def _apply_frame(self, batch: FrameBatch) -> tuple[int, str]:
+        """Write frame content within the caller's synchronized block."""
+        if batch.scroll_ansi:
+            self._worker_write(batch.scroll_ansi)
+        if batch.scroll_ansi and self._baseline_valid and not batch.force_full:
+            payload, changed_lines = scrolled_frame_payload(
+                previous=self._applied_lines, previous_start=self._applied_start_row,
+                current=batch.target_lines, start=batch.start_row,
+                scroll_rows=batch.scroll_rows, scroll_bottom=batch.scroll_bottom,
+            )
+            self._worker_write(payload)
+            strategy = "diff-scroll"
+        elif self._baseline_valid and self._bottom_only_baseline and not batch.force_full and self._applied_start_row != batch.start_row:
+            payload, changed_lines = scrolled_frame_payload(
+                previous=self._applied_lines, previous_start=self._applied_start_row,
+                current=batch.target_lines, start=batch.start_row,
+                scroll_rows=0, scroll_bottom=0,
+            )
+            self._worker_write(payload)
+            strategy = "diff"
+        elif (
+            self._baseline_valid
+            and not batch.force_full
+            and self._applied_start_row == batch.start_row
+        ):
+            changed_lines, strategy = self._write_frame_diff(
+                batch.start_row,
+                self._applied_lines,
+                batch.target_lines,
+            )
+        else:
+            if self._baseline_valid:
+                for index in range(len(self._applied_lines)):
+                    row = self._applied_start_row + index
+                    if batch.scroll_ansi and row <= batch.scroll_bottom:
+                        row -= batch.scroll_rows
+                    if 1 <= row < batch.start_row:
+                        self._worker_write(f"\x1b[{row};1H\x1b[K")
+            changed_lines, strategy = self._write_frame_full(
+                batch.start_row,
+                batch.target_lines,
+            )
+        if batch.cursor_ansi:
+            self._worker_write(batch.cursor_ansi)
+        return changed_lines, strategy
+
+    def _finish_frame(self, batch: FrameBatch, changed_lines: int, strategy: str) -> None:
+        """Record the applied frame baseline and publish the result."""
         self._bottom_only_baseline = False
         self._applied_generation = batch.generation
         self._applied_start_row = batch.start_row
@@ -871,6 +921,7 @@ class TerminalWriter:
                 applied=True,
             )
         )
+
 
     def _write_frame_full(
         self,

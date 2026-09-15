@@ -776,6 +776,13 @@ class PureTui(
         try:
             await self._terminal_writer.wait(token)
         except BaseException as exc:
+            recovery_generation = update.get("recovery_generation")
+            if recovery_generation is not None:
+                # The bundled recovery frame died with the commit; drop its
+                # pending state so geometry tracking does not stall.
+                self._pending_layout_snapshots.pop(recovery_generation, None)
+                self._pending_layout_force_full.pop(recovery_generation, None)
+                self._pending_worker_frame_states().pop(recovery_generation, None)
             if update.get("restore_epoch", 0) == self._restore_epoch:
                 if update["force_requested"]:
                     dock.request_force_flush()
@@ -787,7 +794,21 @@ class PureTui(
                 return
             update["settle"]()
             update["apply_state"]()
-            self._apply_commit_geometry(update["geometry"])
+            recovery_generation = update.get("recovery_generation")
+            if recovery_generation is not None and (
+                recovery_generation not in self._pending_worker_frame_states()
+            ):
+                # The bundled recovery frame already applied the post-commit
+                # geometry through its frame result.
+                geometry = update["geometry"]
+                self._trace_geometry(
+                    "commit_applied",
+                    next_row=geometry.next_row,
+                    remaining_rows=geometry.remaining_frame_rows,
+                    via="recovery_frame",
+                )
+            else:
+                self._apply_commit_geometry(update["geometry"])
             if not update.get("preserve_baseline", False):
                 self._invalidate_frame_cache()
         finally:
@@ -811,6 +832,7 @@ class PureTui(
         force_requested: bool,
         raw_echoes: list[str],
         preserve_baseline: bool = False,
+        recovery_generation: int | None = None,
     ) -> None:
         token_key = id(token)
         self._render_state.pending_terminal_operations[token_key] = {
@@ -830,6 +852,7 @@ class PureTui(
             "raw_echoes": raw_echoes,
             "preserve_baseline": preserve_baseline,
             "restore_epoch": self._restore_epoch,
+            "recovery_generation": recovery_generation,
         }
         self._render_state.pending_commit_tasks[token_key] = asyncio.create_task(
             self._wait_for_pending_commit(token)
@@ -1784,17 +1807,50 @@ class PureTui(
                     self._invalidate_layout_snapshots_for_commit()
                 else:
                     self._invalidate_layout("commit")
-                token = self._terminal_writer.submit_commit(
-                    clear_start_row=clear_start_row,
-                    ansi=commit_ansi,
-                    positioned=True,
-                    previous_frame_rows=previous_frame_rows,
-                    fixed_bottom_rows=fixed_bottom_rows,
-                    lines_written=flush_rows,
-                    explicit_start=True,
-                    preserve_baseline=preserve_baseline,
-                )
-                if callable(getattr(self._terminal_writer, "wait", None)):
+                # Project the recovery frame at the committed geometry from a
+                # speculative post-commit view (the commit state itself is only
+                # applied once the writer token completes) and bundle it with
+                # the commit so the worker applies both in one synchronized
+                # block (no visible vibe gap). Only a previously rendered frame
+                # has transient rows (vibe, thinking) the commit can erase.
+                # Restored-history commits are skipped: their post-commit
+                # projection requires dock mutations.
+                real_writer = callable(getattr(self._terminal_writer, "wait", None))
+                recovery_frame = None
+                if real_writer and self._has_rendered_frame and restored_range is None:
+                    recovery_frame = self._render_frame_for_commit(
+                        geometry,
+                        width=width,
+                        term_height=term_height,
+                        committed_state={
+                            "_committed_line_count": next_committed_line_count,
+                            "_committed_projection": next_committed_projection,
+                            "_restored_committed_line_count": next_restored_committed_line_count,
+                            "_restored_startup_flushed": next_restored_startup_flushed,
+                            "_restored_history_retired": next_restored_history_retired,
+                            "_startup_committed": next_startup_committed,
+                        },
+                    )
+                try:
+                    token = self._terminal_writer.submit_commit(
+                        clear_start_row=clear_start_row,
+                        ansi=commit_ansi,
+                        positioned=True,
+                        previous_frame_rows=previous_frame_rows,
+                        fixed_bottom_rows=fixed_bottom_rows,
+                        lines_written=flush_rows,
+                        explicit_start=True,
+                        preserve_baseline=preserve_baseline,
+                        recovery_frame=recovery_frame,
+                    )
+                except Exception:
+                    if recovery_frame is not None:
+                        generation = recovery_frame.generation
+                        self._pending_layout_snapshots.pop(generation, None)
+                        self._pending_layout_force_full.pop(generation, None)
+                        self._pending_worker_frame_states().pop(generation, None)
+                    raise
+                if real_writer:
                     self._track_pending_commit(
                         token,
                         apply_state=apply_state,
@@ -1803,6 +1859,11 @@ class PureTui(
                         force_requested=force_requested,
                         raw_echoes=raw_echoes,
                         preserve_baseline=preserve_baseline,
+                        recovery_generation=(
+                            recovery_frame.generation
+                            if recovery_frame is not None
+                            else None
+                        ),
                     )
                 else:
                     settle_batch()

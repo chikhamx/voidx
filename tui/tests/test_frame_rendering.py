@@ -5,12 +5,52 @@ import re
 import shutil
 import sys
 
+import asyncio
 import pytest
 
 from rich.console import Console
 from rich.text import Text
 
 from voidx.presentation.output.dock import dock
+
+def test_render_frame_for_commit_returns_frame_at_committed_geometry(
+    tmp_path, monkeypatch
+):
+    """After a commit, the recovery frame must be projected at the committed
+    geometry (geometry.next_row) and contain the current vibe line content."""
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(force_terminal=True, width=80, height=24, _environ={})
+    tui._running = True
+
+    dock.begin_capture()
+    dock.start_turn("task")
+    tui._busy = True
+    tui._busy_started_at = 0.0
+    tui._busy_activity_verb = "Cogitating"
+
+    # Simulate a commit geometry: the frame should restart at row 10.
+    from voidx_cli.commit_geometry import CommitGeometry
+    geometry = CommitGeometry(visible_rows=9, next_row=10, remaining_frame_rows=5)
+
+    batch = tui._render_frame_for_commit(
+        geometry,
+        width=tui._frame_width(),
+        term_height=24,
+    )
+    assert batch is not None
+    assert batch.start_row == 10
+    # The frame must contain the vibe line (busy activity) content.
+    plain = "\n".join(batch.target_lines)
+    assert "Cogitating" in plain
+    # The frame must contain the bottom dock (input border).
+    assert "─" in plain
+
 
 def test_render_frame_uses_absolute_positioning_to_avoid_scrollback_pollution(
     tmp_path, monkeypatch
@@ -1408,3 +1448,150 @@ def test_thinking_stream_records_correct_thinking_rows_in_frame_state(tmp_path, 
     tui._render_frame()
 
     assert tui._last_busy_activity_thinking_rows == 2
+
+
+@pytest.mark.asyncio
+async def test_tool_finish_commit_and_recovery_frame_are_atomic(tmp_path, monkeypatch):
+    """When a tool finishes and its row is committed, the recovery frame must
+    be submitted immediately after the commit so the worker applies both in a
+    single synchronized block; the vibe line must never be visibly blank."""
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 12)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(force_terminal=True, width=80, height=12, _environ={})
+    tui._running = True
+    tui._terminal_writer_required = True
+
+    from voidx_cli.terminal_writer import TerminalWriter
+
+    class SpyWriter(TerminalWriter):
+        _started = True
+
+        def __init__(self):
+            super().__init__(stream=None)
+            self.frames: list = []
+            self.commits: list = []
+
+        def submit_frame(self, batch):
+            self.frames.append(batch)
+
+        def submit_commit(self, **kwargs):
+            self.commits.append(kwargs)
+            return object()
+
+        def write(self, value: str) -> int:
+            return len(value)
+
+        def flush(self) -> None:
+            pass
+
+    writer = SpyWriter()
+    tui._terminal_writer = writer
+
+    # Set up a committed state with a rendered frame.
+    dock.begin_capture()
+    dock.start_turn("task")
+    tool = dock.start_tool("Editing", 'file_path="x.py"', tool_name="edit", tool_call_id="t1")
+    dock.finish_tool_node(tool, "Editing", 0.1, True)
+    tui._has_rendered_frame = True
+    tui._last_frame_start_row = 6
+    tui._last_frame_rows = 4
+    tui._last_bottom_rows = 3
+    tui._last_bottom_start_row = 9
+    tui._committed_line_count = 0
+    tui._committed_tree_revision = dock.tree.revision  # mark tree as committed
+    tui._startup_committed = True  # skip startup path
+
+    # Pre-render once so the frame geometry caches exist for the commit plan.
+    tui._render_impl(height=12, capture_plan=True)
+    render_plan = tui._render_plan
+    assert render_plan is not None and render_plan.logical_plan is not None
+    tui._last_render_plan = render_plan
+
+    # Now finish the tool and flush; the commit should be followed by a recovery frame.
+    tui._busy = True  # turn still running -> vibe row must be in the frame
+    tui._busy_activity_verb = "Cogitating"
+    dock.finish_tool_node(tool, "Editing", 0.5, True)
+    tui._flush_committed()
+
+    # The commit must carry the recovery frame bundled in the same batch,
+    # so the worker can apply both in one synchronized block.
+    assert len(writer.commits) == 1, f"expected 1 commit, got {len(writer.commits)}"
+    assert len(writer.frames) == 0, f"expected no separate frame, got {len(writer.frames)}"
+    frame = writer.commits[0].get("recovery_frame")
+    assert frame is not None, "commit must carry a bundled recovery frame"
+    assert frame.generation == tui._terminal_frame_generation
+    plain = chr(10).join(frame.target_lines)
+    assert "Cogitating" in plain
+
+
+@pytest.mark.asyncio
+async def test_commit_falls_back_to_deferred_frame_when_atomic_plan_unavailable(
+    tmp_path, monkeypatch
+):
+    """When _render_frame_for_commit returns None (e.g. no logical_plan), the
+    commit must still proceed and the recovery frame must be deferred to the
+    normal _render_frame path after the commit settles."""
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 12)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(force_terminal=True, width=80, height=12, _environ={})
+    tui._running = True
+    tui._terminal_writer_required = True
+
+    from voidx_cli.terminal_writer import TerminalWriter
+
+    class SpyWriter(TerminalWriter):
+        _started = True
+
+        def __init__(self):
+            super().__init__(stream=None)
+            self.frames: list = []
+            self.commits: list = []
+
+        def submit_frame(self, batch):
+            self.frames.append(batch)
+
+        def submit_commit(self, **kwargs):
+            self.commits.append(kwargs)
+            return object()
+
+        def write(self, value: str) -> int:
+            return len(value)
+
+        def flush(self) -> None:
+            pass
+
+    writer = SpyWriter()
+    tui._terminal_writer = writer
+
+    dock.begin_capture()
+    dock.start_turn("task")
+    tool = dock.start_tool("Editing", 'file_path="x.py"', tool_name="edit", tool_call_id="t1")
+    dock.finish_tool_node(tool, "Editing", 0.1, True)
+    tui._has_rendered_frame = True
+    tui._last_frame_start_row = 6
+    tui._last_frame_rows = 4
+    tui._last_bottom_rows = 3
+    tui._last_bottom_start_row = 9
+    tui._committed_line_count = 0
+    tui._committed_tree_revision = dock.tree.revision
+    tui._startup_committed = True
+    # Atomic plan unavailable -> the commit must fall back to deferred recovery.
+    monkeypatch.setattr(tui, "_render_frame_for_commit", lambda *a, **k: None)
+
+    dock.finish_tool_node(tool, "Editing", 0.5, True)
+    tui._flush_committed()
+
+    # Commit must proceed, but no recovery frame is bundled or submitted.
+    assert len(writer.commits) == 1
+    assert writer.commits[0].get("recovery_frame") is None
+    assert len(writer.frames) == 0

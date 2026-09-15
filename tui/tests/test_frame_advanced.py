@@ -14,7 +14,7 @@ import pytest
 from rich.console import Console
 from rich.text import Text
 
-from voidx_cli.helpers import _rendered_row_count
+from voidx_cli.helpers import _BEGIN_SYNCHRONIZED_OUTPUT, _END_SYNCHRONIZED_OUTPUT, _rendered_row_count
 from voidx.presentation.output.dock import BottomInputDock, dock
 
 
@@ -1928,6 +1928,94 @@ class _DeferredCommitFrameWriter(_DeferredCommitWriter):
     def submit_barrier(self, **kwargs):
         self.barriers.append(kwargs)
         return object()
+
+
+@pytest.mark.asyncio
+async def test_process_commit_atomic_with_following_frame_no_intermediate_flush(
+    tmp_path, monkeypatch
+):
+    """When a commit carries a bundled recovery frame, the worker must apply
+    both in a single synchronized block without an intermediate flush, so the
+    vibe line is never visibly erased."""
+    monkeypatch.setattr(
+        shutil,
+        "get_terminal_size",
+        lambda fallback=None: os.terminal_size((80, 24)),
+    )
+    tui = _tui(tmp_path)
+    tui._tty = True
+    tui._console = Console(file=None, force_terminal=True, width=80, height=24, _environ={})
+    tui._running = True
+    tui._terminal_writer_required = True
+
+    from voidx_cli.terminal_writer import TerminalWriter
+
+    class AtomicSpyWriter(TerminalWriter):
+        def __init__(self):
+            super().__init__(stream=None)
+            self.flush_count = 0
+            self.sync_blocks: list[list[str]] = []
+            self._current_block: list[str] | None = None
+
+        def _worker_write(self, value: str) -> None:
+            if _BEGIN_SYNCHRONIZED_OUTPUT in value:
+                self._current_block = []
+            if self._current_block is not None:
+                self._current_block.append(value)
+            if _END_SYNCHRONIZED_OUTPUT in value and self._current_block is not None:
+                self.sync_blocks.append(self._current_block)
+                self._current_block = None
+
+        def _worker_flush(self) -> None:
+            self.flush_count += 1
+
+    writer = AtomicSpyWriter()
+    tui._terminal_writer = writer
+
+    # Build a committed geometry so _flush_committed can plan a commit.
+    dock.begin_capture()
+    dock.start_turn("atomic test")
+    tool = dock.start_tool("Editing", 'file_path="x.py"', tool_name="edit", tool_call_id="t1")
+    dock.finish_tool_node(tool, "Editing", 0.1, True)
+
+    tui._has_rendered_frame = True
+    tui._last_frame_start_row = 6
+    tui._last_frame_rows = 4
+    tui._last_bottom_rows = 3
+    tui._last_bottom_start_row = 9
+
+    loop = asyncio.get_running_loop()
+    writer.start(loop=loop, on_frame_result=tui._handle_terminal_frame_result, on_error=lambda e: None)
+
+    # The recovery frame bundled with the commit must be atomic with it.
+    from voidx_cli.commit_geometry import CommitGeometry
+    frame = tui._render_frame_for_commit(
+        CommitGeometry(visible_rows=6, next_row=7, remaining_frame_rows=4),
+        width=79,
+        term_height=24,
+    )
+    assert frame is not None, "recovery frame must be projected for this geometry"
+    commit_token = writer.submit_commit(
+        clear_start_row=6,
+        ansi="committed line\n",
+        lines_written=1,
+        positioned=True,
+        explicit_start=True,
+        fixed_bottom_rows=3,
+        previous_frame_rows=4,
+        recovery_frame=frame,
+    )
+
+    await writer.wait(commit_token)
+    await asyncio.sleep(0.05)
+
+    # The commit and frame must share one synchronized block (no intermediate flush).
+    assert writer.flush_count == 1, f"expected 1 flush, got {writer.flush_count}"
+    assert len(writer.sync_blocks) == 1
+    block = "".join(writer.sync_blocks[0])
+    assert "committed line" in block
+
+    await writer.shutdown_async()
 
 
 @pytest.mark.asyncio
@@ -4514,6 +4602,15 @@ async def test_commit_geometry_applies_only_after_success(
     if mode == "sync":
         assert tui._prev_frame_lines == ["bottom"] * 3
         assert tui._prev_frame_start_row == 14
+    if mode == "wait":
+        # A real worker applies the bundled recovery frame atomically with the
+        # commit and publishes its result, consuming the pending frame state.
+        from voidx_cli.terminal_writer import FrameResult
+        recovery = writer.commits[0].get("recovery_frame")
+        if recovery is not None:
+            tui._handle_terminal_frame_result(
+                FrameResult(recovery.generation, 1, 1, 0.0, "full", True)
+            )
     dock.append_message("second commit")
     next_token = tui._flush_committed(force=True)
     if mode == "wait" and next_token is not None:
@@ -4636,7 +4733,13 @@ async def test_deferred_commit_barrier_preserves_requests_and_releases_waiters(
     else:
         assert len(writer.commits) == 1
         assert "keep guidance" in writer.commits[0]["ansi"]
+        recovery = writer.commits[0].get("recovery_frame")
         await _resolve_deferred_commit(writer.tokens[0])
+        if recovery is not None:
+            # The bundled recovery frame's result arrives with the commit.
+            tui._handle_terminal_frame_result(
+                FrameResult(recovery.generation, 1, 1, 0.0, "full", True)
+            )
         await asyncio.wait_for(task, 1)
         assert tui._pending_worker_frame_states() == {}
     assert getattr(tui, "_deferred_commit_token", None) is None

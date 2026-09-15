@@ -1220,7 +1220,13 @@ async def test_commit_clears_live_tail_before_next_frame(tmp_path, monkeypatch, 
             dock.tree.new_node(parent=dock.tree.root, node_type="message", header=label)
             tui._flush_committed(force=True)
             await drain()
-            assert "OLD-VIBE" not in "\n".join((*screen.history, *screen.rows))
+            tail = "\n".join((*screen.history, *screen.rows))
+            if worker:
+                # The bundled recovery frame restores the vibe rows in the
+                # same synchronized block as the commit (no visible gap).
+                assert "OLD-VIBE-C" in tail
+            else:
+                assert "OLD-VIBE" not in tail
             if anchored:
                 assert screen.rows[bottom_start - 1:] == bottom
         tui._render_frame()
@@ -1334,14 +1340,24 @@ async def test_continuous_commits_do_not_expand_old_envelope(tmp_path, monkeypat
         tui._render_frame()
         await drain()
         end = tui._last_frame_start_row + tui._last_frame_rows - 1
+        frame_rows = tui._last_frame_rows
         assert end + 1 < 20
         stream.write(f"\x1b[{end + 1};1HUNOWNED-SENTINEL")
         for label in ("COMMITTED-A", "COMMITTED-B"):
             dock.tree.new_node(parent=dock.tree.root, node_type="message", header=label)
             tui._flush_committed(force=True)
             await drain()
-            assert screen.rows[end] == "UNOWNED-SENTINEL"
-            assert tui._last_frame_start_row + tui._last_frame_rows - 1 == end
+            if worker:
+                # The bundled recovery frame redraws the frame atomically at
+                # the committed geometry: no erased gap, and the frame rides
+                # one row lower per committed line — exactly where the sync
+                # flow's deferred re-render would place it.
+                start = tui._last_frame_start_row
+                assert tui._last_frame_rows == frame_rows
+                assert all(screen.rows[start - 1 + i] for i in range(frame_rows))
+            else:
+                assert screen.rows[end] == "UNOWNED-SENTINEL"
+                assert tui._last_frame_start_row + tui._last_frame_rows - 1 == end
 
 
 @pytest.mark.asyncio
@@ -1517,7 +1533,13 @@ async def test_slash_del_after_commit_keeps_advanced_origin(tmp_path, monkeypatc
         )
         tui._flush_committed(force=True)
         await drain()
-        assert tui._applied_layout_snapshot is None
+        if worker:
+            # The bundled recovery frame applies its layout snapshot
+            # atomically with the commit; the screen already matches it.
+            assert tui._applied_layout_snapshot is not None
+            _assert_applied_screen(tui, screen)
+        else:
+            assert tui._applied_layout_snapshot is None
         assert tui._bottom_dock_is_anchored(screen.height)
         origin = tui._last_frame_start_row
         assert origin >= opened.frame_start_row

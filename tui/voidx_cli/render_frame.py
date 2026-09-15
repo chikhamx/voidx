@@ -2245,6 +2245,114 @@ class _FrameRendererMixin:
             anchor_bottom=anchor_bottom,
         )
 
+    def _render_frame_for_commit(
+        self,
+        geometry,
+        *,
+        width: int,
+        term_height: int,
+        committed_state: dict[str, object] | None = None,
+    ) -> FrameBatch | None:
+        """Project the recovery frame at the committed geometry for atomic flush.
+
+        Renders a fresh plan from the speculative post-commit view
+        (``committed_state`` overrides apply only for the duration of the
+        render; the live commit state still waits for the writer token) and
+        registers the pending layout snapshot and worker frame state so the
+        frame result callback applies the new geometry exactly as a normal
+        _render_frame submission would.
+        """
+        saved: dict[str, object] = {}
+        self._render_plan = None
+        try:
+            if committed_state:
+                for attr, value in committed_state.items():
+                    saved[attr] = getattr(self, attr)
+                    setattr(self, attr, value)
+            self._render_impl(height=term_height, capture_plan=True)
+            render_plan = self._render_plan
+        except Exception:
+            return None
+        finally:
+            self._render_plan = None
+            for attr, value in saved.items():
+                setattr(self, attr, value)
+        if render_plan is None or render_plan.logical_plan is None:
+            return None
+        try:
+            physical = self._physical_viewport_for_frame(
+                render_plan.logical_plan,
+                width=width,
+                term_height=term_height,
+                frame_start_row=geometry.next_row,
+                anchor_bottom=self._frame_bottom_is_anchored(term_height, render_plan),
+            )
+        except (ValueError, TypeError):
+            return None
+        target_lines = self._physical_target_lines(physical)
+        cursor_ansi = f"\x1b[{physical.cursor_row};{physical.cursor_col}H"
+        generation = self._terminal_frame_generation + 1
+        snapshot = self._layout_snapshot_for_physical(
+            physical=physical,
+            generation=generation,
+            width=width,
+            term_height=term_height,
+            frame_start_row=physical.frame_start_row,
+            scroll_epoch=self._scroll_epoch,
+            restore_epoch=self._restore_epoch,
+        )
+        if snapshot is None:
+            return None
+        frame_rows = physical.frame_rows
+        bottom_rows = physical.bottom.rendered.visual_rows
+        busy_activity_rows = physical.projected_regions[1].visual_rows
+        thinking_stream_rows = physical.projected_regions[2].visual_rows
+        start_row = physical.frame_start_row
+        lines_up = max(
+            frame_rows - (physical.cursor_row - start_row) - 1,
+            0,
+        )
+        self._layout_generation = generation
+        self._pending_layout_snapshots[generation] = snapshot
+        self._pending_layout_force_full[generation] = False
+        self._submitted_generation = generation
+        self._terminal_frame_generation = generation
+        self._pending_worker_frame_states()[generation] = {
+            "visible_rows": geometry.visible_rows,
+            "frame_rows": frame_rows,
+            "start_row": start_row,
+            "bottom_rows": bottom_rows,
+            "busy_activity_rows": busy_activity_rows,
+            "busy_activity_start_row": next(
+                (
+                    region.start_row
+                    for region in snapshot.regions
+                    if region.key == "vibe"
+                ),
+                start_row
+                + frame_rows
+                - bottom_rows
+                - thinking_stream_rows
+                - busy_activity_rows,
+            ),
+            "thinking_stream_rows": thinking_stream_rows,
+            "width": width,
+            "term_height": term_height,
+            "lines_up": lines_up,
+            "target_lines": tuple(target_lines),
+            "render_plan": render_plan,
+        }
+        return FrameBatch(
+            generation=generation,
+            start_row=start_row,
+            target_lines=tuple(target_lines),
+            cursor_ansi=cursor_ansi,
+            render_ms=0.0,
+            force_full=False,
+            scroll_ansi="",
+            scroll_rows=0,
+            scroll_bottom=0,
+        )
 
     def _restored_active_line_indexes(
         self,
