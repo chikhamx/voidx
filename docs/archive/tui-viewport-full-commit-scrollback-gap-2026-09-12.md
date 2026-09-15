@@ -1,5 +1,7 @@
 # TUI 视口满载提交与动态区伸缩空行累加修复规范
 
+> **Status: Done** — Archived on 2026-09-16.
+
 - **日期**：2026-09-12
 - **状态**：设计完成，待实现
 - **适用范围**：`tui/voidx_cli/` 终端物理视口渲染与提交管道（`render_frame.py`、`commit_output.py`、`commit_geometry.py`、`app.py`、`terminal_writer.py`）
