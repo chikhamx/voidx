@@ -89,8 +89,12 @@ def _load_gitignore(base: Path):
         return None
 
 
-def _relative(base: Path, path: Path) -> str:
-    return str(path.relative_to(base)).replace("\\", "/")
+def _display_path(base: Path, path: Path) -> str:
+    """Workspace-internal paths render relative; external paths render as normalized absolute POSIX."""
+    try:
+        return str(path.relative_to(base)).replace("\\", "/")
+    except ValueError:
+        return str(path.resolve()).replace("\\", "/")
 
 
 def _hidden_content(relative: str) -> bool:
@@ -114,7 +118,13 @@ def _is_binary(path: Path) -> bool:
 
 
 def _visible_files(base: Path, scope: Path, *, skip_binary: bool):
-    spec = _load_gitignore(base)
+    try:
+        scope.relative_to(base)
+        filter_base = base
+    except ValueError:
+        # External scope: apply hidden/gitignore filtering relative to the scope itself.
+        filter_base = scope if scope.is_dir() else scope.parent
+    spec = _load_gitignore(filter_base)
     candidates: list[Path] = []
     if scope.is_file():
         candidates = [scope]
@@ -123,22 +133,20 @@ def _visible_files(base: Path, scope: Path, *, skip_binary: bool):
             root_path = Path(root)
             dirs[:] = [name for name in dirs if name not in SKIP_DIRS and not name.startswith(".")]
             candidates.extend(root_path / name for name in files)
-    for path in sorted(candidates, key=lambda item: _relative(base, item)):
+    for path in sorted(candidates, key=lambda item: _display_path(base, item)):
         if path.is_symlink():
             continue
-        try:
-            relative = _relative(base, path)
-        except ValueError:
+        display = _display_path(base, path)
+        filter_rel = _display_path(filter_base, path)
+        if _hidden_content(filter_rel):
             continue
-        if _hidden_content(relative):
+        if _ignored(spec, filter_rel) or (skip_binary and _is_binary(path)):
             continue
-        if _ignored(spec, relative) or (skip_binary and _is_binary(path)):
-            continue
-        yield _FileEntry(path=path, relative=relative)
+        yield _FileEntry(path=path, relative=display)
 
 
 def _resolve_scope(ctx: ToolContext, value: str | None):
-    base = Path(ctx.workspace)
+    base = Path(ctx.workspace).expanduser().resolve()
     scope = _resolve_tool_path(ctx.workspace, value, _sandbox_paths_for_access(ctx, write=False)) if value else base
     return base, scope
 

@@ -52,8 +52,18 @@ class AuthorizationRuntime:
         )
 
     def sandbox_paths(self, *, write: bool) -> list[str]:
-        writable = [*self.write_files, *self.write_dirs]
-        return writable if write else [*self.read_files, *self.read_dirs, *writable]
+        grants = self.access_grants()
+        writable = [*self.write_files, *self.write_dirs, *grants.writable_files, *grants.writable_dirs]
+        if write:
+            return list(dict.fromkeys(writable))
+        readable = [
+            *self.read_files,
+            *self.read_dirs,
+            *grants.readable_files,
+            *grants.readable_dirs,
+            *writable,
+        ]
+        return list(dict.fromkeys(readable))
 
     async def record_created_path(
         self,

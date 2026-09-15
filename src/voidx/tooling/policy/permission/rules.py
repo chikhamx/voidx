@@ -185,6 +185,9 @@ def file_paths_for_tool(tool: str, args: dict) -> list[str]:
     if tool in FILE_PATTERN_TOOLS:
         file_path = args.get("file_path")
         return [str(file_path)] if file_path else []
+    if tool in {"search", "find"}:
+        path = args.get("path")
+        return [str(path)] if path else []
     if tool != "manage":
         return []
 

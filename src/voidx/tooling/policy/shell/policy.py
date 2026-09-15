@@ -7,6 +7,7 @@ import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from voidx.tooling.domain.authorization import PermissionContext
+from voidx.tooling.domain.grants import AccessIntent
 from voidx.tooling.policy.filesystem.grants import resolve_access
 from voidx.tooling.domain.risk import RiskAssessment, RiskLevel, RiskTag
 from voidx.tooling.domain.permission import Action
@@ -330,6 +331,17 @@ def shell_sandbox_precheck(
     shell: str = "bash",
 ) -> tuple[Action, str | None]:
     """Apply the shared shell policy and external path grants before execution."""
+    action, reason, _intents = shell_sandbox_precheck_with_intents(args, context, shell=shell)
+    return action, reason
+
+
+def shell_sandbox_precheck_with_intents(
+    args: dict,
+    context: PermissionContext,
+    *,
+    shell: str = "bash",
+) -> tuple[Action, str | None, tuple[AccessIntent, ...]]:
+    """Like shell_sandbox_precheck, but also returns AccessIntents for unauthorized external paths."""
     command = str(args.get("command") or "")
     risk = classify_shell_risk(
         command,
@@ -337,13 +349,15 @@ def shell_sandbox_precheck(
         workspace=context.workspace,
     )
     if risk.level == RiskLevel.BLOCKED:
-        return "deny", risk.reason
+        return "deny", risk.reason, ()
 
     if getattr(context, "permission_mode", None) in {"full_access", "danger-full-access"}:
-        return "allow", None
+        return "allow", None, ()
 
     policy = shell_policy_for_command(command, shell=shell)
 
+    intents: list[AccessIntent] = []
+    read_deferred = False
     for raw_path in policy.read_paths:
         resolution = resolve_access(
             context.workspace,
@@ -354,8 +368,11 @@ def shell_sandbox_precheck(
             allow_missing_write_file=False,
         )
         if resolution.action != "allow":
-            return "defer", _EXTERNAL_ACCESS_GRANT_REASON
+            read_deferred = True
+            if resolution.intent is not None:
+                intents.append(resolution.intent)
 
+    write_deferred = False
     for raw_path in policy.write_paths:
         resolution = resolve_access(
             context.workspace,
@@ -366,17 +383,27 @@ def shell_sandbox_precheck(
             allow_missing_write_file=True,
         )
         if resolution.action != "allow":
-            return "defer", "shell policy deferred: external path requires writable grant"
+            write_deferred = True
+            if resolution.intent is not None:
+                intents.append(resolution.intent)
+
+    if read_deferred:
+        reason = _EXTERNAL_ACCESS_GRANT_REASON
+        if write_deferred:
+            reason = "shell policy deferred: external path requires read/write grants"
+        return "defer", reason, tuple(intents)
+    if write_deferred:
+        return "defer", "shell policy deferred: external path requires writable grant", tuple(intents)
 
     if not policy.allowed:
-        return "defer", policy.reason
+        return "defer", policy.reason, ()
 
 
     capability = getattr(context, "process_sandbox", None) or ProcessSandboxCapability()
     if capability.supported and not capability.usable_for(shell):
-        return "deny", capability.denial_reason(shell)
+        return "deny", capability.denial_reason(shell), ()
 
-    return "allow", None
+    return "allow", None, ()
 
 
 

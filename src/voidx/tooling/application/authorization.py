@@ -13,7 +13,7 @@ from voidx.tooling.domain.result import ToolResult
 from voidx.tooling.domain.permission import PermissionMode
 from voidx.tooling.domain.authorization import PermissionContext, PermissionDecision
 from voidx.tooling.policy.permission.evaluate import evaluate
-from voidx.tooling.policy.shell.policy import classify_shell_risk, shell_sandbox_precheck
+from voidx.tooling.policy.shell.policy import classify_shell_risk, shell_sandbox_precheck_with_intents
 from voidx.tooling.domain.grants import AccessGrant, AccessGrants, AccessIntent, ApprovalPrecondition, GrantPersistence, ObjectType
 from voidx.tooling.policy.filesystem.grants import grant_for_intent, resolve_access
 from voidx.tooling.policy.permission.presets import resolve_mode_decision
@@ -58,7 +58,7 @@ def authorize_tool_call(tool_call: dict, context: PermissionContext) -> Permissi
     if sandbox_action == "defer":
         if session_action == "deny":
             return _decision(classified, "deny", "session", _reason_for(classified, "deny"), context=context)
-        if session_action == "allow" and context.sandbox_mode == "workspace-write":
+        if session_action == "allow" and context.sandbox_mode == "workspace-write" and not access_intents:
             return _decision(classified, "allow", "session", _reason_for(classified, "allow"), context=context)
         return _decision(classified, "ask", "sandbox", reason or _reason_for(classified, "ask"), context=context, access_intents=access_intents)
 
@@ -102,11 +102,11 @@ def sandbox_precheck_action(classified: ClassifiedToolCall, context: PermissionC
         if classified.name == "bash":
             if classified.capability == PermissionCapability.BASH_WRITE:
                 return "deny", f"SANDBOX READ-ONLY: '{classified.name}' is not allowed.", ()
-            return (*shell_sandbox_precheck(classified.args, context, shell="bash"), ())
+            return shell_sandbox_precheck_with_intents(classified.args, context, shell="bash")
         if classified.name == "powershell":
             if classified.capability == PermissionCapability.BASH_WRITE:
                 return "deny", f"SANDBOX READ-ONLY: '{classified.name}' is not allowed.", ()
-            return (*shell_sandbox_precheck(classified.args, context, shell="powershell"), ())
+            return shell_sandbox_precheck_with_intents(classified.args, context, shell="powershell")
         if classified.capability in {
             PermissionCapability.FILE_WRITE,
             PermissionCapability.FILE_FORMAT,
@@ -117,9 +117,9 @@ def sandbox_precheck_action(classified: ClassifiedToolCall, context: PermissionC
 
     if context.sandbox_mode == "read-only":
         if classified.name == "bash":
-            return (*shell_sandbox_precheck(classified.args, context, shell="bash"), ())
+            return shell_sandbox_precheck_with_intents(classified.args, context, shell="bash")
         if classified.name == "powershell":
-            return (*shell_sandbox_precheck(classified.args, context, shell="powershell"), ())
+            return shell_sandbox_precheck_with_intents(classified.args, context, shell="powershell")
         if classified.capability in {
             PermissionCapability.FILE_WRITE,
             PermissionCapability.FILE_FORMAT,
@@ -133,7 +133,7 @@ def sandbox_precheck_action(classified: ClassifiedToolCall, context: PermissionC
             *context.sandbox_writable_files,
             *context.sandbox_writable_dirs,
         ]
-        path_tool_names = {"read", "write", "replace", "manage", "lsp_format", "lsp"}
+        path_tool_names = {"read", "write", "replace", "manage", "lsp_format", "lsp", "search", "find"}
         if classified.name in path_tool_names or classified.capability in {PermissionCapability.FILE_WRITE, PermissionCapability.FILE_FORMAT}:
             intents = _collect_external_access_intents(classified, context)
             if intents is None:
@@ -143,17 +143,17 @@ def sandbox_precheck_action(classified: ClassifiedToolCall, context: PermissionC
                 return "defer", defer_reason, tuple(intents)
             return "allow", None, ()
         if classified.name == "bash":
-            return (*shell_sandbox_precheck(classified.args, context, shell="bash"), ())
+            return shell_sandbox_precheck_with_intents(classified.args, context, shell="bash")
         if classified.name == "powershell":
-            return (*shell_sandbox_precheck(classified.args, context, shell="powershell"), ())
+            return shell_sandbox_precheck_with_intents(classified.args, context, shell="powershell")
     return "allow", None, ()
 
 
 def _collect_external_access_intents(classified: ClassifiedToolCall, context: PermissionContext) -> list[AccessIntent] | None:
     """Resolve access for every file path of a path tool; return external intents or None on deny."""
     name = classified.name
-    read_tools = {"read", "lsp"}
-    require_exists = name in {"read", "manage", "lsp", "lsp_format"}
+    read_tools = {"read", "lsp", "search", "find"}
+    require_exists = name in {"read", "manage", "lsp", "lsp_format", "search", "find"}
     allow_missing_write_file = name in {"write", "replace", "manage"}
     intents: list[AccessIntent] = []
     for file_path in file_paths_for_tool(name, classified.args):
@@ -254,13 +254,15 @@ def _risk_for(
     access_intents: tuple[AccessIntent, ...] = (),
 ) -> RiskAssessment:
     if classified.name == "bash":
-        return classify_shell_risk(
+        risk = classify_shell_risk(
             str(classified.args.get("command") or ""),
             shell="bash",
             workspace=context.workspace if context else None,
         )
+        return _merge_external_intent_risk(risk, access_intents, reason)
     if classified.name == "powershell":
-        return classify_shell_risk(str(classified.args.get("command") or ""), shell="powershell")
+        risk = classify_shell_risk(str(classified.args.get("command") or ""), shell="powershell")
+        return _merge_external_intent_risk(risk, access_intents, reason)
     if action == "allow":
         return RiskAssessment.normal(tool_name=classified.name, pattern=classified.pattern, tags=(RiskTag.SAFE_READ,), reason=reason)
     if action == "deny":
@@ -276,6 +278,19 @@ def _risk_for(
         tags=tuple(tags),
         reason=reason,
     )
+
+
+def _merge_external_intent_risk(
+    risk: RiskAssessment,
+    access_intents: tuple[AccessIntent, ...],
+    reason: str,
+) -> RiskAssessment:
+    """Escalate shell risk when the command touches unauthorized external paths."""
+    if not any(not intent.is_workspace_path and not intent.grant_matched for intent in access_intents):
+        return risk
+    level = risk.level if risk.level in (RiskLevel.BLOCKED, RiskLevel.EXTREME) else RiskLevel.DANGEROUS
+    tags = tuple(dict.fromkeys(tag for tag in risk.tags if tag != RiskTag.SAFE_READ)) + (RiskTag.EXTERNAL_PATH,)
+    return risk.model_copy(update={"level": level, "tags": tuple(dict.fromkeys(tags)), "reason": risk.reason or reason})
 
 
 def _reason_for(classified: ClassifiedToolCall, action: Action) -> str:
