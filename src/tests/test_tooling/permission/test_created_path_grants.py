@@ -9,10 +9,8 @@ import pytest
 from tests.tool_registry import build_registry
 from voidx.tooling.application.execution import (
     AuthorizationRuntime,
-    CallbackInteractionPort,
     FileToolContext,
 )
-from voidx.tooling.domain.interaction import UserResponse
 
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
 from voidx.tooling.domain.grants import AccessGrant
@@ -133,18 +131,11 @@ async def test_permission_mode_change_clears_only_created_path_grants(tmp_path):
     assert service.grant_snapshot() == (user_grant,)
 
 
-def _tool_context(service, workspace: Path, prompts: list[str]) -> FileToolContext:
-    def interact(request):
-        prompts.append(request.prompt)
-        return UserResponse(value="deny")
-
+def _tool_context(service, workspace: Path) -> FileToolContext:
     return FileToolContext(
         workspace=str(workspace),
         authorization_service=AuthorizationRuntime(
             access_grants_reader=service.get_access_grants,
-            grant_writer=service.add_grant,
-            target_locker=service.acquire_grant_targets,
-            interaction=CallbackInteractionPort(interact),
             created_path_recorder=service.record_created_path,
             created_path_forgetter=service.forget_created_path,
             created_path_mover=service.move_created_path,
@@ -171,8 +162,7 @@ async def test_manage_created_external_file_remains_accessible_after_runtime_gra
     external.mkdir()
     target = external / "created.txt"
     service = PermissionService()
-    prompts: list[str] = []
-    ctx = _tool_context(service, workspace, prompts)
+    ctx = _tool_context(service, workspace)
     registry = build_registry()
     await _add_runtime_grant(service, target, object_type="file")
 
@@ -193,7 +183,6 @@ async def test_manage_created_external_file_remains_accessible_after_runtime_gra
     assert created.metadata.get("error") is not True
     assert written.metadata.get("error") is not True
     assert read.metadata.get("error") is not True
-    assert prompts == []
     assert service.created_path_grant_snapshot() == (
         AccessGrant(str(target.resolve()), "write", "file", "session"),
     )
@@ -208,8 +197,7 @@ async def test_manage_created_external_directory_allows_child_creation(tmp_path)
     target = external / "created-dir"
     child = target / "child.txt"
     service = PermissionService()
-    prompts: list[str] = []
-    ctx = _tool_context(service, workspace, prompts)
+    ctx = _tool_context(service, workspace)
     registry = build_registry()
     await _add_runtime_grant(service, target, object_type="dir")
 
@@ -228,7 +216,6 @@ async def test_manage_created_external_directory_allows_child_creation(tmp_path)
     assert created.metadata.get("error") is not True
     assert written.metadata.get("error") is not True
     assert child.read_text(encoding="utf-8") == "child\n"
-    assert prompts == []
 
 
 @pytest.mark.asyncio
@@ -244,8 +231,7 @@ async def test_write_created_external_file_records_grant_but_failure_and_overwri
     existing_target.write_text("before\n", encoding="utf-8")
     failed_parent.write_text("parent is a file\n", encoding="utf-8")
     service = PermissionService()
-    prompts: list[str] = []
-    ctx = _tool_context(service, workspace, prompts)
+    ctx = _tool_context(service, workspace)
     registry = build_registry()
 
     await _add_runtime_grant(service, created_target, object_type="file")
@@ -276,7 +262,6 @@ async def test_write_created_external_file_records_grant_but_failure_and_overwri
     assert service.created_path_grant_snapshot() == (
         AccessGrant(str(created_target.resolve()), "write", "file", "session"),
     )
-    assert prompts == []
 
 
 @pytest.mark.asyncio
@@ -289,8 +274,7 @@ async def test_manage_delete_revokes_and_move_migrates_created_file_grants(tmp_p
     source = external / "source.txt"
     dest = external / "dest.txt"
     service = PermissionService()
-    prompts: list[str] = []
-    ctx = _tool_context(service, workspace, prompts)
+    ctx = _tool_context(service, workspace)
     registry = build_registry()
 
     for target in (deleted_target, source):
@@ -328,28 +312,24 @@ async def test_manage_delete_revokes_and_move_migrates_created_file_grants(tmp_p
     assert service.created_path_grant_snapshot() == (
         AccessGrant(str(dest.resolve()), "write", "file", "session"),
     )
-    assert prompts == []
 
 
 @pytest.mark.asyncio
-async def test_manage_directory_tool_approval_grants_exact_new_directory(tmp_path):
+async def test_manage_directory_create_with_exact_session_dir_grant(tmp_path):
     workspace = tmp_path / "workspace"
     external = tmp_path / "external"
     workspace.mkdir()
     external.mkdir()
     target = external / "approved-dir"
     service = PermissionService()
-
-    def interact(_request):
-        return UserResponse(value="session_dir")
+    await service.add_grant(
+        AccessGrant(str(target.resolve()), "write", "dir", "session")
+    )
 
     ctx = FileToolContext(
         workspace=str(workspace),
         authorization_service=AuthorizationRuntime(
             access_grants_reader=service.get_access_grants,
-            grant_writer=service.add_grant,
-            target_locker=service.acquire_grant_targets,
-            interaction=CallbackInteractionPort(interact),
         ),
     )
 
@@ -375,8 +355,7 @@ async def test_manage_move_from_workspace_records_external_destination(tmp_path)
     dest = external / "dest.txt"
     source.write_text("source\n", encoding="utf-8")
     service = PermissionService()
-    prompts: list[str] = []
-    ctx = _tool_context(service, workspace, prompts)
+    ctx = _tool_context(service, workspace)
     await _add_runtime_grant(service, dest, object_type="file")
 
     async with service.execution_lease_for_tool("manage"):
@@ -394,7 +373,6 @@ async def test_manage_move_from_workspace_records_external_destination(tmp_path)
     assert service.created_path_grant_snapshot() == (
         AccessGrant(str(dest.resolve()), "write", "file", "session"),
     )
-    assert prompts == []
 
 
 @pytest.mark.asyncio
@@ -408,8 +386,7 @@ async def test_manage_move_from_workspace_over_existing_external_file_does_not_r
     source.write_text("source\n", encoding="utf-8")
     dest.write_text("existing\n", encoding="utf-8")
     service = PermissionService()
-    prompts: list[str] = []
-    ctx = _tool_context(service, workspace, prompts)
+    ctx = _tool_context(service, workspace)
     await _add_runtime_grant(service, dest, object_type="file")
 
     async with service.execution_lease_for_tool("manage"):
@@ -425,7 +402,6 @@ async def test_manage_move_from_workspace_over_existing_external_file_does_not_r
 
     assert moved.metadata.get("error") is not True
     assert service.created_path_grant_snapshot() == ()
-    assert prompts == []
 
 
 @pytest.mark.asyncio
@@ -438,8 +414,7 @@ async def test_manage_move_created_external_file_over_existing_external_file_doe
     dest = external / "existing-dest.txt"
     dest.write_text("existing\n", encoding="utf-8")
     service = PermissionService()
-    prompts: list[str] = []
-    ctx = _tool_context(service, workspace, prompts)
+    ctx = _tool_context(service, workspace)
     await _add_runtime_grant(service, source, object_type="file")
 
     async with service.execution_lease_for_tool("manage"):
@@ -463,7 +438,6 @@ async def test_manage_move_created_external_file_over_existing_external_file_doe
     assert created.metadata.get("error") is not True
     assert moved.metadata.get("error") is not True
     assert service.created_path_grant_snapshot() == ()
-    assert prompts == []
 
 
 @pytest.mark.asyncio
@@ -481,8 +455,7 @@ async def test_write_created_external_file_does_not_record_grant_when_final_stat
     external.mkdir()
     target = external / "created-then-removed.txt"
     service = PermissionService()
-    prompts: list[str] = []
-    ctx = _tool_context(service, workspace, prompts).model_copy(
+    ctx = _tool_context(service, workspace).model_copy(
         update={"post_edit_formatter": RemovingFormatter()}
     )
     await _add_runtime_grant(service, target, object_type="file")
@@ -496,4 +469,3 @@ async def test_write_created_external_file_does_not_record_grant_when_final_stat
 
     assert result.metadata.get("error") is True
     assert service.created_path_grant_snapshot() == ()
-    assert prompts == []

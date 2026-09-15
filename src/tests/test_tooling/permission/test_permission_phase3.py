@@ -11,34 +11,23 @@ import pytest
 
 from voidx.tooling.application.execution import (
     AuthorizationRuntime,
-    CallbackInteractionPort,
     FileToolContext as ToolContext,
-)
-from voidx.tooling.domain.interaction import (
-    UserInteraction,
-    UserResponse,
 )
 from voidx.tooling.application.registry import ToolRegistry
 
 
 @pytest.mark.asyncio
-async def test_manage_create_external_file_uses_tool_approval(tmp_path):
+async def test_manage_create_external_file_with_grant(tmp_path):
     workspace = tmp_path / "workspace"
     external = tmp_path / "external"
     workspace.mkdir()
     external.mkdir()
     target = external / "created.txt"
-    seen_request: UserInteraction | None = None
-
-    async def interact(req: UserInteraction) -> UserResponse:
-        nonlocal seen_request
-        seen_request = req
-        return UserResponse(value="allow")
 
     ctx = ToolContext(
         workspace=str(workspace),
         authorization_service=AuthorizationRuntime(
-            interaction=CallbackInteractionPort(interact),
+            write_files=[str(target)],
         ),
     )
 
@@ -47,8 +36,6 @@ async def test_manage_create_external_file_uses_tool_approval(tmp_path):
     assert result.metadata.get("error") is not True
     assert result.metadata["succeeded"] == 1
     assert target.exists()
-    assert seen_request is not None
-    assert seen_request.prompt == f"Write file outside workspace? {target}"
 
 
 @pytest.mark.asyncio
@@ -60,18 +47,11 @@ async def test_move_source_requires_write(tmp_path):
     source = external / "source.txt"
     dest = workspace / "dest.txt"
     source.write_text("source\n", encoding="utf-8")
-    seen_request: UserInteraction | None = None
-
-    async def interact(req: UserInteraction) -> UserResponse:
-        nonlocal seen_request
-        seen_request = req
-        return UserResponse(value="deny")
 
     ctx = ToolContext(
         workspace=str(workspace),
         authorization_service=AuthorizationRuntime(
             read_files=[str(source)],
-            interaction=CallbackInteractionPort(interact),
         ),
     )
 
@@ -82,7 +62,6 @@ async def test_move_source_requires_write(tmp_path):
     )
 
     assert result.metadata["failed"] == 1
-    assert seen_request is not None
     assert source.exists()
     assert not dest.exists()
 
@@ -96,16 +75,11 @@ async def test_move_cross_write_grants(tmp_path):
     source = external / "source.txt"
     dest = external / "dest.txt"
     source.write_text("source\n", encoding="utf-8")
-    prompts: list[UserInteraction] = []
-
-    async def interact(req: UserInteraction) -> UserResponse:
-        prompts.append(req)
-        return UserResponse(value="allow")
 
     ctx = ToolContext(
         workspace=str(workspace),
         authorization_service=AuthorizationRuntime(
-            interaction=CallbackInteractionPort(interact),
+            write_files=[str(source), str(dest)],
         ),
     )
 
@@ -119,10 +93,6 @@ async def test_move_cross_write_grants(tmp_path):
     assert result.metadata["succeeded"] == 1
     assert not source.exists()
     assert dest.read_text(encoding="utf-8") == "source\n"
-    assert [prompt.prompt for prompt in prompts] == [
-        f"Write file outside workspace? {source}",
-        f"Write file outside workspace? {dest}",
-    ]
 
 
 def test_authorized_path_is_unforgeable(tmp_path):

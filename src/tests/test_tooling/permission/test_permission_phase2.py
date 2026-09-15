@@ -23,12 +23,7 @@ from voidx.tooling.policy.filesystem.grants import resolve_access
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
 from voidx.tooling.application.execution import (
     AuthorizationRuntime,
-    CallbackInteractionPort,
     FileToolContext as ToolContext,
-)
-from voidx.tooling.domain.interaction import (
-    UserInteraction,
-    UserResponse,
 )
 from voidx.tooling.application.registry import ToolRegistry
 
@@ -42,19 +37,14 @@ async def test_context_grants_are_refreshed(tmp_path):
     target = external / "fresh.txt"
     target.write_text("fresh\n", encoding="utf-8")
     service = PermissionService()
-
-    async def add_grant(grant: AccessGrant) -> None:
-        await service.add_grant(grant)
-
-    async def interact(_req: UserInteraction) -> UserResponse:
-        return UserResponse(value="session_file")
+    await service.add_grant(
+        AccessGrant(path=str(target), access="read", object_type="file", persistence="session")
+    )
 
     ctx = ToolContext(
         workspace=str(workspace),
         authorization_service=AuthorizationRuntime(
             access_grants_reader=service.get_access_grants,
-            grant_writer=add_grant,
-            interaction=CallbackInteractionPort(interact),
         ),
     )
 
@@ -68,7 +58,7 @@ async def test_context_grants_are_refreshed(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_persistent_tool_grant_commits_to_settings(tmp_path):
+async def test_persistent_service_grant_commits_to_settings(tmp_path):
     workspace = tmp_path / "workspace"
     external = tmp_path / "external"
     workspace.mkdir()
@@ -77,17 +67,14 @@ async def test_persistent_tool_grant_commits_to_settings(tmp_path):
     target.write_text("persist\n", encoding="utf-8")
     settings = Settings(str(workspace))
     service = PermissionService(persistent_grant_writer=settings.add_persistent_grant_delta)
-
-    async def interact(_req: UserInteraction) -> UserResponse:
-        return UserResponse(value="persistent_file")
+    await service.add_grant(
+        AccessGrant(path=str(target), access="read", object_type="file", persistence="persistent")
+    )
 
     ctx = ToolContext(
         workspace=str(workspace),
         authorization_service=AuthorizationRuntime(
             access_grants_reader=service.get_access_grants,
-            grant_writer=service.add_grant,
-            target_locker=service.acquire_grant_targets,
-            interaction=CallbackInteractionPort(interact),
         ),
     )
 
@@ -99,7 +86,7 @@ async def test_persistent_tool_grant_commits_to_settings(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_build_permission_service_persists_tool_grant_to_settings(tmp_path):
+async def test_build_permission_service_persists_service_grant_to_settings(tmp_path):
     from voidx.bootstrap.permission import build_permission_service
 
     workspace = tmp_path / "workspace"
@@ -112,17 +99,14 @@ async def test_build_permission_service_persists_tool_grant_to_settings(tmp_path
     cfg = await (await Settings.create(str(workspace))).build_config()
     cfg.workspace = str(workspace)
     service = build_permission_service(cfg, settings=settings, notifier=lambda _msg: None)
-
-    async def interact(_req: UserInteraction) -> UserResponse:
-        return UserResponse(value="persistent_file")
+    await service.add_grant(
+        AccessGrant(path=str(target), access="read", object_type="file", persistence="persistent")
+    )
 
     ctx = ToolContext(
         workspace=str(workspace),
         authorization_service=AuthorizationRuntime(
             access_grants_reader=service.get_access_grants,
-            grant_writer=service.add_grant,
-            target_locker=service.acquire_grant_targets,
-            interaction=CallbackInteractionPort(interact),
         ),
     )
 
@@ -130,47 +114,6 @@ async def test_build_permission_service_persists_tool_grant_to_settings(tmp_path
 
     assert result.metadata.get("error") is not True
     assert Settings(str(workspace)).get_persistent_readable_files() == [str(target)]
-
-
-@pytest.mark.asyncio
-async def test_tool_grant_lock_serializes_prompts_for_same_path(tmp_path):
-    workspace = tmp_path / "workspace"
-    external = tmp_path / "external"
-    workspace.mkdir()
-    external.mkdir()
-    target = external / "locked.txt"
-    target.write_text("locked\n", encoding="utf-8")
-    service = PermissionService()
-    active_prompts = 0
-    max_active_prompts = 0
-
-    async def interact(_req: UserInteraction) -> UserResponse:
-        nonlocal active_prompts, max_active_prompts
-        active_prompts += 1
-        max_active_prompts = max(max_active_prompts, active_prompts)
-        await asyncio.sleep(0.05)
-        active_prompts -= 1
-        return UserResponse(value="session_file")
-
-    def make_ctx() -> ToolContext:
-        return ToolContext(
-            workspace=str(workspace),
-            authorization_service=AuthorizationRuntime(
-                access_grants_reader=service.get_access_grants,
-                grant_writer=service.add_grant,
-                target_locker=service.acquire_grant_targets,
-                interaction=CallbackInteractionPort(interact),
-            ),
-        )
-
-    first, second = await asyncio.gather(
-        build_registry().execute_tool("read", {"file_path": str(target)}, make_ctx()),
-        build_registry().execute_tool("read", {"file_path": str(target)}, make_ctx()),
-    )
-
-    assert first.metadata.get("error") is not True
-    assert second.metadata.get("error") is not True
-    assert max_active_prompts == 1
 
 
 @pytest.mark.asyncio
@@ -283,6 +226,58 @@ def test_resolve_access_denies_not_ready_stale_external_grants(tmp_path):
     assert "not ready" in resolution.reason.lower()
 
 
+def test_resolve_access_grant_matched_missing_file_allows(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    missing = tmp_path / "missing.txt"
+    grants = AccessGrants.from_parts(readable_files=[str(missing)])
+
+    resolution = resolve_access(
+        str(workspace),
+        str(missing),
+        access="read",
+        access_grants=grants,
+        require_exists=True,
+    )
+
+    assert resolution.action == "allow"
+    assert resolution.intent is not None
+    assert resolution.intent.grant_matched is True
+
+
+def test_resolve_access_write_grant_matched_missing_file_allows(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    missing = tmp_path / "missing.txt"
+    grants = AccessGrants.from_parts(writable_files=[str(missing)])
+
+    resolution = resolve_access(
+        str(workspace),
+        str(missing),
+        access="write",
+        access_grants=grants,
+    )
+
+    assert resolution.action == "allow"
+    assert resolution.intent is not None
+    assert resolution.intent.grant_matched is True
+
+
+def test_resolve_access_missing_file_without_grant_still_defers(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    missing = tmp_path / "missing.txt"
+
+    resolution = resolve_access(
+        str(workspace),
+        str(missing),
+        access="read",
+        require_exists=True,
+    )
+
+    assert resolution.action == "defer"
+
+
 @pytest.mark.asyncio
 async def test_tool_context_get_access_grants_fails_closed_when_not_ready(tmp_path):
     workspace = tmp_path / "workspace"
@@ -293,18 +288,11 @@ async def test_tool_context_get_access_grants_fails_closed_when_not_ready(tmp_pa
         permission_state_ready=False,
         persistent_grants=[AccessGrant(path=str(external), access="read", object_type="file", persistence="persistent")],
     )
-    prompted = False
-
-    async def interact(_req: UserInteraction) -> UserResponse:
-        nonlocal prompted
-        prompted = True
-        return UserResponse(value="allow")
 
     ctx = ToolContext(
         workspace=str(workspace),
         authorization_service=AuthorizationRuntime(
             access_grants_reader=service.get_access_grants,
-            interaction=CallbackInteractionPort(interact),
         ),
     )
 
@@ -312,7 +300,6 @@ async def test_tool_context_get_access_grants_fails_closed_when_not_ready(tmp_pa
 
     assert result.metadata.get("error") is True
     assert "not ready" in result.output.lower()
-    assert prompted is False
 
 
 @pytest.mark.asyncio
@@ -417,47 +404,6 @@ async def test_build_permission_service_hydrates_persistent_grants_separately(tm
     assert grants.readable_files == (str(target),)
 
 
-@pytest.mark.asyncio
-async def test_tool_grant_lock_defers_final_target_until_user_choice(tmp_path):
-    workspace = tmp_path / "workspace"
-    external = tmp_path / "external"
-    workspace.mkdir()
-    external.mkdir()
-    target = external / "target.txt"
-    target.write_text("target\n", encoding="utf-8")
-    calls: list[tuple[tuple[str, ...], tuple[str, ...] | None]] = []
-    grants: list[AccessGrant] = []
-
-    class _Lock:
-        async def release(self) -> None:
-            return None
-
-    async def acquire(paths, *, final_paths=None):
-        calls.append((tuple(str(Path(p)) for p in paths), None if final_paths is None else tuple(str(Path(p)) for p in final_paths)))
-        return _Lock()
-
-    async def interact(_req: UserInteraction) -> UserResponse:
-        assert calls[-1][1] is None
-        return UserResponse(value="session_file")
-
-    async def add_grant(grant: AccessGrant, *, precondition=None) -> None:
-        grants.append(grant)
-
-    ctx = ToolContext(
-        workspace=str(workspace),
-        authorization_service=AuthorizationRuntime(
-            access_grants_reader=lambda: AccessGrants(),
-            grant_writer=add_grant,
-            target_locker=acquire,
-            interaction=CallbackInteractionPort(interact),
-        ),
-    )
-
-    result = await build_registry().execute_tool("read", {"file_path": str(target)}, ctx)
-
-    assert result.metadata.get("error") is not True
-    assert calls == [((str(target),), None), ((str(target),), (str(target),))]
-    assert grants == [AccessGrant(path=str(target), access="read", object_type="file", persistence="session")]
 
 
 @pytest.mark.asyncio
@@ -473,9 +419,6 @@ async def test_manage_external_path_uses_existing_external_grant(tmp_path):
         workspace=str(workspace),
         authorization_service=AuthorizationRuntime(
             access_grants_reader=service.get_access_grants,
-            grant_writer=service.add_grant,
-            target_locker=service.acquire_grant_targets,
-            interaction=CallbackInteractionPort(lambda _req: UserResponse(value="deny")),
         ),
     )
 

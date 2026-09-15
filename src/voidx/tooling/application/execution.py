@@ -11,15 +11,11 @@ from pydantic import ConfigDict, Field, SkipValidation
 from voidx.tooling.domain.context import ToolExecutionContext
 from voidx.tooling.domain.file_tracking import FileStateStore
 from voidx.tooling.domain.grants import AccessGrants, ObjectType
-from voidx.tooling.ports.interaction import InteractionPort
 from voidx.tooling.ports.post_edit import PostEditFormatter
 from voidx.tooling.ports.invoker import ToolInvoker
 from voidx.tooling.ports.process import ProcessSandbox
 
 
-GrantWriter = Callable[..., object | Awaitable[object]]
-GrantTargetLocker = Callable[..., object | Awaitable[object]]
-ExecutionLeaseFactory = Callable[[str], object]
 CreatedPathRecorder = Callable[..., object | Awaitable[object]]
 CreatedPathForgetter = Callable[..., object | Awaitable[object]]
 CreatedPathMover = Callable[..., object | Awaitable[object]]
@@ -33,10 +29,6 @@ class AuthorizationRuntime:
     write_dirs: list[str] = field(default_factory=list)
     access_grants_reader: Callable[[], AccessGrants] | None = None
     revocation_epoch_reader: Callable[[], int] | None = None
-    grant_writer: GrantWriter | None = None
-    target_locker: GrantTargetLocker | None = None
-    execution_lease_factory: ExecutionLeaseFactory | None = None
-    interaction: InteractionPort | None = None
     created_path_recorder: CreatedPathRecorder | None = None
     created_path_forgetter: CreatedPathForgetter | None = None
     created_path_mover: CreatedPathMover | None = None
@@ -133,15 +125,6 @@ def _is_workspace_path(workspace: str, path: str | Path) -> bool:
         return target == workspace_path or target.is_relative_to(workspace_path)
     except (OSError, RuntimeError, ValueError):
         return False
-
-
-class CallbackInteractionPort:
-    def __init__(self, callback: Callable[..., object]) -> None:
-        self._callback = callback
-
-    async def request(self, interaction):
-        result = self._callback(interaction)
-        return await result if isinstance(result, Awaitable) else result
 
 
 class FileToolContext(ToolExecutionContext):

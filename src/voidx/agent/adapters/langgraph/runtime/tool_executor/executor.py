@@ -36,7 +36,6 @@ from voidx.agent.adapters.tools.context import AgentToolExecutionContext as Tool
 from voidx.agent.adapters.tools.plugins import bind_agent_tool_runtime
 from voidx.tooling.application.execution import (
     AuthorizationRuntime,
-    CallbackInteractionPort,
 )
 from voidx.tooling.domain.file_tracking import FileStateStore
 from voidx.tooling.domain.result import ToolResult
@@ -344,15 +343,9 @@ class ToolExecutorAdapter:
             write_dirs=list(permission.sandbox_writable_dirs),
             access_grants_reader=permission.get_access_grants,
             revocation_epoch_reader=lambda: permission.revocation_epoch,
-            grant_writer=permission.add_grant,
-            target_locker=permission.acquire_grant_targets,
-            execution_lease_factory=permission.execution_lease_for_tool,
             created_path_recorder=permission.record_created_path,
             created_path_forgetter=permission.forget_created_path,
             created_path_mover=permission.move_created_path,
-            interaction=CallbackInteractionPort(
-                _make_interact_callback(host._ui, host._ui)
-            ),
         )
         host._scoped_tools_binder(
             tools,
@@ -495,7 +488,6 @@ class ToolExecutorAdapter:
                 parent_tool_token = current_parent_tool_call_id.set(tool_event_id)
                 lock_manager = _workspace_write_lock_manager(host) if _requires_workspace_write_lock(tc) else None
                 lock_acquired = False
-                lease_factory = getattr(host._permission, "execution_lease_for_tool", None)
 
                 async def run_authorized_tool() -> ToolResult:
                     nonlocal lock_acquired
@@ -520,11 +512,7 @@ class ToolExecutorAdapter:
                     return await tools.execute_tool(tid, targs, tool_ctx)
 
                 try:
-                    if lease_factory is not None:
-                        async with lease_factory(tid):
-                            result = await run_authorized_tool()
-                    else:
-                        result = await run_authorized_tool()
+                    result = await run_authorized_tool()
                 finally:
                     if lock_acquired and lock_manager is not None:
                         lock_manager.release_workspace_write_lock(thread_state.thread_id)

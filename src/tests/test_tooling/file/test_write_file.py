@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 import voidx.persistence.sqlite as store
-from voidx.tooling.application.execution import AuthorizationRuntime, CallbackInteractionPort, FileToolContext as ToolContext
+from voidx.tooling.application.execution import AuthorizationRuntime, FileToolContext as ToolContext
 from voidx.tooling.application.registry import ToolRegistry
 
 
@@ -516,26 +516,17 @@ class TestWriteInsert1Based:
 
 
 class TestExternalWriteApproval:
-    @pytest.mark.asyncio
-    async def test_deferred_path_denied_by_user(self, tmp_path):
-        from voidx.tooling.domain.interaction import (
-            UserInteraction,
-            UserResponse,
-        )
+    """External writes rely on scheduling-layer grants; the gate itself never prompts."""
 
+    @pytest.mark.asyncio
+    async def test_external_write_without_grant_blocked(self, tmp_path):
         workspace = tmp_path / "workspace"
         external = tmp_path / "external"
         workspace.mkdir()
         external.mkdir()
         target = external / "denied.txt"
-        seen_request: UserInteraction | None = None
 
-        async def fake_interact(req: UserInteraction) -> UserResponse:
-            nonlocal seen_request
-            seen_request = req
-            return UserResponse(value="deny")
-
-        ctx = ToolContext(workspace=str(workspace), authorization_service=AuthorizationRuntime(interaction=CallbackInteractionPort(fake_interact)))
+        ctx = ToolContext(workspace=str(workspace), authorization_service=AuthorizationRuntime())
         result = await build_registry().execute_tool(
             "write",
             {"file_path": str(target), "op": "write", "new_string": "secret\n"},
@@ -543,35 +534,21 @@ class TestExternalWriteApproval:
         )
 
         assert result.metadata.get("error") is True
-        assert seen_request is not None
+        assert result.metadata.get("unauthorized") is True
         assert target.exists() is False
 
     @pytest.mark.asyncio
     async def test_read_grant_does_not_allow_write(self, tmp_path):
-        from voidx.tooling.domain.interaction import (
-            UserInteraction,
-            UserResponse,
-        )
-
         workspace = tmp_path / "workspace"
         external = tmp_path / "external"
         workspace.mkdir()
         external.mkdir()
         target = external / "file.txt"
         target.write_text("original\n", encoding="utf-8")
-        seen_request: UserInteraction | None = None
-
-        async def fake_interact(req: UserInteraction) -> UserResponse:
-            nonlocal seen_request
-            seen_request = req
-            return UserResponse(value="deny")
 
         ctx = ToolContext(
             workspace=str(workspace),
-            authorization_service=AuthorizationRuntime(
-                read_files=[str(target)],
-                interaction=CallbackInteractionPort(fake_interact),
-            ),
+            authorization_service=AuthorizationRuntime(read_files=[str(target)]),
         )
         result = await build_registry().execute_tool(
             "write",
@@ -580,16 +557,11 @@ class TestExternalWriteApproval:
         )
 
         assert result.metadata.get("error") is True
-        assert seen_request is not None
+        assert result.metadata.get("unauthorized") is True
         assert target.read_text(encoding="utf-8") == "original\n"
 
     @pytest.mark.asyncio
     async def test_file_grant_does_not_cover_sibling(self, tmp_path):
-        from voidx.tooling.domain.interaction import (
-            UserInteraction,
-            UserResponse,
-        )
-
         workspace = tmp_path / "workspace"
         external = tmp_path / "external"
         workspace.mkdir()
@@ -597,19 +569,10 @@ class TestExternalWriteApproval:
         granted = external / "granted.txt"
         sibling = external / "sibling.txt"
         granted.write_text("ok\n", encoding="utf-8")
-        seen_request: UserInteraction | None = None
-
-        async def fake_interact(req: UserInteraction) -> UserResponse:
-            nonlocal seen_request
-            seen_request = req
-            return UserResponse(value="deny")
 
         ctx = ToolContext(
             workspace=str(workspace),
-            authorization_service=AuthorizationRuntime(
-                write_files=[str(granted)],
-                interaction=CallbackInteractionPort(fake_interact),
-            ),
+            authorization_service=AuthorizationRuntime(write_files=[str(granted)]),
         )
         result = await build_registry().execute_tool(
             "write",
@@ -618,29 +581,21 @@ class TestExternalWriteApproval:
         )
 
         assert result.metadata.get("error") is True
-        assert seen_request is not None
+        assert result.metadata.get("unauthorized") is True
         assert sibling.exists() is False
 
     @pytest.mark.asyncio
-    async def test_write_missing_external_target(self, tmp_path):
-        from voidx.tooling.domain.interaction import (
-            UserInteraction,
-            UserResponse,
-        )
-
+    async def test_write_missing_external_target_with_grant_creates(self, tmp_path):
         workspace = tmp_path / "workspace"
         external = tmp_path / "external"
         workspace.mkdir()
         external.mkdir()
         target = external / "new.txt"
-        seen_request: UserInteraction | None = None
 
-        async def fake_interact(req: UserInteraction) -> UserResponse:
-            nonlocal seen_request
-            seen_request = req
-            return UserResponse(value="allow")
-
-        ctx = ToolContext(workspace=str(workspace), authorization_service=AuthorizationRuntime(interaction=CallbackInteractionPort(fake_interact)))
+        ctx = ToolContext(
+            workspace=str(workspace),
+            authorization_service=AuthorizationRuntime(write_files=[str(target)]),
+        )
         result = await build_registry().execute_tool(
             "write",
             {"file_path": str(target), "op": "write", "new_string": "created\n"},
@@ -648,5 +603,4 @@ class TestExternalWriteApproval:
         )
 
         assert result.metadata.get("error") is not True
-        assert seen_request is not None
         assert target.read_text(encoding="utf-8") == "created\n"

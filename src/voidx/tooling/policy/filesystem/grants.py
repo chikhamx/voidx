@@ -57,10 +57,6 @@ def resolve_access(
         return AccessResolution("allow", intent=intent)
     if not grants.permission_state_ready:
         return AccessResolution("deny", intent=intent, reason="Permission state not ready.")
-    if require_exists and not _safe_exists(normalized):
-        return AccessResolution("defer", intent=intent, reason=f"File not found; external path deferred: {file_path}")
-    if access == "write" and not _safe_exists(normalized) and not allow_missing_write_file:
-        return AccessResolution("defer", intent=intent, reason=f"Path does not exist; external path deferred: {file_path}")
     if _matches_grant(
         normalized,
         access,
@@ -80,6 +76,10 @@ def resolve_access(
                 grant_matched=True,
             ),
         )
+    if require_exists and not _safe_exists(normalized):
+        return AccessResolution("defer", intent=intent, reason=f"File not found; external path deferred: {file_path}")
+    if access == "write" and not _safe_exists(normalized) and not allow_missing_write_file:
+        return AccessResolution("defer", intent=intent, reason=f"Path does not exist; external path deferred: {file_path}")
     return AccessResolution("defer", intent=intent, reason=f"Permission deferred to tool: {file_path}")
 
 

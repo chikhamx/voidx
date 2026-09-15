@@ -104,9 +104,6 @@ async def _execute_write_insert(ctx: ToolContext, inp: WriteInput) -> ToolResult
         inp.file_path,
         write=True,
         require_exists=True,
-        prompt_label="Write",
-        allow_description="Allow this write once",
-        deny_description="Do not write this file",
     )
     if error is not None:
         return error
@@ -162,9 +159,6 @@ async def _execute_write_append(ctx: ToolContext, inp: WriteInput) -> ToolResult
         inp.file_path,
         write=True,
         require_exists=True,
-        prompt_label="Write",
-        allow_description="Allow this write once",
-        deny_description="Do not write this file",
     )
     if error is not None:
         return error
@@ -189,9 +183,6 @@ async def _execute_write_full(ctx: ToolContext, inp: WriteInput) -> ToolResult:
         inp.file_path,
         write=True,
         allow_missing_write_file=True,
-        prompt_label="Write",
-        allow_description="Allow this write once",
-        deny_description="Do not write this file",
     )
     if error is not None:
         return error

@@ -219,9 +219,6 @@ class LspFormatTool:
             inp.file_path,
             write=True,
             require_exists=True,
-            prompt_label="LSP format",
-            allow_description="Allow formatting this file once",
-            deny_description="Do not format this file",
         )
         if error is not None:
             return error

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Literal
 
@@ -17,6 +18,7 @@ __all__ = [
     "AccessGrants",
     "AccessIntent",
     "AccessResolution",
+    "PathGrantChoice",
 ]
 
 
@@ -24,6 +26,17 @@ AccessAction = Literal["allow", "deny", "defer"]
 AccessMode = Literal["read", "write"]
 GrantPersistence = Literal["runtime", "session", "persistent"]
 ObjectType = Literal["file", "dir"]
+
+
+class PathGrantChoice(str, Enum):
+    """Canonical wire values for external path grant approval options."""
+
+    ONCE = "allow"
+    SESSION_FILE = "session_file"
+    SESSION_DIR = "session_dir"
+    PERSISTENT_FILE = "persistent_file"
+    PERSISTENT_DIR = "persistent_dir"
+    DENY = "deny"
 
 
 @dataclass(frozen=True)

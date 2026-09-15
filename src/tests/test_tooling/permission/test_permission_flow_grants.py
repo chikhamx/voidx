@@ -167,3 +167,30 @@ async def test_deny_choice_denies_tool(tmp_path):
 
     assert approved == []
     assert len(denied) == 1
+
+
+def test_path_grant_choice_enum_matches_flow_options():
+    from pathlib import Path
+
+    from voidx.tooling.domain.grants import AccessIntent, PathGrantChoice
+    from voidx.agent.adapters.langgraph.runtime.permission_flow import _path_grant_choices
+
+    assert [c.value for c in PathGrantChoice] == [
+        "allow",
+        "session_file",
+        "session_dir",
+        "persistent_file",
+        "persistent_dir",
+        "deny",
+    ]
+
+    intent = AccessIntent(
+        requested_path="/external/x.txt",
+        normalized_path=Path("/external/x.txt"),
+        access="read",
+        object_type="file",
+        is_workspace_path=False,
+        grant_matched=False,
+    )
+    values = [value for _label, value, _desc in _path_grant_choices(intent)]
+    assert values == [c.value for c in PathGrantChoice]

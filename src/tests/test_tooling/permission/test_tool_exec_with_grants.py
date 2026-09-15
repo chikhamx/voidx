@@ -9,18 +9,13 @@ from voidx.tooling.domain.grants import AccessGrant
 from voidx.tooling.adapters.permission.in_memory_state import create_permission_service as PermissionService
 from voidx.tooling.application.execution import (
     AuthorizationRuntime,
-    CallbackInteractionPort,
     FileToolContext as ToolContext,
-)
-from voidx.tooling.domain.interaction import (
-    UserInteraction,
-    UserResponse,
 )
 from voidx.tooling.application.registry import ToolRegistry
 
 
 @pytest.mark.asyncio
-async def test_read_tool_skips_interact_when_runtime_grant_exists(tmp_path):
+async def test_read_tool_passes_gate_when_runtime_grant_exists(tmp_path):
     workspace = tmp_path / "workspace"
     external = tmp_path / "external"
     workspace.mkdir()
@@ -32,30 +27,20 @@ async def test_read_tool_skips_interact_when_runtime_grant_exists(tmp_path):
     grant = AccessGrant(path=str(target), access="read", object_type="file", persistence="runtime")
     await service.add_grant(grant)
 
-    interact_called = False
-
-    async def interact(_req: UserInteraction) -> UserResponse:
-        nonlocal interact_called
-        interact_called = True
-        return UserResponse(value="allow")
-
     ctx = ToolContext(
         workspace=str(workspace),
         authorization_service=AuthorizationRuntime(
             access_grants_reader=service.get_access_grants,
-            grant_writer=service.add_grant,
-            interaction=CallbackInteractionPort(interact),
         ),
     )
 
     result = await build_registry().execute_tool("read", {"file_path": str(target)}, ctx)
 
     assert result.metadata.get("error") is not True
-    assert interact_called is False
 
 
 @pytest.mark.asyncio
-async def test_write_tool_skips_interact_when_runtime_grant_exists(tmp_path):
+async def test_write_tool_passes_gate_when_runtime_grant_exists(tmp_path):
     workspace = tmp_path / "workspace"
     external = tmp_path / "external"
     workspace.mkdir()
@@ -66,19 +51,10 @@ async def test_write_tool_skips_interact_when_runtime_grant_exists(tmp_path):
     grant = AccessGrant(path=str(target), access="write", object_type="file", persistence="runtime")
     await service.add_grant(grant)
 
-    interact_called = False
-
-    async def interact(_req: UserInteraction) -> UserResponse:
-        nonlocal interact_called
-        interact_called = True
-        return UserResponse(value="allow")
-
     ctx = ToolContext(
         workspace=str(workspace),
         authorization_service=AuthorizationRuntime(
             access_grants_reader=service.get_access_grants,
-            grant_writer=service.add_grant,
-            interaction=CallbackInteractionPort(interact),
         ),
     )
 
@@ -88,4 +64,3 @@ async def test_write_tool_skips_interact_when_runtime_grant_exists(tmp_path):
     )
 
     assert result.metadata.get("error") is not True
-    assert interact_called is False

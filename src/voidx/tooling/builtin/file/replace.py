@@ -242,9 +242,6 @@ async def _resolve_edit_target(ctx: ToolContext, file_path: str, *, allow_missin
         write=True,
         require_exists=not allow_missing,
         allow_missing_write_file=allow_missing,
-        prompt_label="Write",
-        allow_description="Allow this write once",
-        deny_description="Do not write this file",
     )
     if error is not None:
         return None, error

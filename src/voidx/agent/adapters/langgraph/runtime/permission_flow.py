@@ -18,7 +18,7 @@ from voidx.tooling.application.permission_service import (
     classify_tool_call,
 )
 from voidx.tooling.domain.authorization import PermissionDecision
-from voidx.tooling.domain.grants import AccessIntent, ApprovalPrecondition
+from voidx.tooling.domain.grants import AccessIntent, ApprovalPrecondition, PathGrantChoice
 from voidx.tooling.policy.filesystem.grants import grant_for_intent
 from voidx.tooling.policy.permission.session_rules import scoped_session_rule_for_decision
 from voidx.tooling.domain.permission import Action
@@ -78,7 +78,10 @@ def _permission_choices(decisions: list[PermissionDecision]) -> list[tuple[str, 
     if len(external_intents) == 1:
         return _path_grant_choices(external_intents[0])
     if external_intents:
-        return [("Allow once", "allow", "Allow this tool use once"), ("Deny", "deny", "Deny these tools")]
+        return [
+            ("Allow once", PathGrantChoice.ONCE.value, "Allow this tool use once"),
+            ("Deny", PathGrantChoice.DENY.value, "Deny these tools"),
+        ]
     choices: list[tuple[str, str, str]] = []
     if _all_decisions_allow_scope(decisions, ApprovalScope.SESSION):
         choices.append(("Yes, always", "a", "Allow these tools for this session"))
@@ -99,23 +102,28 @@ def _external_access_intents(decisions: list[PermissionDecision]) -> list[Access
 def _path_grant_choices(intent: AccessIntent) -> list[tuple[str, str, str]]:
     access = intent.access
     return [
-        ("Allow once", "allow", f"Allow this {access} once"),
-        ("This file this session", "session_file", f"Allow this {access} file for this session"),
-        ("This folder this session", "session_dir", f"Allow this {access} directory for this session"),
-        ("Always allow this file", "persistent_file", f"Always allow this {access} file"),
-        ("Always allow this folder", "persistent_dir", f"Always allow this {access} directory"),
-        ("Deny", "deny", f"Do not {access} this file"),
+        ("Allow once", PathGrantChoice.ONCE.value, f"Allow this {access} once"),
+        ("This file this session", PathGrantChoice.SESSION_FILE.value, f"Allow this {access} file for this session"),
+        ("This folder this session", PathGrantChoice.SESSION_DIR.value, f"Allow this {access} directory for this session"),
+        ("Always allow this file", PathGrantChoice.PERSISTENT_FILE.value, f"Always allow this {access} file"),
+        ("Always allow this folder", PathGrantChoice.PERSISTENT_DIR.value, f"Always allow this {access} directory"),
+        ("Deny", PathGrantChoice.DENY.value, f"Do not {access} this file"),
     ]
 
 
-_PATH_GRANT_CHOICES = frozenset({"session_file", "session_dir", "persistent_file", "persistent_dir"})
+_PATH_GRANT_CHOICES = frozenset({
+    PathGrantChoice.SESSION_FILE.value,
+    PathGrantChoice.SESSION_DIR.value,
+    PathGrantChoice.PERSISTENT_FILE.value,
+    PathGrantChoice.PERSISTENT_DIR.value,
+})
 
 
 _GRANT_PERSISTENCE_MAP = {
-    "session_file": "session",
-    "session_dir": "session",
-    "persistent_file": "persistent",
-    "persistent_dir": "persistent",
+    PathGrantChoice.SESSION_FILE.value: "session",
+    PathGrantChoice.SESSION_DIR.value: "session",
+    PathGrantChoice.PERSISTENT_FILE.value: "persistent",
+    PathGrantChoice.PERSISTENT_DIR.value: "persistent",
     "runtime_file": "runtime",
     "runtime_dir": "runtime",
 }

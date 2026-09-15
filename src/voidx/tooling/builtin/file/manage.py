@@ -244,9 +244,6 @@ async def _resolve_manage_path(
         require_exists=require_exists,
         allow_missing_write_file=allow_missing_write_file,
         object_type=object_type,
-        prompt_label="Write",
-        allow_description="Allow this write once",
-        deny_description="Do not write this file",
     )
     if error is not None:
         return None, error.output

@@ -208,9 +208,6 @@ class FileReadTool:
             inp.file_path,
             write=False,
             require_exists=True,
-            prompt_label="Read",
-            allow_description="Allow this read once",
-            deny_description="Do not read this file",
         )
         if error is not None:
             return error

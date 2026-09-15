@@ -2,20 +2,17 @@
 
 from __future__ import annotations
 
-import inspect
-from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from voidx.tooling.domain.interaction import UserInteraction
 from voidx.tooling.domain.result import ToolResult
 
 from voidx.tooling.domain.permission import PermissionMode
 from voidx.tooling.domain.authorization import PermissionContext, PermissionDecision
 from voidx.tooling.policy.permission.evaluate import evaluate
 from voidx.tooling.policy.shell.policy import classify_shell_risk, shell_sandbox_precheck_with_intents
-from voidx.tooling.domain.grants import AccessGrant, AccessGrants, AccessIntent, ApprovalPrecondition, GrantPersistence, ObjectType
-from voidx.tooling.policy.filesystem.grants import grant_for_intent, resolve_access
+from voidx.tooling.domain.grants import AccessGrants, AccessIntent, ObjectType
+from voidx.tooling.policy.filesystem.grants import resolve_access
 from voidx.tooling.policy.permission.presets import resolve_mode_decision
 from voidx.tooling.domain.risk import RiskAssessment, RiskLevel, RiskTag
 from voidx.tooling.policy.permission.rules import (
@@ -300,52 +297,6 @@ def _reason_for(classified: ClassifiedToolCall, action: Action) -> str:
         return f"Permission allowed: {classified.name} → {classified.pattern}"
     return f"Permission required: {classified.name} → {classified.pattern}"
 
-async def _maybe_await(value: Awaitable[Any] | Any) -> Any:
-    return await value if inspect.isawaitable(value) else value
-
-
-def _approval_precondition(access_grants: AccessGrants) -> ApprovalPrecondition:
-    return ApprovalPrecondition(
-        permission_mode=access_grants.permission_mode,
-        revocation_epoch=access_grants.revocation_epoch,
-    )
-
-
-async def _release_lock(lock: Any | None) -> None:
-    if lock is None:
-        return
-    release = getattr(lock, "release", None)
-    if release is not None:
-        await _maybe_await(release())
-
-
-async def _call_add_grant(
-    add_grant: Callable[..., Any],
-    grant: AccessGrant,
-    precondition: ApprovalPrecondition,
-) -> Any:
-    try:
-        signature = inspect.signature(add_grant)
-        accepts_precondition = (
-            "precondition" in signature.parameters
-            or any(
-                parameter.kind == inspect.Parameter.VAR_KEYWORD
-                for parameter in signature.parameters.values()
-            )
-        )
-    except (TypeError, ValueError):
-        accepts_precondition = True
-    if accepts_precondition:
-        return await _maybe_await(add_grant(grant, precondition=precondition))
-    return await _maybe_await(add_grant(grant))
-
-
-def _grant_choice(choice: str) -> tuple[GrantPersistence, ObjectType]:
-    persistence: GrantPersistence = "persistent" if choice.startswith("persistent_") else "session"
-    object_type: ObjectType = "dir" if choice.endswith("_dir") else "file"
-    return persistence, object_type
-
-
 async def authorized_path(
     ctx,
     file_path: str,
@@ -354,122 +305,24 @@ async def authorized_path(
     require_exists: bool = False,
     allow_missing_write_file: bool = False,
     object_type: ObjectType | None = None,
-    prompt_label: str | None = None,
-    allow_description: str | None = None,
-    deny_description: str | None = None,
 ) -> tuple[Path | None, ToolResult | None]:
-    authorization = ctx.authorization_service
-    access = "write" if write else "read"
-    access_grants = authorization.access_grants()
-    precondition = _approval_precondition(access_grants)
     resolution = resolve_access(
         ctx.workspace,
         file_path,
-        access=access,
-        access_grants=access_grants,
+        access="write" if write else "read",
+        access_grants=ctx.authorization_service.access_grants(),
         require_exists=require_exists,
         allow_missing_write_file=allow_missing_write_file,
         object_type=object_type,
     )
     if resolution.action == "allow" and resolution.intent is not None:
         return resolution.intent.normalized_path, None
-    if resolution.action == "deny":
-        return None, ToolResult(
-            output=resolution.reason or f"Path traversal blocked: {file_path}",
-            metadata={"error": True},
-        )
-    label = prompt_label or ("Write" if write else "Read")
-    if authorization.interaction is None:
-        return None, ToolResult(output=f"Path traversal blocked: {file_path}", metadata={"error": True})
-
-    lock = None
-    if authorization.target_locker is not None and resolution.intent is not None:
-        lock = await _maybe_await(authorization.target_locker([resolution.intent.normalized_path]))
-        access_grants = authorization.access_grants()
-        precondition = _approval_precondition(access_grants)
-        resolution = resolve_access(
-            ctx.workspace,
-            file_path,
-            access=access,
-            access_grants=access_grants,
-            require_exists=require_exists,
-            allow_missing_write_file=allow_missing_write_file,
-            object_type=object_type,
-        )
-        if resolution.action == "allow" and resolution.intent is not None:
-            await _release_lock(lock)
-            return resolution.intent.normalized_path, None
-        if resolution.action == "deny":
-            await _release_lock(lock)
-            return None, ToolResult(
-                output=resolution.reason or f"Path traversal blocked: {file_path}",
-                metadata={"error": True},
-            )
-    try:
-        options = [
-            ("Yes", "allow", allow_description or f"Allow this {access} once"),
-            ("No", "deny", deny_description or f"Do not {access} this file"),
-        ]
-        if authorization.grant_writer is not None:
-            options = [
-                ("Session file", "session_file", allow_description or f"Allow this {access} file for this session"),
-                ("Session dir", "session_dir", f"Allow this {access} directory for this session"),
-                ("Persistent file", "persistent_file", f"Always allow this {access} file"),
-                ("Persistent dir", "persistent_dir", f"Always allow this {access} directory"),
-                ("Once", "allow", f"Allow this {access} once"),
-                ("No", "deny", deny_description or f"Do not {access} this file"),
-            ]
-        response = await authorization.interaction.request(
-            UserInteraction(
-                type="choice",
-                title=f"{label} outside workspace?",
-                prompt=f"{label} file outside workspace? {resolution.intent.normalized_path if resolution.intent else file_path}",
-                options=options,
-            )
-        )
-        if response.cancelled or response.value in {None, "deny"}:
-            return None, ToolResult(output=f"Path traversal blocked: {file_path}", metadata={"error": True})
-        if response.value != "allow" and authorization.grant_writer is not None and resolution.intent is not None:
-            persistence, object_type = _grant_choice(response.value)
-            grant = grant_for_intent(
-                resolution.intent,
-                persistence=persistence,
-                object_type=object_type,
-            )
-            if authorization.target_locker is not None:
-                await _release_lock(lock)
-                lock = await _maybe_await(
-                    authorization.target_locker(
-                        [resolution.intent.normalized_path],
-                        final_paths=[grant.path],
-                    )
-                )
-                access_grants = authorization.access_grants()
-                precondition = _approval_precondition(access_grants)
-                resolution = resolve_access(
-                    ctx.workspace,
-                    file_path,
-                    access=access,
-                    access_grants=access_grants,
-                    require_exists=require_exists,
-                    allow_missing_write_file=allow_missing_write_file,
-                )
-                if resolution.action == "allow" and resolution.intent is not None:
-                    return resolution.intent.normalized_path, None
-                if resolution.action == "deny":
-                    return None, ToolResult(
-                        output=resolution.reason or f"Path traversal blocked: {file_path}",
-                        metadata={"error": True},
-                    )
-            result = await _call_add_grant(authorization.grant_writer, grant, precondition)
-            if getattr(result, "ok", True) is False:
-                return None, ToolResult(
-                    output=getattr(result, "error", "Permission grant conflict") or "Permission grant conflict",
-                    metadata={"error": True, "conflict": getattr(result, "conflict", False)},
-                )
-        return resolution.intent.normalized_path, None
-    finally:
-        await _release_lock(lock)
+    reason = (
+        resolution.reason
+        if resolution.action == "deny" and resolution.reason
+        else f"Path traversal blocked: {file_path}"
+    )
+    return None, ToolResult(output=reason, metadata={"error": True, "unauthorized": True})
 
 
 def sandbox_paths_for_access(ctx, *, write: bool) -> list[str]:

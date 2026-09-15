@@ -8,12 +8,9 @@ from pathlib import Path
 import pytest
 
 from voidx.agent.application.tool_messages import DEFAULT_TOOL_MESSAGE_MAX_CHARS, sanitize_tool_message_content
-from voidx.tooling.application.execution import AuthorizationRuntime, CallbackInteractionPort, FileToolContext as ToolContext
+from voidx.tooling.application.execution import AuthorizationRuntime, FileToolContext as ToolContext
+from voidx.tooling.domain.grants import AccessGrants
 from voidx.tooling.domain.result import ToolResult
-from voidx.tooling.domain.interaction import (
-    UserInteraction,
-    UserResponse,
-)
 from voidx.tooling.builtin.file import FileReadInput, FileReadTool
 from voidx.tooling.adapters.persistence.file_snapshot import save_file_version
 import voidx.tooling.application.file_state as file_state
@@ -340,11 +337,10 @@ class TestFileOps:
 
 
 class TestReadExternalPath:
-    """read tool should ask for permission when reading outside workspace."""
+    """External reads rely on scheduling-layer grants; the gate itself never prompts."""
 
     @pytest.mark.asyncio
-    async def test_external_path_allowed_by_user(self, tmp_path):
-
+    async def test_external_path_allowed_by_grant(self, tmp_path):
         external = tmp_path / "external"
         external.mkdir()
         target = external / "file.txt"
@@ -353,32 +349,20 @@ class TestReadExternalPath:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
-        seen_request: UserInteraction | None = None
-
-        async def fake_interact(req: UserInteraction) -> UserResponse:
-            nonlocal seen_request
-            seen_request = req
-            return UserResponse(value="allow")
-
         ctx = ToolContext(
             workspace=str(workspace),
-            authorization_service=AuthorizationRuntime(interaction=CallbackInteractionPort(fake_interact)),
+            authorization_service=AuthorizationRuntime(
+                access_grants_reader=lambda: AccessGrants.from_parts(readable_files=[str(target)]),
+            ),
         )
         r = build_registry()
         result = await r.execute_tool("read", {"file_path": str(target)}, ctx)
 
         assert result.metadata.get("error") is not True
         assert "hello" in result.output
-        assert seen_request is not None
-        assert seen_request.prompt == f"Read file outside workspace? {target}"
-        assert seen_request.options == [
-            ("Yes", "allow", "Allow this read once"),
-            ("No", "deny", "Do not read this file"),
-        ]
 
     @pytest.mark.asyncio
-    async def test_external_path_denied_by_user(self, tmp_path):
-
+    async def test_external_path_without_grant_blocked(self, tmp_path):
         external = tmp_path / "external"
         external.mkdir()
         target = external / "file.txt"
@@ -387,21 +371,16 @@ class TestReadExternalPath:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
-        async def fake_interact(req: UserInteraction) -> UserResponse:
-            return UserResponse(value="deny")
-
-        ctx = ToolContext(
-            workspace=str(workspace),
-            authorization_service=AuthorizationRuntime(interaction=CallbackInteractionPort(fake_interact)),
-        )
+        ctx = ToolContext(workspace=str(workspace), authorization_service=AuthorizationRuntime())
         r = build_registry()
         result = await r.execute_tool("read", {"file_path": str(target)}, ctx)
 
         assert result.metadata.get("error") is True
-        assert "denied" in result.output.lower()
+        assert result.metadata.get("unauthorized") is True
+        assert "blocked" in result.output.lower()
 
     @pytest.mark.asyncio
-    async def test_external_path_no_interact_fallback_blocked(self, tmp_path):
+    async def test_external_path_no_authorization_service_blocked(self, tmp_path):
         external = tmp_path / "external"
         external.mkdir()
         target = external / "file.txt"
@@ -415,21 +394,37 @@ class TestReadExternalPath:
         result = await r.execute_tool("read", {"file_path": str(target)}, ctx)
 
         assert result.metadata.get("error") is True
+        assert result.metadata.get("unauthorized") is True
         assert "blocked" in result.output.lower()
 
     @pytest.mark.asyncio
-    async def test_external_nonexistent_path_still_blocked(self, tmp_path):
+    async def test_external_nonexistent_path_with_grant_reports_not_found(self, tmp_path):
         workspace = tmp_path / "workspace"
         workspace.mkdir()
+        missing = tmp_path / "nonexistent" / "file.txt"
 
-        async def fake_interact(req):
-            return UserResponse(value="allow")
-
-        ctx = ToolContext(workspace=str(workspace), authorization_service=AuthorizationRuntime(interaction=CallbackInteractionPort(fake_interact)))
-        r = build_registry()
-        result = await r.execute_tool(
-            "read", {"file_path": str(tmp_path / "nonexistent" / "file.txt")}, ctx
+        ctx = ToolContext(
+            workspace=str(workspace),
+            authorization_service=AuthorizationRuntime(
+                access_grants_reader=lambda: AccessGrants.from_parts(readable_files=[str(missing)]),
+            ),
         )
+        r = build_registry()
+        result = await r.execute_tool("read", {"file_path": str(missing)}, ctx)
 
         assert result.metadata.get("error") is True
         assert "not found" in result.output.lower()
+
+    @pytest.mark.asyncio
+    async def test_external_nonexistent_path_without_grant_blocked(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        missing = tmp_path / "nonexistent" / "file.txt"
+
+        ctx = ToolContext(workspace=str(workspace), authorization_service=AuthorizationRuntime())
+        r = build_registry()
+        result = await r.execute_tool("read", {"file_path": str(missing)}, ctx)
+
+        assert result.metadata.get("error") is True
+        assert result.metadata.get("unauthorized") is True
+        assert "blocked" in result.output.lower()
