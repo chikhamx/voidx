@@ -9,7 +9,27 @@ from math import ceil
 StreamingRenderer = None
 
 from voidx.agent.domain.ui_events import StatusFinished, StatusUpdated
-from voidx.agent.ports.ui import NullAgentUiPort
+class _NullRenderer:
+    def __init__(self, *args: Any, headless: bool = False, **kwargs: Any) -> None:
+        self._headless = headless
+        self._stream_to_dock = bool(kwargs.get("stream_to_dock", True))
+    def start(self) -> None:
+        pass
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        pass
+    def done(self) -> None:
+        pass
+def _ui_events(host: Any) -> Any:
+    ui = getattr(host, "_ui", None)
+    if ui is not None and hasattr(ui, "via_events") and ui.via_events():
+        return getattr(ui, "events", None)
+    return None
+
+
+def _ui_print(host: Any, msg: str) -> None:
+    ui = getattr(host, "_ui", None)
+    if ui is not None and hasattr(ui, "ui") and ui.ui is not None:
+        ui.ui.print(msg)
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -558,18 +578,18 @@ class CompactionCoordinator:
         if not force and ask and getattr(host.config, "ask_compact", False):
             should_compact = await self.ask_compact(total_tokens)
             if not should_compact:
-                if host._ui.via_events():
-                    await host._ui.events.emit(StatusFinished(
+                if (events := _ui_events(host)) is not None:
+                    await events.emit(StatusFinished(
                         status_id="compaction",
                         label="Compaction skipped",
                         remove=True,
                     ))
                 else:
-                    host._ui.ui.print("[dim]Compaction skipped[/dim]")
+                    _ui_print(host, "[dim]Compaction skipped[/dim]")
                 return None
 
-        if host._ui.via_events():
-            await host._ui.events.emit(StatusUpdated(
+        if (events := _ui_events(host)) is not None:
+            await events.emit(StatusUpdated(
                 status_id="compaction",
                 label="Compacting",
                 detail=_compaction_status_detail(total_tokens, force=force, preflight=preflight),
@@ -577,7 +597,8 @@ class CompactionCoordinator:
                 display="record_only",
             ))
         else:
-            host._ui.ui.print(
+            _ui_print(
+                host,
                 "[yellow]Context overflow — compacting...[/yellow]"
                 if not force
                 else "[yellow]Compacting...[/yellow]"
@@ -599,8 +620,8 @@ class CompactionCoordinator:
         semantic_tail = semantic_messages[selection.keep_from:]
 
         if not selection.should_compact:
-            if host._ui.via_events():
-                await host._ui.events.emit(StatusFinished(
+            if (events := _ui_events(host)) is not None:
+                await events.emit(StatusFinished(
                     status_id="compaction",
                     label="Compaction skipped: no older complete turn to summarize",
                     remove=True,
@@ -642,9 +663,9 @@ class CompactionCoordinator:
         for stage_name, resolved in stages:
             for attempt in range(1, COMPACTION_MAX_RETRIES + 2):
                 try:
-                    if host._ui.via_events():
+                    if (events := _ui_events(host)) is not None:
                         retry_label = f" (attempt {attempt})" if attempt > 1 else ""
-                        await host._ui.events.emit(StatusUpdated(
+                        await events.emit(StatusUpdated(
                             status_id="compaction",
                             label="Compacting",
                             detail=f"summarizing {len(summary_head)} old messages{retry_label}",
@@ -679,8 +700,8 @@ class CompactionCoordinator:
                     last_error = e
                     returned_no_summary = False
                     if attempt <= COMPACTION_MAX_RETRIES:
-                        if host._ui.via_events():
-                            await host._ui.events.emit(StatusUpdated(
+                        if (events := _ui_events(host)) is not None:
+                            await events.emit(StatusUpdated(
                                 status_id="compaction",
                                 label="Compaction agent failed",
                                 detail=f"{e}; retrying ({attempt}/{COMPACTION_MAX_RETRIES})",
@@ -688,7 +709,7 @@ class CompactionCoordinator:
                                 display="record_only",
                             ))
                         else:
-                            host._ui.ui.print(f"[dim]Compaction agent failed ({e}) — retrying ({attempt}/{COMPACTION_MAX_RETRIES})[/dim]")
+                            _ui_print(host, f"[dim]Compaction agent failed ({e}) — retrying ({attempt}/{COMPACTION_MAX_RETRIES})[/dim]")
             if summary:
                 break
 
@@ -708,8 +729,8 @@ class CompactionCoordinator:
                 ),
                 session_id=host._session.id if host._session is not None else None,
             )
-            if host._ui.via_events():
-                await host._ui.events.emit(StatusUpdated(
+            if (events := _ui_events(host)) is not None:
+                await events.emit(StatusUpdated(
                     status_id="compaction",
                     label="Compaction agent failed",
                     detail=f"{failure_detail}; using extracted summary",
@@ -718,7 +739,7 @@ class CompactionCoordinator:
                 ))
             else:
                 err_msg = f" ({failure_detail})"
-                host._ui.ui.print(f"[dim]Compaction agent failed{err_msg} — using extracted summary[/dim]")
+                _ui_print(host, f"[dim]Compaction agent failed{err_msg} — using extracted summary[/dim]")
             fallback = fallback_summary_with_previous(summary_head, previous_summary)
             host._pending_summary = fallback
             host._compaction_summary = fallback
@@ -748,8 +769,8 @@ class CompactionCoordinator:
                 model=host.config.model.model,
                 fallback=True,
             )
-            if host._ui.via_events():
-                await host._ui.events.emit(StatusFinished(
+            if (events := _ui_events(host)) is not None:
+                await events.emit(StatusFinished(
                     status_id="compaction",
                     label=f"Compaction fallback summarized {len(head_msgs)} messages",
                     detail=f"{failure_detail}; using extracted summary",
@@ -770,16 +791,16 @@ class CompactionCoordinator:
             host._compaction_summary = summary
             host._compaction.compaction_count += 1
             await persist(head_msgs)
-            if host._ui.via_events():
-                await host._ui.events.emit(StatusFinished(
+            if (events := _ui_events(host)) is not None:
+                await events.emit(StatusFinished(
                     status_id="compaction",
                     label=f"Compacted {len(head_msgs)} messages into summary",
                     remove=True,
                 ))
             else:
-                host._ui.ui.print(f"[dim]Compacted: {len(head_msgs)} messages → summary[/dim]")
-        elif host._ui.via_events():
-            await host._ui.events.emit(StatusFinished(
+                _ui_print(host, f"[dim]Compacted: {len(head_msgs)} messages → summary[/dim]")
+        elif (events := _ui_events(host)) is not None:
+            await events.emit(StatusFinished(
                 status_id="compaction",
                 label="Compaction produced no summary",
                 ok=False,
@@ -828,11 +849,13 @@ class CompactionCoordinator:
             ("Compact", "compact", "Summarize older context and continue"),
             ("Skip once", "skip", "Continue without compacting this turn"),
         ]
-        choice = await host._ui.ask_choice("Compact context?", choices)
-        if choice is not None:
-            return choice == "compact"
-        host._ui.ui.print("")
-        host._ui.ui.print(f"  [yellow]Context is large ({total_tokens} tokens); compacting automatically.[/yellow]")
+        ui = getattr(host, "_ui", None)
+        if ui is not None and hasattr(ui, "ask_choice"):
+            choice = await ui.ask_choice("Compact context?", choices)
+            if choice is not None:
+                return choice == "compact"
+        _ui_print(host, "")
+        _ui_print(host, f"  [yellow]Context is large ({total_tokens} tokens); compacting automatically.[/yellow]")
         return True
 
     async def persist_compaction(self, head_messages: list) -> None:
@@ -872,7 +895,7 @@ class CompactionCoordinator:
     ) -> bool:
         host = self.host
         if getattr(host, "_session", None) is None:
-            host._ui.ui.print("[dim]No active session to compact.[/dim]")
+            _ui_print(host, "[dim]No active session to compact.[/dim]")
             return False
 
         cache = getattr(host, "_session_msg_cache", None)
@@ -972,10 +995,11 @@ class CompactionCoordinator:
             protocol=model_protocol,
         )
 
-        ui_factories = host._ui if hasattr(host._ui, "streaming_renderer") else NullAgentUiPort()
-        renderer_factory = StreamingRenderer or ui_factories.streaming_renderer
+        ui_renderer = getattr(host._ui, "streaming_renderer", None) if getattr(host, "_ui", None) is not None else None
+        renderer_factory = StreamingRenderer or ui_renderer or (lambda *args, **kwargs: _NullRenderer(*args, **kwargs))
+        console = getattr(host._ui, "console", None) if getattr(host, "_ui", None) is not None else None
         renderer = renderer_factory(
-            host._ui.console,
+            console,
             debug=host._debug,
             stream_to_dock=False,
             headless=True,

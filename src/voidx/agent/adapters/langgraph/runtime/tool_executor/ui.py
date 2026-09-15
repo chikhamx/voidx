@@ -21,6 +21,9 @@ async def notify_tool_started(host, tc, display_policy) -> object | None:
     initial_summary_max_lines = rule.summary_max_lines
     tool_node = None
 
+    if getattr(host, "_ui", None) is None:
+        return None
+
     if host._ui.via_events():
         gerund = host._ui.title(host._ui.ui._TOOL_GERUND.get(tid, tid + "ing"))
         tool_node = await host._ui.events.request(ToolStarted(
@@ -65,6 +68,9 @@ async def notify_tool_result(host, tc, result, ok, elapsed, display_policy, tool
     rule = display_policy.rule_for(tid)
     initial_display_mode = rule.mode
 
+    if getattr(host, "_ui", None) is None:
+        return
+
     if host._ui.via_events():
         if initial_display_mode != ToolDisplayMode.HIDDEN:
             await host._ui.events.emit(ToolFinished(
@@ -92,6 +98,8 @@ async def notify_tool_diff(host, result, tool_event_id, tool_node) -> None:
     """Render diff output across all UI channels."""
     if (output := getattr(host, "semantic_output", None)) is not None:
         await output.file_changed(result, tool_event_id)
+        return
+    if getattr(host, "_ui", None) is None:
         return
     if host._ui.via_events():
         await host._ui.events.emit(FileChangeAppended(

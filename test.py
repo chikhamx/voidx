@@ -29,6 +29,7 @@ def _workspace_pythonpath() -> None:
             if entry and entry not in paths
         )
     os.environ["PYTHONPATH"] = os.pathsep.join(paths)
+    os.environ["PYTHONSAFEPATH"] = "1"
 
 
 _workspace_pythonpath()

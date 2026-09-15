@@ -25,7 +25,7 @@ from voidx.agent.adapters.tools.result_storage import (
     tool_name_for_persistence,
 )
 from voidx.agent.adapters.langgraph.runtime.todo_events import todo_updated_event
-from voidx.agent.ports.ui import UiEventTimeout
+from voidx.agent.domain.ui_events import UiEventTimeout
 from voidx.agent.adapters.tools.automation.loop import (
     LoopCommitTool,
     LoopInitTool,

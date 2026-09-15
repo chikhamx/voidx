@@ -6,7 +6,7 @@ import asyncio
 from typing import Awaitable, Callable
 
 from voidx.agent.ports.presentation import RuntimeStatusReader
-from voidx.agent.ports.ui import AgentUiPort
+from voidx.presentation.runtime_port import AgentUiPort
 from voidx.observability.tool_log import log_tool_event
 from voidx.presentation.output.events import StartupShown
 

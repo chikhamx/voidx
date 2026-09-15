@@ -303,3 +303,28 @@ def test_input_adapter_uses_explicit_frontend_protocol():
     path = ROOT / "src" / "voidx" / "agent" / "adapters" / "input_adapter.py"
     source = path.read_text(encoding="utf-8")
     assert 'getattr(self._frontend, "hide_command_output"' not in source
+
+
+AGENT_PORTS = ROOT / "src" / "voidx" / "agent" / "ports"
+
+
+def test_stage_d_agent_ports_ui_module_deleted():
+    assert not (AGENT_PORTS / "ui.py").exists(), "src/voidx/agent/ports/ui.py must be deleted in Stage D"
+
+
+def test_stage_d_agent_core_has_no_ports_ui_imports():
+    root = ROOT / "src" / "voidx" / "agent"
+    violations = []
+    for py_file in root.rglob("*.py"):
+        if py_file.name == "ui.py" and py_file.parent == AGENT_PORTS:
+            continue
+        tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                if node.module == "voidx.agent.ports.ui" or node.module.endswith(".ports.ui"):
+                    violations.append((str(py_file.relative_to(ROOT)), node.module))
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "voidx.agent.ports.ui" or alias.name.endswith(".ports.ui"):
+                        violations.append((str(py_file.relative_to(ROOT)), alias.name))
+    assert violations == [], f"Agent core still imports ports.ui: {violations}"

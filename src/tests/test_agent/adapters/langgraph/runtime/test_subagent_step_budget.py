@@ -513,8 +513,6 @@ async def test_subagent_todo_uses_local_tracker_and_queued_event(tmp_path, monke
     import voidx.agent.adapters.langgraph.runtime.subagent as subagent_module
     from voidx.agent.application.runtime.task_tracker import TaskTracker
     from voidx.agent.domain.ui_events import TodoUpdated
-    from voidx.agent.ports.ui import NullAgentUiPort
-
     stream_calls: list[list] = []
     queued_events: list[object] = []
     direct_events: list[object] = []
@@ -532,7 +530,7 @@ async def test_subagent_todo_uses_local_tracker_and_queued_event(tmp_path, monke
             direct_events.append(event)
             return True
 
-    class RecordingUiPort(NullAgentUiPort):
+    class RecordingUiPort:
         def __init__(self):
             super().__init__()
             self._events = RecordingEvents()

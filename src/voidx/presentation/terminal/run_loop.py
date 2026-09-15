@@ -19,7 +19,7 @@ from voidx.agent.ports.presentation import (
     RuntimeStatusReader,
     SessionLifecycle,
 )
-from voidx.agent.ports.ui import AgentUiPort
+from voidx.presentation.runtime_port import AgentUiPort
 from voidx.agent.ports.workspace_lock import WorkspaceWriteLockBinder
 from voidx.agent.domain.ui_events import (
     IntegrationStartupItem,

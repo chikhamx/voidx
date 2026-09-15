@@ -80,7 +80,6 @@ from voidx.llm.structured import ainvoke_structured
 from voidx.agent.adapters.persistence.session_repository import SessionInfo
 from voidx.observability.tool_log import log_tool_event
 from voidx.agent.adapters.persistence.subagent_repository import append_subagent_event
-from voidx.agent.ports.ui import AgentUiPort
 from voidx.agent.ports.workspace_lock import WorkspaceWriteLockPort
 
 GUIDANCE_MAX_CHARS = 2_000
@@ -400,7 +399,7 @@ class LangGraphExecution:
         skills_api_factory: Callable[[Any | None], Any] | None = None,
         skills_api_provider: Callable[[str], Any] | None = None,
         *,
-        ui: AgentUiPort | None,
+        ui: Any | None,
         workspace_write_lock: WorkspaceWriteLockPort,
         presentation_snapshots: PresentationSnapshotPort | None = None,
         interaction_requester: Callable[..., Awaitable[Any]] | None = None,
@@ -507,13 +506,16 @@ class LangGraphExecution:
                 else {}
             ),
         )
-        self._permission = self._permission_service_factory(config, settings=self._settings, notifier=permission_notifier if permission_notifier is not None else self._ui.ui.print)
+        notifier = permission_notifier
+        if notifier is None and self._ui is not None:
+            notifier = getattr(getattr(self._ui, "ui", None), "print", None)
+        self._permission = self._permission_service_factory(config, settings=self._settings, notifier=notifier)
 
         self._interaction_mode: InteractionMode = InteractionMode.AUTO
         self._debug: bool = False
         self._image_strip: bool = False
         self._instruction.set_debug(self._debug)
-        if self._ui is not None:
+        if self._ui is not None and hasattr(self._ui, "ui") and self._ui.ui is not None:
             self._ui.ui.set_debug(self._debug)
 
         self._file_mtimes: dict[str, dict[str, int]] = {}
@@ -578,7 +580,7 @@ class LangGraphExecution:
 
     @property
     def ui(self):
-        return self._ui.ui
+        return getattr(self._ui, "ui", None) if self._ui is not None else None
 
     @property
     def presentation_ui(self):
@@ -672,7 +674,8 @@ class LangGraphExecution:
     def _invalidate_skill_service_cache(self) -> None:
         if self._skills_api_factory is not None:
             self.skills_api = self._skills_api_factory(self._settings)
-        self._ui.invalidate_skill_service_cache()
+        if self._ui is not None and hasattr(self._ui, "invalidate_skill_service_cache"):
+            self._ui.invalidate_skill_service_cache()
 
     @property
     def usage_stats(self):
@@ -703,7 +706,8 @@ class LangGraphExecution:
             web_route=self._web_route,
         )
         old_permission = getattr(self, "_permission", None)
-        self._permission = self._permission_service_factory(self.config, settings=settings, notifier=self._ui.ui.print)
+        notifier = getattr(getattr(self._ui, "ui", None), "print", None) if self._ui is not None else None
+        self._permission = self._permission_service_factory(self.config, settings=settings, notifier=notifier)
         if old_permission is not None and hasattr(old_permission, "ai_approval_count"):
             self._permission.ai_approval_count = old_permission.ai_approval_count
         self._tool_executor = ToolExecutorAdapter(self)
@@ -717,7 +721,8 @@ class LangGraphExecution:
         self._compaction.soft_ratio = updated_compaction.soft_ratio
         self._compaction.post_target_ratio = updated_compaction.post_target_ratio
 
-        self._ui.update_status(
+        if self._ui is not None and hasattr(self._ui, "update_status"):
+            self._ui.update_status(
             provider=self.config.model.provider,
             model=self.config.model.model,
             context_limit=context_limit,
@@ -798,7 +803,7 @@ class LangGraphExecution:
         if len(guidance) > GUIDANCE_MAX_CHARS:
             guidance = guidance[:GUIDANCE_MAX_CHARS].rstrip()
             truncated = True
-        if source == "user" and self._ui.via_events():
+        if source == "user" and self._ui is not None and hasattr(self._ui, "via_events") and self._ui.via_events():
             if not self._ui.events.emit_direct(
                 GuidanceSubmitted(text=guidance, truncated=truncated)
             ):
@@ -974,7 +979,7 @@ class LangGraphExecution:
 
     def _project_submitted_guidance(self, guidance: Any) -> None:
         source = guidance.source if guidance.source in {"user", "system", "guard"} else "guard"
-        if source == "user" and self._ui is not None and self._ui.via_events():
+        if source == "user" and self._ui is not None and hasattr(self._ui, "via_events") and self._ui.via_events():
             self._ui.events.emit_direct(
                 GuidanceSubmitted(text=guidance.text, truncated=guidance.truncated)
             )
@@ -1081,7 +1086,8 @@ class LangGraphExecution:
             await self._session_runtime.clear_runtime_state(session_id)
             await update_title(session_id, "New session", touch=False)
         except Exception as exc:
-            self._ui.ui.print(f"[red]Clear cleanup failed: {exc}[/red]")
+            if self._ui is not None and hasattr(self._ui, "ui") and self._ui.ui is not None:
+                self._ui.ui.print(f"[red]Clear cleanup failed: {exc}[/red]")
 
 
     async def resume_session(self, session: SessionInfo) -> None:
@@ -1215,7 +1221,7 @@ class LangGraphExecution:
                 process_sandbox = getattr(self._permission, "process_sandbox", None)
         except Exception as exc:
             error = str(exc).strip()[:500] or exc.__class__.__name__
-            if self._ui.via_events():
+            if self._ui is not None and hasattr(self._ui, "via_events") and self._ui.via_events():
                 await self._ui.events.emit(SubagentFinished(
                     agent_id=agent_id,
                     subagent_id=agent_run_id,
@@ -1245,7 +1251,7 @@ class LangGraphExecution:
                 workflow_runs=workflow_runtime_context.runs,
             )
 
-        if self._ui.via_events():
+        if self._ui is not None and hasattr(self._ui, "via_events") and self._ui.via_events():
             await self._ui.events.emit(SubagentStarted(
                 agent_id=agent_id,
                 subagent_id=agent_run_id,
@@ -1318,7 +1324,7 @@ class LangGraphExecution:
             error = str(exc).strip()[:500] or exc.__class__.__name__
             raise
         finally:
-            if self._ui.via_events():
+            if self._ui is not None and hasattr(self._ui, "via_events") and self._ui.via_events():
                 await self._ui.events.emit(SubagentFinished(
                     agent_id=agent_id,
                     subagent_id=agent_run_id,
@@ -1345,7 +1351,8 @@ class LangGraphExecution:
     def set_debug(self, value: bool) -> None:
         self._debug = value
         self._instruction.set_debug(value)
-        self._ui.ui.set_debug(value)
+        if self._ui is not None and hasattr(self._ui, "ui") and self._ui.ui is not None:
+            self._ui.ui.set_debug(value)
 
     @property
     def image_strip_enabled(self) -> bool:
@@ -1620,7 +1627,8 @@ class LangGraphExecution:
         error_preview = str(result.output)[:200]
         message = f"[on-failure] '{tool_name}' failed: {error_preview}"
         if not self._show_permission_output(message):
-            self._ui.ui.print(f"\n[yellow]{message}[/yellow]")
+            if self._ui is not None and hasattr(self._ui, "ui") and self._ui.ui is not None:
+                self._ui.ui.print(f"\n[yellow]{message}[/yellow]")
 
     def _record_successful_tool_call(self: Any, tool_call: dict[str, Any]) -> None:
         risk = (tool_call.get("metadata") or {}).get("approved_risk") or {}

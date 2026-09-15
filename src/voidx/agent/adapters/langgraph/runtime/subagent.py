@@ -96,7 +96,60 @@ from voidx.agent.application.subagent_policy import (
     child_allowed_tool_ids,
     mode_allows_guarded_shell,
 )
-from voidx.agent.ports.ui import AgentUiPort, NullAgentUiPort
+class _NullSubagentRenderer:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        pass
+    def start(self) -> None:
+        pass
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        pass
+    def done(self) -> None:
+        pass
+    def print(self, *args: Any, **kwargs: Any) -> None:
+        pass
+    def step_header(self, *args: Any, **kwargs: Any) -> None:
+        pass
+    def tool_call(self, *args: Any, **kwargs: Any) -> None:
+        pass
+    def tool_done(self, *args: Any, **kwargs: Any) -> None:
+        pass
+    def diff(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+
+class _NullSubagentUi:
+    def __init__(self, ui_port: Any = None) -> None:
+        self._ui_port = ui_port
+        self._null = _NullSubagentRenderer()
+
+    def via_events(self) -> bool:
+        if self._ui_port is not None and hasattr(self._ui_port, "via_events"):
+            return bool(self._ui_port.via_events())
+        return False
+
+    @property
+    def events(self) -> Any:
+        return getattr(self._ui_port, "events", getattr(self._ui_port, "_events", None))
+
+    def streaming_renderer(self, *args: Any, **kwargs: Any) -> Any:
+        renderer = getattr(self._ui_port, "streaming_renderer", None)
+        if callable(renderer):
+            return renderer(*args, **kwargs)
+        return self._null
+
+    def capture_console(self, *args: Any, **kwargs: Any) -> Any:
+        capture = getattr(self._ui_port, "capture_console", None)
+        if callable(capture):
+            return capture(*args, **kwargs)
+        return self._null
+
+    @property
+    def console(self) -> Any:
+        return getattr(self._ui_port, "console", self._null)
+
+    @property
+    def ui(self) -> Any:
+        return getattr(self._ui_port, "ui", self._null)
 
 
 create_chat_model = None
@@ -188,7 +241,7 @@ async def run_subagent(
     process_sandbox=None,
     agent_run_id: str | None = None,
     agent_gateway=None,
-    ui_port: AgentUiPort | None = None,
+    ui_port: Any | None = None,
     model_factory=None,
     scoped_tools_binder=None,
     context_handoff=None,
@@ -200,8 +253,8 @@ async def run_subagent(
         runtime_profile.prompt_policy.suppress_sections()
         if runtime_profile.prompt_policy is not None else set()
     )
-    ui_port = ui_port or NullAgentUiPort()
-    ui_factories = ui_port if hasattr(ui_port, "streaming_renderer") else NullAgentUiPort()
+    ui_port = _NullSubagentUi(ui_port)
+    ui_factories = ui_port
     agent_def = child_run_agent_def(agent_def)
     run_identity = agent_run_id or f"run_{uuid.uuid4().hex}"
     persona = (runtime_persona or PersonaName.EXPLORE).strip() or PersonaName.EXPLORE
@@ -782,7 +835,7 @@ async def run_subagent(
                 raise TimeoutError("Child summary wall-clock budget exhausted")
             summary_model = bind_summary_model(model, model_protocol, output_limit)
             summary_renderer = ui_factories.streaming_renderer(
-                ui_port.console, debug=debug, agent_id=agent_id, headless=True,
+                getattr(ui_port, "console", None), debug=debug, agent_id=agent_id, headless=True,
             )
             response = await asyncio.wait_for(
                 stream_child_llm(summary_model, request, summary_renderer), remaining,
@@ -835,7 +888,7 @@ async def run_subagent(
         )
         final_messages: list = []
         renderer = ui_factories.streaming_renderer(
-            ui_port.console,
+            getattr(ui_port, "console", None),
             debug=debug,
             agent_id=agent_id,
             headless=True,
@@ -889,14 +942,15 @@ async def run_subagent(
                 capture = ui_factories.capture_console(capture_tree, parent_node, agent_id=agent_id)
                 capture.step_header(persona)
             else:
-                ui_port.ui.step_header(persona)
+                if hasattr(ui_port, "ui") and ui_port.ui is not None:
+                    ui_port.ui.step_header(persona)
 
             await receive_parent_messages()
             next_step = step + 1
             ctx = ctx.model_copy(update={"turn_count": next_step})
             llm_messages = compile_context([*messages, *drain_guard_guidance()])
             renderer = ui_factories.streaming_renderer(
-                ui_port.console,
+                getattr(ui_port, "console", None),
                 debug=debug,
                 agent_id=agent_id,
                 headless=True,

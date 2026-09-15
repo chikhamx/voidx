@@ -354,7 +354,7 @@ async def test_model_provider_list_matches_catalog():
 
 def test_slash_handler_fallback_ui_is_agent_owned():
     from voidx.presentation.slash.handler import ui as slash_ui
-    from voidx.agent.ports.ui import NullAgentUiPort
+    from voidx.presentation.runtime_port import NullAgentUiPort
 
     assert type(slash_ui) is type(NullAgentUiPort().ui)
 

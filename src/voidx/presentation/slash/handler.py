@@ -15,7 +15,7 @@ from voidx.presentation.slash.port import (
 )
 from voidx.presentation.slash.registry import REGISTRY, SLASH_COMMANDS, SlashCommand
 from voidx.presentation.slash.runtime import prompt_text
-from voidx.agent.ports.ui import NullAgentUiPort
+from voidx.presentation.runtime_port import NullAgentUiPort
 
 ui = NullAgentUiPort().ui
 from voidx.presentation.slash.commands import (

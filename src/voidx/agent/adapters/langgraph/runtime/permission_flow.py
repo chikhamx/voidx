@@ -523,17 +523,19 @@ class PermissionFlow:
                 tools=host._permission_tool_details(decisions),
             ))
 
-        choice = await _call_with_optional_kwargs(
-            host._ui.ask_choice,
-            "Allow tool use?",
-            choices,
-            details=details,
-            request_id=request_id,
-        )
-        if choice is not None:
-            return choice
-        host._ui.ui.print("")
-        host._ui.ui.print(f"  [yellow]Allow tools: [bold]{tool_list}[/bold]?[/yellow]")
+        if host._ui is not None:
+            choice = await _call_with_optional_kwargs(
+                host._ui.ask_choice,
+                "Allow tool use?",
+                choices,
+                details=details,
+                request_id=request_id,
+            )
+            if choice is not None:
+                return choice
+            if hasattr(host._ui, "ui") and host._ui.ui is not None:
+                host._ui.ui.print("")
+                host._ui.ui.print(f"  [yellow]Allow tools: [bold]{tool_list}[/bold]?[/yellow]")
         return "n"
 
 

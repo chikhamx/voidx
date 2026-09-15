@@ -12,7 +12,7 @@ from typing import Any, Callable
 from voidx.platform.execution_context import current_execution_identity
 
 from voidx.observability.tool_log import log_tool_event
-from voidx.agent.ports.ui import UiEventTimeout
+from voidx.agent.domain.ui_events import UiEventTimeout
 from voidx.presentation.output.events.schema import AssistantStreamUpdated, UiEvent
 
 

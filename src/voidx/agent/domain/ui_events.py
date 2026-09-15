@@ -491,3 +491,7 @@ UiEvent: TypeAlias = (
     | IntegrationStartupUpdated
     | IntegrationStartupFinished
 )
+
+
+class UiEventTimeout(TimeoutError):
+    pass

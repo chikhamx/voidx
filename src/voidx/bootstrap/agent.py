@@ -34,7 +34,7 @@ from voidx.agent.adapters.presentation_adapter import (
     LangGraphSessionLifecycle,
 )
 from voidx.agent.ports.presentation import AgentEventPublisher, NullAgentEventPublisher
-from voidx.agent.ports.ui import AgentUiPort
+from voidx.presentation.runtime_port import AgentUiPort
 from voidx.agent.ports.workspace_lock import DelegatingWorkspaceWriteLock
 from voidx.config import Config, Settings
 from voidx.llm.domain.model import ModelConfig

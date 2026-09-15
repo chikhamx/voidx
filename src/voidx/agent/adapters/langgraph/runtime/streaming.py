@@ -11,7 +11,6 @@ from typing import Any, Callable
 
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
-from voidx.agent.ports.ui import AgentUiPort, NullAgentUiPort
 from voidx.agent.application.tool_call_ids import ai_tool_call_ids
 from voidx.agent.application.tool_messages import tool_observation_kwargs
 
@@ -60,7 +59,7 @@ async def stream_llm(
     renderer: Any,
     protocol: str = "",
     *,
-    ui_port: AgentUiPort | None = None,
+    ui_port: Any | None = None,
     on_activity: Callable[[], None] | None = None,
     semantic_output=None,
 ) -> AIMessage:
@@ -75,8 +74,8 @@ async def stream_llm(
         if semantic_output is not None:
             await semantic_output.stream_started(stream_id, "text")
         else:
-            ui_port = ui_port or NullAgentUiPort()
-            renderer.start()
+            if renderer is not None and hasattr(renderer, "start"):
+                renderer.start()
         if on_activity is not None:
             on_activity()
         iterator = model.astream(_sanitize_messages_for_replay(messages, protocol=protocol))
@@ -133,9 +132,11 @@ async def stream_llm(
         if iterator is not None and hasattr(iterator, "aclose"):
             await iterator.aclose()
         if semantic_output is None:
-            renderer.done()
-            if getattr(ui_port.events, "is_running", False):
-                await ui_port.events.drain()
+            if renderer is not None and hasattr(renderer, "done"):
+                renderer.done()
+            events = getattr(ui_port, "events", None) if ui_port is not None else None
+            if events is not None and getattr(events, "is_running", False):
+                await events.drain()
 
 
 def _merge_stream_chunks(chunks: list[AIMessageChunk]) -> AIMessage:
