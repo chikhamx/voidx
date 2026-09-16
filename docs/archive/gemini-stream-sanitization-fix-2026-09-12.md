@@ -1,7 +1,9 @@
 # Gemini 流式正文截断与分块空格丢失修复规范
 
+> **Status: Done** — Archived on 2026-09-16.
+
 - 日期：2026-09-12
-- 状态：缺陷已复现；规范已校正，实施方案待确认，尚未修改代码
+- 状态：已实施并验收（2026-09-16，提交 4bfe4ee2；后端全套 7066 passed）
 - 读者：维护者与实施代理
 - 范围：`src/voidx/agent/adapters/langgraph/runtime/streaming.py` 及其测试
 
